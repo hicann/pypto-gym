@@ -462,7 +462,6 @@ def ifa_func_kernel(
         value_cache.move(pypto.scatter_update(value_cache_2d, -2, index_view, v_res))
 
     q_2d = pypto.reshape(q_tmp, q_2d_shape, inplace=True)
-    pypto.set_pass_options(pg_upper_bound=1536)
     # Q常驻，0代表第一组mmad，4代表4次matmul合并
     pypto.set_pass_options(cube_l1_reuse_setting={0: 4})
     # 6. 实现kernel逻辑，循环展开B动态轴

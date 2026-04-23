@@ -21,67 +21,182 @@ PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym
 - 每个模型目录自包含：impl 文件 + pytest 测试 + README，可独立运行
 - 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
 
-## 📦 安装
+## 📦 环境准备
 
-### 前置依赖
+### 系统要求
 
-- 昇腾 CANN 环境
-- [PyPTO](https://gitcode.com/cann/pypto) ≥ 0.2.0（必选）
-- PyTorch + torch_npu（根据昇腾版本选择）
+| 组件 | 版本要求 |
+|------|---------|
+| 华为昇腾 CANN | ≥ 8.5.0 |
+| Python | 3.10+ |
+| PyTorch | 2.7.x |
+| torch_npu | 与 PyTorch 版本配套 |
+| [PyPTO](https://gitcode.com/cann/pypto) | ≥ 0.2.1（需从源码编译安装） |
+| [pto-isa](https://gitcode.com/cann/pto-isa) | 与 PyPTO 主仓同步的最新版本 |
 
-### 从源码安装
+### 第一步：安装 CANN 环境
+
+按照昇腾官方文档安装 CANN toolkit，安装完成后加载环境变量：
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+```
+
+### 第二步：安装 torch_npu
+
+torch_npu 需要与 PyTorch 版本严格对应，按照昇腾官方发布的配套表安装：
+
+```bash
+pip install torch torch_npu -i https://mirrors.aliyun.com/pypi/simple/
+```
+
+torch_npu 依赖 `scipy` 和 `decorator`，需一并安装：
+
+```bash
+pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
+```
+
+### 第三步：克隆并编译安装 pto-isa
+
+pto-isa 提供底层 ISA 接口头文件，PyPTO 编译时依赖。
+
+```bash
+git clone https://gitcode.com/cann/pto-isa.git
+```
+
+> pto-isa 无需单独编译，仅需将仓库路径通过环境变量 `PTO_TILE_LIB_CODE_PATH` 指定给 PyPTO 编译系统即可。
+
+### 第四步：克隆并编译安装 PyPTO
+
+```bash
+git clone https://gitcode.com/cann/pypto.git
+cd pypto
+
+# 设置 pto-isa 路径（必须在编译前设置）
+export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
+
+# 编译 C++ 扩展（约 1~2 分钟）
+python setup.py build_ext --inplace
+
+# 可编辑模式安装
+pip install -e . -i https://mirrors.aliyun.com/pypi/simple/
+```
+
+### 第五步：设置运行时环境变量
+
+每次运行前需设置以下环境变量：
+
+```bash
+# 加载 CANN 环境
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+
+# 指定运行的 NPU 设备 ID（根据实际可用 chip 设置）
+export TILE_FWK_DEVICE_ID=0
+
+# 指定 pto-isa 代码路径（用于 JIT 编译）
+export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
+```
+
+推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
+
+### 第六步：安装 pypto-gym
 
 ```bash
 git clone https://gitcode.com/cann/pypto-gym.git
 cd pypto-gym
-pip install -e .
+pip install -e . -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 开发模式附加依赖：
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]" -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## ⚡️ 快速上手
 
-### 1. 运行单个模型的测试
+### 1. 验证环境
 
 ```bash
-# Arctic LSTM
-pytest src/pypto_gym/models/arctic -v
+source env_setup.sh
+python -c "import pypto; import torch_npu; print('pypto:', pypto.__version__); print('npu available:', torch_npu.npu.is_available())"
+```
+
+### 2. 运行单个模型的测试
+
+```bash
+source env_setup.sh
 
 # GLM V4.5 Attention
 pytest src/pypto_gym/models/glm_v4_5/glm_attention.py -v
 
-# DeepSeek V3.2 Sparse Flash Attention
-pytest src/pypto_gym/models/deepseek_v32_exp/deepseekv32_sparse_flash_attention_quant.py -v
+# DeepSeek V3.2 MLA Prolog
+pytest src/pypto_gym/models/deepseek_v32_exp/deepseekv32_mla_prolog_quant.py -v
 
 # Qwen3-Next Gated Delta Rule
 pytest src/pypto_gym/models/qwen3_next -v
+
+# QAT 量化感知训练
+pytest src/pypto_gym/models/qat -v
 ```
 
-### 2. 运行全部（非 experimental）测试
+### 3. 运行全部（非 experimental）测试
 
 ```bash
-pytest
+source env_setup.sh
+pytest -v
 ```
 
-`pytest.ini` 默认排除 `experimental/` 目录；如需运行实验性算子：
+`pytest.ini` 已配置：
+- `testpaths`：`src/pypto_gym/models` 和 `tests`
+- `norecursedirs`：自动排除 `experimental/` 目录
+- `python_files`：匹配 `test_*.py glm_*.py deepseekv32_*.py qwen3_next_*.py`
+
+如需运行实验性算子：
 
 ```bash
 pytest src/pypto_gym/models/experimental/<op_name> -v
 ```
 
-### 3. 多卡 / 指定 SoC
+### 4. 多卡 / 指定 SoC
 
 ```bash
-# 指定 NPU device id
-pytest src/pypto_gym/models/<model> --device 0
+# 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
+pytest src/pypto_gym/models/glm_v4_5 -v --device 1
 
 # 多卡（2 卡）分布式样例
 pytest src/pypto_gym/models/experimental/distributed --device 0 1 --cards-per-case 2
 ```
+
+### 5. 用例筛选说明
+
+测试用例通过 `@pytest.mark.soc` 标注适用芯片（`"950"` 对应 910B/910C，`"910"` 对应 910A），conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例通过 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
+
+## 🔧 常见问题排查
+
+**Q: 报错 `key: runtime.stitch_cfgcache_size does not exist`**
+
+该 key 为新版 PyPTO 引入，需确保 PyPTO 编译版本与 impl 文件版本一致。建议始终保持 pypto、pypto-gym、pto-isa 三仓同步到最新版本后重新编译安装 PyPTO。
+
+**Q: 报错 `NPU out of memory`**
+
+部分算子（如 sparse_flash_attention、gated_delta_rule）的 `stitch_function_max_num` 参数会影响 workspace 大小，公式为 `workspace = totalSlot × (stitch_function_max_num + 1) × parallelism`。可在 impl 文件对应 `@pypto.frontend.jit` 的 `runtime_options` 中降低该值（如从 128 降至 1）以减少内存占用，代价是降低并行度。
+
+**Q: 报错 `npu_format_cast ACL error 500001`**
+
+TBE（Tensor Boost Engine）初始化失败，通常由缺少 Python 依赖导致。执行以下命令修复：
+
+```bash
+pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
+```
+
+**Q: 部分 GLM 用例报 `TypeError: set_pass_options() got an unexpected keyword argument 'pg_upper_bound'`**
+
+`pg_upper_bound` 在新版 PyPTO 中已改为自动推导，从 `set_pass_options()` 调用中移除该参数即可。建议同步 pypto 主仓最新的 impl 文件。
+
+**Q: 编译 PyPTO 时找不到 pto-isa 头文件**
+
+确认 `PTO_TILE_LIB_CODE_PATH` 指向 pto-isa 仓库根目录（含 `include/` 子目录），且 pto-isa 版本与 PyPTO 兼容（建议两仓同步到最新）。
 
 ## 🔍 目录结构
 

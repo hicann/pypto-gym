@@ -111,7 +111,6 @@ class IndexerPrologQuantConfigs:
     unroll_list: List[int]
 
     cube_l1_reuse_setting: dict[int, int]
-    pg_upper_bound: int
     block_size: int
     t_sub_tile: int
     chunk_size: int
@@ -318,8 +317,7 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor, configs: Inde
 
 
 @pypto.frontend.jit(
-    pass_options={"cube_l1_reuse_setting": {1: 4},
-                  "pg_upper_bound": 8192},
+    pass_options={"cube_l1_reuse_setting": {1: 4}, },
     runtime_options={"stitch_function_max_num": 128,
                     "device_sched_mode": 1}
 )

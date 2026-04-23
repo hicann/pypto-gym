@@ -67,7 +67,6 @@ class MlaTileConfig:
         self.k_vec_tile0 = 16
         self.k_vec_tile1 = 16
         self.cube_l1_reuse_setting = {-1: 4}
-        self.pg_upper_bound = 8192
         self.cube_nbuffer_setting = {3: 4}
         self.dynamic_unaligned_enable = False
 

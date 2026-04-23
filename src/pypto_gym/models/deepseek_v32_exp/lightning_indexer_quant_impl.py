@@ -65,9 +65,6 @@ def lightning_indexer_decode_compute(
         selected_count: Required parameter. It represents the number of topk selections, with a default value of 2048.
     """
 
-    # graph fuse/split thresold
-    pypto.set_pass_options(pg_upper_bound=configs.pg_upper_bound)
-
     # vector graph fuse optimization
     pypto.set_pass_options(vec_nbuffer_setting=configs.vec_nbuffer_setting)
 

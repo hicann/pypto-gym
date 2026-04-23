@@ -21,7 +21,8 @@ import numpy as np
 import pypto
 
 from sparse_flash_attention_quant_impl \
-    import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p, SaTileShapeConfig
+    import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p,\
+           sparse_flash_attention_quant_d_950, SaTileShapeConfig
 from utils.compare import compare
 
 
@@ -389,7 +390,7 @@ def gen_gather_select_attention_golden(dtype, bn1n2s1, is_kn_quant, actual_seq):
     return input_params, input_data_map, atten_out
 
 
-def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data, atten_out, is_p):
+def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data, atten_out, is_p, is_soc_950):
     b, n1, n2, s1 = bn1n2s1
 
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -399,6 +400,7 @@ def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data,
         tile_config = SaTileShapeConfig(
             g_tile=128,
             s_kv_tile=2048,
+            gather_vec_tile_shape=[32, 512],
             c1_tile_shape=[128, 128, 128, 128, 128, 128],
             v1_tile_shape=[8, 2048],
             c2_tile_shape=[128, 128, 128, 128, 128, 128], # C1的N轴与C2的K轴一致
@@ -408,10 +410,22 @@ def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data,
         tile_config = SaTileShapeConfig(
             g_tile=128,
             s_kv_tile=2048,
+            gather_vec_tile_shape=[32, 512],
             c1_tile_shape=[128, 128, 128, 128, 128, 128],
             v1_tile_shape=[8, 2048],
             c2_tile_shape=[128, 128, 128, 128, 128, 128],
-            v2_tile_shape=[64, 128]
+            v2_tile_shape=[64, 256]
+        )
+    
+    if is_soc_950:
+        tile_config = SaTileShapeConfig(
+            g_tile=128,
+            s_kv_tile=2048,
+            gather_vec_tile_shape=[64, 512],
+            c1_tile_shape=[128, 128, 128, 128, 128, 128],
+            v1_tile_shape=[8, 2048],
+            c2_tile_shape=[128, 128, 128, 128, 128, 128],
+            v2_tile_shape=[64, 256]
         )
 
     b, s1, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num, block_size, topk, \
@@ -436,11 +450,14 @@ def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data,
 
     max_blocknum_perbatch = math.ceil(max_kv_seq / block_size)
 
-    if is_p:
+    if is_p and not is_soc_950:
         sparse_flash_attention_quant_p(*pto_inputs, *pto_outputs, n_q, n_kv, softmax_scale, topk, block_size, \
             max_blocknum_perbatch, tile_config)
-    else:
+    elif not is_p and not is_soc_950:
         sparse_flash_attention_quant_d(*pto_inputs, *pto_outputs, n_q, n_kv, softmax_scale, topk, block_size, \
+            max_blocknum_perbatch, tile_config)
+    else:
+        sparse_flash_attention_quant_d_950(*pto_inputs, *pto_outputs, n_q, n_kv, softmax_scale, topk, block_size, \
             max_blocknum_perbatch, tile_config)
     torch_npu.npu.synchronize()
     compare(calc_attention_out_npu.cpu(), atten_out, "atten_out", atol=0.0001, rtol=0.005, max_error_count=100)
@@ -450,34 +467,37 @@ def get_case_config(case_name: str):
     # case参数配置字典，key为case名称，value为对应的参数元组(bn1n2s1, is_kn_quant, actual_seq)
     test_case_config = {
         "sfa_bf16_b4_s2_seq64K_total_int8_d": (
-            (4, 128, 1, 2), 1, [65536, 16381, 666, 15]
+            (4, 128, 1, 2), 1, [65536, 16381, 666, 15], 0
         ),
         "sfa_bf16_b4_s2_seq64K_per_int8_d": (
-            (4, 128, 1, 2), 1, [65536] * 4
+            (4, 128, 1, 2), 1, [65536] * 4, 0
         ),
         "sfa_bf16_b4_s2_seq64K_per_bf16_d": (
-            (4, 128, 1, 2), 0, [65536] * 4
+            (4, 128, 1, 2), 0, [65536] * 4, 0
         ),
         "sfa_bf16_b1_s256_seq64K_int8_p": (
-            (1, 128, 1, 256), 1, [65536]
+            (1, 128, 1, 256), 1, [65536], 0
+        ),
+        "sfa_bf16_b4_s2_seq64K_per_int8_d_950": (
+            (4, 128, 1, 2), 0, [65536] * 4, 1
         ),
     }
     case_config = test_case_config.get(case_name)
     return case_config
 
 
-def do_test_sfa_entry(case_name: str, is_p: bool):
+def do_test_sfa_entry(case_name: str, is_p: bool, is_soc_950: bool):
     case_config = get_case_config(case_name)
     if not case_config:
         logging.error("Can't get func to gen golden, Case(%s)", case_name)
         return False
-    bn1n2s1, is_kn_quant, actual_seq = case_config
+    bn1n2s1, is_kn_quant, actual_seq, is_soc_950 = case_config
 
     input_params, input_data, atten_out = gen_gather_select_attention_golden(
         torch.bfloat16, bn1n2s1, is_kn_quant, actual_seq
     )
     do_test_sparse_attention_func(
-        bn1n2s1, actual_seq, input_params, input_data, atten_out, is_p
+        bn1n2s1, actual_seq, input_params, input_data, atten_out, is_p, is_soc_950
     )
     return True
 
@@ -487,7 +507,7 @@ def test_sfa_bf16_b4_s2_seq64k_total_int8_d():
     '''
     sfa decode测试函数
     '''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_total_int8_d", is_p=False)
+    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_total_int8_d", is_p=False, is_soc_950=False)
 
 
 @pytest.mark.skip(reason="perf")
@@ -495,7 +515,16 @@ def test_sfa_bf16_b4_s2_seq64k_per_int8_d():
     '''
     sfa decode测试函数
     '''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_int8_d", is_p=False)
+    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_int8_d", is_p=False, is_soc_950=False)
+
+
+@pytest.mark.soc("950")
+@pytest.mark.skip(reason="perf")
+def test_sfa_bf16_b4_s2_seq64k_per_int8_d_950():
+    '''
+    sfa decode测试函数
+    '''
+    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_int8_d_950", is_p=False, is_soc_950=True)
 
 
 @pytest.mark.skip(reason="bf16 perf")
@@ -503,7 +532,7 @@ def test_sfa_bf16_b4_s2_seq64k_per_bf16_d():
     '''
     sfa decode非量化测试函数
     '''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_bf16_d", is_p=False)
+    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_bf16_d", is_p=False, is_soc_950=False)
 
 
 @pytest.mark.skip(reason="large test case")
@@ -511,7 +540,7 @@ def test_sfa_bf16_b1_s256_seq64k_int8_p():
     '''
     sfa prefill测试函数
     '''
-    do_test_sfa_entry("sfa_bf16_b1_s256_seq64K_int8_p", is_p=True)
+    do_test_sfa_entry("sfa_bf16_b1_s256_seq64K_int8_p", is_p=True, is_soc_950=False)
 
 
 if __name__ == "__main__":
@@ -522,3 +551,4 @@ if __name__ == "__main__":
     test_sfa_bf16_b4_s2_seq64k_total_int8_d()
     test_sfa_bf16_b4_s2_seq64k_per_int8_d()
     test_sfa_bf16_b1_s256_seq64k_int8_p()
+    test_sfa_bf16_b4_s2_seq64k_per_int8_d_950()

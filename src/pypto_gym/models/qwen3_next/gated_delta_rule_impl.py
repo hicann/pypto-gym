@@ -350,7 +350,7 @@ def chunk_gated_delta_rule(b, nqk, nv, d, l):
 
     @pypto.frontend.jit(
         runtime_options={
-            "stitch_function_max_num": 128,
+            "stitch_function_max_num": 1,
         },
     )
     def kernel(
@@ -476,7 +476,7 @@ def chunk_gated_delta_rule_unaligned(b, nqk, nv, d, l):
 
     @pypto.frontend.jit(
         runtime_options={
-            "stitch_function_max_num": 128,
+            "stitch_function_max_num": 1,
         },
     )
     def kernel(

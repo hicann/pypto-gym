@@ -233,8 +233,7 @@ def rope_data(x1, x2, cos, sin, tile_shape):
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128,
-    "stitch_cfgcache_size": 3000000}
+    runtime_options={"stitch_function_max_num": 128}
 )
 def quant_attention_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

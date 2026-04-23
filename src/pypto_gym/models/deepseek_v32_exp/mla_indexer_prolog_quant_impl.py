@@ -268,7 +268,6 @@ def mla_indexer_prolog_quant_compute(
     # prefill版本融合算子优化参数
     pass_options={
         "cube_l1_reuse_setting": {-1: 4},
-        "pg_upper_bound": 8192,
     },
     runtime_options={"stitch_function_max_num": 128,
                     "device_sched_mode": 2}
@@ -399,7 +398,6 @@ def mla_indexer_prolog_quant_p(
     pass_options={
         "cube_l1_reuse_setting": {-1: 4, 0: 1, 1: 1, 2: 1},
         "cube_nbuffer_setting": {-1: 6, 0: 1, 1: 1, 2: 1},
-        "pg_upper_bound": 8192,
     },
     runtime_options={"device_sched_mode": 2}
 )

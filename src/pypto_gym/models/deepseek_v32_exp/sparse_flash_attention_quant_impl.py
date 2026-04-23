@@ -36,6 +36,7 @@ from pypto.experimental import gather_in_l1, gather_in_ub
 class SaTileShapeConfig:
     g_tile: int
     s_kv_tile: int
+    gather_vec_tile_shape: list
     c1_tile_shape: list
     v1_tile_shape: list
     c2_tile_shape: list
@@ -88,6 +89,7 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
     dn = query_nope.shape[1]
     dr = query_rope.shape[1]
     group = nq // n_kv
+    gather_vec_tile = tile_config.gather_vec_tile_shape
     group_tile = tile_config.g_tile
     s2_tile = tile_config.s_kv_tile
     c1_tile = tile_config.c1_tile_shape
@@ -103,7 +105,7 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
     g_loop_sym = group // group_tile
 
     atten_out_2dim = pypto.tensor([batch_size_sym * s1_n2_gsym, dn], dtype, "attenOut2Dim")
-    for batch_idx in pypto.loop(0, batch_size_sym, 1, name="LOOP_L0_idx", idx_name="bIdx"):
+    for batch_idx in pypto.loop(0, batch_size_sym, 1, name="LOOP_L0_idx", idx_name="bIdx", parallel=True):
         cur_act_seq = kv_act_seqs[batch_idx]
         for slc_idx in pypto.loop(0, s1_sym, 1, name="LOOP_L1_s1_SA", idx_name="s1Idx"):
             cur_seq = (cur_act_seq - s1_sym + 1 + slc_idx).max(0).min(topk)
@@ -146,42 +148,63 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
                             cur_kn_fp32 = pypto.view(kn_fp32_reshape, [cur_s2_tile, dn], [0, 0],
                                 valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn])
                             kn = pypto.cast(cur_kn_fp32, dtype)
+                            # C1
+                            pypto.set_semantic_label("Sa_C1")
+                            pypto.set_vec_tile_shapes(gather_vec_tile[0], gather_vec_tile[1])
+                            pypto.set_cube_tile_shapes([c1_tile[0],
+                                c1_tile[1]], [c1_tile[2], c1_tile[3]], [c1_tile[4], c1_tile[5]])
+                            
+                            kr = gather_in_l1(key_rope_2d, cur_topk_indices, cur_block_table, block_size, dr,
+                                            is_b_matrix=True, is_trans=True)
+                            
+                            kj = pypto.tensor([cur_s2_tile, dn + dr], dtype, "kj")
+                            pypto.assemble(kn, [0, 0], kj)
+                            pypto.assemble(kr, [0, dn], kj)
+                            kj_view = pypto.view(kj, [cur_s2_tile, dn + dr], [0, 0],
+                                valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn + dr])
+
+                            qn = pypto.view(query_nope, [cur_group_tile, dn], [cur_offset, 0],
+                                            valid_shape=[cur_group_tile, dn])
+                            qr = pypto.view(query_rope, [cur_group_tile, dr], [cur_offset, 0],
+                                            valid_shape=[cur_group_tile, dr])
+                            qi = pypto.tensor([cur_group_tile, dn + dr], dtype, "qi")
+                            pypto.assemble(qn, [0, 0], qi)
+                            pypto.assemble(qr, [0, dn], qi)
+
+                            sij = pypto.matmul(qi, kj_view, pypto.DT_FP32, a_trans=False, b_trans=True)
                         else:
+                            pypto.set_pass_options(sg_set_scope=20001)
                             pypto.set_semantic_label("Sa_V0")
-                            pypto.set_vec_tile_shapes(32, 512)
+                            pypto.set_vec_tile_shapes(gather_vec_tile[0], gather_vec_tile[1])
                             k_nope_2d_view = pypto.view(key_nope_2d, [key_nope_2d.shape[0], dn],
                                 [0, 0], valid_shape=[key_nope_2d.shape[0], dn])
                             kn = gather_in_ub(k_nope_2d_view, cur_topk_indices, cur_block_table, block_size, -2)
-
-                        # C1
-                        pypto.set_semantic_label("Sa_C1")
-                        pypto.set_vec_tile_shapes(32, 512)
-                        pypto.set_cube_tile_shapes([c1_tile[0],
-                            c1_tile[1]], [c1_tile[2], c1_tile[3]], [c1_tile[4], c1_tile[5]])
-
-                        if kn_dtype == pypto.DT_INT8:
-                            kr = gather_in_l1(key_rope_2d, cur_topk_indices, cur_block_table, block_size, dr,
-                                            is_b_matrix=True, is_trans=True)
-                        else:
+                            # C1
+                            pypto.set_semantic_label("Sa_C1")
+                            pypto.set_vec_tile_shapes(gather_vec_tile[0], gather_vec_tile[1])
+                            pypto.set_cube_tile_shapes([c1_tile[0],
+                                c1_tile[1]], [c1_tile[2], c1_tile[3]], [c1_tile[4], c1_tile[5]])
+                            
                             key_rope_2d_view = pypto.view(key_rope_2d, [key_rope_2d.shape[0], dr],
                                                             [0, 0], valid_shape=[key_rope_2d.shape[0], dr])
                             kr = gather_in_ub(key_rope_2d_view, cur_topk_indices, cur_block_table, block_size, -2)
 
-                        kj = pypto.tensor([cur_s2_tile, dn + dr], dtype, "kj")
-                        pypto.assemble(kn, [0, 0], kj)
-                        pypto.assemble(kr, [0, dn], kj)
-                        kj_view = pypto.view(kj, [cur_s2_tile, dn + dr], [0, 0],
-                                             valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn + dr])
+                            kj = pypto.tensor([cur_s2_tile, dn + dr], dtype, "kj")
+                            pypto.assemble(kn, [0, 0], kj)
+                            pypto.assemble(kr, [0, dn], kj)
+                            kj_view = pypto.view(kj, [cur_s2_tile, dn + dr], [0, 0],
+                                valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn + dr])
 
-                        qn = pypto.view(query_nope, [cur_group_tile, dn], [cur_offset, 0],
-                                        valid_shape=[cur_group_tile, dn])
-                        qr = pypto.view(query_rope, [cur_group_tile, dr], [cur_offset, 0],
-                                        valid_shape=[cur_group_tile, dr])
-                        qi = pypto.tensor([cur_group_tile, dn + dr], dtype, "qi")
-                        pypto.assemble(qn, [0, 0], qi)
-                        pypto.assemble(qr, [0, dn], qi)
+                            qn = pypto.view(query_nope, [cur_group_tile, dn], [cur_offset, 0],
+                                            valid_shape=[cur_group_tile, dn])
+                            qr = pypto.view(query_rope, [cur_group_tile, dr], [cur_offset, 0],
+                                            valid_shape=[cur_group_tile, dr])
+                            qi = pypto.tensor([cur_group_tile, dn + dr], dtype, "qi")
+                            pypto.assemble(qn, [0, 0], qi)
+                            pypto.assemble(qr, [0, dn], qi)
 
-                        sij = pypto.matmul(qi, kj_view, pypto.DT_FP32, a_trans=False, b_trans=True)
+                            sij = pypto.matmul(qi, kj_view, pypto.DT_FP32, a_trans=False, b_trans=True)
+                            pypto.set_pass_options(sg_set_scope=-1)
 
                         pypto.set_semantic_label("Sa_V1")
                         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
@@ -422,12 +445,72 @@ def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_
 
 @pypto.frontend.jit(
     pass_options={
-        "pg_upper_bound": 5000000,
+        "vec_nbuffer_setting": {-1: 4},
+        "cube_l1_reuse_setting": {-1: 4},
+    },
+    runtime_options={
+        "stitch_function_max_num": 1,
+        "device_sched_mode": 3
+    }
+)
+def sparse_flash_attention_quant_d_950(
+    query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    key_nope_2d: pypto.Tensor([pypto.STATIC, pypto.STATIC], ), # int8 or bf16
+    key_rope_2d: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
+    k_nope_scales: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
+    topk_indices: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT32),
+    block_table: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT32),
+    kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
+    attention_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
+
+    nq, n_kv, softmax_scale, topk, block_size, max_blocknum_perbatch, tile_config
+):
+    """JIT-compiled sparse flash attention for decode phase.
+
+    Optimized version for decode phase with specific pass configurations.
+    Uses flash attention algorithm with online softmax for numerical stability.
+
+    Args:
+        query_nope: Query tensor without RoPE, shape (t * n_q, kv_lora_rank), dtype BF16
+        query_rope: Query tensor with RoPE, shape (t * n_q, rope_dim), dtype BF16
+        key_nope_2d: Key tensor without RoPE, shape (block_num * block_size, kv_lora_rank),
+                    dtype BF16 or INT8
+        key_rope_2d: Key tensor with RoPE, shape (block_num * block_size, rope_dim), dtype BF16
+        k_nope_scales: Dequantization scales for quantized keys, shape (block_num * block_size, 4),
+                    dtype FP32
+        topk_indices: Top-k indices for each query token, shape (t, n_kv * topk), dtype INT32
+        block_table: Block mapping table for PagedAttention, shape (b, max_blocknum_perbatch),
+                    dtype INT32
+        kv_act_seqs: Actual sequence lengths for each batch, shape (b,), dtype INT32
+        attention_out: Output attention tensor, shape (b, s, n_q, kv_lora_rank), dtype BF16
+        nq: Number of query heads
+        n_kv: Number of key-value heads
+        softmax_scale: Scaling factor for attention scores
+        topk: Number of top-k keys to attend to
+        block_size: Size of each block in PagedAttention
+        max_blocknum_perbatch: Maximum number of blocks per batch
+        tile_config: SaTileShapeConfig object containing tiling parameters
+
+    Note:
+        Configured for decode phase with optimized memory and parallelism settings.
+        Uses flash attention algorithm for better numerical stability.
+    """
+    pypto.experimental.set_operation_options(combine_axis=True)
+
+    sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, key_rope_2d,
+                                        k_nope_scales, topk_indices, block_table, kv_act_seqs,
+                                        attention_out, nq, n_kv, softmax_scale, topk,
+                                        block_size, max_blocknum_perbatch, tile_config)
+
+
+@pypto.frontend.jit(
+    pass_options={
         "vec_nbuffer_setting": {-1: 2, 0: 8},
         "cube_l1_reuse_setting": {-1: 2},
     },
     runtime_options={
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 1,
         "device_sched_mode": 3
     }
 )
@@ -484,12 +567,11 @@ def sparse_flash_attention_quant_d(
 
 @pypto.frontend.jit(
     pass_options={
-        "pg_upper_bound": 5000000,
         "vec_nbuffer_setting": {-1: 4, 0: 16},
         "cube_l1_reuse_setting": {-1: 4},
     },
     runtime_options={
-        "stitch_function_max_num": 128
+        "stitch_function_max_num": 1
     }
 )
 def sparse_flash_attention_quant_p(

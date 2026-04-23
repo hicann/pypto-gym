@@ -180,8 +180,7 @@ def process_main_loop_interation(
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128,
-                     "stitch_cfgcache_size": 2500000}
+    runtime_options={"stitch_function_max_num": 128}
 )
 def select_experts_kernel(
     logits: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32),

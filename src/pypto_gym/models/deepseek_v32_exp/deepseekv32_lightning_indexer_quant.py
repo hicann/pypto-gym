@@ -27,8 +27,6 @@ class LightningIndexerConfigs:
     # graph optimization params
     # used for copy in merge graph
     mg_copy_in_upper_bound = 2 * 1024 * 1024
-    # used for graph partition
-    pg_upper_bound = 16 * 8192
     # l1 reuse merge params
     cube_l1_reuse_setting = {
         0: 16

@@ -222,8 +222,7 @@ def expert_infer_base(hidden_states, w13_params, w2_params, ffn_res, tiling_para
 
 
 @pypto.frontend.jit(
-    runtime_options={"device_sched_mode": 1,
-                        "stitch_cfgcache_size": 2700000},
+    runtime_options={"device_sched_mode": 1},
 )
 def share_expert_moe_main(
     hidden_states: pypto.tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

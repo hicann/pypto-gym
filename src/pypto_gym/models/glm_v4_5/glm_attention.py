@@ -69,23 +69,26 @@ def check_args(
 
 @dataclass
 class AttentionTileConfig:
-    g_tile: int
-    s2_tile: int
-    c1_tile_shape: list
-    v1_tile_shape: list
-    c2_tile_shape: list
-    v2_tile_shape: list
+    g_tile: int = 12
+    s2_tile: int = 512
+    c1_tile_shape: list = None
+    v1_tile_shape: list = None
+    c2_tile_shape: list = None
+    v2_tile_shape: list = None
+
+
+global_tile_config = AttentionTileConfig()
 
 
 @dataclass
 class AttentionConfig:
-    b: int
-    s1: int
-    s2: int
-    n1: int
-    n2: int
-    q_d: int
-    kv_d: int
+    b: int = 8
+    s1: int = 1
+    s2: int = 16384
+    n1: int = 12
+    n2: int = 1
+    q_d: int = 128
+    kv_d: int = 128
     block_size: int = 128
     max_num_blocks_per_query: int = 0
     softmax_scale: float = 1.0
@@ -95,10 +98,17 @@ class AttentionConfig:
     kv_num_blocks: int = 0
 
 
-def get_qwen_common_config(device="cpu", case_950=0):
-    b = 8
-    s1 = 1
-    s2 = 16384
+global_config = AttentionConfig()
+
+
+def set_qwen_common_config(case_950=0, b=8, s1=1, s2=16384):
+    global global_tile_config
+    global global_config
+    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+    device = f'npu:{device_id}'
+    b = b
+    s1 = s1
+    s2 = s2
     q_d = 128
     nq = 12
     nkv = 1
@@ -111,15 +121,15 @@ def get_qwen_common_config(device="cpu", case_950=0):
     m_tile = 128
     s2_tile = 512
     if case_950 == 1:
-        b = 16
-        s1 = 1
-        s2 = 8192
+        b = b
+        s1 = s1
+        s2 = s2
         q_d = 128
         nq = 12
         nkv = 1
         kv_layout = "PA_BSND"
         softmax_scale = q_d ** -0.5
-        block_table_batch = 256
+        block_table_batch = b
         block_size = 128
         kv_num_blocks = b * ((s2 + block_size - 1) // block_size)
         cube_tile = 128
@@ -142,7 +152,12 @@ def get_qwen_common_config(device="cpu", case_950=0):
         [m_tile, s2_tile],
         [[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
         [m_tile, cube_tile])
-    return atten_cfg, tile_cfg
+    global_config = atten_cfg
+    global_tile_config = tile_cfg
+
+
+def get_common_config():
+    return global_config, global_tile_config
 
 
 def gen_block_table(actual_seq_len, block_size, block_table_shape):
@@ -266,23 +281,26 @@ def softmax(x, is_fp16=False):
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128},
     # 当子图大小达到上界不允许与其他子图合并
-    pass_options={"pg_upper_bound": 1536,
+    pass_options={
     # Q常驻，0代表第一组mmad，4代表4次matmul合并
-    "cube_l1_reuse_setting": {0: 4}}
+    "cube_l1_reuse_setting": {0: 4}},
+    host_options={"compile_monitor_enable": True},
+    debug_options={"runtime_debug_mode": 1, "compile_debug_mode": 0}
 )
 def ifa_func_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     v: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
-    block_table: pypto.Tensor([], pypto.DT_INT32),
+    block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32),
     kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
-    atten_out: pypto.Tensor([], pypto.DT_BF16)
+    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
 ):
-
     # 1. 添加支持动态的config
     pypto.experimental.set_operation_options(combine_axis=True)
-
-    atten_cfg, tile_cfg = get_qwen_common_config(device="cpu", case_950=0)
+    atten_cfg, tile_cfg = get_common_config()
+    if tile_cfg.c1_tile_shape is None:
+        set_qwen_common_config()
+        atten_cfg, tile_cfg = get_common_config()
     softmax_scale = atten_cfg.softmax_scale
 
     # 2. 从入参拿到输入和输出tensor
@@ -414,7 +432,7 @@ def ifa_func_kernel(
                             pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                             oi_update[:] = oi_update * update_mul + oi_tmp
                         if pypto.is_loop_end(s2_idx):
-                            oi_final = pypto.div(oi_update, sum_update)
+                            oi_final = pypto.div(oi_update, sum_update, precision_type=pypto.DivAlgorithm.INTRINSIC)
                             pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                             oi_final_3d = pypto.cast(
                                 pypto.reshape(oi_final, [1, g_tile, dn]),
@@ -431,17 +449,22 @@ def ifa_func_kernel(
     "cube_l1_reuse_setting": {0: 32},
     "cube_nbuffer_setting": {1: 4}
     },
-    host_options={"compile_monitor_enable": True}
+    host_options={"compile_monitor_enable": True},
+    debug_options={"runtime_debug_mode": 1, "compile_debug_mode": 0}
 )
 def ifa_func_kernel_for_950(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     v: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
-    block_table: pypto.Tensor([], pypto.DT_INT32),
+    block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32),
     kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
-    atten_out: pypto.Tensor([], pypto.DT_BF16)
+    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
 ):
-    atten_cfg, tile_cfg = get_qwen_common_config(device="cpu", case_950=1)
+    pypto.experimental.set_operation_options(combine_axis=True)
+    atten_cfg, tile_cfg = get_common_config()
+    if tile_cfg.c1_tile_shape is None:
+        set_qwen_common_config(case_950=1, b=16, s1=1, s2=8192)
+        atten_cfg, tile_cfg = get_common_config()
     softmax_scale = atten_cfg.softmax_scale
 
      # 2. 从入参拿到输入和输出tensor
@@ -512,21 +535,21 @@ def ifa_func_kernel_for_950(
                         # c1
                         # 9. 下面是flash attention的计算逻辑  m 128  k=128  n=128
                         pypto.set_cube_tile_shapes(c1_tile[0], c1_tile[1], c1_tile[2])
-                        pypto.set_pass_options(sg_set_scope=5001)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=5001)
                         sij = pypto.matmul(qi, kj_assemble, pypto.DT_FP32, a_trans=False, b_trans=True)
-                        pypto.set_pass_options(sg_set_scope=-1)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=-1)
                         sij = pypto.view(sij, [g_tile, s2_tile], [0, 0],
                                 valid_shape=[g_tile, actual_s2_tile])
                         # v1
                         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                        pypto.set_pass_options(sg_set_scope=5002)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=5001)
                         sij_scale = pypto.mul(sij, softmax_scale)
                         amax_ij = pypto.amax(sij_scale, dim=-1, keepdim=True)
                         tsub = pypto.sub(sij_scale, amax_ij)
                         vec1_res = pypto.exp(tsub)
                         vec1_res_fp16 = pypto.cast(vec1_res, dtype)
                         sum_local = pypto.sum(vec1_res, dim=-1, keepdim=True)
-                        pypto.set_pass_options(sg_set_scope=-1)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=-1)
 
                         #c2
                         vj_assemble = pypto.tensor([s2_tile, dn], v_2d.dtype, "vj_assemble")
@@ -537,10 +560,10 @@ def ifa_func_kernel_for_950(
                                 [block_size, dn], [block_idx_vaild * block_size, 0])
                         vj_assemble = pypto.view(vj_assemble, [s2_tile, dn], [0, 0],
                                         valid_shape=[actual_s2_tile, dn])
-                        pypto.set_pass_options(sg_set_scope=5003)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=5001)
                         pypto.set_cube_tile_shapes(c2_tile[0], c2_tile[1], c2_tile[2])
                         mm2_res = pypto.matmul(vec1_res_fp16, vj_assemble, pypto.DT_FP32)
-                        pypto.set_pass_options(sg_set_scope=-1)
+                        # 后续开启 pypto.set_pass_options(sg_set_scope=-1)
 
                         # # v2
                         if pypto.is_loop_begin(s2_idx):
@@ -549,7 +572,7 @@ def ifa_func_kernel_for_950(
                             oi_tmp = mm2_res
                             oi_update[:] = pypto.tensor(oi_tmp.shape, pypto.DT_FP32, "oi_update")
                             if pypto.is_loop_end(s2_idx):
-                                oi_update[:] = pypto.div(oi_tmp, sum_local)
+                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.DivAlgorithm.INTRINSIC)
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update, [1, g_tile, dn]),
                                                         dtype)
@@ -580,7 +603,8 @@ def ifa_func_kernel_for_950(
                             oi_tmp = pypto.add(oi_last, oi_flash)
                             if pypto.is_loop_end(s2_idx):
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
-                                oi_update_tmp = pypto.div(oi_tmp, sum_update)
+                                oi_update_tmp = pypto.div(oi_tmp, sum_update,
+                                                          precision_type=pypto.DivAlgorithm.INTRINSIC)
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update_tmp, [1, g_tile, dn]), dtype)
                                 # 11. 将结果搬运到输出tensor上
                                 pypto.assemble(oi_update_3d, oi_ofs, atten_out)
@@ -671,46 +695,53 @@ def ifa(atten_cfg, case_950=0):
 
 
 @pytest.mark.soc("950")
-@pytest.mark.skip(reason="large test case")
 def test_ifa_for_950():
     # 1. 设置参数
-    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
-    device = f'npu:{device_id}'
-    atten_cfg, _ = get_qwen_common_config(device=device, case_950=1)
+    for case_i in range(4):
+        set_qwen_common_config(case_950=1, b=16, s1=1, s2=8192)
+        if case_i == 1:
+            set_qwen_common_config(case_950=1, b=64, s1=1, s2=8192)
+        if case_i == 2:
+            set_qwen_common_config(case_950=1, b=64, s1=2, s2=8192)
+        if case_i == 3:
+            # 测试同一个进程中连跑两种case(静态轴发生变化)
+            set_qwen_common_config(case_950=1, b=16, s1=1, s2=16384)
+        atten_cfg, _ = get_common_config()
 
-    # 检查 B 的大小和 actual_seq 长度是否相等
-    assert atten_cfg.b == len(
-        atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        # 检查 B 的大小和 actual_seq 长度是否相等
+        assert atten_cfg.b == len(
+            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
 
-    # 检查所有值是否都小于 s2
-    if atten_cfg.actual_seq.device.type != 'cpu':
-        actual_seq_cpu = atten_cfg.actual_seq.cpu()
-    else:
-        actual_seq_cpu = atten_cfg.actual_seq
+        # 检查所有值是否都小于 s2
+        if atten_cfg.actual_seq.device.type != 'cpu':
+            actual_seq_cpu = atten_cfg.actual_seq.cpu()
+        else:
+            actual_seq_cpu = atten_cfg.actual_seq
 
-    assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
-    ifa(atten_cfg, case_950=1)
+        assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
+        ifa(atten_cfg, case_950=1)
 
 
 @pytest.mark.soc("950", "910")
 def test_ifa():
-    # 1. 设置参数
-    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
-    device = f'npu:{device_id}'
-    atten_cfg, _ = get_qwen_common_config(device=device, case_950=0)
+    for case_i in range(2):
+        # 1. 设置参数
+        set_qwen_common_config(case_950=0, b=8, s1=1, s2=16384)
+        if case_i == 1:
+            set_qwen_common_config(case_950=0, b=16, s1=1, s2=16384)
+        atten_cfg, _ = get_common_config()
+        # 检查 B 的大小和 actual_seq 长度是否相等
+        assert atten_cfg.b == len(
+            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
 
-    # 检查 B 的大小和 actual_seq 长度是否相等
-    assert atten_cfg.b == len(
-        atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        # 检查所有值是否都小于 s2
+        if atten_cfg.actual_seq.device.type != 'cpu':
+            actual_seq_cpu = atten_cfg.actual_seq.cpu()
+        else:
+            actual_seq_cpu = atten_cfg.actual_seq
 
-    # 检查所有值是否都小于 s2
-    if atten_cfg.actual_seq.device.type != 'cpu':
-        actual_seq_cpu = atten_cfg.actual_seq.cpu()
-    else:
-        actual_seq_cpu = atten_cfg.actual_seq
-
-    assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
-    ifa(atten_cfg, case_950=0)
+        assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
+        ifa(atten_cfg, case_950=0)
 
 
 @allow_in_graph
@@ -753,7 +784,8 @@ def attention(
     )
 
     inputs = [query, key_cache, value_cache, block_tables, actual_seqs, attn_res]
-    ifa_func_kernel(*inputs)
+    for _ in range(1):
+        ifa_func_kernel(*inputs)
 
 
 @allow_in_graph
@@ -801,4 +833,6 @@ def attention_for_950(
 
 if __name__ == "__main__":
     test_ifa()
-    # 950上板 test_ifa_for_950()
+    if pypto.platform.npuarch == 'DAV_3510':
+        # 950上板
+        test_ifa_for_950()
