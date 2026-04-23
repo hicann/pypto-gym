@@ -1,0 +1,8 @@
+# Runtime dependencies for pypto-gym
+# 注：torch / torch_npu 需要用户按照昇腾环境手册单独安装，不从 PyPI 自动拉取。
+
+pypto>=0.2.0
+numpy
+pytest
+pytest-forked
+pytest-xdist

@@ -1,0 +1,71 @@
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+[build-system]
+requires = [
+    "setuptools>=77.0.3",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypto-gym"
+version = "0.1.0"
+authors = [
+    { name = "PyPTO Team", email = "pto@cann.osinfra.cn" }
+]
+description = "A kernel library of fused operators and model implementations built on top of PyPTO"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "LicenseRef-CANN-Open-Software-License-Agreement-Version-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = [
+    "pypto>=0.2.0",
+]
+keywords = ["python", "pto", "tile", "tile-centric", "ascend", "kernel", "operator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://gitcode.com/cann/pypto-gym"
+Repository = "https://gitcode.com/cann/pypto-gym"
+"Bug Tracker" = "https://gitcode.com/cann/pypto-gym/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pip",
+    "build",
+    "packaging",
+    "pytest",
+    "pytest-forked",
+    "pytest-xdist",
+]
+tests = [
+    "pytest",
+    "pytest-forked",
+    "pytest-xdist",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pypto_gym*"]
+
+[tool.setuptools.package-data]
+"pypto_gym" = ["**/*.md", "**/*.yaml"]
+
+[tool.pytest.ini_options]
+junit_family = "xunit1"
