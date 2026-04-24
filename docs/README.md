@@ -9,11 +9,11 @@
 - 仓库总览与快速上手：[../README.md](../README.md)
 - 测试入口与运行规则：[../tests/README.md](../tests/README.md)
 - 各算子/模型说明：每个目录下的 `README.md`，例如：
-  - [../src/pypto_gym/models/arctic/README.md](../src/pypto_gym/models/arctic/README.md)
-  - [../src/pypto_gym/models/deepseek_v32_exp/README.md](../src/pypto_gym/models/deepseek_v32_exp/README.md)
-  - [../src/pypto_gym/models/glm_v4_5/README.md](../src/pypto_gym/models/glm_v4_5/README.md)
-  - [../src/pypto_gym/models/qat/README.md](../src/pypto_gym/models/qat/README.md)
-  - [../src/pypto_gym/models/qwen3_next/README.md](../src/pypto_gym/models/qwen3_next/README.md)
+  - [../src/pypto_gym/ops/arctic/README.md](../src/pypto_gym/ops/arctic/README.md)
+  - [../src/pypto_gym/ops/deepseek_v32_exp/README.md](../src/pypto_gym/ops/deepseek_v32_exp/README.md)
+  - [../src/pypto_gym/ops/glm_v4_5/README.md](../src/pypto_gym/ops/glm_v4_5/README.md)
+  - [../src/pypto_gym/ops/qat/README.md](../src/pypto_gym/ops/qat/README.md)
+  - [../src/pypto_gym/ops/qwen3_next/README.md](../src/pypto_gym/ops/qwen3_next/README.md)
 
 ## 计划补充
 

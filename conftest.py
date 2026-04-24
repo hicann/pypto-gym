@@ -45,6 +45,16 @@ def _set_process_desc(desc: str):
         pass
 
 
+@pytest.fixture
+def device():
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+
+
+@pytest.fixture
+def device_id():
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+
+
 def pytest_addoption(parser: pytest.Parser):
     parser.addoption("--device", nargs="+", type=int,
                      help="Device ID, default 0")

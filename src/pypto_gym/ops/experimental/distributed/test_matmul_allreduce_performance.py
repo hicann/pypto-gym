@@ -39,7 +39,6 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 @pypto.frontend.jit(
     debug_options={"runtime_debug_mode": 1},
     runtime_options={"stitch_function_max_num": 128,
-                     "stitch_cfgcache_size": 100000000},
 )
 def matmul_allreduce_kernel(
     in_tensor: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

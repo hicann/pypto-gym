@@ -128,16 +128,16 @@ python -c "import pypto; import torch_npu; print('pypto:', pypto.__version__); p
 source env_setup.sh
 
 # GLM V4.5 Attention
-pytest src/pypto_gym/models/glm_v4_5/glm_attention.py -v
+pytest src/pypto_gym/ops/glm_v4_5/glm_attention.py -v
 
 # DeepSeek V3.2 MLA Prolog
-pytest src/pypto_gym/models/deepseek_v32_exp/deepseekv32_mla_prolog_quant.py -v
+pytest src/pypto_gym/ops/deepseek_v32_exp/deepseekv32_mla_prolog_quant.py -v
 
 # Qwen3-Next Gated Delta Rule
-pytest src/pypto_gym/models/qwen3_next -v
+pytest src/pypto_gym/ops/qwen3_next -v
 
 # QAT 量化感知训练
-pytest src/pypto_gym/models/qat -v
+pytest src/pypto_gym/ops/qat -v
 ```
 
 ### 3. 运行全部（非 experimental）测试
@@ -148,24 +148,24 @@ pytest -v
 ```
 
 `pytest.ini` 已配置：
-- `testpaths`：`src/pypto_gym/models` 和 `tests`
+- `testpaths`：`src/pypto_gym/ops` 和 `tests`
 - `norecursedirs`：自动排除 `experimental/` 目录
 - `python_files`：匹配 `test_*.py glm_*.py deepseekv32_*.py qwen3_next_*.py`
 
 如需运行实验性算子：
 
 ```bash
-pytest src/pypto_gym/models/experimental/<op_name> -v
+pytest src/pypto_gym/ops/experimental/<op_name> -v
 ```
 
 ### 4. 多卡 / 指定 SoC
 
 ```bash
 # 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
-pytest src/pypto_gym/models/glm_v4_5 -v --device 1
+pytest src/pypto_gym/ops/glm_v4_5 -v --device 1
 
 # 多卡（2 卡）分布式样例
-pytest src/pypto_gym/models/experimental/distributed --device 0 1 --cards-per-case 2
+pytest src/pypto_gym/ops/experimental/distributed --device 0 1 --cards-per-case 2
 ```
 
 ### 5. 用例筛选说明
@@ -203,33 +203,35 @@ pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 ```
 pypto-gym/
 ├── docs/                                    # 文档资源（规划中）
+├── modeling/                                # 模型执行脚本（推理入口 / 基准 / Dockerfile / 样例输入）
 ├── src/
 │   └── pypto_gym/
 │       ├── __init__.py
-│       └── models/                          # 模型 / 算子样例根目录
-│           ├── arctic/                      # Arctic LSTM
-│           │   ├── sum_lstm.py
-│           │   ├── test_sum_lstm.py
-│           │   └── README.md
-│           ├── deepseek_v32_exp/            # DeepSeek V3.2 实验算子
-│           │   ├── deepseekv32_sparse_flash_attention_quant.py
-│           │   ├── deepseekv32_mla_prolog_quant.py
-│           │   ├── deepseekv32_lightning_indexer_quant.py
-│           │   └── ...
-│           ├── glm_v4_5/                    # GLM V4.5
-│           │   ├── glm_attention.py
-│           │   ├── glm_moe_fusion.py
-│           │   ├── glm_select_experts.py
-│           │   └── ...
-│           ├── qat/                         # 量化感知训练
-│           ├── qwen3_next/                  # Qwen3-Next Gated Delta Rule
-│           └── experimental/                # 实验性算子（默认不跑）
-│               ├── attention/
-│               ├── distributed/
-│               ├── flash_attention_score_grad/
-│               ├── matmul/
-│               ├── ops-transformer/
-│               └── vector/
+│       ├── ops/                             # 算子样例根目录
+│       │   ├── arctic/                      # Arctic LSTM
+│       │   │   ├── sum_lstm.py
+│       │   │   ├── test_sum_lstm.py
+│       │   │   └── README.md
+│       │   ├── deepseek_v32_exp/            # DeepSeek V3.2 实验算子
+│       │   │   ├── deepseekv32_sparse_flash_attention_quant.py
+│       │   │   ├── deepseekv32_mla_prolog_quant.py
+│       │   │   ├── deepseekv32_lightning_indexer_quant.py
+│       │   │   └── ...
+│       │   ├── glm_v4_5/                    # GLM V4.5
+│       │   │   ├── glm_attention.py
+│       │   │   ├── glm_moe_fusion.py
+│       │   │   ├── glm_select_experts.py
+│       │   │   └── ...
+│       │   ├── qat/                         # 量化感知训练
+│       │   ├── qwen3_next/                  # Qwen3-Next Gated Delta Rule
+│       │   └── experimental/                # 实验性算子（默认不跑）
+│       │       ├── attention/
+│       │       ├── distributed/
+│       │       ├── flash_attention_score_grad/
+│       │       ├── matmul/
+│       │       ├── ops-transformer/
+│       │       └── vector/
+│       └── llm/                             # LLM 模型结构定义
 ├── tests/                                   # 共享测试工具（conftest 聚合入口）
 ├── conftest.py                              # pytest 调度（多卡 / 多 SoC 筛选）
 ├── pytest.ini
@@ -243,7 +245,7 @@ pypto-gym/
 
 ## 🧩 添加新算子
 
-1. 在 `src/pypto_gym/models/` 下新建子目录（若是通用算子，放入 `experimental/` 对应子类）。
+1. 在 `src/pypto_gym/ops/` 下新建子目录（若是通用算子，放入 `experimental/` 对应子类）。
 2. 编写 impl 文件，按需拆分 `*_impl.py` 和业务入口 `*.py`。
 3. 同目录增加 `test_*.py` 或在业务入口内直接写 `def test_xxx()`（参考 `qwen3_next/`）。
 4. 用 `@pytest.mark.soc("950", "910")` 标注适用 SoC，用 `@pytest.mark.world_size(N)` 标注多卡需求。

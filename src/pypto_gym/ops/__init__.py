@@ -1,10 +1,10 @@
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # Licensed under the CANN Open Software License Agreement Version 2.0.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""pypto-gym model & operator library.
+"""pypto-gym operator library.
 
-Each subdirectory under ``pypto_gym/models`` hosts a self-contained model /
-fused-operator example built on PyPTO.
+Each subdirectory under ``pypto_gym/ops`` hosts a self-contained fused-operator
+example built on PyPTO.
 
 Stable subdirectories:
 
@@ -15,13 +15,18 @@ Stable subdirectories:
 * ``qwen3_next``        — Qwen3-Next Gated Delta Rule
 * ``experimental``      — Unstable / WIP operators (excluded from the default pytest path)
 
-NOTE: Model subdirectories are *not* Python sub-packages. They use sibling imports
+LLM model definitions built on top of these operators live under
+``pypto_gym/llm``. The execution scripts (inference entrypoints, benchmarks,
+Dockerfiles, sample inputs) sit at the repo root under ``modeling/``, mirroring
+TileGym's top-level ``modeling/`` layout.
+
+NOTE: Operator subdirectories are *not* Python sub-packages. They use sibling imports
 (e.g. ``from sum_lstm import ...``) and are designed to be loaded by ``pytest <dir>``,
-which adds the directory to ``sys.path``. Adding an ``__init__.py`` to a model
+which adds the directory to ``sys.path``. Adding an ``__init__.py`` to an operator
 directory would break those sibling imports — keep them as plain directories.
 """
 
-STABLE_MODELS = (
+STABLE_OPS = (
     "arctic",
     "deepseek_v32_exp",
     "glm_v4_5",
@@ -30,4 +35,4 @@ STABLE_MODELS = (
 )
 EXPERIMENTAL_DIR = "experimental"
 
-__all__ = ["STABLE_MODELS", "EXPERIMENTAL_DIR"]
+__all__ = ["STABLE_OPS", "EXPERIMENTAL_DIR"]

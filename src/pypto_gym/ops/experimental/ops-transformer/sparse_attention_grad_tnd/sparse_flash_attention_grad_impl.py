@@ -263,7 +263,6 @@ def sparse_flash_attention_grad_compute(
 
 @pypto.frontend.jit(
     pass_options={
-        "pg_upper_bound": 5000000,
         "vec_nbuffer_setting": {-1: 4, -2: 1},
         "cube_l1_reuse_setting": {-1: 8},
     },

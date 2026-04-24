@@ -177,7 +177,6 @@ def moe_gating_topk(
     @pypto.frontend.jit(
         runtime_options={"run_mode": mode,
         "stitch_function_max_num": 128,
-        "stitch_cfgcache_size": 2500000,
         "device_sched_mode": 1},
         debug_options={"runtime_debug_mode": 1})
     def moe_gating_topk_kernel(

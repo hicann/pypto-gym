@@ -42,7 +42,6 @@ S2_TILE = 320
         "cube_nbuffer_setting": {-1: 8},
         "vec_nbuffer_setting": {-1: 16},
         "cube_l1_reuse_setting": {-1: 8},
-        "pg_upper_bound": 500000000,
     },
     runtime_options={
         "stitch_function_max_num": 256,
