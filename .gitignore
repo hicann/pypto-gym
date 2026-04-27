@@ -47,6 +47,9 @@ output/
 *.bin
 *.s
 *.a
+kernel_aicore
+kernel_aicpu
+golden/
 
 # Logs
 *.log
