@@ -401,7 +401,7 @@ def do_test_sfa_grad_npu(case_name, actual_q_lens, actual_kv_lens,
     logging.info(f"Test: SFA grad NPU ({case_name})")
     logging.info("=" * 60)
 
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 6))
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
 
     data = gen_test_data_tnd(actual_q_lens, actual_kv_lens,

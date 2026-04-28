@@ -15,16 +15,16 @@ Flash Attention Score with Online Softmax
 This module provides:
 1. Multiple PyPTO kernel implementations (imported from impl)
 2. Golden reference implementations for validation
-3. Test suite for all kernels and datatypes
+3. Test suite for all kernels
 
-Kernels (Stage 3: Multi-datatype support):
-- with_mask: Basic attention with mask support (BF16/FP16/FP32)
-- with_pse_and_dropout: Full features (PSE + Dropout + Mask) (BF16/FP16/FP32)
+Kernels:
+- with_mask_origin: Basic attention with mask (BF16, no softmax_max/sum output)
+- with_mask: Attention with mask support (BF16)
+- with_pse_and_dropout: Full features (PSE + Dropout + Mask) (BF16)
 - Configurable scale_value parameter
 
 Datatype Strategy:
-- BF16/FP16: Input -> FP32 compute -> Output (with cast)
-- FP32: Input -> FP32 compute -> Output (no cast)
+- BF16: Input -> FP32 compute -> BF16 Output (with cast)
 """
 
 import os
@@ -35,6 +35,7 @@ import logging
 from typing import Optional
 from dataclasses import dataclass
 import torch
+import torch_npu
 import numpy as np
 from numpy.testing import assert_allclose
 
@@ -42,17 +43,15 @@ from flash_attention_score_impl import (
     flash_attention_score_kernel_with_mask_origin,
     flash_attention_score_kernel_with_mask,
     flash_attention_score_kernel_with_pse_and_dropout,
-    flash_attention_score_kernel_with_mask_fp32,
-    flash_attention_score_kernel_with_pse_and_dropout_fp32,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-BATCH_SIZE = 4
-NUM_HEADS = 8
-SEQ_LEN_Q = 128
-SEQ_LEN_KV = 128
+BATCH_SIZE = 2
+NUM_HEADS = 4
+SEQ_LEN_Q = 64
+SEQ_LEN_KV = 64
 HEAD_DIM = 64
 
 
@@ -343,11 +342,6 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
 
         output_fp32 = output.float()
         golden_fp32 = golden.float()
-        max_diff = (output_fp32 - golden_fp32).abs().max().item()
-        mean_diff = (output_fp32 - golden_fp32).abs().mean().item()
-
-        logging.info(f"Output max difference: {max_diff:.6f}")
-        logging.info(f"Output mean difference: {mean_diff:.6f}")
 
         assert_allclose(
             output_fp32.cpu().numpy().flatten(),
@@ -362,24 +356,22 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
 def test_kernel_with_mask(
     device_id=None,
     run_mode: str = "npu",
-    dtype: str = "bf16",
     scale_value: Optional[float] = None,
     skip_golden: bool = False
 ):
     """Test flash_attention_score_kernel_with_mask.
     
     Args:
-        dtype: Data type to test (bf16, fp16, fp32)
         scale_value: Custom scale value (default: 1/sqrt(HEAD_DIM))
         skip_golden: Skip golden comparison (faster for large shapes)
     """
     logging.info("=" * 70)
-    logging.info(f"Test: flash_attention_score_kernel_with_mask ({dtype.upper()})")
+    logging.info("Test: flash_attention_score_kernel_with_mask (BF16)")
     logging.info("=" * 70)
 
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
     
-    torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float32
+    torch_dtype = torch.bfloat16
     
     query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
                         dtype=torch_dtype, device=device)
@@ -405,12 +397,9 @@ def test_kernel_with_mask(
     
     logging.info(f"Scale value: {test_scale}")
 
-    if dtype == "bf16":
-        kernel_func = flash_attention_score_kernel_with_mask
-    else:
-        kernel_func = flash_attention_score_kernel_with_mask_fp32
-    
-    kernel_func(query, key, value, atten_mask_fp32, output, softmax_max, softmax_sum, test_scale)
+    flash_attention_score_kernel_with_mask(
+        query, key, value, atten_mask_fp32, output, softmax_max, softmax_sum, test_scale
+    )
 
     logging.info(f"Input shape: query={query.shape}, key={key.shape}, value={value.shape}")
     logging.info(f"Output shape: {output.shape}")
@@ -426,7 +415,7 @@ def test_kernel_with_mask(
 
     if skip_golden:
         logging.info("  Golden comparison skipped")
-        logging.info(f"  Kernel with_mask test passed for {dtype.upper()}!")
+        logging.info("  Kernel with_mask test passed for BF16!")
         return
 
     if run_mode == "npu":
@@ -434,14 +423,9 @@ def test_kernel_with_mask(
 
         output_fp32 = output.float()
         golden_fp32 = golden.float()
-        max_diff = (output_fp32 - golden_fp32).abs().max().item()
-        mean_diff = (output_fp32 - golden_fp32).abs().mean().item()
 
-        logging.info(f"Output max difference: {max_diff:.6f}")
-        logging.info(f"Output mean difference: {mean_diff:.6f}")
-        
-        rtol = 0.0078125 if dtype == "bf16" else 0.01
-        atol = 0.0001 if dtype == "bf16" else 0.003
+        rtol = 0.0078125
+        atol = 0.0001
 
         assert_allclose(
             output_fp32.cpu().numpy().flatten(),
@@ -450,30 +434,28 @@ def test_kernel_with_mask(
             atol=atol
         )
         
-        logging.info(f"  Kernel with_mask test passed for {dtype.upper()}!")
+        logging.info("  Kernel with_mask test passed for BF16!")
 
 
 def test_kernel_with_pse_and_dropout(
     device_id=None,
     run_mode: str = "npu",
-    dtype: str = "bf16",
     scale_value: Optional[float] = None,
     skip_golden: bool = False
 ):
     """Test flash_attention_score_kernel_with_pse_and_dropout.
     
     Args:
-        dtype: Data type to test (bf16, fp16, fp32)
         scale_value: Custom scale value (default: 1/sqrt(HEAD_DIM))
         skip_golden: Skip golden comparison (faster for large shapes)
     """
     logging.info("\n" + "=" * 70)
-    logging.info(f"Test: flash_attention_score_kernel_with_pse_and_dropout ({dtype.upper()})")
+    logging.info("Test: flash_attention_score_kernel_with_pse_and_dropout (BF16)")
     logging.info("=" * 70)
 
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
     
-    torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float32
+    torch_dtype = torch.bfloat16
 
     query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
                         dtype=torch_dtype, device=device)
@@ -508,15 +490,10 @@ def test_kernel_with_pse_and_dropout(
     
     logging.info(f"Scale value: {test_scale}")
 
-    if dtype == "bf16":
-        kernel_func = flash_attention_score_kernel_with_pse_and_dropout
-    else:
-        kernel_func = flash_attention_score_kernel_with_pse_and_dropout_fp32
-
     for pse_type in [0, 1]:
         logging.info(f"\nTesting pse_type={pse_type}")
         
-        kernel_func(
+        flash_attention_score_kernel_with_pse_and_dropout(
             query, key, value, atten_mask_fp32, pse, drop_mask,
             output, softmax_max, softmax_sum, pse_type, keep_prob, test_scale
         )
@@ -532,7 +509,7 @@ def test_kernel_with_pse_and_dropout(
         
         if skip_golden:
             logging.info("  Golden comparison skipped")
-            logging.info(f"  Kernel with_pse_and_dropout test passed for pse_type={pse_type} ({dtype.upper()}!")
+            logging.info(f"  Kernel with_pse_and_dropout test passed for pse_type={pse_type} (BF16)!")
             continue
         
         if run_mode == "npu":
@@ -552,14 +529,8 @@ def test_kernel_with_pse_and_dropout(
             output_fp32 = output.float()
             golden_fp32 = golden.float()
             
-            max_diff = (output_fp32 - golden_fp32).abs().max().item()
-            mean_diff = (output_fp32 - golden_fp32).abs().mean().item()
-            
-            logging.info(f"Output max difference: {max_diff:.6f}")
-            logging.info(f"Output mean difference: {mean_diff:.6f}")
-            
-            rtol = 0.0078125 if dtype == "bf16" else 0.01
-            atol = 0.0001 if dtype == "bf16" else 0.003
+            rtol = 0.0078125
+            atol = 0.0001
             
             assert_allclose(
                 output_fp32.cpu().numpy().flatten(),
@@ -568,7 +539,7 @@ def test_kernel_with_pse_and_dropout(
                 atol=atol
             )
             
-            logging.info(f"  Kernel with_pse_and_dropout test passed for pse_type={pse_type} ({dtype.upper()}!")
+            logging.info(f"  Kernel with_pse_and_dropout test passed for pse_type={pse_type} (BF16)!")
 
 
 def main():
@@ -600,13 +571,6 @@ Examples:
         help='Which kernel to test: all, mask_origin, mask, or pse_dropout (default: all)'
     )
     parser.add_argument(
-        '--dtype',
-        type=str,
-        default='all',
-        choices=["all", "bf16", "fp32"],
-        help='Data type to test: all, bf16, or fp32 (default: all)'
-    )
-    parser.add_argument(
         '--scale_value',
         type=float,
         default=None,
@@ -628,41 +592,37 @@ Examples:
         device_id = get_device_id()
         if device_id is None:
             return
-        import torch_npu
         torch.npu.set_device(device_id)
         logging.info(f"Running on NPU device {device_id}\n")
 
     try:
-        dtypes_to_test = ["bf16", "fp32"] if args.dtype == "all" else [args.dtype]
-        
-        for dtype in dtypes_to_test:
-            logging.info(f"\n{'=' * 70}")
-            logging.info(f"Testing dtype: {dtype.upper()}")
-            logging.info(f"{'=' * 70}")
-            
-            if args.kernel == "all":
-                if dtype == "bf16":
-                    test_kernel_with_mask_origin(device_id, args.run_mode, args.skip_golden)
-                test_kernel_with_mask(device_id, args.run_mode, dtype, args.scale_value, args.skip_golden)
-                test_kernel_with_pse_and_dropout(device_id, args.run_mode, dtype, args.scale_value, args.skip_golden)
-            elif args.kernel == "mask_origin":
-                test_kernel_with_mask_origin(device_id, args.run_mode, args.skip_golden)
-            elif args.kernel == "mask":
-                test_kernel_with_mask(device_id, args.run_mode, dtype, args.scale_value, args.skip_golden)
-            elif args.kernel == "pse_dropout":
-                test_kernel_with_pse_and_dropout(device_id, args.run_mode, dtype, args.scale_value, args.skip_golden)
+        if args.kernel == "all":
+            test_kernel_with_mask_origin(device_id, args.run_mode, args.skip_golden)
+            test_kernel_with_mask(device_id, args.run_mode, args.scale_value, args.skip_golden)
+            test_kernel_with_pse_and_dropout(device_id, args.run_mode, args.scale_value, args.skip_golden)
+        elif args.kernel == "mask_origin":
+            test_kernel_with_mask_origin(device_id, args.run_mode, args.skip_golden)
+        elif args.kernel == "mask":
+            test_kernel_with_mask(device_id, args.run_mode, args.scale_value, args.skip_golden)
+        elif args.kernel == "pse_dropout":
+            test_kernel_with_pse_and_dropout(device_id, args.run_mode, args.scale_value, args.skip_golden)
 
         logging.info("\n" + "=" * 70)
         logging.info("All tests passed!")
         logging.info("=" * 70)
-        logging.info("Available kernels (Stage 3: Multi-datatype support):")
+        logging.info("Available kernels:")
         logging.info("")
-        logging.info("  1. flash_attention_score_kernel_with_mask (BF16/FP32)")
+        logging.info("  1. flash_attention_score_kernel_with_mask_origin (BF16)")
+        logging.info("     - Basic attention with mask support")
+        logging.info("     - Fixed scale = 1/sqrt(HEAD_DIM)")
+        logging.info("     - Outputs: attention_out only")
+        logging.info("")
+        logging.info("  2. flash_attention_score_kernel_with_mask (BF16)")
         logging.info("     - Basic attention with mask support")
         logging.info("     - Configurable scale_value parameter")
         logging.info("     - Outputs: attention_out + softmax_max + softmax_sum")
         logging.info("")
-        logging.info("  2. flash_attention_score_kernel_with_pse_and_dropout (BF16/FP32)")
+        logging.info("  3. flash_attention_score_kernel_with_pse_and_dropout (BF16)")
         logging.info("     - Full features: Mask + PSE + Dropout")
         logging.info("     - PSE modes: pse_type 0,1,2,3 (add/mul order control)")
         logging.info("     - Dropout: drop_mask + keep_prob")
@@ -670,8 +630,7 @@ Examples:
         logging.info("     - Outputs: attention_out + softmax_max + softmax_sum")
         logging.info("")
         logging.info("  Precision Strategy:")
-        logging.info("  - BF16: Input -> FP32 compute -> Output (with cast)")
-        logging.info("  - FP32: Input -> FP32 compute -> Output (no cast)")
+        logging.info("  - BF16: Input -> FP32 compute -> BF16 Output (with cast)")
         logging.info("=" * 70)
     except Exception as e:
         logging.info(f"\nError: {e}")

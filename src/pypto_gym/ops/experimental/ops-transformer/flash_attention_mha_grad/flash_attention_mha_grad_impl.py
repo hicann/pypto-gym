@@ -9,22 +9,20 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 """
-Flash Attention Backward with Dynamic Variable Length Sequences
+Flash Attention MHA Backward (参考 flash_attention_score_grad_impl.py 实现)
 
-语义约定:
-  - Q 侧: s1_size (Q seqlen), 张量包括 Q/O/dO/L/M/dQ
-  - KV 侧: s2_size (KV seqlen), 张量包括 K/V/dK/dV
-  - S2_TILE: KV 序列维度的分块大小 (将 s2_size 切分为多个 tile 迭代)
+布局 (uniform seq, NOT varlen):
+  - q/k/v/o/do: [total, num_heads, head_dim] BF16, total = batch * s
+  - l/m:        [total, num_heads, 1] FP32
+  - dq/dk/dv:   [total, hidden_dim] BF16
+  - actual_q/actual_kv: [batch] INT32 (仅取 shape, 内部假设 uniform seq)
 
-3 loops: batch + head + kv_tile (KV sequence tiling).
-Tiles KV sequence dimension by S2_TILE to reduce intermediate attention matrix
-from [s1_size, s2_size] to [s1_size, S2_TILE] per iteration.
-dK and dV are accumulated across kv tiles.
+两趟 (拆分两个独立 inner loop, 共享外层 batch/head 循环):
+  趟1 dQ: 外层 s1_tile, 内层 s2_tile, dQ FP32 累加器在 s2 内层累加
+  趟2 dK/dV: 外层 s2_tile, 内层 s1_tile, dK/dV FP32 累加器在 s1 内层累加
+
+关键: s_loop 为编译期静态 int, is_loop_begin/end 用 Python if 即可。
 """
-
-import os
-
-import torch
 
 import pypto
 
@@ -32,8 +30,9 @@ import pypto
 NUM_HEADS = 8
 HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
+S_TILE_2 = 128
 
-# KV 序列维度的分块大小 (全局配置常量)
+
 S2_TILE = 320
 
 
@@ -48,10 +47,10 @@ S2_TILE = 320
         "device_sched_mode": 0,
     },
     debug_options={
-        "runtime_debug_mode": 1
+        "runtime_debug_mode": 0
     }
 )
-def flash_attention_varlen_backward_kernel(
+def flash_attention_varlen_backward_kernel_small_seq(
     # Q 侧输入: shape=[bs, N, D], bs=DYNAMIC, N=num_heads, D=head_dim
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     # KV 侧输入: shape=[bs, N, D]
@@ -182,7 +181,6 @@ def flash_attention_varlen_backward_kernel(
                         s2 = (s2_total - s2_ofs).min(S2_TILE)
                         s2.as_variable()
 
-                        pypto.set_pass_options(sg_set_scope=1)
                         # KV 侧: 加载 K_tile, V_tile (静态 S2_TILE, 有效 s2)
                         ki_tile = pypto.view(k_2d, [S2_TILE, head_dim], [kv_start + s2_ofs, h_ofs],
                                              valid_shape=[s2, head_dim])
@@ -191,7 +189,11 @@ def flash_attention_varlen_backward_kernel(
 
                         # 计算公式： head_dim = sum(O * dO, dim=-1, keepdim=True) -> [sq, 1]
                         # dtype: BF16 → cast → FP32, mul, sum
-                        pypto.set_vec_tile_shapes(512, 64)
+                        pypto.set_pass_options(sg_set_scope=1)
+                        if pypto.platform.npuarch == 'DAV_3510':
+                            pypto.set_vec_tile_shapes(512, 64)
+                        else:
+                            pypto.set_vec_tile_shapes(256, 64)
                         oi_fp32 = pypto.cast(oi, pypto.DT_FP32)
                         doi_fp32 = pypto.cast(doi, pypto.DT_FP32)
                         do_o = pypto.mul(oi_fp32, doi_fp32)
@@ -202,7 +204,10 @@ def flash_attention_varlen_backward_kernel(
                         # 数据类型转换： dtype: BF16 matmul → FP32
                         pypto.set_cube_tile_shapes([128, 512], [64, 64], [256, 512])
                         dp = pypto.matmul(doi, vi_tile, out_dtype=pypto.DT_FP32, b_trans=True)
-                        pypto.set_vec_tile_shapes(64, 512)
+                        if pypto.platform.npuarch == 'DAV_3510':
+                            pypto.set_vec_tile_shapes(64, 512)
+                        else:
+                            pypto.set_vec_tile_shapes(64, 256)
                         dp = pypto.view(dp, [S2_TILE, S2_TILE], [0, 0], valid_shape=[sq, s2])
 
                         # 计算公式：S_tile = Q_tile @ K_tile^T -> [sq, s2]
@@ -210,13 +215,17 @@ def flash_attention_varlen_backward_kernel(
                         pypto.set_cube_tile_shapes([128, 512], [64, 64], [256, 512])
                         scores = pypto.matmul(qi, ki_tile, out_dtype=pypto.DT_FP32, b_trans=True)
 
-                        pypto.set_vec_tile_shapes(64, 512)
+                        if pypto.platform.npuarch == 'DAV_3510':
+                            pypto.set_vec_tile_shapes(64, 512)
+                        else:
+                            pypto.set_vec_tile_shapes(64, 256)
                         scores = pypto.view(scores, [S2_TILE, S2_TILE], [0, 0], valid_shape=[sq, s2])
 
                         # 计算公式： P_tile = exp(S * scale - M) / L  (softmax)
                         # 数据类型转换：dtype: FP32 全程
                         pypto.set_pass_options(sg_set_scope=2)
-                        p = pypto.div(pypto.exp(pypto.sub(pypto.mul(scores, scale), m_i)), l_i)
+                        p = pypto.div(pypto.exp(pypto.sub(pypto.mul(scores, scale), m_i)),
+                                            l_i, precision_type=pypto.DivAlgorithm.INTRINSIC)
                         # 计算公式： dS_tile = P * (dP - head_dim)
                         # 数据类型转换：dtype: FP32
                         ds = pypto.mul(p, pypto.sub(dp, d_tile))
@@ -229,7 +238,10 @@ def flash_attention_varlen_backward_kernel(
                         # 数据类型转换：dtype: BF16 matmul → FP32, mul(scale), cast → BF16
                         pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
                         dk_tile_mm = pypto.matmul(ds_half, qi, out_dtype=pypto.DT_FP32, a_trans=True)
-                        pypto.set_vec_tile_shapes(512, 64)
+                        if pypto.platform.npuarch == 'DAV_3510':
+                            pypto.set_vec_tile_shapes(512, 64)
+                        else:
+                            pypto.set_vec_tile_shapes(256, 64)
                         dk_tile = pypto.mul(dk_tile_mm, scale)
                         # KV 侧写回: dK[kv_start + s2_ofs]
                         pypto.assemble(pypto.cast(dk_tile, pypto.DT_BF16), [kv_start + s2_ofs, h_ofs], dk)
@@ -261,3 +273,205 @@ def flash_attention_varlen_backward_kernel(
                                 pypto.assemble(pypto.cast(dq_new, pypto.DT_BF16), [q_start + q_ofs, h_ofs], dq)
                             else:
                                 dq_update[:] = dq_new
+
+
+def compute_p_ds(qi, ki, vi, doi, mi, li, d_i, sq, sk, scale, c_tile, v_tile_s, v_tile_d):
+    """计算单个 (s1_tile, s2_tile) 块的 P_ij 和 dS_ij。"""
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+    s_ij = pypto.matmul(qi, ki, pypto.DT_FP32, b_trans=True)
+    s_ij = pypto.view(s_ij, [S_TILE_2, S_TILE_2], [0, 0], valid_shape=[sq, sk])
+
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    s_ij = pypto.mul(s_ij, scale)
+    p_ij = pypto.exp(pypto.sub(s_ij, mi))
+    p_ij = pypto.div(p_ij, li, precision_type=pypto.DivAlgorithm.INTRINSIC)
+
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+    dp_ij = pypto.matmul(doi, vi, pypto.DT_FP32, b_trans=True)
+    dp_ij = pypto.view(dp_ij, [S_TILE_2, S_TILE_2], [0, 0], valid_shape=[sq, sk])
+
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    ds_ij = pypto.mul(p_ij, pypto.sub(dp_ij, d_i))
+
+    return p_ij, ds_ij
+
+
+@pypto.frontend.jit(
+    runtime_options={
+        "stitch_function_max_num": 128,
+        "device_sched_mode": 1,
+    },
+    pass_options={
+        "cube_nbuffer_setting": {0: 8},
+        "vec_nbuffer_setting": {0: 8},
+        "cube_l1_reuse_setting": {0: 8},
+    },
+    debug_options={
+        "runtime_debug_mode": 0,
+    },
+)
+def flash_attention_mha_grad_kernel_long_seq(
+    q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    k: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    v: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    o: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    do: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    l_input: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    m_input: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    dq: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    dk: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    actual_q: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
+    actual_kv: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
+):
+    """合一 kernel: 两趟 (dQ, dK/dV) 共享外层 batch+head 循环。"""
+    num_heads = q.shape[1]
+    head_dim = q.shape[2]
+    hidden_dim = num_heads * head_dim
+    total = q.shape[0]
+    b = actual_q.shape[0]
+    s = total // b
+    scale = 1.0 / (head_dim ** 0.5)
+
+    # reshape 三维 → 二维, 便于按 [seq, hidden_dim] 切片
+    q_2d = pypto.reshape(q, [total, hidden_dim], inplace=True)
+    k_2d = pypto.reshape(k, [total, hidden_dim], inplace=True)
+    v_2d = pypto.reshape(v, [total, hidden_dim], inplace=True)
+    o_2d = pypto.reshape(o, [total, hidden_dim], inplace=True)
+    do_2d = pypto.reshape(do, [total, hidden_dim], inplace=True)
+    l_2d = pypto.reshape(l_input, [total, num_heads], inplace=True)
+    m_2d = pypto.reshape(m_input, [total, num_heads], inplace=True)
+
+    s_loop = (s + S_TILE_2 - 1) // S_TILE_2  # 编译期静态 int (ceil div, 处理非整除情况)
+
+    c_tile = [[S_TILE_2, S_TILE_2], [HEAD_DIM, 256], [S_TILE_2, S_TILE_2]]
+    v_tile_s = [S_TILE_2, S_TILE_2]
+    v_tile_d = [S_TILE_2, HEAD_DIM]
+
+    for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx"):
+        for n_idx in pypto.loop(num_heads, name="LOOP_n", idx_name="n_idx"):
+            bn_base = b_idx * s
+            h_ofs = n_idx * head_dim
+
+            # ===== 趟1: 计算 dQ =====
+            for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dq", idx_name="s1_idx"):
+                s1_off = bn_base + s1_idx * S_TILE_2
+                actual_s1 = (s - s1_idx * S_TILE_2).min(S_TILE_2)
+
+                pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                q_i = pypto.view(q_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                 valid_shape=[actual_s1, HEAD_DIM])
+                do_i = pypto.view(do_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                  valid_shape=[actual_s1, HEAD_DIM])
+                o_i = pypto.view(o_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                 valid_shape=[actual_s1, HEAD_DIM])
+                m_i = pypto.view(m_2d, [S_TILE_2, 1], [s1_off, n_idx],
+                                 valid_shape=[actual_s1, 1])
+                l_i = pypto.view(l_2d, [S_TILE_2, 1], [s1_off, n_idx],
+                                 valid_shape=[actual_s1, 1])
+
+                pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                d_i = pypto.sum(pypto.cast(pypto.mul(o_i, do_i), pypto.DT_FP32),
+                                -1, keepdim=True)
+
+                dq_acc = pypto.tensor([S_TILE_2, HEAD_DIM], pypto.DT_FP32, "dq_acc")
+
+                for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dq", idx_name="s2_idx",
+                                         unroll_list=[8, 4, 2, 1]):
+                    s2_off = bn_base + s2_idx * S_TILE_2
+                    actual_s2 = (s - s2_idx * S_TILE_2).min(S_TILE_2)
+
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    k_j = pypto.view(k_2d, [S_TILE_2, HEAD_DIM], [s2_off, h_ofs],
+                                     valid_shape=[actual_s2, HEAD_DIM])
+                    v_j = pypto.view(v_2d, [S_TILE_2, HEAD_DIM], [s2_off, h_ofs],
+                                     valid_shape=[actual_s2, HEAD_DIM])
+
+                    _, ds_ij = compute_p_ds(q_i, k_j, v_j, do_i, m_i, l_i, d_i,
+                                            actual_s1, actual_s2, scale,
+                                            c_tile, v_tile_s, v_tile_d)
+
+                    ds_bf16 = pypto.cast(ds_ij, pypto.DT_BF16)
+                    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    dq_tile = pypto.matmul(ds_bf16, k_j, pypto.DT_FP32)
+
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    if pypto.is_loop_begin(s2_idx):
+                        dq_acc[:] = dq_tile
+                    else:
+                        dq_acc[:] = dq_acc + dq_tile
+
+                    if pypto.is_loop_end(s2_idx):
+                        pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                        dq_final = pypto.cast(pypto.mul(dq_acc, scale), pypto.DT_BF16)
+                        dq_final_v = pypto.view(dq_final, [S_TILE_2, HEAD_DIM], [0, 0],
+                                                valid_shape=[actual_s1, HEAD_DIM])
+                        pypto.assemble(dq_final_v, [s1_off, h_ofs], dq)
+
+            # ===== 趟2: 计算 dK, dV =====
+            for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dkv", idx_name="s2_idx"):
+                s2_off = bn_base + s2_idx * S_TILE_2
+                actual_s2 = (s - s2_idx * S_TILE_2).min(S_TILE_2)
+
+                pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                k_j = pypto.view(k_2d, [S_TILE_2, HEAD_DIM], [s2_off, h_ofs],
+                                 valid_shape=[actual_s2, HEAD_DIM])
+                v_j = pypto.view(v_2d, [S_TILE_2, HEAD_DIM], [s2_off, h_ofs],
+                                 valid_shape=[actual_s2, HEAD_DIM])
+
+                dk_acc = pypto.tensor([S_TILE_2, HEAD_DIM], pypto.DT_FP32, "dk_acc")
+                dv_acc = pypto.tensor([S_TILE_2, HEAD_DIM], pypto.DT_FP32, "dv_acc")
+
+                for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dkv", idx_name="s1_idx",
+                                         unroll_list=[8, 4, 2, 1]):
+                    s1_off = bn_base + s1_idx * S_TILE_2
+                    actual_s1 = (s - s1_idx * S_TILE_2).min(S_TILE_2)
+
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    q_i = pypto.view(q_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                     valid_shape=[actual_s1, HEAD_DIM])
+                    do_i = pypto.view(do_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                      valid_shape=[actual_s1, HEAD_DIM])
+                    o_i = pypto.view(o_2d, [S_TILE_2, HEAD_DIM], [s1_off, h_ofs],
+                                     valid_shape=[actual_s1, HEAD_DIM])
+                    m_i = pypto.view(m_2d, [S_TILE_2, 1], [s1_off, n_idx],
+                                     valid_shape=[actual_s1, 1])
+                    l_i = pypto.view(l_2d, [S_TILE_2, 1], [s1_off, n_idx],
+                                     valid_shape=[actual_s1, 1])
+
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    d_i = pypto.sum(pypto.cast(pypto.mul(o_i, do_i), pypto.DT_FP32),
+                                    -1, keepdim=True)
+
+                    p_ij, ds_ij = compute_p_ds(q_i, k_j, v_j, do_i, m_i, l_i, d_i,
+                                               actual_s1, actual_s2, scale,
+                                               c_tile, v_tile_s, v_tile_d)
+
+                    ds_bf16 = pypto.cast(ds_ij, pypto.DT_BF16)
+                    p_bf16 = pypto.cast(p_ij, pypto.DT_BF16)
+                    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    dk_tile = pypto.matmul(ds_bf16, q_i, pypto.DT_FP32, a_trans=True)
+                    dv_tile = pypto.matmul(p_bf16, do_i, pypto.DT_FP32, a_trans=True)
+
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    if pypto.is_loop_begin(s1_idx):
+                        dk_acc[:] = dk_tile
+                        dv_acc[:] = dv_tile
+                    else:
+                        dk_acc[:] = dk_acc + dk_tile
+                        dv_acc[:] = dv_acc + dv_tile
+
+                    if pypto.is_loop_end(s1_idx):
+                        pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                        dk_final = pypto.cast(pypto.mul(dk_acc, scale), pypto.DT_BF16)
+                        dv_final = pypto.cast(dv_acc, pypto.DT_BF16)
+                        dk_final_v = pypto.view(dk_final, [S_TILE_2, HEAD_DIM], [0, 0],
+                                                valid_shape=[actual_s2, HEAD_DIM])
+                        dv_final_v = pypto.view(dv_final, [S_TILE_2, HEAD_DIM], [0, 0],
+                                                valid_shape=[actual_s2, HEAD_DIM])
+                        pypto.assemble(dk_final_v, [s2_off, h_ofs], dk)
+                        pypto.assemble(dv_final_v, [s2_off, h_ofs], dv)

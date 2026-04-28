@@ -35,7 +35,7 @@ import torch
 import torch_npu
 from numpy.testing import assert_allclose
 
-from qat_impl import (
+from pypto_gym.ops.qat.qat_impl import (
     ai_infra_qat_asymmetric_per_group,
     ai_infra_qat_asymmetric_per_group_backward,
     ai_infra_qat_symmetric_per_channel,

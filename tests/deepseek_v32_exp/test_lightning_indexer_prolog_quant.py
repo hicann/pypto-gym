@@ -18,10 +18,10 @@ import torch_npu
 import pytest
 import pypto
 
-from lightning_indexer_prolog_quant_impl import (
+from pypto_gym.ops.deepseek_v32_exp.lightning_indexer_prolog_quant_impl import (
     IndexerPrologQuantInput, IndexerPrologQuantOutput, IndexerPrologQuantAttr, IndexerPrologQuantConfigs,
     lightning_indexer_prolog_quant)
-from utils.compare import compare
+from pypto_gym.ops.deepseek_v32_exp.utils.compare import compare
 
 
 def gen_dims(params):

@@ -87,7 +87,7 @@ def mla_prolog_kernel(
 
     for t_idx in pypto.loop(t_loop, name="LOOP_T", idx_name="t_idx"):
         t_offset = t_idx * TILE_T
-        t_offset_end = pypto.min(t_offset + TILE_T, seq_len)
+        t_offset_end = min(t_offset + TILE_T, seq_len)
         valid_t = t_offset_end - t_offset
 
         x_tile = pypto.view(token_x, [TILE_T, HE], [t_offset, 0], valid_shape=[valid_t, HE])

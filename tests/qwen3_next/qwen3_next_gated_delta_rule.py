@@ -34,7 +34,7 @@ import torch.nn.functional as F
 import torch_npu
 
 import pypto
-from gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
+from pypto_gym.ops.qwen3_next.gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
 
 
 def gen_dims(params):

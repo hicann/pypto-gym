@@ -51,23 +51,14 @@ $$
 ## 函数原型
 
 ```python
-def sfa_forward_tnd(kv_lora_rank, qk_rope_dim, nq, n_kv, scale,
-                    sparse_size, tile_config, max_total_kv=1024*1024):
+def sfa_forward_tnd(
+    q_nope, compressed_kv_norm, topk_indices, 
+    q_pe, k_pe, npu_actual_q_len, npu_actual_kv_len, 
+    core_attn_out, softmax_max_out, softmax_sum_out, 
+    nq, n_kv, scale, sparse_size, tile_config, max_total_kv=1024 * 1024
+):
     """工厂函数：创建JIT编译的SFA前向TND kernel。
 
-    Args:
-        kv_lora_rank: KV LoRA秩（D维度）
-        qk_rope_dim: QK RoPE维度（D_ROPE维度）
-        nq: Query head数（N1）
-        n_kv: KV head数（N2）
-        scale: 注意力缩放因子
-        sparse_size: 稀疏TopK大小（K）
-        tile_config: SaTileShapeConfig分片配置
-        max_total_kv: T2*N2的静态上界（默认1M）
-
-    Returns:
-        JIT编译的kernel函数
-    """
 ```
 
 ## 参数说明
@@ -127,7 +118,7 @@ def sfa_forward_tnd(kv_lora_rank, qk_rope_dim, nq, n_kv, scale,
 
 ```python
 import torch
-from pangu_sparse_attention_impl import sfa_forward_tnd, SaTileShapeConfig
+from sfa_sparse_attention_impl import sfa_forward_tnd, SaTileShapeConfig
 
 # ========== 参数配置 ==========
 B = 2

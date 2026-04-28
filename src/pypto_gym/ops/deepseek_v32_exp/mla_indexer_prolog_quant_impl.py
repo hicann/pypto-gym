@@ -29,8 +29,8 @@ from dataclasses import dataclass
 import torch
 import torch_npu
 import pypto
-from lightning_indexer_prolog_quant_impl import rope_3d, quant_layer_norm, prolog_quant, quant_rope_2d
-from mla_prolog_quant_impl import pre_compute_2d, rms_norm, rope_3d_v2, rope_v2, MlaQuantInputs, k_nope_quant
+from pypto_gym.ops.deepseek_v32_exp.lightning_indexer_prolog_quant_impl import rope_3d, quant_layer_norm, prolog_quant, quant_rope_2d
+from pypto_gym.ops.deepseek_v32_exp.mla_prolog_quant_impl import pre_compute_2d, rms_norm, rope_3d_v2, rope_v2, MlaQuantInputs, k_nope_quant
 
 
 L0M_INDEX = 0

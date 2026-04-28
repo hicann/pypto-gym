@@ -28,7 +28,7 @@ import torch
 from numpy.testing import assert_allclose
 import pytest
 
-from sum_lstm import sum_lstm, LstmConfig
+from pypto_gym.ops.arctic.sum_lstm import sum_lstm, LstmConfig
 
 BATCH_SIZE = 32
 D_GATE = 4096

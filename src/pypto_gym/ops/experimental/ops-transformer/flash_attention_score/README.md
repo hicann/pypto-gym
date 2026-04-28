@@ -12,48 +12,20 @@ Flash Attention Score 是一个高效的注意力机制实现，采用 **Online 
 -  **Dropout 支持** - 训练场景正则化
 -  **位置编码支持** - 支持 4 种 pse_type 模式
 -  **注意力掩码** - 支持因果掩码和自定义掩码
--  **Scale 可配置** - 支持自定义 scale_value 参数（Stage 3）
--  **多数据类型** - 支持 BF16、FP32 数据类型（Stage 3）
+-  **Scale 可配置** - 支持自定义 scale_value 参数
 -  **高精度** - 使用 FP32 进行中间计算，满足精度标准
 
 ---
 
 ## Kernel 概览
 
-提供两组 API：
-
-### 1. 统一接口（推荐）
-
-通过 `dtype` 参数自动选择对应的底层 kernel：
-
-```python
-from flash_attention_score_impl import (
-    flash_attention_score_with_mask,
-    flash_attention_score_with_pse_and_dropout
-)
-
-# BF16 (默认)
-flash_attention_score_with_mask(..., dtype="bf16")
-
-# FP32
-flash_attention_score_with_mask(..., dtype="fp32")
-```
-
-### 2. 底层 Kernel（高级用户）
-
-直接调用特定数据类型的 kernel：
-
 | Kernel | 功能 | 数据类型 | 适用场景 |
 |--------|------|---------|---------|
 | `flash_attention_score_kernel_with_mask_origin` | 基础 mask (无中间输出) | BF16 | 简化推理场景 |
 | `flash_attention_score_kernel_with_mask` | 基础 mask 支持 | BF16 | 推理场景 |
-| `flash_attention_score_kernel_with_mask_fp32` | 基础 mask 支持 | FP32 | 推理场景 |
 | `flash_attention_score_kernel_with_pse_and_dropout` | Mask + PSE + Dropout | BF16 | 训练场景 |
-| `flash_attention_score_kernel_with_pse_and_dropout_fp32` | Mask + PSE + Dropout | FP32 | 训练场景 |
 
-**数据类型策略：**
-- BF16: 输入 -> FP32 中间计算 -> 输出（带 cast）
-- FP32: 输入 -> FP32 中间计算 -> 输出（无 cast）
+**精度策略：** BF16 输入 -> FP32 中间计算 -> BF16 输出（带 cast）
 
 ---
 
@@ -109,7 +81,7 @@ $$
 | output | 输出 | [B, N, Sq, D] | BF16 | Attention 输出 |
 | softmax_max | 输出 | [B, N, Sq, 1] | FP32 | Softmax 最大值，用于反向 |
 | softmax_sum | 输出 | [B, N, Sq, 1] | FP32 | Softmax 指数和，用于反向 |
-| scale_value | 属性 | - | float | 缩放系数，默认 1/√D (Stage 3) |
+| scale_value | 属性 | - | float | 缩放系数，默认 1/√D |
 
 ### Kernel 2: flash_attention_score_kernel_with_pse_and_dropout
 
@@ -126,7 +98,7 @@ $$
 | softmax_sum | 输出 | [B, N, Sq, 1] | FP32 | Softmax 指数和，用于反向 |
 | pse_type | 属性 | - | int | PSE 模式 (0, 1, 2, 3) |
 | keep_prob | 属性 | - | float | Dropout 保留概率，默认 1.0 |
-| scale_value | 属性 | - | float | 缩放系数，默认 1/√D (Stage 3) |
+| scale_value | 属性 | - | float | 缩放系数，默认 1/√D |
 
 ### 固定参数
 
@@ -176,47 +148,7 @@ flash_attention_score_kernel_with_mask(
 
 ## 使用示例
 
-### 统一接口（推荐）
-
-```python
-import torch
-import math
-from flash_attention_score_impl import flash_attention_score_with_mask
-
-# 准备输入（BF16）
-query = torch.randn(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-key = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-value = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-atten_mask = torch.zeros(64, 128, dtype=torch.float32, device='npu:0')
-
-# 准备输出
-output = torch.empty(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-softmax_max = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-softmax_sum = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-
-# 调用统一接口（BF16）
-flash_attention_score_with_mask(
-    query, key, value, atten_mask,
-    output, softmax_max, softmax_sum,
-    scale_value=1.0 / math.sqrt(64),
-    dtype="bf16"  # 可选，默认 bf16
-)
-
-# 或者使用 FP32
-query_fp32 = torch.randn(2, 8, 64, 64, dtype=torch.float32, device='npu:0')
-# ... 其他 FP32 张量 ...
-
-flash_attention_score_with_mask(
-    query_fp32, key_fp32, value_fp32, atten_mask,
-    output_fp32, softmax_max, softmax_sum,
-    scale_value=1.0 / math.sqrt(64),
-    dtype="fp32"  # 显式指定 FP32
-)
-```
-
-### 底层 Kernel（高级用户）
-
-#### BF16 示例
+### 基础 Mask 示例
 
 ```python
 import torch
@@ -242,12 +174,12 @@ flash_attention_score_kernel_with_mask(
 )
 ```
 
-#### 训练场景 (with_pse_and_dropout) - 统一接口
+### 训练场景 (with_pse_and_dropout)
 
 ```python
 import torch
 import math
-from flash_attention_score_impl import flash_attention_score_with_pse_and_dropout
+from flash_attention_score_impl import flash_attention_score_kernel_with_pse_and_dropout
 
 # 输入
 query = torch.randn(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
@@ -264,13 +196,12 @@ output = torch.empty(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
 softmax_max = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
 softmax_sum = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
 
-# 调用统一接口
-flash_attention_score_with_pse_and_dropout(
+# 调用 kernel
+flash_attention_score_kernel_with_pse_and_dropout(
     query, key, value, atten_mask, pse, drop_mask,
     output, softmax_max, softmax_sum,
     pse_type=0, keep_prob=1.0,
-    scale_value=1.0 / math.sqrt(64),
-    dtype="bf16"  # 或 "fp32"
+    scale_value=1.0 / math.sqrt(64)
 )
 ```
 
@@ -282,12 +213,8 @@ flash_attention_score_with_pse_and_dropout(
 # 设置环境变量
 export TILE_FWK_DEVICE_ID=0
 
-# 运行全部测试（所有数据类型）
+# 运行全部测试
 python flash_attention_score.py
-
-# 测试指定数据类型
-python flash_attention_score.py --dtype bf16
-python flash_attention_score.py --dtype fp32
 
 # 仅测试 with_mask_origin kernel
 python flash_attention_score.py --kernel mask_origin
@@ -306,7 +233,6 @@ python flash_attention_score.py --run_mode sim
 ```
 
 **测试参数说明：**
-- `--dtype`: 数据类型（all/bf16/fp32），默认 all
 - `--kernel`: Kernel 类型（all/mask_origin/mask/pse_dropout），默认 all
 - `--scale_value`: 自定义 scale 值，默认 1/√D
 - `--run_mode`: 运行模式（npu/sim），默认 npu
@@ -315,7 +241,7 @@ python flash_attention_score.py --run_mode sim
 
 ## 测试结果
 
-### BF16 精度验证
+### 精度验证
 
 | Kernel | pseType | 最大差异 | 平均差异 | 状态 |
 |--------|---------|---------|---------|------|
@@ -324,17 +250,7 @@ python flash_attention_score.py --run_mode sim
 | with_pse_and_dropout | 0 | 0.001953 | 0.000000 | 通过 |
 | with_pse_and_dropout | 1 | 0.000488 | 0.000000 | 通过 |
 
-**精度标准**: `rtol=0.0078125, atol=0.0001` (BF16)
-
-### FP32 精度验证
-
-| Kernel | pseType | 最大差异 | 平均差异 | 状态 |
-|--------|---------|---------|---------|------|
-| with_mask | - | 0.003866 | 0.000219 | 通过 |
-| with_pse_and_dropout | 0 | 0.007114 | 0.000390 | 通过 |
-| with_pse_and_dropout | 1 | 0.003890 | 0.000301 | 通过 |
-
-**精度标准**: `rtol=0.01, atol=0.003` (FP32)
+**精度标准**: `rtol=0.0078125, atol=0.0001`
 
 ### Scale 可配置验证
 
@@ -368,29 +284,21 @@ $$
 ```
 flash_attention_score/
 ├── flash_attention_score_impl.py     # Kernel 实现
-│   ├── flash_attention_score_with_mask (统一接口) 
-│   ├── flash_attention_score_with_pse_and_dropout (统一接口) 
 │   ├── flash_attention_score_kernel_with_mask_origin (BF16, 无中间输出)
 │   ├── flash_attention_score_kernel_with_mask (BF16)
-│   ├── flash_attention_score_kernel_with_mask_fp32 (FP32)
-│   ├── flash_attention_score_kernel_with_pse_and_dropout (BF16)
-│   └── flash_attention_score_kernel_with_pse_and_dropout_fp32 (FP32)
+│   └── flash_attention_score_kernel_with_pse_and_dropout (BF16)
 ├── flash_attention_score.py          # 测试套件 + Golden Reference
-├── README.md                         # 本文档
-└── UPGRADE_PLAN.md                   # 功能规划
+└── README.md                         # 本文档
 ```
-
-**推荐使用统一接口，通过 dtype 参数选择数据类型。**
 
 ---
 
 ## 已知限制
 
-| 限制 | 说明 | 规划 |
-|------|------|------|
-| 固定维度 | Num heads=8, Head dim=64 | 待优化 |
-| drop_mask dtype | 使用 FP32 而非 UINT8 | 已知问题 |
-| FP8 支持 | 不支持 | Stage 4 |
+| 限制 | 说明 |
+|------|------|
+| 固定维度 | Num heads=8, Head dim=64 |
+| drop_mask dtype | 使用 FP32 而非 UINT8 |
 
 ### drop_mask 使用 FP32 说明
 
@@ -404,13 +312,7 @@ AscendC 文档要求 `drop_mask` 使用 UINT8 类型，但 PyPTO 实现中使用
 |-------|------|------|
 | Stage 1 | 反向传播中间结果 (softmax_max, softmax_sum) | 已完成 |
 | Stage 2 | Dropout + PSE 支持 | 已完成 |
-| Stage 3 | Scale 可配置 + BF16/FP32 数据类型 | 已完成 |
-| Stage 4 | FP8 量化支持 | 计划中 |
-
-**Stage 3 详细说明：**
-- Scale 可配置：支持自定义 scale_value 参数
-- BF16 数据类型：完全支持，精度验证通过
-- FP32 数据类型：完全支持，精度验证通过
+| Stage 3 | Scale 可配置 | 已完成 |
 
 ---
 

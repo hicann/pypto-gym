@@ -75,12 +75,12 @@ $$
 ```python
 @pypto.frontend.jit(...)
 def sparse_flash_attention_grad(
-    q_nope, q_pe, k_nope, k_pe, value,
-    sparse_idx, d_out, out, sm_max, sm_sum,
-    actual_seq_qlen, actual_seq_kvlen,
-    dq_nope_out, dq_pe_out, dk_nope_out, dk_pe_out, dv_out,
-    dk_nope_in, dk_pe_in,
-    N1, N2, D, DR, K, G, scale_value
+    q_nope, q_pe, k_nope, k_pe, value, 
+    sparse_idx, d_out, out, sm_max, sm_sum, 
+    actual_seq_qlen, actual_seq_kvlen, 
+    dq_nope_out, dq_pe_out, dk_nope_out, dk_pe_out, dv_out, 
+    dk_nope_in, dk_pe_in, dk_out, 
+    dk_2d, n_1, n_2, d, dr, k, group, scale_value
 ):
     """JIT编译的SFA反向kernel，TND格式，nope/rope拆分，动态shape。"""
 ```
@@ -88,7 +88,7 @@ def sparse_flash_attention_grad(
 ### 封装接口
 
 ```python
-def npu_pangu_sparse_attention_grad(
+def npu_sfa_sparse_attention_grad(
     q_nope, q_pe, k_nope, k_pe, value,
     sparse_idx, d_out, out, sm_max, sm_sum,
     actual_seq_qlen, actual_seq_kvlen, scale_value
@@ -174,7 +174,7 @@ def npu_pangu_sparse_attention_grad(
 
 ```python
 import torch
-from sparse_flash_attention_grad_impl import npu_pangu_sparse_attention_grad
+from sparse_flash_attention_grad_impl import npu_sfa_sparse_attention_grad
 
 # ========== 参数配置 ==========
 actual_q_lens = [4]
@@ -206,7 +206,7 @@ actual_seq_qlen = torch.tensor(actual_q_lens, dtype=torch.int32).cumsum(0).to(to
 actual_seq_kvlen = torch.tensor(actual_kv_lens, dtype=torch.int32).cumsum(0).to(torch.int32).npu()
 
 # ========== 调用反向kernel ==========
-dq_nope, dq_pe, dk_nope, dk_pe, dv = npu_pangu_sparse_attention_grad(
+dq_nope, dq_pe, dk_nope, dk_pe, dv = npu_sfa_sparse_attention_grad(
     q_nope, q_pe, k_nope, k_pe, value,
     sparse_idx, d_out, out, sm_max, sm_sum,
     actual_seq_qlen, actual_seq_kvlen, scale_value)

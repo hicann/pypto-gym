@@ -20,10 +20,10 @@ import pytest
 import numpy as np
 import pypto
 
-from sparse_flash_attention_quant_impl \
+from pypto_gym.ops.deepseek_v32_exp.sparse_flash_attention_quant_impl \
     import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p,\
            sparse_flash_attention_quant_d_950, SaTileShapeConfig
-from utils.compare import compare
+from pypto_gym.ops.deepseek_v32_exp.utils.compare import compare
 
 
 def gen_uniform_data(data_shape, min_value, max_value, dtype):
@@ -422,8 +422,8 @@ def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data,
             g_tile=128,
             s_kv_tile=2048,
             gather_vec_tile_shape=[64, 512],
-            c1_tile_shape=[128, 128, 128, 128, 128, 128],
-            v1_tile_shape=[8, 2048],
+            c1_tile_shape=[128, 128, 128, 128, 64, 64],
+            v1_tile_shape=[4, 2048],
             c2_tile_shape=[128, 128, 128, 128, 128, 128],
             v2_tile_shape=[64, 256]
         )

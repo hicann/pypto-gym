@@ -7,17 +7,25 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# ---
+# -----------------------------------------------------------------------------------------------------------
 """
-Performance use
+GLM-4.5 MatMul AllReduce Module for performance
+
+This module implements a fused matmul and all-reduce operation for large-scale distributed models.
+It efficiently combines computation and communication, reducing memory overhead and accelerating training.
+
+Main Functions:
+    - matmul_allreduce: Main function for fused matmul and all-reduce computation
 """
 
+import logging
+import multiprocessing as mp
 import os
 import json
 import csv
-import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime, timezone
+import statistics
 
 
 class SwimlaneAnalyzer:
@@ -32,8 +40,8 @@ class SwimlaneAnalyzer:
         self.output_dir = output_dir
         self.performance_data = None
         self.expected_total_time = expected_total_time
-        self._cached_min_file_info = None
-    
+        self._cached_swimlane_times = None
+
     @staticmethod
     def find_swimlane_files(rank_dir: str) -> List[str]:
         """在目录中查找 swimlane 文件"""
@@ -106,15 +114,16 @@ class SwimlaneAnalyzer:
 
         return rank_dirs[:world_size]
 
-    def find_min_time_file_in_ranks(self, world_size: int) -> Tuple[str, float]:
+    def get_all_rank_times(self, world_size: int) -> List[Tuple[str, float]]:
         """
-        在最近的world_size个rank目录中找到耗时最少的文件
+        获取所有rank文件的时间和路径
 
         返回:
-        (文件路径, 最小耗时)
+        列表，每个元素是(文件路径, 时间)
         """
-        if self._cached_min_file_info is not None:
-            return self._cached_min_file_info
+        # 如果已经有缓存，直接返回缓存结果
+        if self._cached_swimlane_times is not None:
+            return self._cached_swimlane_times
 
         rank_dirs = self.find_recent_rank_dirs(world_size)
 
@@ -126,133 +135,38 @@ class SwimlaneAnalyzer:
         if not all_times:
             raise ValueError("Could not find any valid swimlane file")
 
-        min_file, min_time = min(all_times, key=lambda x: x[1])
-        self._cached_min_file_info = (min_file, min_time)
+        # 缓存结果
+        self._cached_swimlane_times = all_times
 
-        return min_file, min_time
+        return all_times
 
-    def calculate_min_total_time(self, world_size: int) -> float:
-        """计算所有rank文件中总体执行时间的最小值"""
-        _, min_time = self.find_min_time_file_in_ranks(world_size)
-        return min_time
+    def calculate_stats(self, world_size: int) -> Dict[str, float]:
+        """计算统计信息：平均值、最小值、最大值"""
+        all_times = self.get_all_rank_times(world_size)
+        time_values = [time for _, time in all_times]
 
-    def generate_comparison_report(self, world_size: int, debug: bool = True) -> str:
-        """生成实际最小总体执行时间与预期总时间的对比报告"""
-        actual_min_time = self.calculate_min_total_time(world_size)
-        expected_total_time = self.expected_total_time
-        min_file_path, _ = self.find_min_time_file_in_ranks(world_size)
+        if not time_values:
+            return {
+                'avg_time': 0.0,
+                'min_time': 0.0,
+                'max_time': 0.0,
+                'num_ranks': 0
+            }
 
-        report_lines = []
-        report_lines.append("=" * 60)
-        report_lines.append("Swimlane总体执行时间对比报告")
-        report_lines.append("=" * 60)
-        report_lines.append("")
-        report_lines.append(f"分析目录: {self.output_dir}")
-        report_lines.append(f"World Size: {world_size}")
-        report_lines.append(f"最小耗时文件: {os.path.basename(os.path.dirname(min_file_path))}")
-        report_lines.append(f"文件路径: {min_file_path}")
-        report_lines.append(f"分析时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
-        report_lines.append("")
-
-        if expected_total_time is not None:
-            is_within = actual_min_time <= expected_total_time
-            diff = actual_min_time - expected_total_time
-
-            if is_within:
-                status = "✓"
-                status_text = f"实际总体执行时间在预期范围内"
-            else:
-                status = "✗"
-                status_text = f"实际总体执行时间超出预期"
-
-            report_lines.append(f"实际总体执行时间: {actual_min_time:.3f} us")
-            report_lines.append(f"预期总时间: {expected_total_time:.3f} us")
-            report_lines.append(f"差值: {diff:+.3f} us ({diff/expected_total_time*100:.1f}%)")
-            report_lines.append(f"状态: {status} {status_text}")
-        else:
-            report_lines.append(f"实际总体执行时间: {actual_min_time:.3f} us")
-            report_lines.append(f"预期总时间: 未设置")
-
-        report_lines.append("")
-        report_lines.append("=" * 60)
-
-        return "\n".join(report_lines)
+        return {
+            'avg_time': statistics.mean(time_values) if len(time_values) > 1 else time_values[0],
+            'min_time': min(time_values),
+            'max_time': max(time_values),
+            'num_ranks': len(time_values)
+        }
 
     def check_within_expected(self, world_size: int) -> bool:
-        """检查实际总体执行时间是否在预期总时间内"""
+        """检查最小执行时间是否在预期总时间内"""
         if self.expected_total_time is None:
             return True
 
-        actual_min_time = self.calculate_min_total_time(world_size)
-        return actual_min_time <= self.expected_total_time
-
-    def save_to_csv(self, world_size: int, csv_file: str = "performance_results.csv"):
-        """将结果保存到CSV文件"""
-        actual_min_time = self.calculate_min_total_time(world_size)
-        min_file_path, _ = self.find_min_time_file_in_ranks(world_size)
-        expected_total_time = self.expected_total_time
-        is_within = self.check_within_expected(world_size)
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-
-        rank = "unknown"
-        rank_dir = os.path.dirname(min_file_path)
-        for part in rank_dir.split(os.sep):
-            if 'rank' in part.lower():
-                rank = part
-                break
-
-        fieldnames = [
-            'timestamp',
-            'world_size',
-            'rank',
-            'expected_time_us',
-            'actual_total_time_us',
-            'is_within_expected',
-            'min_file_path',
-            'status'
-        ]
-
-        file_exists = os.path.isfile(csv_file)
-
-        with open(csv_file, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-
-            if not file_exists:
-                writer.writeheader()
-
-            expected_value = expected_total_time if expected_total_time is not None else 'N/A'
-
-            writer.writerow({
-                'timestamp': timestamp,
-                'world_size': world_size,
-                'rank': rank,
-                'expected_time_us': expected_value,
-                'actual_total_time_us': round(actual_min_time, 3),
-                'is_within_expected': is_within,
-                'min_file_path': min_file_path,
-                'status': 'PASS' if is_within else 'FAIL'
-            })
-
-        return csv_file
-
-    def print_swimlane_files_info(self, world_size: int):
-        """打印找到的swimlane文件信息"""
-        if self._cached_min_file_info is None:
-            self.find_min_time_file_in_ranks(world_size)
-
-        rank_dirs = self.find_recent_rank_dirs(world_size)
-
-        if not rank_dirs:
-            logging.warning(f"No rank directories found in {self.output_dir}")
-            return
-
-        all_times = self._collect_swimlane_times(rank_dirs)
-
-        if all_times:
-            logging.info(f"Found {len(all_times)} swimlane files with times:")
-            for file_path, time in sorted(all_times, key=lambda x: x[1]):
-                rank_name = os.path.basename(os.path.dirname(file_path))
-                logging.info(f"  {rank_name}: {time:.3f} us")
+        stats = self.calculate_stats(world_size)
+        return stats['min_time'] <= self.expected_total_time
 
     def _collect_swimlane_times(self, rank_dirs: List[str]) -> List[Tuple[str, float]]:
         """收集所有 swimlane 文件的时间信息"""

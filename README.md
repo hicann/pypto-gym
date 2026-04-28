@@ -229,7 +229,7 @@ pypto-gym/
 │       │       ├── distributed/
 │       │       ├── flash_attention_score_grad/
 │       │       ├── matmul/
-│       │       ├── ops-transformer/
+│       │       ├── ops_transformer/
 │       │       └── vector/
 │       └── llm/                             # LLM 模型结构定义
 ├── tests/                                   # 共享测试工具（conftest 聚合入口）

@@ -30,8 +30,8 @@ import torch
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-from flash_attention_mha_grad_impl import flash_attention_varlen_backward_kernel
-import pypto
+from flash_attention_mha_grad_impl \
+    import flash_attention_varlen_backward_kernel_small_seq, flash_attention_mha_grad_kernel_long_seq
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
@@ -42,7 +42,7 @@ HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 
 # KV 序列维度的分块大小 (全局配置常量)
-S2_TILE = 320
+S2_TILE = 256
 
 
 def get_device_id():
@@ -54,6 +54,16 @@ def get_device_id():
         return int(os.environ['TILE_FWK_DEVICE_ID'])
     except ValueError:
         return None
+
+
+@pytest.fixture(scope="module")
+def device():
+    device_id = get_device_id()
+    if device_id is None:
+        pytest.skip("TILE_FWK_DEVICE_ID not set")
+    import torch_npu  # noqa: F401
+    torch.npu.set_device(device_id)
+    return f'npu:{device_id}'
 
 
 ########################################################################
@@ -109,10 +119,10 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     torch.manual_seed(42)
     # Q 张量: shape=[batch * s1_size, num_heads, head_dim], dtype=BF16
     # kernel 签名为 [DYNAMIC, N, D], 三维输入
-    q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1 + 0.5
+    q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
     # K/V 张量: shape=[batch * s2_size, num_heads, head_dim], dtype=BF16
-    k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1 + 0.5
-    v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1 + 0.5
+    k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
+    v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
 
     # 计算流：actual_q: [s1_size, s1_size, ...] — shape=[batch_size], Q 每个 batch 的 seqlen
     q_seqlens = [s1_size] * batch_size
@@ -144,7 +154,7 @@ def attention_backward_golden(q, k, v, o_input, do_t, scale):
       7. ds_half = cast(dS, BF16)                  (pypto.cast → DT_BF16)
          p_half  = cast(P, BF16)                   (pypto.cast → DT_BF16)
       8. dK = ds_half^T(BF16) @ Q(BF16) → FP32 * scale → cast BF16
-      9. dV = p_half^T(BF16) @ dO(BF16) → BF16       (matmul out_dtype=BF16)
+      9. dV = p_half^T(BF16) @ dO(BF16) → FP32     (matmul out_dtype=FP32, 改为 FP32 以支持读-改-写累加)
      10. dQ_partial = ds_half(BF16) @ K(BF16) → FP32 * scale
          dQ 跨 tile 累加 (FP32), 最终 cast BF16
 
@@ -315,9 +325,11 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     total_q = batch_size * s1_size
     total_kv = batch_size * s2_size
 
-    torch.manual_seed(42)
+    # 注意: 此处使用与 create_inputs 不同的种子，避免 do_t 与 q 数值完全相同，
+    # 否则会掩盖 dQ/dK/dV 计算路径中与 dO 相关的错误。
+    torch.manual_seed(2026)
     # dO: Q 侧, shape=[batch * s1_size, num_heads, dim], dtype=BF16
-    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.1 + 0.5
+    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.01
 
     # L, M: Q 侧, shape=[batch * s1_size, num_heads, 1], dtype=FP32
     l_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
@@ -376,11 +388,35 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
 
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
-    flash_attention_varlen_backward_kernel(
-        q, k, v, o_out, do_t, l_out, m_out,
-        dq_out, dk_out, dv_out,
-        actual_q, actual_kv)
-
+    import time
+    if (s1_size > 320):
+        # warmup
+        flash_attention_mha_grad_kernel_long_seq(
+            q, k, v, o_out, do_t, l_out, m_out,
+            dq_out, dk_out, dv_out,
+            actual_q, actual_kv)
+        # perf run
+        start_time = time.time()
+        flash_attention_mha_grad_kernel_long_seq(
+            q, k, v, o_out, do_t, l_out, m_out,
+            dq_out, dk_out, dv_out,
+            actual_q, actual_kv)
+        elapsed = time.time() - start_time
+        logging.info(f"  Kernel time: {elapsed*1000:.2f} ms")
+    else:
+        # warmup
+        flash_attention_varlen_backward_kernel_small_seq(
+            q, k, v, o_out, do_t, l_out, m_out,
+            dq_out, dk_out, dv_out,
+            actual_q, actual_kv)
+        # perf run
+        start_time = time.time()
+        flash_attention_varlen_backward_kernel_small_seq(
+            q, k, v, o_out, do_t, l_out, m_out,
+            dq_out, dk_out, dv_out,
+            actual_q, actual_kv)
+        elapsed = time.time() - start_time
+        logging.info(f"  Kernel time: {elapsed*1000:.2f} ms")
     # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
     rtol = 0.0078125  # 1/128, 约 BF16 精度
     atol = 0.0001
@@ -424,8 +460,8 @@ def test_01(device):
 
 @pytest.mark.skip(reason="large test case")
 def test_02(device):
-    """ 用例规格信息：batch=8, heads=8, s1=2432, s2=2432, dim=64"""
-    return run_test(device, batch_size=8, num_heads=8, s1_size=2432, s2_size=2432, dim=64)
+    """ 用例规格信息：batch=1, heads=8, s1=4096, s2=4096, dim=64"""
+    return run_test(device, batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=64)
 
 
 @pytest.mark.skip(reason="large test case")
@@ -470,7 +506,7 @@ def main():
     # ---- 选择要运行的测试用例 (注释/取消注释即可) ----
     test_funcs = [
         test_01,    # batch=8, heads=8, s1=320, s2=320, dim=64
-        # 用例 test_02,    # batch=8, heads=8, s1=2432, s2=2432, dim=64
+        test_02,    # batch=8, heads=8, s1=4096, s2=4096, dim=64
         test_03,    # batch=8, heads=16, s1=32, s2=32, dim=32
         test_04,    # batch=8, heads=16, s1=64, s2=64, dim=32
         test_05,    # batch=8, heads=8, s1=32, s2=32, dim=64

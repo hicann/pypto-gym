@@ -119,27 +119,7 @@ def compute_attention_tnd_golden(q_nope, compressed_kv_norm, value, topk_indices
     return core_attn_out, softmax_max_out, softmax_sum_out
 
 
-def gen_sfa_tnd_golden(dtype, b, nq, n_kv, npu_actual_q_len_list, npu_actual_kv_len_list,
-                       sparse_size=2048):
-    """Generate test data and golden output for SFA TND v2."""
-    torch.manual_seed(42)
-
-    kv_lora_rank = 512
-    qk_rope_dim = 64
-    scale = 0.07216878364870322
-    group = nq // n_kv
-
-    t1 = sum(npu_actual_q_len_list)
-    t2 = sum(npu_actual_kv_len_list)
-
-    # Generate 3D inputs
-    q_nope = gen_uniform_data([t1, nq, kv_lora_rank], -1, 1, dtype)
-    q_pe = gen_uniform_data([t1, nq, qk_rope_dim], -1, 1, dtype)
-    compressed_kv_norm = gen_uniform_data([t2, n_kv, kv_lora_rank], -1, 1, dtype)
-    k_pe = gen_uniform_data([t2, n_kv, qk_rope_dim], -1, 1, dtype)
-
-    # Generate topk_indices: [T1, N2, sparse_size]
-    # All sparse_size positions filled with valid indices
+def gen_topk_indices(b, n_kv, npu_actual_q_len_list, npu_actual_kv_len_list, sparse_size, t1):
     topk_indices = torch.zeros(t1, n_kv, sparse_size, dtype=torch.int32)
 
     q_offsets = [0]
@@ -163,6 +143,32 @@ def gen_sfa_tnd_golden(dtype, b, nq, n_kv, npu_actual_q_len_list, npu_actual_kv_
                 if pad_size > 0:
                     perm = F.pad(perm, (0, pad_size), value=-1)
                 topk_indices[t_idx, kv_h, :] = (perm[:sparse_size] + kv_start).to(torch.int32)
+                
+    return topk_indices
+
+
+def gen_sfa_tnd_golden(dtype, b, nq, n_kv, npu_actual_q_len_list, npu_actual_kv_len_list,
+                       sparse_size=2048):
+    """Generate test data and golden output for SFA TND v2."""
+    torch.manual_seed(42)
+
+    kv_lora_rank = 512
+    qk_rope_dim = 64
+    scale = 0.07216878364870322
+    group = nq // n_kv
+
+    t1 = sum(npu_actual_q_len_list)
+    t2 = sum(npu_actual_kv_len_list)
+
+    # Generate 3D inputs
+    q_nope = gen_uniform_data([t1, nq, kv_lora_rank], -1, 1, dtype)
+    q_pe = gen_uniform_data([t1, nq, qk_rope_dim], -1, 1, dtype)
+    compressed_kv_norm = gen_uniform_data([t2, n_kv, kv_lora_rank], -1, 1, dtype)
+    k_pe = gen_uniform_data([t2, n_kv, qk_rope_dim], -1, 1, dtype)
+
+    # Generate topk_indices: [T1, N2, sparse_size]
+    # All sparse_size positions filled with valid indices
+    topk_indices = gen_topk_indices(b, n_kv, npu_actual_q_len_list, npu_actual_kv_len_list, sparse_size, t1)
     # npu_actual_q_len is prefix-sum: [q0, q0+q1, q0+q1+q2, ...]
     q_prefix_sum = []
     running_sum = 0

@@ -19,7 +19,7 @@ import torch
 import torch_npu
 import numpy as np
 import pypto
-from utils.compare import compare
+from pypto_gym.ops.deepseek_v32_exp.utils.compare import compare
 
 
 @dataclass
@@ -312,7 +312,7 @@ def topk_idx_compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, error_cou
 
 
 def lightning_indexer(case_name: str) -> bool:
-    from lightning_indexer_quant_impl import lightning_indexer_decode
+    from pypto_gym.ops.deepseek_v32_exp.lightning_indexer_quant_impl import lightning_indexer_decode
     # 设置设备ID
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

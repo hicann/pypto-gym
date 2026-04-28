@@ -126,12 +126,16 @@ def sparse_flash_attention_grad_compute(
     for b_idx in pypto.loop(0, b_sym, 1, name="LOOP_B", idx_name="bIdx"):
         # 计算当前batch的q/kv offset和s_count
         # actual_seq_qlen 是前缀和: q_offset = qlen[b-1] if b>0 else 0, s_count = qlen[b] - q_offset
-        cur_qlen = actual_seq_qlen[b_idx]         # qlen prefix sum at b
-        q_offset = (b_idx > 0) * actual_seq_qlen[b_idx - 1]         # 0 when b=0, prev_qlen when b>0
+        cur_qlen = actual_seq_qlen[b_idx]         # qlen prefix sum at b      # 0 when b=0, prev_qlen when b>0
+        if pypto.cond(b_idx == 0):
+            q_offset = 0
+            kv_offset = 0
+        else:
+            q_offset = actual_seq_qlen[b_idx - 1]
+            kv_offset = actual_seq_kvlen[b_idx - 1]
         s_count = cur_qlen - q_offset
 
         cur_kvlen = actual_seq_kvlen[b_idx]
-        kv_offset = (b_idx > 0) * actual_seq_kvlen[b_idx - 1]
         actual_kv_len = cur_kvlen - kv_offset       # actual kv length for this batch
 
         for s_idx in pypto.loop(0, s_count, 1, name="LOOP_S", idx_name="sIdx"):

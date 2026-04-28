@@ -56,7 +56,7 @@ def attention_worker_combine_splitbs_kernel(
 
     for bs_idx in pypto.loop(bs_loops):
         bs_offset = bs_idx * tile_bs
-        bs_end = pypto.min(bs_offset + tile_bs, bs_dyn)
+        bs_end = min(bs_offset + tile_bs, bs_dyn)
         valid_bs = bs_end - bs_offset
 
         token_view = pypto.view(token_data, [tile_bs, k + 1, h],
@@ -100,7 +100,7 @@ def attention_worker_combine_splith_kernel(
 
     for bs_idx in pypto.loop(bs_loops):
         bs_offset = bs_idx * tile_bs
-        bs_end = pypto.min(bs_offset + tile_bs, bs_dyn)
+        bs_end = min(bs_offset + tile_bs, bs_dyn)
         valid_bs = bs_end - bs_offset
 
         scales_view = pypto.view(expert_scales, [tile_bs, k],
