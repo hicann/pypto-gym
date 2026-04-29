@@ -26,7 +26,7 @@ import torch
 from pypto.operation import op_wrapper
 import pypto
 from pypto import pypto_impl
-from deepseekv32_lightning_indexer_quant import LightningIndexerConfigs
+from pypto_gym.ops.deepseek_v32_exp.deepseekv32_lightning_indexer_quant import LightningIndexerConfigs
 
 MAX_LI_S1 = 4
 MAX_LI_S2 = 128 * 1024

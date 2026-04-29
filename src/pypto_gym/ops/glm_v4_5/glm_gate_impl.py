@@ -21,14 +21,10 @@ Main Functions:
 """
 import os
 import torch
-import torch_npu
-import numpy as np
-from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 import pypto
-from utils.get_format import get_format
-import pytest
+from pypto_gym.ops.glm_v4_5.utils.get_format import get_format
 
 
 def check_args(
@@ -78,7 +74,6 @@ def select_experts_mm_kernel(
         This function processes inputs in tiles of size 32 to support dynamic batch sizes.
         The computation uses cube tiling for efficient matrix multiplication on NPU.
     """
-    # 3. 得到动态tensor的shape
     bs = hidden_states.shape[0]
     ne = mm_weight.shape[0]
     h_num = hidden_states.shape[1]
@@ -87,10 +82,8 @@ def select_experts_mm_kernel(
 
     bs_loop = (bs + view_shape[0] - 1) // view_shape[0]
 
-    # 4. 实现kernel逻辑，循环展开BS动态轴
     for bs_idx in pypto.loop(bs_loop, name="LOOP_MOE_MM_L0", idx_name="bs_idx"):
 
-        # 5. 通过view得到tile_logits
         tile_hidden_states = pypto.view(hidden_states, view_shape,
                                         [bs_idx * view_shape[0], 0],
                                         valid_shape=[(bs - bs_idx * view_shape[0]).min(view_shape[0]),
@@ -100,55 +93,15 @@ def select_experts_mm_kernel(
 
         res = pypto.matmul(tile_hidden_states, mm_weight, tile_hidden_states.dtype, b_trans=True)
 
-        # 6. 将结果搬运到输出tensor上
         router_logits_out[bs_idx * view_shape[0]:, 0:] = res
 
 
 
 
-@pytest.mark.soc("950", "910")
-def test_select_experts_mm():
-    # 1. 设置参数
-    bs = 64
-    ne = 160
-    h_num = 5120
-
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
-    torch.npu.set_device(device_id)
-
-    # 2. 构造多种shape，测试动态case
-    for i in range(0, 1):
-        if i == 1:
-            bs = 1026
-        # 3. 准备测试数据
-        torch.manual_seed(0)
-        np.random.seed(0)
-        hidden_states = torch.rand((bs, h_num), dtype=torch.float32, device=f'npu:{device_id}')
-        mm_weight = torch.rand((ne, h_num), dtype=torch.float32, device=f'npu:{device_id}')
-        router_logits_out = torch.rand((bs, ne), dtype=torch.float32, device=f'npu:{device_id}')
-
-        # 4. 执行kernel并获取结果
-        inputs = [hidden_states, mm_weight, router_logits_out]
-
-        g = torch.npu.NPUGraph()
-        with torch.npu.graph(g):
-            gate(*inputs)
-        g.replay()
-
-        # 5. 与PyTorch参考实现对比
-        result = torch.matmul(hidden_states, mm_weight.t())
-        result_list = result.cpu().flatten().tolist()
-
-        # weight result
-        assert_allclose(np.array(router_logits_out.cpu().flatten().tolist()),
-                        np.array(result_list),
-                        rtol=5e-3, atol=5e-3)
-
-
 @allow_in_graph
 def gate(
-    hidden_states: torch.Tensor,  # Hidden states of shape (num_tokens, hidden_size).
-    gate_weight: torch.Tensor,  # gate matmul weights
+    hidden_states: torch.Tensor,
+    gate_weight: torch.Tensor,
     router_logits_out: torch.Tensor
 ):
     """
@@ -177,11 +130,3 @@ def gate(
 
     inputs = [hidden_states, gate_weight, router_logits_out]
     select_experts_mm_kernel(*inputs)
-
-
-def main():
-    test_select_experts_mm()
-
-
-if __name__ == "__main__":
-    main()
