@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """
 修复 transformers 模型代码导入语句
 将相对导入改为绝对导入，适用于从 transformers 包复制到本地目录的场景
@@ -7,9 +16,12 @@
 例如: python3 fix_imports.py /data/models/Nanbeige4.1-3B/core/modeling_llama.py
 """
 
+import logging
 import re
 import sys
 import os
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 
 def fix_imports(file_path):
@@ -92,18 +104,18 @@ def fix_imports(file_path):
     with open(file_path, "w") as f:
         f.write(content)
 
-    print(f"已修复导入: {file_path}")
+    logging.info(f"已修复导入: {file_path}")
 
 
 def main():
     if len(sys.argv) < 2:
-        print(__doc__)
+        logging.info(__doc__)
         sys.exit(1)
 
     file_path = sys.argv[1]
 
     if not os.path.exists(file_path):
-        print(f"文件不存在: {file_path}")
+        logging.error(f"文件不存在: {file_path}")
         sys.exit(1)
 
     # 先备份
@@ -111,14 +123,14 @@ def main():
     import shutil
 
     shutil.copy(file_path, backup_path)
-    print(f"已创建备份: {backup_path}")
+    logging.info(f"已创建备份: {backup_path}")
 
     fix_imports(file_path)
 
     # 验证修复后的文件可以导入
-    print(f"\n验证修复结果:")
-    print(f"  请检查文件内容，确认导入语句正确")
-    print(f"  如有问题，可从备份恢复: cp {backup_path} {file_path}")
+    logging.info(f"\n验证修复结果:")
+    logging.info(f"  请检查文件内容，确认导入语句正确")
+    logging.info(f"  如有问题，可从备份恢复: cp {backup_path} {file_path}")
 
 
 if __name__ == "__main__":

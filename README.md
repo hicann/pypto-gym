@@ -1,12 +1,10 @@
 # PyPTO-Gym
 
-[简体中文](README.md)
-
 PyPTO-Gym 是基于 [PyPTO](https://gitcode.com/cann/pypto) 编程框架构建的算子/模型样例仓库。它收录了一批用 PyPTO 写成的高性能融合算子与典型大模型结构实现，作为 PyPTO 的"算子体操场"，方便开发者学习、复用、压测与对比。
 
 > 本仓原为 `pypto/models/` 目录，现已拆分为独立仓，与 PyPTO 主仓解耦演进。
 
-## 🚀 概述
+## 概述
 
 PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym) 之于 cuTile —— 一个围绕编程框架的算子示例和基准库。区别在于：
 
@@ -14,21 +12,21 @@ PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym
 - **编程框架**：PyPTO，基于 Tile 的编程模型
 - **内容**：端到端可运行的融合算子样例 + 大模型关键结构（Attention、MoE、LSTM、Delta-Rule 等）
 
-## ✨ 特性
+## 特性
 
 - 覆盖 DeepSeek V3.2、GLM V4.5、Qwen3-Next、Arctic、QAT 等模型的关键算子实现
 - 提供实验性目录 `experimental/` 收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
 - 每个模型目录自包含：impl 文件 + pytest 测试 + README，可独立运行
 - 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
 
-## 📦 环境准备
+## 环境准备
 
 ### 系统要求
 
 | 组件 | 版本要求 |
 |------|---------|
 | 华为昇腾 CANN | ≥ 8.5.0 |
-| Python | 3.10+ |
+| Python | 3.9+ |
 | PyTorch | 2.7.x |
 | torch_npu | 与 PyTorch 版本配套 |
 | [PyPTO](https://gitcode.com/cann/pypto) | ≥ 0.2.1（需从源码编译安装） |
@@ -113,7 +111,7 @@ pip install -e . -i https://mirrors.aliyun.com/pypi/simple/
 pip install -e ".[dev]" -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
-## ⚡️ 快速上手
+## 快速上手
 
 ### 1. 验证环境
 
@@ -128,16 +126,19 @@ python -c "import pypto; import torch_npu; print('pypto:', pypto.__version__); p
 source env_setup.sh
 
 # GLM V4.5 Attention
-pytest src/pypto_gym/ops/glm_v4_5/glm_attention.py -v
+pytest tests/ops/glm_v4_5 -v
 
 # DeepSeek V3.2 MLA Prolog
-pytest src/pypto_gym/ops/deepseek_v32_exp/deepseekv32_mla_prolog_quant.py -v
+pytest tests/ops/deepseek_v32_exp -v
 
 # Qwen3-Next Gated Delta Rule
-pytest src/pypto_gym/ops/qwen3_next -v
+pytest tests/ops/qwen3_next -v
 
 # QAT 量化感知训练
-pytest src/pypto_gym/ops/qat -v
+pytest tests/ops/qat -v
+
+# Qwen3-1.7B 融合算子
+pytest tests/ops/qwen3_1_7b -v
 ```
 
 ### 3. 运行全部（非 experimental）测试
@@ -155,24 +156,24 @@ pytest -v
 如需运行实验性算子：
 
 ```bash
-pytest src/pypto_gym/ops/experimental/<op_name> -v
+pytest src/pypto_gym/ops/pypto_tile/experimental/<op_name> -v
 ```
 
 ### 4. 多卡 / 指定 SoC
 
 ```bash
 # 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
-pytest src/pypto_gym/ops/glm_v4_5 -v --device 1
+pytest tests/ops/glm_v4_5 -v --device 1
 
 # 多卡（2 卡）分布式样例
-pytest src/pypto_gym/ops/experimental/distributed --device 0 1 --cards-per-case 2
+pytest src/pypto_gym/ops/pypto_tile/experimental/distributed --device 0 1 --cards-per-case 2
 ```
 
 ### 5. 用例筛选说明
 
 测试用例通过 `@pytest.mark.soc` 标注适用芯片（`"950"` 对应 910B/910C，`"910"` 对应 910A），conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例通过 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
 
-## 🔧 常见问题排查
+## 常见问题排查
 
 **Q: 报错 `key: runtime.stitch_cfgcache_size does not exist`**
 
@@ -198,41 +199,52 @@ pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 
 确认 `PTO_TILE_LIB_CODE_PATH` 指向 pto-isa 仓库根目录（含 `include/` 子目录），且 pto-isa 版本与 PyPTO 兼容（建议两仓同步到最新）。
 
-## 🔍 目录结构
+## 目录结构
 
 ```
 pypto-gym/
 ├── docs/                                    # 文档资源（规划中）
-├── modeling/                                # 模型执行脚本（推理入口 / 基准 / Dockerfile / 样例输入）
+├── modeling/                                # 模型端到端执行脚本与样例输入
+│   └── transformers/                        # Qwen3-1.7B 推理示例
+│       ├── infer.py
+│       ├── bench_qwen3_1_7b.sh
+│       ├── README.md
+│       └── sample_inputs/
 ├── src/
 │   └── pypto_gym/
 │       ├── __init__.py
-│       ├── ops/                             # 算子样例根目录
-│       │   ├── arctic/                      # Arctic LSTM
-│       │   │   ├── sum_lstm.py
-│       │   │   ├── test_sum_lstm.py
-│       │   │   └── README.md
-│       │   ├── deepseek_v32_exp/            # DeepSeek V3.2 实验算子
-│       │   │   ├── deepseekv32_sparse_flash_attention_quant.py
-│       │   │   ├── deepseekv32_mla_prolog_quant.py
-│       │   │   ├── deepseekv32_lightning_indexer_quant.py
-│       │   │   └── ...
-│       │   ├── glm_v4_5/                    # GLM V4.5
-│       │   │   ├── glm_attention.py
-│       │   │   ├── glm_moe_fusion.py
-│       │   │   ├── glm_select_experts.py
-│       │   │   └── ...
-│       │   ├── qat/                         # 量化感知训练
-│       │   ├── qwen3_next/                  # Qwen3-Next Gated Delta Rule
-│       │   └── experimental/                # 实验性算子（默认不跑）
-│       │       ├── attention/
-│       │       ├── distributed/
-│       │       ├── flash_attention_score_grad/
-│       │       ├── matmul/
-│       │       ├── ops_transformer/
-│       │       └── vector/
-│       └── llm/                             # LLM 模型结构定义
-├── tests/                                   # 共享测试工具（conftest 聚合入口）
+│       ├── ops/
+│       │   └── pypto_tile/                  # 算子根目录
+│       │       ├── arctic/                  # Arctic LSTM
+│       │       │   └── sum_lstm.py
+│       │       ├── deepseek_v32_exp/        # DeepSeek V3.2 实验算子
+│       │       │   ├── sparse_flash_attention_quant_impl.py
+│       │       │   ├── mla_prolog_quant_impl.py
+│       │       │   └── ...
+│       │       ├── glm_v4_5/                # GLM V4.5
+│       │       │   ├── glm_attention_impl.py
+│       │       │   ├── glm_moe_fusion_impl.py
+│       │       │   └── ...
+│       │       ├── qat/                     # 量化感知训练
+│       │       │   └── qat_impl.py
+│       │       ├── qwen3_1_7b/              # Qwen3-1.7B 融合算子
+│       │       ├── qwen3_next/              # Qwen3-Next Gated Delta Rule
+│       │       └── experimental/            # 实验性算子（默认不跑）
+│       │           ├── attention/
+│       │           ├── distributed/
+│       │           ├── matmul/
+│       │           ├── ops-transformer/
+│       │           └── vector/
+│       └── transformers/                    # HuggingFace 模型结构定义
+│           └── qwen3_1_7b/
+├── tests/                                   # 算子单元测试
+│   └── ops/
+│       ├── arctic/
+│       ├── deepseek_v32_exp/
+│       ├── glm_v4_5/
+│       ├── qat/
+│       ├── qwen3_1_7b/
+│       └── qwen3_next/
 ├── conftest.py                              # pytest 调度（多卡 / 多 SoC 筛选）
 ├── pytest.ini
 ├── pyproject.toml
@@ -243,21 +255,21 @@ pypto-gym/
 └── README.md
 ```
 
-## 🧩 添加新算子
+## 添加新算子
 
-1. 在 `src/pypto_gym/ops/` 下新建子目录（若是通用算子，放入 `experimental/` 对应子类）。
-2. 编写 impl 文件，按需拆分 `*_impl.py` 和业务入口 `*.py`。
-3. 同目录增加 `test_*.py` 或在业务入口内直接写 `def test_xxx()`（参考 `qwen3_next/`）。
+1. 在 `src/pypto_gym/ops/pypto_tile/` 下新建子目录（若是通用算子，放入 `experimental/` 对应子类）。
+2. 编写 impl 文件（命名建议 `*_impl.py`）。
+3. 在 `tests/ops/` 对应子目录下增加 `test_*.py`。
 4. 用 `@pytest.mark.soc("950", "910")` 标注适用 SoC，用 `@pytest.mark.world_size(N)` 标注多卡需求。
 5. 补一份 `README.md` 说明算子语义、shape 范围与预期性能。
 
-## 🔗 关联资源
+## 关联资源
 
 - [PyPTO 主仓](https://gitcode.com/cann/pypto)
 - [PyPTO 文档中心](https://pypto.gitcode.com)
 - [PyPTO 贡献指南](https://gitcode.com/cann/pypto/blob/master/CONTRIBUTION.md)
 
-## 📝 相关信息
+## 相关信息
 
 - [许可证](LICENSE)：CANN Open Software License Agreement Version 2.0
 - [安全声明](SECURITY.md)
