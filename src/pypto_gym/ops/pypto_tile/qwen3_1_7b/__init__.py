@@ -20,11 +20,11 @@ import torch
 
 # The op modules use sibling imports — add their directory to sys.path
 # so `import qwen3_decode_attn`, `import qwen3_pre_attn_fused` etc. resolve.
-# This file lives at  <repo>/modeling/qwen3_1_7b/qwen3_pto_kernels/__init__.py
+# This file lives at  <repo>/src/pypto_gym/transformers/qwen3_1_7b/qwen3_pto_kernels/
 # Ops live at        <repo>/src/pypto_gym/ops/qwen3_1_7b/
 _OPS_DIR = (
     Path(__file__).resolve().parents[3]
-    / "src" / "pypto_gym" / "ops" / "qwen3_1_7b"
+    / "ops" / "qwen3_1_7b"
 )
 if str(_OPS_DIR) not in sys.path:
     sys.path.insert(0, str(_OPS_DIR))
