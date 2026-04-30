@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-PyPTO 算子库顶层 __init__.py — Qwen3-1.7B
+PyPTO 算子库顶层 __init__.py — Qwen3-VL-8B-Instruct-Unredacted-MAX
 """
 
 import os

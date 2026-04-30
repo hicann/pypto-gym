@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+# coding: utf-8
+"""
+RMSNorm 精度测试脚本
+遍历 test_cases.json 执行精度对比
+"""
+
+import os
+import sys
+import json
+import argparse
+import torch
+import numpy as np
+from numpy.testing import assert_allclose
+
+from pathlib import Path
+
+_IMPL = Path(__file__).resolve().parents[3] / "src/pypto_gym/ops/pypto_tile/gutenocr_3b"
+sys.path.insert(0, str(_IMPL))
+from rms_norm_golden import rms_norm_golden      # 同级目录
+from rms_norm.rms_norm_impl import rms_norm_impl  # sys.path 中找到
+
+
+def get_device():
+    if "TILE_FWK_DEVICE_ID" in os.environ:
+        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
+        return f"npu:{device_id}"
+    return "cpu"
+
+
+def load_test_cases():
+    json_path = os.path.join(os.path.dirname(__file__), "test_cases.json")
+    if not os.path.exists(json_path):
+        print(f"ERROR: {json_path} not found")
+        sys.exit(1)
+    with open(json_path, "r") as f:
+        return json.load(f)
+
+
+def run_single_case(case_data, device):
+    case_id = case_data["id"]
+    description = case_data.get("description", "")
+    
+    print("=" * 60)
+    print(f"Test: {case_id} — {description}")
+    print("=" * 60)
+    
+    torch.manual_seed(case_data.get("seed", 42))
+    
+    dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
+    
+    inputs = case_data["input"]
+    dtype = dtype_map[inputs["hidden_states"]["dtype"]]
+    
+    hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=dtype, device=device)
+    gamma = torch.randn(inputs["gamma"]["shape"], dtype=dtype, device=device)
+    eps = inputs["eps"]["value"]
+    
+    output_golden = rms_norm_golden(hidden_states.cpu(), gamma.cpu(), eps).to(device)
+    output_impl = rms_norm_impl(hidden_states, gamma, eps)
+    
+    max_diff = torch.abs(output_golden - output_impl).max().item()
+    print(f"  Max diff: {max_diff:.6e}")
+    
+    rtol = case_data.get("rtol", 1e-3)
+    atol = case_data.get("atol", 1e-3)
+    
+    try:
+        assert_allclose(output_impl.cpu().numpy(), output_golden.cpu().numpy(), rtol=rtol, atol=atol)
+        print(f"[PRECISION_PASS] diff < {rtol}")
+    except AssertionError as e:
+        print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
+        raise
+    
+    expected_shape = case_data["output"]["shape"]
+    expected_dtype = dtype_map[case_data["output"]["dtype"]]
+    assert output_impl.shape == torch.Size(expected_shape), f"Shape mismatch: {output_impl.shape} vs {expected_shape}"
+    assert output_impl.dtype == expected_dtype, f"Dtype mismatch: {output_impl.dtype} vs {expected_dtype}"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="RMSNorm 精度测试")
+    parser.add_argument("case_id", nargs="?", help="运行单个用例")
+    parser.add_argument("--list", action="store_true", help="列出所有用例")
+    args = parser.parse_args()
+    
+    test_cases = load_test_cases()
+    cases = test_cases.get("test_cases", [])
+    
+    if args.list:
+        print(f"\nTest cases from test_cases.json:\n")
+        for case in cases:
+            print(f"  {case['id']} — {case.get('description', '')}")
+        return
+    
+    device = get_device()
+    if device.startswith("npu"):
+        import torch_npu
+        torch.npu.set_device(int(device.split(":")[1]))
+    
+    to_run = cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]
+    
+    try:
+        for case_data in to_run:
+            run_single_case(case_data, device)
+        print("\n" + "=" * 60)
+        print("All tests passed!")
+        print("=" * 60)
+    except Exception as e:
+        print(f"\nError: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
