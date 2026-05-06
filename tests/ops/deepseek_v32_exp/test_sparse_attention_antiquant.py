@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 import pypto
 
-from pypto_gym.ops.deepseek_v32_exp.sparse_attention_antiquant_impl \
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.sparse_attention_antiquant_impl \
     import sparse_attention_antiquant_d, sparse_attention_antiquant_p, SaTileShapeConfig
-from pypto_gym.ops.deepseek_v32_exp.utils.compare import compare
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 
 
 def gen_uniform_data(data_shape, min_value, max_value, dtype):

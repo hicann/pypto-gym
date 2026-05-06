@@ -19,6 +19,7 @@ Main Functions:
 """
 
 import multiprocessing as mp
+import traceback
 
 import numpy as np
 import pytest
@@ -28,7 +29,7 @@ from torch._subclasses import fake_tensor
 
 import pypto
 
-from distributed_config import DistributedConfig
+from distributed_config import DistributedConfig, collect_process_errors
 
 
 @pypto.frontend.jit()
@@ -183,34 +184,40 @@ def matmul_allreduce_add_rmsnorm_worker(
     input_data: list,
     output_data: list,
     logical_rank_id: int,
+    error_queue: mp.Queue,
 ):
-    groups = config.init_hccl_comm(logical_rank_id)
-    physical_device_id = config.get_physical_device_id(logical_rank_id)
-    device = f'npu:{physical_device_id}'
+    try:
+        groups = config.init_hccl_comm(logical_rank_id)
+        physical_device_id = config.get_physical_device_id(logical_rank_id)
+        device = f'npu:{physical_device_id}'
 
-    in_tensor, matmul_weight, residual, gamma, bias, eps = input_data
-    golden_out_tensor, golden_residual = output_data
+        in_tensor, matmul_weight, residual, gamma, bias, eps = input_data
+        golden_out_tensor, golden_residual = output_data
 
-    out_tensor = torch.empty(residual.shape, dtype=torch.bfloat16, device=device)
-    residual_out = torch.empty(residual.shape, dtype=torch.bfloat16, device=device)
+        out_tensor = torch.empty(residual.shape, dtype=torch.bfloat16, device=device)
+        residual_out = torch.empty(residual.shape, dtype=torch.bfloat16, device=device)
 
-    inputs = [in_tensor, matmul_weight, residual, gamma, bias, out_tensor, residual_out]
+        inputs = [in_tensor, matmul_weight, residual, gamma, bias, out_tensor, residual_out]
 
-    matmul_allreduce_add_rmsnorm_kernel(*inputs, eps, groups[0], config.world_size)
+        matmul_allreduce_add_rmsnorm_kernel(*inputs, eps, groups[0], config.world_size)
 
-    np.testing.assert_allclose(
-        np.array(out_tensor.cpu().flatten().tolist()),
-        np.array(golden_out_tensor.cpu().flatten().tolist()),
-        rtol=8e-3,
-        atol=8e-3,
-    )
+        np.testing.assert_allclose(
+            np.array(out_tensor.cpu().flatten().tolist()),
+            np.array(golden_out_tensor.cpu().flatten().tolist()),
+            rtol=8e-3,
+            atol=8e-3,
+        )
 
-    np.testing.assert_allclose(
-        np.array(residual_out.cpu().flatten().tolist()),
-        np.array(golden_residual.cpu().flatten().tolist()),
-        rtol=8e-3,
-        atol=8e-3,
-    )
+        np.testing.assert_allclose(
+            np.array(residual_out.cpu().flatten().tolist()),
+            np.array(golden_residual.cpu().flatten().tolist()),
+            rtol=8e-3,
+            atol=8e-3,
+        )
+    except Exception as e:
+        if error_queue is not None:
+            error_queue.put((logical_rank_id, str(e), traceback.format_exc()))
+        raise
 
 
 @allow_in_graph
@@ -242,16 +249,23 @@ def matmul_allreduce_add_rmsnorm(
 def test_matmul_allreduce_add_rmsnorm():
     mp.set_start_method('spawn', force=True)
     config = DistributedConfig(world_size=4)
-    processes = []
     input_datas, output_datas = generate_golden_data(config)
+
+    error_queue = mp.Queue()
+
+    processes = []
     for i in range(config.world_size):
-        p = mp.Process(target=matmul_allreduce_add_rmsnorm_worker, args=(config, input_datas[i], output_datas[i], i))
+        p = mp.Process(
+            target=matmul_allreduce_add_rmsnorm_worker,
+            args=(config, input_datas[i], output_datas[i], i, error_queue)
+        )
         p.start()
         processes.append(p)
-    for i, p in enumerate(processes):
+
+    for p in processes:
         p.join()
-        if p.exitcode != 0:
-            raise AssertionError(f"process {i} failed, return: {p.exitcode}")
+
+    collect_process_errors(processes, error_queue)
 
 
 def main():

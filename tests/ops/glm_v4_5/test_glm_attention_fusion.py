@@ -16,9 +16,9 @@ import torch
 import torch_npu
 import pypto
 import pytest
-from pypto_gym.ops.glm_v4_5.glm_attention_fusion_impl import attention, get_qwen_common_config
-from pypto_gym.ops.glm_v4_5.utils.np_compare import detailed_allclose_manual as compare
-from pypto_gym.ops.glm_v4_5.utils.golden import attn_golden
+from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_fusion_impl import attention, get_qwen_common_config
+from pypto_gym.ops.pypto_tile.glm_v4_5.utils.np_compare import detailed_allclose_manual as compare
+from pypto_gym.ops.pypto_tile.glm_v4_5.utils.golden import attn_golden
 
 
 np.random.seed(0)

@@ -24,7 +24,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 import pypto
-from pypto_gym.ops.glm_v4_5.utils.get_format import get_format
+from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
 
 
 def check_args(

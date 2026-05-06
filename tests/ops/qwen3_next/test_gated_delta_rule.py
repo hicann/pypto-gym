@@ -23,7 +23,7 @@ Main Functions:
     - pypto_chunk_gated_delta_rule_dyn: Dynamic wrapper for PyPTO implementation
 
 Example:
-    python qwen3_next_gated_delta_rule.py
+    pytest tests/ops/qwen3_next/test_gated_delta_rule.py
 """
 
 import os
@@ -34,7 +34,7 @@ import torch.nn.functional as F
 import torch_npu
 
 import pypto
-from pypto_gym.ops.qwen3_next.gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
+from pypto_gym.ops.pypto_tile.qwen3_next.gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
 
 
 def gen_dims(params):

@@ -22,6 +22,7 @@ Main Functions:
 
 import dataclasses
 from typing import Callable
+import traceback
 
 import multiprocessing as mp
 import numpy as np
@@ -31,7 +32,7 @@ import torch.nn.functional as F
 
 import pypto
 
-from distributed_config import DistributedConfig
+from distributed_config import DistributedConfig, collect_process_errors
 
 TensorList = list[torch.Tensor]
 
@@ -881,47 +882,56 @@ def moe_distributed_dispatch_combine(
     moe_case: MoeCase,
     operands: MoeDispatchCombineOperands,
     logical_rank_id: int,
+    error_queue: mp.Queue,
 ) -> None:
-    groups = config.init_hccl_comm(logical_rank_id)
+    try:
+        groups = config.init_hccl_comm(logical_rank_id)
 
-    x = operands.x
-    expert_ids = operands.expert_ids
-    expand_x_golden = operands.expand_x_golden
-    assist_info_for_combine_golden = operands.assist_info_for_combine_golden
-    expert_token_nums_golden = operands.expert_token_nums_golden
-    recv_counts_golden = operands.recv_counts_golden
+        x = operands.x
+        expert_ids = operands.expert_ids
+        expand_x_golden = operands.expand_x_golden
+        assist_info_for_combine_golden = operands.assist_info_for_combine_golden
+        expert_token_nums_golden = operands.expert_token_nums_golden
+        recv_counts_golden = operands.recv_counts_golden
 
-    physical_device_id = config.get_physical_device_id(logical_rank_id)
-    x = x.to(f'npu:{physical_device_id}')
-    expert_ids = expert_ids.to(f'npu:{physical_device_id}')
-    expand_x_golden = expand_x_golden.to(f'npu:{physical_device_id}')
-    assist_info_for_combine_golden = assist_info_for_combine_golden.to(f'npu:{physical_device_id}')
-    expert_token_nums_golden = expert_token_nums_golden.to(f'npu:{physical_device_id}')
-    recv_counts_golden = recv_counts_golden.to(f'npu:{physical_device_id}')
+        physical_device_id = config.get_physical_device_id(logical_rank_id)
+        x = x.to(f'npu:{physical_device_id}')
+        expert_ids = expert_ids.to(f'npu:{physical_device_id}')
+        expand_x_golden = expand_x_golden.to(f'npu:{physical_device_id}')
+        assist_info_for_combine_golden = assist_info_for_combine_golden.to(f'npu:{physical_device_id}')
+        expert_token_nums_golden = expert_token_nums_golden.to(f'npu:{physical_device_id}')
+        recv_counts_golden = recv_counts_golden.to(f'npu:{physical_device_id}')
 
-    expand_x_actual = create_tensor_on_npu(expand_x_golden, physical_device_id)
-    assist_info_for_combine_actual = create_tensor_on_npu(assist_info_for_combine_golden, physical_device_id)
-    expert_token_nums_actual = create_tensor_on_npu(expert_token_nums_golden, physical_device_id)
-    recv_counts_actual = create_tensor_on_npu(recv_counts_golden, physical_device_id)
+        expand_x_actual = create_tensor_on_npu(expand_x_golden, physical_device_id)
+        assist_info_for_combine_actual = create_tensor_on_npu(assist_info_for_combine_golden, physical_device_id)
+        expert_token_nums_actual = create_tensor_on_npu(expert_token_nums_golden, physical_device_id)
+        recv_counts_actual = create_tensor_on_npu(recv_counts_golden, physical_device_id)
 
-    kernel = moe_distributed_dispatch_kernel(moe_case=moe_case, group_name=groups[0])
-    kernel(x, expert_ids, expand_x_actual, assist_info_for_combine_actual, expert_token_nums_actual, recv_counts_actual)
+        kernel = moe_distributed_dispatch_kernel(moe_case=moe_case, group_name=groups[0])
+        kernel(
+            x, expert_ids, expand_x_actual, assist_info_for_combine_actual,
+            expert_token_nums_actual, recv_counts_actual
+        )
 
-    assist_info_for_combine = assist_info_for_combine_actual[:, -3:].cpu()
-    assist_info_for_combine = assist_info_for_combine.to(f'npu:{physical_device_id}')
-    expert_scales = operands.expert_scales
-    expert_scales = expert_scales.to(f'npu:{physical_device_id}')
-    out_golden = operands.out_golden
-    out_golden = out_golden.to(f'npu:{physical_device_id}')
-    out = create_tensor_on_npu(out_golden, physical_device_id)
+        assist_info_for_combine = assist_info_for_combine_actual[:, -3:].cpu()
+        assist_info_for_combine = assist_info_for_combine.to(f'npu:{physical_device_id}')
+        expert_scales = operands.expert_scales
+        expert_scales = expert_scales.to(f'npu:{physical_device_id}')
+        out_golden = operands.out_golden
+        out_golden = out_golden.to(f'npu:{physical_device_id}')
+        out = create_tensor_on_npu(out_golden, physical_device_id)
 
-    kernel = moe_distributed_combine_kernel(moe_case=moe_case, group_name=groups[0])
-    kernel(expand_x_actual, assist_info_for_combine, recv_counts_actual, expert_scales, out)
+        kernel = moe_distributed_combine_kernel(moe_case=moe_case, group_name=groups[0])
+        kernel(expand_x_actual, assist_info_for_combine, recv_counts_actual, expert_scales, out)
 
-    assert_allclose_with_eps(out_golden.cpu(), out.cpu())
+        assert_allclose_with_eps(out_golden.cpu(), out.cpu())
+    except Exception as e:
+        if error_queue is not None:
+            error_queue.put((logical_rank_id, str(e), traceback.format_exc()))
+        raise
 
 
-@pytest.mark.skip(reason="功能有问题，暂不执行")
+@pytest.mark.skip(reason="精度问题，暂不执行")
 @pytest.mark.world_size(4)
 def test_moe_distributed_dispatch_combine() -> None:
     config = DistributedConfig(world_size=4)
@@ -930,7 +940,7 @@ def test_moe_distributed_dispatch_combine() -> None:
     moe_case = MoeCase(8, 5120, 160, 8, pypto.DT_BF16, config.world_size)
 
     operand_lists = generate_dispatch_combine_golden(moe_case, torch.bfloat16)
-
+    error_queue = mp.Queue()
     for (
         x,
         moe_expert_ids,
@@ -962,13 +972,15 @@ def test_moe_distributed_dispatch_combine() -> None:
             recv_counts_golden,
             out_golden,
         )
-        p = mp.Process(target=moe_distributed_dispatch_combine, args=(config, moe_case, operands, logical_rank_id))
+        p = mp.Process(target=moe_distributed_dispatch_combine,
+            args=(config, moe_case, operands, logical_rank_id, error_queue))
         p.start()
         processes.append(p)
-    for i, p in enumerate(processes):
+
+    for p in processes:
         p.join()
-        if p.exitcode != 0:
-            raise AssertionError(f"process {i} failed, return: {p.exitcode}")
+
+    collect_process_errors(processes, error_queue)
 
 
 if __name__ == '__main__':

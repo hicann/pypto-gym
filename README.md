@@ -14,9 +14,9 @@ PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym
 
 ## 特性
 
-- 覆盖 DeepSeek V3.2、GLM V4.5、Qwen3-Next、Arctic、QAT 等模型的关键算子实现
+- 覆盖 DeepSeek V3.2、GLM V4.5、Qwen3-Next、Qwen3-1.7B、Arctic、QAT 等模型的关键算子实现
 - 提供实验性目录 `experimental/` 收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
-- 每个模型目录自包含：impl 文件 + pytest 测试 + README，可独立运行
+- 算子实现与测试分离：kernel 实现位于 `src/pypto_gym/ops/pypto_tile/<model>/`，对应测试位于 `tests/ops/<model>/`，通过绝对包路径互相引用
 - 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
 
 ## 环境准备
@@ -149,9 +149,9 @@ pytest -v
 ```
 
 `pytest.ini` 已配置：
-- `testpaths`：`src/pypto_gym/ops` 和 `tests`
+- `testpaths`：`tests/ops`
 - `norecursedirs`：自动排除 `experimental/` 目录
-- `python_files`：匹配 `test_*.py glm_*.py deepseekv32_*.py qwen3_next_*.py`
+- `python_files`：匹配 `test_*.py`
 
 如需运行实验性算子：
 
@@ -213,38 +213,66 @@ pypto-gym/
 ├── src/
 │   └── pypto_gym/
 │       ├── __init__.py
-│       ├── ops/
-│       │   └── pypto_tile/                  # 算子根目录
-│       │       ├── arctic/                  # Arctic LSTM
-│       │       │   └── sum_lstm.py
-│       │       ├── deepseek_v32_exp/        # DeepSeek V3.2 实验算子
-│       │       │   ├── sparse_flash_attention_quant_impl.py
-│       │       │   ├── mla_prolog_quant_impl.py
-│       │       │   └── ...
-│       │       ├── glm_v4_5/                # GLM V4.5
-│       │       │   ├── glm_attention_impl.py
-│       │       │   ├── glm_moe_fusion_impl.py
-│       │       │   └── ...
-│       │       ├── qat/                     # 量化感知训练
-│       │       │   └── qat_impl.py
-│       │       ├── qwen3_1_7b/              # Qwen3-1.7B 融合算子
-│       │       ├── qwen3_next/              # Qwen3-Next Gated Delta Rule
-│       │       └── experimental/            # 实验性算子（默认不跑）
-│       │           ├── attention/
-│       │           ├── distributed/
-│       │           ├── matmul/
-│       │           ├── ops-transformer/
-│       │           └── vector/
+│       ├── ops/                             # 算子样例根目录
+│       │   ├── pypto_tile/                  # Tile 算子实现
+│       │   │   ├── arctic/                  # Arctic LSTM
+│       │   │   │   ├── sum_lstm.py
+│       │   │   │   └── README.md
+│       │   │   ├── deepseek_v32_exp/        # DeepSeek V3.2 实验算子
+│       │   │   │   ├── lightning_indexer_prolog_quant_impl.py
+│       │   │   │   ├── lightning_indexer_quant_impl.py
+│       │   │   │   ├── mla_indexer_prolog_quant_impl.py
+│       │   │   │   ├── mla_prolog_quant_impl.py
+│       │   │   │   ├── sparse_attention_antiquant_impl.py
+│       │   │   │   ├── sparse_flash_attention_quant_impl.py
+│       │   │   │   ├── utils/
+│       │   │   │   └── README.md
+│       │   │   ├── glm_v4_5/                # GLM V4.5
+│       │   │   │   ├── glm_attention_impl.py
+│       │   │   │   ├── glm_attention_fusion_impl.py
+│       │   │   │   ├── glm_attention_pre_quant_impl.py
+│       │   │   │   ├── glm_ffn_common_interface.py
+│       │   │   │   ├── glm_ffn_shared_expert_quant_impl.py
+│       │   │   │   ├── glm_gate_impl.py
+│       │   │   │   ├── glm_moe_fusion_impl.py
+│       │   │   │   ├── glm_select_experts_impl.py
+│       │   │   │   ├── utils/
+│       │   │   │   ├── intergrated_example.md
+│       │   │   │   └── README.md
+│       │   │   ├── qat/                     # 量化感知训练
+│       │   │   │   ├── qat_impl.py
+│       │   │   │   └── README.md
+│       │   │   ├── qwen3_1_7b/              # Qwen3-1.7B 融合算子
+│       │   │   │   ├── qwen3_pre_attn_fused.py
+│       │   │   │   ├── qwen3_k3_post_attn.py
+│       │   │   │   ├── qwen3_decode_attn.py
+│       │   │   │   ├── qwen3_iter1a_kernel.py
+│       │   │   │   ├── qwen3_iter1b_kernel.py
+│       │   │   │   ├── qwen3_k2_qk_rope.py
+│       │   │   │   ├── k3_post_attn.py
+│       │   │   │   ├── __init__.py
+│       │   │   │   └── README.md
+│       │   │   └── qwen3_next/              # Qwen3-Next Gated Delta Rule
+│       │   │       ├── gated_delta_rule_impl.py
+│       │   │       └── README.md
+│       │   └── experimental/                # 实验性算子（默认不跑）
+│       │       ├── attention/
+│       │       ├── distributed/
+│       │       ├── matmul/
+│       │       ├── ops-transformer/
+│       │       └── vector/
 │       └── transformers/                    # HuggingFace 模型结构定义
 │           └── qwen3_1_7b/
-├── tests/                                   # 算子单元测试
-│   └── ops/
-│       ├── arctic/
-│       ├── deepseek_v32_exp/
-│       ├── glm_v4_5/
-│       ├── qat/
-│       ├── qwen3_1_7b/
-│       └── qwen3_next/
+├── tests/                                   # 测试用例
+│   └── ops/                                 # 与 ops/ 一一对应
+│       ├── arctic/test_sum_lstm.py
+│       ├── deepseek_v32_exp/test_*.py
+│       ├── glm_v4_5/test_*.py
+│       ├── qat/test_qat.py
+│       ├── qwen3_1_7b/test_*.py
+│       │   └── conftest.py
+│       ├── qwen3_next/test_gated_delta_rule.py
+│       └── README.md
 ├── conftest.py                              # pytest 调度（多卡 / 多 SoC 筛选）
 ├── pytest.ini
 ├── pyproject.toml
@@ -258,10 +286,10 @@ pypto-gym/
 ## 添加新算子
 
 1. 在 `src/pypto_gym/ops/pypto_tile/` 下新建子目录（若是通用算子，放入 `experimental/` 对应子类）。
-2. 编写 impl 文件（命名建议 `*_impl.py`）。
-3. 在 `tests/ops/` 对应子目录下增加 `test_*.py`。
+2. 编写 kernel 实现文件，命名建议为 `*_impl.py`，对外暴露入口函数 / 配置类。
+3. 在 `tests/ops/` 下新建同名子目录，添加 `test_*.py`，通过绝对路径引用 kernel。
 4. 用 `@pytest.mark.soc("950", "910")` 标注适用 SoC，用 `@pytest.mark.world_size(N)` 标注多卡需求。
-5. 补一份 `README.md` 说明算子语义、shape 范围与预期性能。
+5. 补一份 `README.md` 说明算子语义、shape 范围与预期性能，以及对应测试文件路径。
 
 ## 关联资源
 

@@ -16,8 +16,8 @@ import pytest
 import numpy as np
 import pypto
 from numpy.testing import assert_allclose
-from pypto_gym.ops.glm_v4_5.glm_attention_pre_quant_impl import attention_pre_quant
-from pypto_gym.ops.glm_v4_5.utils.get_format import get_format
+from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_pre_quant_impl import attention_pre_quant
+from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)

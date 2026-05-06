@@ -24,7 +24,7 @@ Main Functions:
     - chunk_gated_delta_rule: Main fused operator entry point
 
 Example:
-    See qwen3_next_gated_delta_rule.py for usage examples.
+    See tests/ops/qwen3_next/test_gated_delta_rule.py for usage examples.
 """
 
 import pypto

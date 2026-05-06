@@ -16,7 +16,7 @@ import pytest
 import numpy as np
 from numpy.testing import assert_allclose
 import pypto
-from pypto_gym.ops.glm_v4_5.glm_attention_impl import (
+from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_impl import (
     attention, attention_for_950, set_qwen_common_config,
     get_common_config,
 )

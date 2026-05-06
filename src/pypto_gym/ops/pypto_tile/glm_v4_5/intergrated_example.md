@@ -1,11 +1,11 @@
 ## GLM-4.5 模型 PyPTO 算子替换指南
 
-本文选取 `models/glm_v4_5` 目录下 `glm_gate.py` 文件中的 `gate` 算子作为典型案例（其它算子替换逻辑完全相同），重点介绍基于 vllm 工程的 PyPTO 算子便捷替换方案，旨在为 GLM-4.5 模型整网融合后的算子适配工作提供实践支撑。
+本文选取 `src/pypto_gym/ops/pypto_tile/glm_v4_5/` 目录下 `glm_gate_impl.py` 文件中的 `gate` 算子作为典型案例（其它算子替换逻辑完全相同），重点介绍基于 vllm 工程的 PyPTO 算子便捷替换方案，旨在为 GLM-4.5 模型整网融合后的算子适配工作提供实践支撑。
 
 ### 1. 调整目录结构
 
 1. 新建 `glm_pto_kernels` 目录，该目录与现有 `vllm`、`vllm_ascend` 目录同级；
-2. 将 `models/glm_v4_5` 目录下的 `glm_gate.py` 文件复制至新建的 `glm_pto_kernels` 目录中；
+2. 将 `src/pypto_gym/ops/pypto_tile/glm_v4_5/` 目录下的 `glm_gate_impl.py` 文件复制至新建的 `glm_pto_kernels` 目录中，并重命名为 `glm_gate.py`；
 3. 在 `glm_pto_kernels` 目录下新建空的 `__init__.py` 文件。
 
 - 调整后的完整目录结构如下：
@@ -80,9 +80,9 @@ router_logits = glm_pto_kernels.gate(self.gate, hidden_states.to(dtype=torch.flo
 
 
 ### 4. 其它算子适配层接口
-以下提供 `models/glm_v4_5` 目录下各类算子的适配层接口定义，将对应函数直接复制到 `glm_pto_kernels/__init__.py` 文件中即可完成适配层配置；每个函数注释内均标注了目标替换文件、函数及具体替换方法，按说明操作即可完成算子切换。
+以下提供 `src/pypto_gym/ops/pypto_tile/glm_v4_5/` 目录下各类算子的适配层接口定义（`glm_pto_kernels/` 内对应的文件名沿用注释中目标工程的命名约定），将对应函数直接复制到 `glm_pto_kernels/__init__.py` 文件中即可完成适配层配置；每个函数注释内均标注了目标替换文件、函数及具体替换方法，按说明操作即可完成算子切换。
 
-- glm_attention.py 相关的算子适配层函数
+- glm_attention_impl.py 相关的算子适配层函数
 ```
 # 配置算子开关，可灵活切换 PyPTO 或是原始方案
 USE_PTO_FA              = True
@@ -122,7 +122,7 @@ def paged_attention(query, key_cache, value_cache, block_tables, actual_seqs_cpu
     return output
 ```
 
-- glm_attention_pre_quant.py 相关的算子适配层函数
+- glm_attention_pre_quant_impl.py 相关的算子适配层函数
 ```
 # 配置算子开关，可灵活切换 PyPTO 或是原始方案
 USE_PTO_FA_PRE          = True
@@ -212,7 +212,7 @@ def attention_pre(hidden_states, residual, layer, attention, positions):
     return q, k, v, residual_res
 ```
 
-- glm_ffn_shared_expert_quant.py 相关的算子适配层函数
+- glm_ffn_shared_expert_quant_impl.py 相关的算子适配层函数
 ```
 # 配置算子开关，可灵活切换 PyPTO 或是原始方案
 USE_PTO_SHARE_EXEPERTS  = True
@@ -243,7 +243,7 @@ def ffn_share_expert_quant(layer, hidden_states):
     return ffn_res
 ```
 
-- glm_select_experts.py 相关的算子适配层函数
+- glm_select_experts_impl.py 相关的算子适配层函数
 ```
 # 配置算子开关，可灵活切换 PyPTO 或是原始方案
 USE_PTO_SELECT_EXEPERTS = True

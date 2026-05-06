@@ -16,7 +16,7 @@ import torch_npu
 import numpy as np
 from numpy.testing import assert_allclose
 import pypto
-from pypto_gym.ops.glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond
+from pypto_gym.ops.pypto_tile.glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond
 
 
 def gen_quan_per_channel_weight_nz(x):

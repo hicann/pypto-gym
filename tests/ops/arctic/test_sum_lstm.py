@@ -28,7 +28,7 @@ import torch
 from numpy.testing import assert_allclose
 import pytest
 
-from pypto_gym.ops.arctic.sum_lstm import sum_lstm, LstmConfig
+from pypto_gym.ops.pypto_tile.arctic.sum_lstm import sum_lstm, LstmConfig
 
 BATCH_SIZE = 32
 D_GATE = 4096
@@ -249,8 +249,31 @@ def get_device_id():
         return None
 
 
-@pytest.mark.skip("precision test")
+def _setup(device_id: int):
+    """Bind the NPU device, JIT-compile the kernel and prepare common inputs."""
+    import torch_npu  # noqa: F401
+    torch.npu.set_device(device_id)
+    kernel_func = sum_lstm("npu")
+    data = prepare_test_data(device_id)
+    return kernel_func, data
+
+
+@pytest.mark.soc("950", "910")
+def test_precision(device):
+    """Precision check: compare PyPTO NPU kernel against torch golden."""
+    kernel_func, data = _setup(device)
+    run_precision_test(kernel_func, data)
+
+
+@pytest.mark.soc("950", "910")
+def test_performance(device):
+    """Performance benchmark: PyPTO NPU kernel vs torch golden."""
+    kernel_func, data = _setup(device)
+    run_performance_test(kernel_func, data)
+
+
 def main():
+    """CLI entry kept for direct ``python test_sum_lstm.py`` invocation."""
     parser = argparse.ArgumentParser(description="Run Arctic LSTM PyPTO Example")
     parser.add_argument('--run_mode', type=str, default="npu", choices=["npu", "sim"])
     parser.add_argument('--test_type', type=str, default="precision",

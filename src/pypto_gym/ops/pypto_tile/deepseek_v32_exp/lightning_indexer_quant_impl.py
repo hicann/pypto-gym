@@ -19,14 +19,45 @@ Main Functions:
     - lightning_indexer_decode_compute: JIT-compiled decode version
 
 Example:
-    See deepseekv32_lightning_indexer_quant.py for usage examples.
+    See tests/ops/deepseek_v32_exp/test_lightning_indexer_quant.py for usage examples.
 """
 import sys
+from dataclasses import dataclass
+
 import torch
 from pypto.operation import op_wrapper
 import pypto
 from pypto import pypto_impl
-from pypto_gym.ops.deepseek_v32_exp.deepseekv32_lightning_indexer_quant import LightningIndexerConfigs
+
+
+@dataclass
+class LightningIndexerConfigs:
+    """Configuration parameters for the lightning indexer kernel.
+
+    Includes graph optimization, L1 reuse, vector buffer, tile shape and
+    matmul-relu fusion settings consumed by ``lightning_indexer_decode_compute``.
+    """
+    # graph optimization params
+    # used for copy in merge graph
+    mg_copy_in_upper_bound = 2 * 1024 * 1024
+    # l1 reuse merge params
+    cube_l1_reuse_setting = {
+        0: 16
+    }
+    # vector graph fuse optimization
+    vec_merge_mode = 2
+    vec_nbuffer_setting = {
+        -1: 16
+    }
+    # tile params
+    s1_tile = 2
+    topk_tile = 8192
+    # set the tileshape size in cube computation
+    c1_tile = [64, 64, 128, 128, 128, 128]  # (m, M), (k, K), (n, N)
+    c2_tile = [128, 128, 64, 64, 128, 128]  # (m, M), (k, K), (n, N)
+    # matmul relu fuse params
+    extend_param = {'scale': 1 / 2048.0, 'relu_type': pypto.ReLuType.RELU}
+
 
 MAX_LI_S1 = 4
 MAX_LI_S2 = 128 * 1024

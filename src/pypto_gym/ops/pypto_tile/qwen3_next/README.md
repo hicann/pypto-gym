@@ -441,7 +441,16 @@ def test_kernel(
 
 ## 调用示例
 
-- 详见 [gated_delta_rule_impl.py](./gated_delta_rule_impl.py)
+- 算子实现详见 [gated_delta_rule_impl.py](./gated_delta_rule_impl.py)
+- 测试用例详见 [tests/ops/qwen3_next/test_gated_delta_rule.py](../../../../../tests/ops/qwen3_next/test_gated_delta_rule.py)
+
+## 性能测试结果
+
+> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, T=2048, B=2, Nqk=2, Nv=4, D=128, L=128, FP32
+
+| 算子 | 执行时间 (μs) | 数据来源 |
+|------|-------------|---------|
+| chunk_gated_delta_rule | 6,220.58 | Bubble (NPU 硬件追踪) |
 
 ## 参考文献
 

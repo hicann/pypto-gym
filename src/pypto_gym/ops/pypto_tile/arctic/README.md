@@ -98,5 +98,14 @@ def sum_lstm_kernel(
 - **h_out**: 张量，形状为 `(BATCH_SIZE, D_GATE)`，数据类型为 FP16。表示新的隐藏状态输出。
 - **c_out**: 张量，形状为 `(BATCH_SIZE, D_GATE)`，数据类型为 FP16。表示新的细胞状态输出。
 
+## 性能测试结果
+
+> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, BATCH_SIZE=32, D_GATE=4096, FP16
+
+| 算子 | 执行时间 (μs) | 数据来源 |
+|------|-------------|---------|
+| sum_lstm | 63.94 | Bubble (NPU 硬件追踪) |
+
 ## 调用示例
-- 算子源码执行参考[test_sum_lstm.py](test_sum_lstm.py)
+- 算子入口与对外签名见 [sum_lstm.py](sum_lstm.py)
+- 测试与 golden 实现见 [tests/ops/arctic/test_sum_lstm.py](../../../../../tests/ops/arctic/test_sum_lstm.py)

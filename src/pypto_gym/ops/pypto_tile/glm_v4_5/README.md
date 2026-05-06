@@ -120,7 +120,7 @@ def attention_pre_quant(
 
 ## 调用示例
 
-- 详见 [glm_attention_pre_quant](./glm_attention_pre_quant.py)
+- 详见算子实现 [glm_attention_pre_quant_impl.py](./glm_attention_pre_quant_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_attention_pre_quant.py](../../../../../tests/ops/glm_v4_5/test_glm_attention_pre_quant.py)
 
 
 
@@ -183,7 +183,7 @@ def attention(
 
 ## 调用示例
 
-- 详见 [glm_attention.py](./glm_attention.py)
+- 详见算子实现 [glm_attention_impl.py](./glm_attention_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_attention.py](../../../../../tests/ops/glm_v4_5/test_glm_attention.py)
 
 
 
@@ -224,7 +224,7 @@ def gate(
 
 ## 调用示例
 
-- 详见 [glm_gate](./glm_gate.py)
+- 详见算子实现 [glm_gate_impl.py](./glm_gate_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_gate.py](../../../../../tests/ops/glm_v4_5/test_glm_gate.py)
 
 
 
@@ -292,7 +292,7 @@ def select_experts(
 
 ## 调用示例
 
-- 详见 [glm_select_experts](./glm_select_experts.py)
+- 详见算子实现 [glm_select_experts_impl.py](./glm_select_experts_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_select_experts.py](../../../../../tests/ops/glm_v4_5/test_glm_select_experts.py)
 
 
 
@@ -355,7 +355,7 @@ def ffn_shared_expert_quant(
 
 ## 调用示例
 
-- 详见 [glm_ffn_shared_expert_quant](./glm_ffn_shared_expert_quant.py)
+- 详见算子实现 [glm_ffn_shared_expert_quant_impl.py](./glm_ffn_shared_expert_quant_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_ffn_shared_expert_quant.py](../../../../../tests/ops/glm_v4_5/test_glm_ffn_shared_expert_quant.py)
 
 
 # attention_fusion
@@ -486,7 +486,7 @@ def attention(
 
 ## 调用示例
 
-- 详见 [glm_attention_fusion](./glm_attention_fusion.py)
+- 详见算子实现 [glm_attention_fusion_impl.py](./glm_attention_fusion_impl.py)，测试用例见 [tests/ops/glm_v4_5/test_glm_attention_fusion.py](../../../../../tests/ops/glm_v4_5/test_glm_attention_fusion.py)
 
 
 # moe_fusion
@@ -587,6 +587,18 @@ def moe_fusion(
 
 -   **ffn_res**（`Tensor`）：输出tensor。当前仅支持连续，数据格式ND，数据类型支持`bfloat16`，shape为[num_tokens, hidden_size]。
 
-## 调用示例
+## 性能测试结果
 
-- 详见 [glm_moe_fusion](./glm_moe_fusion.py)
+> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, `pytest --forked`
+
+| 算子 | 执行时间 (μs) | 数据来源 |
+|------|-------------|---------|
+| ffn_shared_expert_quant | 39.02 | Bubble |
+| moe_fusion | 45.86 | Bubble |
+| attention_pre_quant | 65.62 | Bubble |
+| attention_fusion | 193.82 | Bubble |
+| attention | 275.86 | Bubble |
+| gate | — | NPUGraph (无 bubble) |
+| select_experts | — | NPUGraph (无 bubble) |
+
+## 调用示例

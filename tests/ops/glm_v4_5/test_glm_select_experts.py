@@ -13,7 +13,7 @@ import torch
 import torch_npu
 import numpy as np
 from numpy.testing import assert_allclose
-from pypto_gym.ops.glm_v4_5.glm_select_experts_impl import select_experts
+from pypto_gym.ops.pypto_tile.glm_v4_5.glm_select_experts_impl import select_experts
 
 
 def gen_row_idx_gloden(hidden_states, top_k):

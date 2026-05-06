@@ -10,7 +10,6 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
-from dataclasses import dataclass
 import os
 import logging
 import math
@@ -19,31 +18,8 @@ import torch
 import torch_npu
 import numpy as np
 import pypto
-from pypto_gym.ops.deepseek_v32_exp.utils.compare import compare
-
-
-@dataclass
-class LightningIndexerConfigs:
-    # graph optimization params
-    # used for copy in merge graph
-    mg_copy_in_upper_bound = 2 * 1024 * 1024
-    # l1 reuse merge params
-    cube_l1_reuse_setting = {
-        0: 16
-    }
-    # vector graph fuse optimization
-    vec_merge_mode = 2
-    vec_nbuffer_setting = {
-        -1: 16
-    }
-    # tile params
-    s1_tile = 2
-    topk_tile = 8192
-    # set the tileshape size in cube computation
-    c1_tile = [64, 64, 128, 128, 128, 128] # (m, M), (k, K), (n, N)
-    c2_tile = [128, 128, 64, 64, 128, 128] # (m, M), (k, K), (n, N)
-    # matmul relu fuse params
-    extend_param = {'scale': 1 / 2048.0, 'relu_type': pypto.ReLuType.RELU}
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_quant_impl import LightningIndexerConfigs
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 
 
 def gen_cache_tensor(k_tensor, block_table, block_num, block_size, b):
@@ -312,7 +288,7 @@ def topk_idx_compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, error_cou
 
 
 def lightning_indexer(case_name: str) -> bool:
-    from pypto_gym.ops.deepseek_v32_exp.lightning_indexer_quant_impl import lightning_indexer_decode
+    from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_quant_impl import lightning_indexer_decode
     # 设置设备ID
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

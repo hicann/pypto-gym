@@ -1,18 +1,17 @@
 # PyPTO-Gym Tests
 
-这个目录是 pypto-gym 的**测试入口与共享工具**目录。
+本目录是 pypto-gym 的**测试目录**，与 `src/pypto_gym/ops/pypto_tile/` 下的算子实现一一对应：
 
-## 测试在哪里
+| Kernel 实现 | 对应测试 |
+|---|---|
+| [src/pypto_gym/ops/pypto_tile/arctic/sum_lstm.py](../src/pypto_gym/ops/pypto_tile/arctic/sum_lstm.py) | [ops/arctic/test_sum_lstm.py](ops/arctic/test_sum_lstm.py) |
+| [src/pypto_gym/ops/pypto_tile/qat/qat_impl.py](../src/pypto_gym/ops/pypto_tile/qat/qat_impl.py) | [ops/qat/test_qat.py](ops/qat/test_qat.py) |
+| [src/pypto_gym/ops/pypto_tile/glm_v4_5/glm_*_impl.py](../src/pypto_gym/ops/pypto_tile/glm_v4_5/) | [ops/glm_v4_5/test_glm_*.py](ops/glm_v4_5/) |
+| [src/pypto_gym/ops/pypto_tile/deepseek_v32_exp/*_impl.py](../src/pypto_gym/ops/pypto_tile/deepseek_v32_exp/) | [ops/deepseek_v32_exp/test_*.py](ops/deepseek_v32_exp/) |
+| [src/pypto_gym/ops/pypto_tile/qwen3_1_7b/qwen3_*.py](../src/pypto_gym/ops/pypto_tile/qwen3_1_7b/) | [ops/qwen3_1_7b/test_*.py](ops/qwen3_1_7b/) |
+| [src/pypto_gym/ops/pypto_tile/qwen3_next/gated_delta_rule_impl.py](../src/pypto_gym/ops/pypto_tile/qwen3_next/gated_delta_rule_impl.py) | [ops/qwen3_next/test_gated_delta_rule.py](ops/qwen3_next/test_gated_delta_rule.py) |
 
-每个模型/算子的测试用例就在它自己的目录下，**impl 与 test 同目录**，例如：
-
-- [src/pypto_gym/ops/arctic/test_sum_lstm.py](../src/pypto_gym/ops/arctic/test_sum_lstm.py)
-- [src/pypto_gym/ops/qat/test_qat.py](../src/pypto_gym/ops/qat/test_qat.py)
-- [src/pypto_gym/ops/glm_v4_5/glm_attention.py](../src/pypto_gym/ops/glm_v4_5/glm_attention.py) — 该文件内含 `test_ifa()` 等用例
-- [src/pypto_gym/ops/qwen3_next/qwen3_next_gated_delta_rule.py](../src/pypto_gym/ops/qwen3_next/qwen3_next_gated_delta_rule.py)
-- [src/pypto_gym/ops/deepseek_v32_exp/deepseekv32_*.py](../src/pypto_gym/ops/deepseek_v32_exp/)
-
-这种 "impl + test 同目录" 的风格沿袭自 pypto 主仓，保持文件间的兄弟 import 关系，避免无谓的路径重写。
+测试文件通过绝对包路径引用 kernel 实现；`tests/ops/qwen3_1_7b/` 因历史原因仍使用 sibling import，依赖本目录下的 `conftest.py` 注入 `sys.path`。
 
 ## 运行方式
 
@@ -21,10 +20,13 @@
 pytest
 
 # 运行指定模型
-pytest src/pypto_gym/ops/arctic -v
+pytest tests/ops/arctic -v
+
+# 运行单个用例文件
+pytest tests/ops/glm_v4_5/test_glm_gate.py -v
 
 # 指定 NPU 设备
-pytest src/pypto_gym/ops/arctic --device 0
+pytest tests/ops/arctic --device 0
 
 # 运行 experimental 目录下的算子（需显式指定路径）
 pytest src/pypto_gym/ops/experimental/matmul -v

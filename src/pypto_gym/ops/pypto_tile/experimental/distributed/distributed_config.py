@@ -11,11 +11,39 @@
 """
 DistributedConfig
 """
+from __future__ import annotations
+
+import multiprocessing as mp
 import os
 
 import torch
 import torch.distributed as dist
 import torch_npu
+
+
+def collect_process_errors(
+    processes: list,
+    error_queue: mp.Queue,
+) -> None:
+    failed_indices = [i for i, p in enumerate(processes) if p.exitcode != 0]
+    if not failed_indices:
+        return
+
+    errors = []
+    if error_queue is not None:
+        while not error_queue.empty():
+            try:
+                rank, error_msg, trace = error_queue.get_nowait()
+                errors.append(f"Process {rank} failed: {error_msg}\n{trace}")
+            except Exception:
+                break
+
+    if errors:
+        error_msg = "\n\n".join(errors)
+    else:
+        exit_codes = [processes[i].exitcode for i in failed_indices]
+        error_msg = f"Processes {failed_indices} failed with exit codes: {exit_codes}"
+    raise AssertionError(f"Test failed:\n{error_msg}")
 
 
 class CustomProcessGroup(dist.ProcessGroup):
