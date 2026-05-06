@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -7,16 +7,15 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-[pytest]
-# 测试文件匹配规则：所有测试位于 tests/ops/ 下，统一以 test_*.py 命名
-python_files = test_*.py
+"""clean fixture: 合法的 PyPTO ReLU 形态, cheat_detector 期望 verdict=pass."""
+import torch
+import pypto
 
-# 默认测试路径：benchmark 自测 + 算子库本体 + tests/ops（与 upstream 一致）
-testpaths = benchmark/tests src/pypto_gym/ops tests/ops
 
-markers =
-    soc: Mark test cases for specific SOC versions (e.g., 950, 910)
-    world_size: number of NPU cards required (e.g., 1, 2)
+@pypto.jit
+def relu_kernel(x):
+    return pypto.dsl.maximum(x, 0)
 
-# 排除 experimental 目录（与 pypto 源仓保持一致，需显式指定才运行实验性算子）
-norecursedirs = experimental
+
+def relu_wrapper(x):
+    return relu_kernel(x)

@@ -79,6 +79,7 @@ def _is_case_match_cards(item, target_cards) -> bool:
     return True
 
 
+@pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
     device_id_lst: Optional[List[int]] = node.config.getoption("--device")
     cards_per_case: int = node.config.getoption("--cards-per-case", 1)
@@ -185,8 +186,8 @@ def pytest_collection_modifyitems(config, items):
     if not items:
         return
     first_item = items[0]
-    item_path = str(first_item.fspath)
-    has_ut = "ut" in item_path.lower()
+    item_path = str(first_item.fspath).replace(os.sep, "/")
+    has_ut = "ut" in item_path.lower() or "/benchmark/tests/" in item_path
 
     if has_ut:
         filtered_items = items
