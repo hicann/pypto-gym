@@ -132,7 +132,7 @@ def mhc_pre_kernel(
         bs_tile = 1
         D_tile = 2560
         
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[128]):
+    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[128, 8, 1]):
         # 提取当前 slice（从已 reshape 的 tensor 切片）
         x_slice_flat = x_flat[bs_idx: bs_idx + unroll_length, :]  # [unroll_length, N*D] BF16
         x_slice_3d = x[bs_idx: bs_idx + unroll_length, :, :]  # [unroll_length, N, D] BF16 (用于 Step 5)

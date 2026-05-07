@@ -76,7 +76,7 @@ def mhc_post_kernel_bf16(
     h_res1 = pypto.reshape(h_res, [BS, N, N, 1], inplace=True)
     x1 = pypto.reshape(x, [BS, N, 1, D], inplace=True)
 
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[128]):
+    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[128, 8, 1]):
         x_slice = x1[bs_idx: bs_idx + unroll_length, :, :, :]           
         h_res_slice = h_res1[bs_idx: bs_idx + unroll_length, :, :, :]   
         h_out_slice = h_out1[bs_idx: bs_idx + unroll_length, :, :]      
