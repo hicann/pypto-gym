@@ -12,10 +12,14 @@ import argparse
 import importlib
 import logging
 import os
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 import torch
+
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'vector', 'ApplyRMSProp')
+sys.path.insert(0, _KERNEL_DIR)
 from apply_rms_prop_impl import RMSPropConfig, apply_rms_prop_kernel
 
 LOGGER = logging.getLogger(__name__)

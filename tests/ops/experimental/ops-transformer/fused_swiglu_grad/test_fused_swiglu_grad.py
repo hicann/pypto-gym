@@ -12,11 +12,17 @@
 Fused SwiGLU Grad Operator Test
 """
 import os
+import sys
 import math
 import logging
 import torch
+import torch_npu
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
+
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'fused_swiglu_grad')
+sys.path.insert(0, _KERNEL_DIR)
 
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -42,7 +48,9 @@ def golden_fused_swiglu_bwd(dy, g, fc, w_g, w_fc, x):
     return dx, dw_g, dw_fc, db_g, db_fc
 
 
-def test_bwd(m, k, n, device_id):
+def test_bwd(device_id):
+    m, k, n = 220000, 512, 1024
+    torch.npu.set_device(device_id)
     logging.info(f"\n=== Backward Test [{m}, {k}] @ [{k}, {n}] ===")
     device = f'npu:{device_id}'
     np.random.seed(0)
@@ -82,7 +90,7 @@ def main():
     if device_id is None:
         return
     torch.npu.set_device(device_id)
-    test_bwd(220000, 512, 1024, device_id)
+    test_bwd(device_id)
 
 
 if __name__ == "__main__":

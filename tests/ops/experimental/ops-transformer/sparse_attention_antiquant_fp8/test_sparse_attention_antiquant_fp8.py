@@ -12,6 +12,7 @@
 """
 import math
 import os
+import sys
 import logging
 from dataclasses import dataclass
 import torch
@@ -20,9 +21,11 @@ import numpy as np
 import pytest
 import pypto
 
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'sparse_attention_antiquant_fp8')
+sys.path.insert(0, _KERNEL_DIR)
 from sparse_attention_antiquant_fp8_impl \
     import sparse_attention_antiquant_d, sparse_attention_antiquant_p, SaTileShapeConfig
-from models.deepseek_v32_exp.utils.compare import compare
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 
 
 @dataclass

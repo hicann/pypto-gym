@@ -28,11 +28,11 @@ import torch_npu
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'sparse_attention_tnd')
+sys.path.insert(0, _KERNEL_DIR)
 from sfa_forward_tnd_impl import sfa_forward_tnd, SaTileShapeConfig
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'deepseek_v32_exp'))
-from utils.compare import compare
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 
 
 def gen_uniform_data(data_shape, min_value, max_value, dtype):

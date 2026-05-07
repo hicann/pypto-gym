@@ -39,6 +39,8 @@ import torch_npu
 import numpy as np
 from numpy.testing import assert_allclose
 
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_score')
+sys.path.insert(0, _KERNEL_DIR)
 from flash_attention_score_impl import (
     flash_attention_score_kernel_with_mask_origin,
     flash_attention_score_kernel_with_mask,
@@ -303,6 +305,9 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
     logging.info("Test: flash_attention_score_kernel_with_mask_origin (BF16)")
     logging.info("=" * 70)
 
+    if device_id is not None:
+        torch.npu.set_device(device_id)
+
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
 
     query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
@@ -368,6 +373,9 @@ def test_kernel_with_mask(
     logging.info("=" * 70)
     logging.info("Test: flash_attention_score_kernel_with_mask (BF16)")
     logging.info("=" * 70)
+
+    if device_id is not None:
+        torch.npu.set_device(device_id)
 
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
     
@@ -452,6 +460,9 @@ def test_kernel_with_pse_and_dropout(
     logging.info("\n" + "=" * 70)
     logging.info("Test: flash_attention_score_kernel_with_pse_and_dropout (BF16)")
     logging.info("=" * 70)
+
+    if device_id is not None:
+        torch.npu.set_device(device_id)
 
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
     

@@ -23,8 +23,8 @@ MLA Prolog Quant HiFP8 Operator Test
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'deepseek_v32_exp'))
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'mla_prolog_quant_hifp8_v3')
+sys.path.insert(0, _KERNEL_DIR)
 
 import math
 import time
@@ -35,7 +35,7 @@ import torch_npu
 import pytest
 import pypto
 
-from utils.compare import compare
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 from mla_prolog_quant_hifp8_v3_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
 
 

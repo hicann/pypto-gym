@@ -26,6 +26,8 @@ from numpy.testing import assert_allclose
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_score_grad')
+sys.path.insert(0, _KERNEL_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flash_attention_score_grad_golden import (

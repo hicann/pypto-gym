@@ -384,17 +384,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
             compute_other_tile(sij, vj_assemble, dtype, ctx_params)
         
         if pypto.cond(pypto.is_loop_end(s2_idx)):
-            finalize_output(out_ofs, dtype, ctx_params)
-
-
-@dataclass
-class PfaKernelInputs:
-    q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
-    k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
-    v: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
-    block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32)
-    kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32)
-    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
+                finalize_output(out_ofs, dtype, ctx_params)
 
 
 @pypto.frontend.jit(
@@ -408,14 +398,15 @@ class PfaKernelInputs:
     },
     debug_options={"runtime_debug_mode": 1}
 )
-def pfa_optimized_kernel(inputs: PfaKernelInputs):
+def pfa_optimized_kernel(
+    q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    v: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32),
+    kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
+    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
+):
     """PFA Kernel"""
-    q = inputs.q
-    k = inputs.k
-    v = inputs.v
-    block_table = inputs.block_table
-    kv_act_seqs = inputs.kv_act_seqs
-    atten_out = inputs.atten_out
     
     dtype = q.dtype
     kernel_params = init_kernel_params(q, k, block_table)
@@ -448,6 +439,5 @@ def prompt_flash_attention(
     """Prompt Flash Attention入口函数"""
     atten_out = torch.empty_like(query)
     atten_out.fill_(0)
-    inputs = [query, key, value, block_table, actual_seq_lengths, atten_out]
-    pfa_optimized_kernel(*inputs)
+    pfa_optimized_kernel(query, key, value, block_table, actual_seq_lengths, atten_out)
     return atten_out

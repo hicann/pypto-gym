@@ -23,12 +23,17 @@ O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
 
 import os
+import sys
 import logging
 from dataclasses import dataclass
 
 import torch
+import torch_npu
 import numpy as np
 import pytest
+
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_mha')
+sys.path.insert(0, _KERNEL_DIR)
 from flash_attention_mha_impl import flash_attention_varlen_forward_kernel
 
 
@@ -268,7 +273,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
         max_diff = np.abs(npu_np - golden_np).max()
 
         try:
-            from models.deepseek_v32_exp.utils.compare import compare
+            from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
             compare(npu_tensor.cpu(), golden_tensor, name, atol=atol, rtol=rtol, max_error_count=10)
 
             logging.info(f"  {name}: PASSED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")

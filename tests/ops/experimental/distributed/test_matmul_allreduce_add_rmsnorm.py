@@ -29,7 +29,7 @@ from torch._subclasses import fake_tensor
 
 import pypto
 
-from distributed_config import DistributedConfig, collect_process_errors
+from pypto_gym.ops.pypto_tile.experimental.distributed.distributed_config import DistributedConfig, collect_process_errors
 
 
 @pypto.frontend.jit()

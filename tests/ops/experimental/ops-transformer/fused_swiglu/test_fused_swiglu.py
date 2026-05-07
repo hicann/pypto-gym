@@ -12,11 +12,17 @@
 Fused SwiGLU Operator Test
 """
 import os
+import sys
 import math
 import logging
 import torch
+import torch_npu
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
+
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'fused_swiglu')
+sys.path.insert(0, _KERNEL_DIR)
 
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -37,7 +43,9 @@ def golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc):
     return y
 
 
-def test_fwd(m, k, n, device_id):
+def test_fwd(device_id):
+    m, k, n = 220000, 512, 1024
+    torch.npu.set_device(device_id)
     logging.info(f"\n=== Forward Test [{m}, {k}] @ [{k}, {n}] ===")
     device = f'npu:{device_id}'
     np.random.seed(0)
@@ -63,7 +71,7 @@ def main():
     if device_id is None:
         return
     torch.npu.set_device(device_id)
-    test_fwd(220000, 512, 1024, device_id)
+    test_fwd(device_id)
 
 
 if __name__ == "__main__":

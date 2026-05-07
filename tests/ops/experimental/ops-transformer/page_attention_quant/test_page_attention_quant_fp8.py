@@ -22,6 +22,7 @@ Main Functions:
     - kv_cache_concat_bsnd: Convert paged KV cache to BSND format
 """
 import os
+import sys
 import math
 import enum
 import torch
@@ -31,6 +32,9 @@ import numpy as np
 from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
+
+_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'page_attention_quant')
+sys.path.insert(0, _KERNEL_DIR)
 from page_attention_quant_fp8_impl import ifa_func_kernel, set_qwen_common_config, get_common_config
 import pypto
 

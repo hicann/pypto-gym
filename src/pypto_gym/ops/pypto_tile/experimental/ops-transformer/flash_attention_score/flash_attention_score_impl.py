@@ -29,6 +29,8 @@ Stage 3 Enhancements:
 
 
 import math
+import torch
+import torch_npu
 import pypto
 
 

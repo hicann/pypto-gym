@@ -32,8 +32,8 @@ import torch
 
 import pypto
 
-from distributed_config import DistributedConfig
-from swimlane_analyzer import SwimlaneAnalyzer
+from pypto_gym.ops.pypto_tile.experimental.distributed.distributed_config import DistributedConfig
+from pypto_gym.ops.pypto_tile.experimental.distributed.swimlane_analyzer import SwimlaneAnalyzer
 
 logger = logging.getLogger(__name__)
 
