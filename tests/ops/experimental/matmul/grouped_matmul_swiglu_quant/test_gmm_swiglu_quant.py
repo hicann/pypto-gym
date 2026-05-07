@@ -12,6 +12,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 
+import pytest
 import torch
 from numpy.testing import assert_allclose
 
@@ -46,7 +47,12 @@ class TestParams:
     description: str = ""
 
 
-def test_gmm_mxfp8(params: TestParams):
+@pytest.fixture
+def params():
+    return get_params("testcase6")
+
+
+def test_gmm_mxfp8(params):
     """Validate the PyPTO kernel against the PyTorch reference implementation."""
     tile_config = ShapeConfig(
         [params.m, params.k, params.n],

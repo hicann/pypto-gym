@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from qwen3_k3_post_attn import qwen3_post_attn_k3, H, INT_SIZE, EPS
+from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k3_post_attn import qwen3_post_attn_k3, H, INT_SIZE, EPS
 
 
 def _rms_norm_torch(x, w, eps=EPS):

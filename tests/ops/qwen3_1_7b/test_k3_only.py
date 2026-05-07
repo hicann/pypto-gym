@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """K3 only - varying S."""
-import sys
-
 import pytest
 import torch
 
-sys.path.insert(0, "/data/z00885570/models/Qwen3-1.7B")
-from qwen3_pto_kernels.k3_post_attn import qwen3_post_attn_k3, H, INT_SIZE, EPS  # noqa: E402
+from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k3_post_attn import qwen3_post_attn_k3, H, INT_SIZE, EPS
 
 
 def _rms_norm_torch(x, w, eps=EPS):

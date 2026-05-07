@@ -34,7 +34,7 @@ def mhc_sinkhorn_kernel(
     hc = x.shape[1]
     unroll_list = [1, 8]
 
-    x = pypto.reshape(x, [t, hc*hc], inplace=True)
+    x_flat = pypto.reshape(x, [t, hc*hc], inplace=True)
     s = 32
 
     for s_idx, unrollLength in pypto.loop_unroll(0, (t+s-1)//s, 1, name="tLoop", idx_name="tIdx",unroll_list=unroll_list):
@@ -43,7 +43,7 @@ def mhc_sinkhorn_kernel(
         t_valid = (t-t_idx).min(tile_t)
 
         pypto.set_vec_tile_shapes(256,16)
-        comb_flag = pypto.view(x, [tile_t, hc*hc], [t_idx, 0], valid_shape=[t_valid, hc*hc])
+        comb_flag = pypto.view(x_flat, [tile_t, hc*hc], [t_idx, 0], valid_shape=[t_valid, hc*hc])
         comb_flag = pypto.transpose(comb_flag, 1, 0)
         comb_flag = pypto.reshape(comb_flag, [hc,hc,tile_t], inplace=True)
 

@@ -211,8 +211,7 @@ def sum_lstm(run_mode: str = "npu"):
         raise ValueError(f"Invalid run_mode: {run_mode}. Must be 'npu' or 'sim'")
 
     @pypto.frontend.jit(
-        runtime_options={"device_sched_mode": 1,
-                         "stitch_cfgcache_size": 2700000},
+        runtime_options={"device_sched_mode": 1},
     )
     def sum_lstm_kernel(
         states_4d: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP16),

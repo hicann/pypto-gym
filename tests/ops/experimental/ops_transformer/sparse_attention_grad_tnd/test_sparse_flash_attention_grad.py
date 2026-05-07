@@ -16,16 +16,12 @@ TND格式输入，actual_seq_qlen/actual_seq_kvlen前缀和格式。
 t_1, batch 动态轴。
 """
 import os
-import sys
 import math
 import random
 import logging
 import torch
 import torch_npu
 import numpy as np
-
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'sparse_attention_grad_tnd')
-sys.path.insert(0, _KERNEL_DIR)
 
 from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 import pytest
@@ -357,7 +353,7 @@ def do_test_sfa_grad_npu_eager(case_name, actual_q_lens, actual_kv_lens,
     logging.info(f"  actual_q_lens={actual_q_lens}, actual_kv_lens={actual_kv_lens}")
     logging.info(f"  scale_value={scale_value:.6f}")
 
-    from sparse_flash_attention_grad_impl import npu_sfa_sparse_attention_grad
+    from pypto_gym.ops.pypto_tile.experimental.ops_transformer.sparse_attention_grad_tnd.sparse_flash_attention_grad_impl import npu_sfa_sparse_attention_grad
 
     # Move to NPU - all in TND 3D format
     q_nope_npu = data['q_nope'].npu()
@@ -426,7 +422,7 @@ def do_test_sfa_grad_npu(case_name, actual_q_lens, actual_kv_lens,
     logging.info(f"  actual_q_lens={actual_q_lens}, actual_kv_lens={actual_kv_lens}")
     logging.info(f"  scale_value={scale_value:.6f}")
 
-    from sparse_flash_attention_grad_impl import sparse_flash_attention_grad
+    from pypto_gym.ops.pypto_tile.experimental.ops_transformer.sparse_attention_grad_tnd.sparse_flash_attention_grad_impl import sparse_flash_attention_grad
 
     # Move to NPU - all in TND 3D format
     q_pe_npu = data['q_pe'].npu()

@@ -50,6 +50,7 @@ output/
 *.a
 kernel_aicore
 kernel_aicpu
+kernel_meta/
 golden/
 
 # Logs

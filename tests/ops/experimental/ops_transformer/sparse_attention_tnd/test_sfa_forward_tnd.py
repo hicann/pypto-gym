@@ -19,7 +19,6 @@ v2 interface:
     - npu_actual_q_len is prefix-sum, npu_actual_kv_len is per-batch
 """
 import os
-import sys
 import math
 import logging
 from dataclasses import dataclass
@@ -28,9 +27,7 @@ import torch_npu
 import numpy as np
 import pytest
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'sparse_attention_tnd')
-sys.path.insert(0, _KERNEL_DIR)
-from sfa_forward_tnd_impl import sfa_forward_tnd, SaTileShapeConfig
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.sparse_attention_tnd.sfa_forward_tnd_impl import sfa_forward_tnd, SaTileShapeConfig
 
 from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
 

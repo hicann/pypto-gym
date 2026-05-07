@@ -4,7 +4,7 @@ import math
 import pytest
 import torch
 
-from qwen3_decode_attn import qwen3_decode_attn, Nq, D, SCALE
+from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_decode_attn import qwen3_decode_attn, Nq, D, SCALE
 
 
 def _golden(q, k, v):

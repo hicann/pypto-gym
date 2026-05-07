@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """K2 only - Q variant."""
-import sys
-
 import pytest
 import torch
 
-sys.path.insert(0, "/data/z00885570/models/Qwen3-1.7B")
-from qwen3_pto_kernels.k2_qk_rope import qwen3_qk_rope_q, D, EPS  # noqa: E402
+from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k2_qk_rope import qwen3_qk_rope_q, D, EPS
 
 Nq = 16
 

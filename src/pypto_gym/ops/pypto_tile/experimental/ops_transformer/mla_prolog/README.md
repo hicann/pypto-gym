@@ -98,7 +98,7 @@ pip install build_out/pypto-*.whl --force-reinstall --no-deps
 ### 运行测试
 
 ```bash
-cd /data/x00952168/pypto_0326/models/experimental/ops-transformer/mla_prolog
+cd /data/x00952168/pypto_0326/models/experimental/ops_transformer/mla_prolog
 python3 mla_prolog.py
 ```
 

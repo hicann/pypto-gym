@@ -259,7 +259,7 @@ pypto-gym/
 │       │       ├── attention/
 │       │       ├── distributed/
 │       │       ├── matmul/
-│       │       ├── ops-transformer/
+│       │       ├── ops_transformer/
 │       │       └── vector/
 │       └── transformers/                    # HuggingFace 模型结构定义
 │           └── qwen3_1_7b/

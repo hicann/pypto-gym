@@ -16,26 +16,22 @@ FlashAttentionScoreGrad PyPTO 算子测试
 """
 
 import os
-import sys
 import argparse
 import logging
 import torch
+import torch_npu  # noqa: F401
 import numpy as np
 from numpy.testing import assert_allclose
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_score_grad')
-sys.path.insert(0, _KERNEL_DIR)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from flash_attention_score_grad_golden import (
     AttentionGradInputs, generate_forward_data,
     ForwardDataConfig, ForwardDataResult,
     flash_attention_score_grad_golden,
 )
-from flash_attention_score_grad_impl import flash_attention_score_grad_wrapper
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import flash_attention_score_grad_wrapper
 
 
 def get_device_id():

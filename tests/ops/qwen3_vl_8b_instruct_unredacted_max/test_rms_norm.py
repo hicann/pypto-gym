@@ -9,17 +9,16 @@ import os
 import sys
 from pathlib import Path
 
-_IMPL = Path(__file__).resolve().parents[3] / 'src/pypto_gym/ops/pypto_tile/qwen3_vl_8b_instruct_unredacted_max'
-sys.path.insert(0, str(_IMPL))
 import json
 import argparse
 import torch
+import torch_npu  # noqa: F401
 import numpy as np
 from numpy.testing import assert_allclose
 
 
 from rms_norm_golden import rms_norm_golden
-from rms_norm.rms_norm_impl import rms_norm_impl
+from pypto_gym.ops.pypto_tile.qwen3_vl_8b_instruct_unredacted_max.rms_norm.rms_norm_impl import rms_norm_impl
 
 
 def get_device():
@@ -96,7 +95,6 @@ def main():
     
     device = get_device()
     if device.startswith("npu"):
-        import torch_npu
         torch.npu.set_device(int(device.split(":")[1]))
     
     to_run = cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]

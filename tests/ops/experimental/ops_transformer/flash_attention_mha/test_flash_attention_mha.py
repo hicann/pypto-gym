@@ -23,7 +23,6 @@ O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
 
 import os
-import sys
 import logging
 from dataclasses import dataclass
 
@@ -32,9 +31,7 @@ import torch_npu
 import numpy as np
 import pytest
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_mha')
-sys.path.insert(0, _KERNEL_DIR)
-from flash_attention_mha_impl import flash_attention_varlen_forward_kernel
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)

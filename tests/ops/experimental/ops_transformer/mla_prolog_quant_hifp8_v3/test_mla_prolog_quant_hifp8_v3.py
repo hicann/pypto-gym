@@ -21,10 +21,6 @@ MLA Prolog Quant HiFP8 Operator Test
   - RoPE (Rotary Position Embedding) 位置编码应用
 """
 import os
-import sys
-
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'mla_prolog_quant_hifp8_v3')
-sys.path.insert(0, _KERNEL_DIR)
 
 import math
 import time
@@ -36,7 +32,7 @@ import pytest
 import pypto
 
 from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
-from mla_prolog_quant_hifp8_v3_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.mla_prolog_quant_hifp8_v3.mla_prolog_quant_hifp8_v3_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
 
 
 def prep_env():

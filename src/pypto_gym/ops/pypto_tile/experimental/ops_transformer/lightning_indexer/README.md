@@ -68,7 +68,7 @@ export PTO_TILE_LIB_CODE_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann}/aarch6
 ### 编译
 
 ```bash
-cd /mnt/workspace/gitCode/cann/pypto
+cd <pypto-repo-root>
 python3 build_ci.py -f python3 --disable_auto_execute
 pip install --force-reinstall build_out/pypto-0.1.1-cp310-cp310-linux_aarch64.whl
 ```
@@ -76,7 +76,7 @@ pip install --force-reinstall build_out/pypto-0.1.1-cp310-cp310-linux_aarch64.wh
 ### 运行测试
 
 ```bash
-cd /mnt/workspace/gitCode/cann/pypto/custom/lightning_indexer
+cd src/pypto_gym/ops/pypto_tile/experimental/ops_transformer/lightning_indexer
 
 # 默认 batch size = 1
 python3 lightning_indexer.py
@@ -134,7 +134,7 @@ Match ratio: 100.00% (4096/4096)
 ## 文件结构
 
 ```
-custom/lightning_indexer/
+src/pypto_gym/ops/pypto_tile/experimental/ops_transformer/lightning_indexer/
 ├── lightning_indexer.py    # 算子实现和测试
 └── README.md               # 本文档
 ```

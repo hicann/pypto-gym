@@ -62,6 +62,7 @@ def test_attention():
     key_cache = torch.empty(kv_cache_shape, dtype=torch_dtype).uniform_(-1, 1).to(npu) * 0
     value_cache = torch.empty(kv_cache_shape, dtype=torch_dtype).uniform_(-1, 1).to(npu) * 0
     block_tables = attn_golden.gen_block_table(actual_seq_lens, block_size, block_table_shape)
+    block_tables = block_tables.to(dtype=torch.int32, device=f'npu:{device_id}')
     key_cache_clone = key_cache.clone()
     value_cache_clone = value_cache.clone()
 

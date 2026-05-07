@@ -23,7 +23,6 @@ dK and dV are accumulated across kv tiles.
 """
 
 import os
-import sys
 import logging
 from dataclasses import dataclass
 
@@ -32,9 +31,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_mha_grad')
-sys.path.insert(0, _KERNEL_DIR)
-from flash_attention_mha_grad_impl \
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl \
     import flash_attention_varlen_backward_kernel_small_seq, flash_attention_mha_grad_kernel_long_seq
 
 

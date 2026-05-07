@@ -28,7 +28,6 @@ Datatype Strategy:
 """
 
 import os
-import sys
 import math
 import argparse
 import logging
@@ -39,9 +38,7 @@ import torch_npu
 import numpy as np
 from numpy.testing import assert_allclose
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'flash_attention_score')
-sys.path.insert(0, _KERNEL_DIR)
-from flash_attention_score_impl import (
+from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import (
     flash_attention_score_kernel_with_mask_origin,
     flash_attention_score_kernel_with_mask,
     flash_attention_score_kernel_with_pse_and_dropout,

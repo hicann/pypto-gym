@@ -1,6 +1,6 @@
-# Qwen3-1.7B PyPto 算子
+# Qwen3-1.7B PyPTO 算子
 
-本目录提供 Qwen/Qwen3-1.7B 的自定义 PyPto 融合算子，用于在 Ascend NPU 上替代 PyTorch 原生算子链路、提升推理性能。
+本目录提供 Qwen/Qwen3-1.7B 的自定义 PyPTO 融合算子，用于在 Ascend NPU 上替代 PyTorch 原生算子链路、提升推理性能。
 
 ## 算子清单
 
@@ -15,10 +15,10 @@
 
 ## 单元测试
 
-每个 `qwen3_*.py` 算子都有对应的 `test_*.py` 同目录测试用例（pypto-gym 惯例）：
+对应测试位于 `tests/ops/qwen3_1_7b/`：
 
 ```bash
-cd src/pypto_gym/ops/qwen3_1_7b
+cd tests/ops/qwen3_1_7b
 TILE_FWK_DEVICE_ID=7 python3 test_pre_attn_fused.py
 TILE_FWK_DEVICE_ID=7 python3 test_k3.py
 TILE_FWK_DEVICE_ID=7 python3 test_decode_attn.py
@@ -26,17 +26,13 @@ TILE_FWK_DEVICE_ID=7 python3 test_decode_attn.py
 
 ## 集成与端到端
 
-模型执行脚本与端到端推理见：
-- `modeling/qwen3_1_7b/`：模型 golden 与网络真实形状的整层测试
-- `models/qwen3_1_7b/`：方案文档 (SPEC/DESIGN/FINAL_REPORT)
-- 端到端 ask 脚本部署在模型 repo 下：`/data/z00885570/models/Qwen3-1.7B/qwen3_pto_kernels/` (运行时适配层) + `scripts/ask_Qwen3-1.7B_pto.py`
+- `tests/ops/qwen3_1_7b/`：算子 golden 与网络真实形状的整层测试
+- 端到端部署请参考模型侧 `qwen3_pto_kernels/` 适配层
 
 ## 性能（稳态，Ascend 910）
 
 | 配置 | Decode 稳态 | vs Baseline |
 |---|---|---|
 | torch_npu Baseline | 31 ms/token | 1.0× |
-| **PyPto Fused (默认)** | **48 ms/token** | **1.55×** |
-| PyPto + decode-attn fused | 59 ms/token | 1.9× |
-
-详细见 `models/qwen3_1_7b/FINAL_REPORT.md`。
+| **PyPTO Fused (默认)** | **48 ms/token** | **1.55×** |
+| PyPTO + decode-attn fused | 59 ms/token | 1.9× |

@@ -75,8 +75,9 @@ def run_mhc_sinkhorn_test(bs, N, N_out, seed, eps, num_iters, device_id=None, ru
     print(f"Test: mhc_sinkhorn {test_name}")
     print("=" * 60)
 
-    # 设置设备
-    if run_mode == "npu" and device_id is not None:
+    if run_mode == "npu":
+        if device_id is None:
+            device_id = get_device_id()
         setup_npu(device_id)
         device = f"npu:{device_id}"
     else:

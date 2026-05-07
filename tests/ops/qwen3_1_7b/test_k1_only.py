@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Single-kernel isolated test — only K1 (RMSNorm + QKV proj)."""
-import sys
-
 import pytest
 import torch
 
-sys.path.insert(0, "/data/z00885570/models/Qwen3-1.7B")
-from qwen3_pto_kernels.k1_rmsnorm_qkv import qwen3_pre_qkv_iter1a, H, Nq, Nkv, D, EPS  # noqa: E402
+from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_iter1a_kernel import qwen3_pre_qkv_iter1a, H, Nq, Nkv, D, EPS
 
 
 def _rms_norm_torch(x, w, eps=EPS):

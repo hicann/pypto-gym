@@ -12,7 +12,6 @@
 Fused SwiGLU Operator Test
 """
 import os
-import sys
 import math
 import logging
 import torch
@@ -20,9 +19,6 @@ import torch_npu
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'ops-transformer', 'fused_swiglu')
-sys.path.insert(0, _KERNEL_DIR)
 
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -59,7 +55,7 @@ def test_fwd(device_id):
     y_golden = golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc)
     y_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
 
-    from fused_swiglu_impl import fused_swiglu_fwd_kernel
+    from pypto_gym.ops.pypto_tile.experimental.ops_transformer.fused_swiglu.fused_swiglu_impl import fused_swiglu_fwd_kernel
     fused_swiglu_fwd_kernel(x, w_g, w_fc, b_g, b_fc, y_out)
 
     assert_allclose(y_out.cpu().float().numpy(), y_golden.cpu().float().numpy(), rtol=0.0078125, atol=0.0001)

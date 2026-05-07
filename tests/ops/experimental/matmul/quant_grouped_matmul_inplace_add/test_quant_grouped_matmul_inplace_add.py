@@ -50,7 +50,74 @@ def quant_grouped_matmul_inplace_add(inputs: QuantGroupedMatmulInplaceAddInputs)
     return y.to(torch.float32)
 
 
-def test_quant_grouped_matmul_inplace_add(tile_config: ShapeConfig):
+import pytest
+
+_QUANT_GMM_TEST_CONFIGS = [
+    ShapeConfig(
+        ori_shape=[768, 6144, 4096],
+        num_groups=32,
+        m_tile_shape=[128, 128],
+        k_tile_shape=[64, 192],
+        n_tile_shape=[256, 1024],
+        vector_tile_shape=[1, 32, 512, 2],
+        in_dtype=pypto.DT_FP8E4M3,
+        a_trans=True,
+        b_trans=False,
+        a_format_nz=False,
+        b_format_nz=False,
+        c_format_nz=False,
+        description="Case1",
+    ),
+    ShapeConfig(
+        ori_shape=[768, 8192, 4096],
+        num_groups=32,
+        m_tile_shape=[128, 128],
+        k_tile_shape=[64, 192],
+        n_tile_shape=[256, 1024],
+        vector_tile_shape=[1, 32, 512, 2],
+        in_dtype=pypto.DT_FP8E4M3,
+        a_trans=True,
+        b_trans=False,
+        a_format_nz=False,
+        b_format_nz=False,
+        c_format_nz=False,
+        description="Case2",
+    ),
+    ShapeConfig(
+        ori_shape=[2048, 6144, 4096],
+        num_groups=16,
+        m_tile_shape=[128, 128],
+        k_tile_shape=[64, 192],
+        n_tile_shape=[256, 1024],
+        vector_tile_shape=[1, 32, 512, 2],
+        in_dtype=pypto.DT_FP8E5M2,
+        a_trans=True,
+        b_trans=False,
+        a_format_nz=False,
+        b_format_nz=False,
+        c_format_nz=False,
+        description="Case3",
+    ),
+    ShapeConfig(
+        ori_shape=[2048, 7168, 4096],
+        num_groups=16,
+        m_tile_shape=[128, 128],
+        k_tile_shape=[64, 192],
+        n_tile_shape=[256, 1024],
+        vector_tile_shape=[1, 32, 512, 2],
+        in_dtype=pypto.DT_FP8E5M2,
+        a_trans=True,
+        b_trans=False,
+        a_format_nz=False,
+        b_format_nz=False,
+        c_format_nz=False,
+        description="Case4",
+    ),
+]
+
+
+@pytest.mark.parametrize("tile_config", _QUANT_GMM_TEST_CONFIGS)
+def test_quant_grouped_matmul_inplace_add(tile_config):
     """
     Test the quantized grouped matrix multiplication with inplace add.
 
@@ -126,74 +193,5 @@ def test_quant_grouped_matmul_inplace_add(tile_config: ShapeConfig):
 
 
 if __name__ == "__main__":
-    test_quant_grouped_matmul_inplace_add(
-        ShapeConfig(
-            ori_shape=[768, 6144, 4096],
-            num_groups=32,
-            m_tile_shape=[128, 128],
-            k_tile_shape=[64, 192],
-            n_tile_shape=[256, 1024],
-            vector_tile_shape=[1, 32, 512, 2],
-            in_dtype=pypto.DT_FP8E4M3,
-            a_trans=True,
-            b_trans=False,
-            a_format_nz=False,
-            b_format_nz=False,
-            c_format_nz=False,
-            description="Case1"
-        )
-    )
-
-    test_quant_grouped_matmul_inplace_add(
-        ShapeConfig(
-            ori_shape=[768, 8192, 4096],
-            num_groups=32,
-            m_tile_shape=[128, 128],
-            k_tile_shape=[64, 192],
-            n_tile_shape=[256, 1024],
-            vector_tile_shape=[1, 32, 512, 2],
-            in_dtype=pypto.DT_FP8E4M3,
-            a_trans=True,
-            b_trans=False,
-            a_format_nz=False,
-            b_format_nz=False,
-            c_format_nz=False,
-            description="Case2"
-        )
-    )
-
-    test_quant_grouped_matmul_inplace_add(
-        ShapeConfig(
-            ori_shape=[2048, 6144, 4096],
-            num_groups=16,
-            m_tile_shape=[128, 128],
-            k_tile_shape=[64, 192],
-            n_tile_shape=[256, 1024],
-            vector_tile_shape=[1, 32, 512, 2],
-            in_dtype=pypto.DT_FP8E5M2,
-            a_trans=True,
-            b_trans=False,
-            a_format_nz=False,
-            b_format_nz=False,
-            c_format_nz=False,
-            description="Case3"
-        )
-    )
-
-    test_quant_grouped_matmul_inplace_add(
-        ShapeConfig(
-            ori_shape=[2048, 7168, 4096],
-            num_groups=16,
-            m_tile_shape=[128, 128],
-            k_tile_shape=[64, 192],
-            n_tile_shape=[256, 1024],
-            vector_tile_shape=[1, 32, 512, 2],
-            in_dtype=pypto.DT_FP8E5M2,
-            a_trans=True,
-            b_trans=False,
-            a_format_nz=False,
-            b_format_nz=False,
-            c_format_nz=False,
-            description="Case4"
-        )
-    )
+    for cfg in _QUANT_GMM_TEST_CONFIGS:
+        test_quant_grouped_matmul_inplace_add(cfg)

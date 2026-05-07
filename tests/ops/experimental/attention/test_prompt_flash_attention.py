@@ -10,7 +10,6 @@
 # -----------------------------------------------------------------------------------------------------------
 
 import os
-import sys
 import logging
 import math
 from dataclasses import dataclass, replace
@@ -21,9 +20,7 @@ import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose
 
-_KERNEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', 'src', 'pypto_gym', 'ops', 'pypto_tile', 'experimental', 'attention')
-sys.path.insert(0, _KERNEL_DIR)
-from pfa_flash_attention_impl import prompt_flash_attention
+from pypto_gym.ops.pypto_tile.experimental.attention.pfa_flash_attention_impl import prompt_flash_attention
 
 
 # Configure logger for the module

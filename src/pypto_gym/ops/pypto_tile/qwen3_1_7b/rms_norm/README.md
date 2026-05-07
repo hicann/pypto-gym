@@ -7,56 +7,25 @@
 ## 文件结构
 
 ```
-pto_kernels/
-├── __init__.py                    # USE_PTO 开关
-├── rms_norm/
-│   ├── __init__.py                # wrapper 导出
-│   ├── rms_norm_impl.py           # PyPTO 实现
-│   ├── rms_norm_golden.py         # PyTorch 参考实现
-│   ├── README.md                  # 本文档
-│   └── test/
-│       ├── test_rms_norm.py       # 测试脚本
-│       └── test_cases.json        # 真实测试用例
-```
-
-## 使用方法
-
-### 启用 PTO 算子
-
-```bash
-python3 scripts/ask_Qwen3-1.7B.py --prompt "你好" --use-pto
-```
-
-### 禁用 PTO（使用原始 torch 实现）
-
-```bash
-python3 scripts/ask_Qwen3-1.7B.py --prompt "你好"
+pypto_gym/ops/pypto_tile/qwen3_1_7b/
+└── rms_norm/
+    ├── rms_norm_impl.py           # PyPTO 实现
+    └── README.md                  # 本文档
 ```
 
 ## 测试验证
 
 ```bash
-cd /mnt/workspace/gitCode/cann/models/pure/Qwen3-1.7B
+cd tests/ops/qwen3_1_7b
 export TILE_FWK_DEVICE_ID=0
-python3 pto_kernels/rms_norm/test/test_rms_norm.py
+python3 test_rms_norm.py
 ```
 
 ### 测试用例来源
 
 从 Qwen3-1.7B 模型打点采集的真实 shape/dtype：
-- prefill 阶段：[1, 11, 2048], [1, 11, 16, 128], [1, 11, 8, 128]
-- decode 阶段：[1, 1, 2048], [1, 1, 16, 128], [1, 1, 8, 128]
-
-## 集成修改
-
-### modeling_qwen3.py 修改
-
-1. 导入 sys.modules 获取 pto_kernels
-2. Qwen3RMSNorm.forward 使用条件分支调用 wrapper
-
-### 推理脚本修改
-
-添加 `--use-pto` 参数和 sys.modules 注入逻辑。
+- prefill 阶段：[1, 11, 2048]
+- decode 阶段：[1, 1, 2048]
 
 ## 技术说明
 

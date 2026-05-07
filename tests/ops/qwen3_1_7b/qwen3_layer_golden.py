@@ -166,12 +166,14 @@ def qwen3_decoder_layer_decode_golden(
 
 def _sanity_check():
     import sys
-    sys.path.insert(0, '/data/z00885570/models/Qwen3-1.7B')
+    import os
+    model_dir = os.environ.get("QWEN3_MODEL_DIR", "/data/z00885570/models/Qwen3-1.7B")
+    sys.path.insert(0, model_dir)
     from core.modeling_qwen3 import Qwen3DecoderLayer, Qwen3RotaryEmbedding
     from core.configuration_qwen3 import Qwen3Config
     import json
 
-    cfg_path = '/data/z00885570/models/Qwen3-1.7B/config.json'
+    cfg_path = os.path.join(model_dir, 'config.json')
     cfg_dict = json.load(open(cfg_path))
     # Drop unknown keys so Qwen3Config ctor is stable across transformers versions
     for drop in ('auto_map',):

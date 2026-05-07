@@ -11,6 +11,7 @@
 import argparse
 import sys
 
+import pytest
 import pypto
 import torch
 from numpy.testing import assert_allclose
@@ -27,7 +28,7 @@ RTOL = 1e-3
 ATOL = 1e-3
 
 
-def test_gmm_finalize_routing(config: FinalizeRoutingConfig):
+def test_gmm_finalize_routing(config):
     """单配置测试：构造数据、运行 golden 与 PyPTO，并执行数值对齐校验。"""
     torch_dtype_map = {
         pypto.DT_FP8E4M3: torch.float8_e4m3fn,
@@ -149,6 +150,8 @@ TEST_CONFIGS = [
         description="case4 m2048 k7168 n4096 e16",
     ),
 ]
+
+test_gmm_finalize_routing = pytest.mark.parametrize("config", TEST_CONFIGS)(test_gmm_finalize_routing)
 
 
 def main():
