@@ -6,13 +6,13 @@
 MHC Pre-processing 算子实现 - Multi-Head Context 前处理
 
 计算流程:
-    1. RMSNorm: 对输入 x 进行归一化 ✅ 已验证通过 (verify_step1_4.py)
-    2. MatMul: 与权重矩阵 phi_T 进行矩阵乘法 ✅ 已验证通过
-    3. Split: 将结果分流为三路（Pre、Post、Comb） ✅ 已验证通过
+    1. RMSNorm: 对输入 x 进行归一化 
+    2. MatMul: 与权重矩阵 phi_T 进行矩阵乘法 
+    3. Split: 将结果分流为三路（Pre、Post、Comb）
     4. 三分枝处理:
-       - Branch Pre: sigmoid + 加权求和 → h_in (BF16) ✅ 已验证通过 (verify_step5.py)
-       - Branch Post: sigmoid + 缩放 → h_post (FP32) ✅ 已验证通过 (verify_step6.py)
-       - Branch Comb: 加权 → h_res (FP32) ✅ 已验证通过 (verify_step7.py)
+       - Branch Pre: sigmoid + 加权求和 → h_in (BF16) 
+       - Branch Post: sigmoid + 缩放 → h_post (FP32) 
+       - Branch Comb: 加权 → h_res (FP32) 
 """
 
 import pypto
@@ -271,32 +271,6 @@ def mhc_pre_wrapper(
     norm_eps: float = 1e-6,
     hc_eps: float = 1e-6,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """mhc_pre wrapper - Multi-Head Context 前处理算子
-    
-    预处理 + 调用 kernel + 返回结果
-    
-    Args:
-        x: 输入特征 tensor，shape [B*S, N, D]，dtype bfloat16
-           其中 N=8, D=5120（典型配置），B*S 为动态轴（1024/2048/4096）
-        phi: 权重矩阵，shape [N²+2N, N*D] = [80, 40960]，dtype float32
-        alpha: 缩放系数，shape [3]，dtype float32
-        bias: 偏置向量，shape [N²+2N] = [80]，dtype float32
-        norm_eps: RMSNorm 的 epsilon，默认 1e-6
-        hc_eps: sigmoid 输出的精度保护，默认 1e-6
-    
-    Returns:
-        h_in: 加权输入，shape [B*S, D] = [B*S, 5120]，dtype bfloat16
-        h_post: 后处理门控信号，shape [B*S, N] = [B*S, 8]，dtype float32
-        h_res: 组合门控信号，shape [B*S, N, N] = [B*S, 8, 8]，dtype float32（3D 输出）
-    
-    Note:
-        PyPTO kernel 可以直接接受 torch tensor，动态轴通过 kernel
-        类型注解 [pypto.DYNAMIC, ...] 标注，无需 from_torch 转换。
-        
-        bias 参数在 wrapper 中提前切片，避免 kernel 内部复杂的 view 操作。
-        
-        所有 Step (1-7) 已验证通过，精度达到预期。
-    """
     # 1. phi 转置：[N²+2N, N*D] = [80, 40960] → [N*D, N²+2N] = [40960, 80]
     # 注意：需要 contiguous，否则 PyPTO 会报错
     phi_T = phi.T.contiguous()

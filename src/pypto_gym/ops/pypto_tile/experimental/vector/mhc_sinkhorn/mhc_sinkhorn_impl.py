@@ -10,37 +10,11 @@ mhc_sinkhorn 实现 Sinkhorn-Knopp 双随机矩阵迭代归一化算法。
 import pypto
 import torch
 
-
-def sinkhorn_core(h: pypto.Tensor, eps: float, num_iters: int) -> pypto.Tensor:
-    """Sinkhorn-Knopp 核心计算逻辑（核内优化版）。
-
-    Args:
-        h: 输入 tensor, shape [batch, 8, 8]，batch可变。
-        eps: 数值稳定性参数，float 标量。
-        num_iters: 迭代次数。
-
-    Returns:
-        双随机矩阵 tensor，shape与输入相同。
-    """
-    # 核内优化：减少中间tensor，使用复合表达式
-    h = pypto.add(pypto.softmax(h, dim=-1), eps)
-    h = pypto.div(h, pypto.add(pypto.sum(h, dim=-2, keepdim=True), eps))
-    
-    for _ in range(max(num_iters - 1, 0)):
-        # 合并 sum+add+div，减少中间tensor
-        h = pypto.div(h, pypto.add(pypto.sum(h, dim=-1, keepdim=True), eps))
-        h = pypto.div(h, pypto.add(pypto.sum(h, dim=-2, keepdim=True), eps))
-    
-    return h
-
-
 @pypto.frontend.jit(
     runtime_options={"device_sched_mode": 1},
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 2}}
 )
 def mhc_sinkhorn_kernel(
-    # x: pypto.Tensor([pypto.DYNAMIC, 8, 8], pypto.DT_FP32),
-    # out: pypto.Tensor([pypto.DYNAMIC, 8, 8], pypto.DT_FP32),
     x: pypto.Tensor([pypto.DYNAMIC, 4, 4], pypto.DT_FP32),
     out: pypto.Tensor([pypto.DYNAMIC, 4, 4], pypto.DT_FP32),
     eps: float,

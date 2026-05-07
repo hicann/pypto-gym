@@ -63,7 +63,6 @@ def mhc_post_kernel_bf16(
         h_post: [B*S, N] 后处理权重 (FP32)
         output: [B*S, N, D] 输出 tensor (BF16)
     """
-    # === 获取动态形状值 ===
     pypto.experimental.set_operation_options(combine_axis=True)
 
     BS = x.shape[0]   # SymbolicScalar（动态轴）
@@ -82,7 +81,7 @@ def mhc_post_kernel_bf16(
         h_out_slice = h_out1[bs_idx: bs_idx + unroll_length, :, :]      
         h_post_slice = h_post1[bs_idx: bs_idx + unroll_length, :, :]   
 
-        pypto.set_vec_tile_shapes(1, N, 1, 1280)         #尾轴不切最好，或者1280.unroll_length改成1    
+        pypto.set_vec_tile_shapes(1, N, 1, 1280)        
         x_fp32 = pypto.cast(x_slice, pypto.DT_FP32)                
 
         pypto.set_vec_tile_shapes(1, N, 1280) 
@@ -90,7 +89,7 @@ def mhc_post_kernel_bf16(
         
         h_post_term = pypto.mul(h_post_slice, h_out_fp32)           
         
-        pypto.set_vec_tile_shapes(1, N, N, 1280)          # 1,4,2,2560 /1280      1,4,1,2560 /1280      4*2560*4=40K
+        pypto.set_vec_tile_shapes(1, N, N, 1280)         
         weighted = pypto.mul(h_res_slice, x_fp32)                    
         
         h_comb_term = pypto.sum(weighted, dim=1, keepdim=False)   
