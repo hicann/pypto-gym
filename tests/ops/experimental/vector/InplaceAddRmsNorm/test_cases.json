@@ -1,0 +1,115 @@
+{
+  "op_name": "inplace_add_rms_norm",
+  "source": "pypto-op-develop",
+  "description": "PyPTO inplace_add_rms_norm 算子测试用例",
+  "test_cases": [
+    {
+      "id": "level0",
+      "description": "小数据量基础功能验证",
+      "seed": 0,
+      "input": {
+        "x1_shape": [1, 16, 7168],
+        "x2_shape": [1, 16, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [1, 16, 7168],
+        "rstd_shape": [1, 16, 1],
+        "x_shape": [1, 16, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    },
+    {
+      "id": "level1",
+      "description": "B*S=2048 核心性能场景",
+      "seed": 42,
+      "input": {
+        "x1_shape": [16, 128, 7168],
+        "x2_shape": [16, 128, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [16, 128, 7168],
+        "rstd_shape": [16, 128, 1],
+        "x_shape": [16, 128, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    },
+    {
+      "id": "level2",
+      "description": "B*S=1024 最小边界",
+      "seed": 0,
+      "input": {
+        "x1_shape": [8, 128, 7168],
+        "x2_shape": [8, 128, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [8, 128, 7168],
+        "rstd_shape": [8, 128, 1],
+        "x_shape": [8, 128, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    },
+    {
+      "id": "level3",
+      "description": "B*S=8192 最大边界",
+      "seed": 1,
+      "input": {
+        "x1_shape": [64, 128, 7168],
+        "x2_shape": [64, 128, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [64, 128, 7168],
+        "rstd_shape": [64, 128, 1],
+        "x_shape": [64, 128, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    },
+    {
+      "id": "level4",
+      "description": "S=1 特殊场景",
+      "seed": 2,
+      "input": {
+        "x1_shape": [144, 1, 7168],
+        "x2_shape": [144, 1, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [144, 1, 7168],
+        "rstd_shape": [144, 1, 1],
+        "x_shape": [144, 1, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    },
+    {
+      "id": "level5",
+      "description": "B=1 边界",
+      "seed": 3,
+      "input": {
+        "x1_shape": [1, 1024, 7168],
+        "x2_shape": [1, 1024, 7168],
+        "gamma_shape": [7168],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "y_shape": [1, 1024, 7168],
+        "rstd_shape": [1, 1024, 1],
+        "x_shape": [1, 1024, 7168]
+      },
+      "rtol": 0.01,
+      "atol": 0.01
+    }
+  ]
+}
