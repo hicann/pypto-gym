@@ -291,8 +291,8 @@ def test_01(device):
 
 @pytest.mark.skip(reason="large test case")
 def test_02(device):
-    """batch=2, heads=8, s1=4096, s2=4096, dim=64"""
-    return run_test(device, batch_size=2, num_heads=8, s1_size=4096, s2_size=4096, dim=64)
+    """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
+    return run_test(device, batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
 
 
 @pytest.mark.skip(reason="large test case")
