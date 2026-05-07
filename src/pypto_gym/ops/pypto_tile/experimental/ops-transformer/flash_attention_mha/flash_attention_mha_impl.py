@@ -41,7 +41,7 @@ SCALE = 1.0 / (HEAD_DIM ** 0.5)
     },
     runtime_options={
         "device_sched_mode": 0,
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 1024,
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 8},
@@ -149,13 +149,17 @@ def flash_attention_varlen_forward_kernel(
         q_tile_count = (seq_len_q + q_tile - 1) // q_tile
         k_tile_count = (seq_len_k + k_tile - 1) // k_tile
 
-        for h_idx in pypto.loop(num_heads, name="head_loop"):
-            h_offset = h_idx * head_dim
+        h_num = num_heads // 2
+        for h_idx in pypto.loop(h_num, name="head_loop"):
 
             for q_tile_idx in pypto.loop(q_tile_count, name="q_tile_loop"):
-                oi_update = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
-                li_update = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
-                mi_update = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
+                # 创建2个head独立的累加器
+                oi_update_0 = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
+                li_update_0 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
+                mi_update_0 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
+                oi_update_1 = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
+                li_update_1 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
+                mi_update_1 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
 
                 q_tile_start = q_tile_idx * q_tile
                 q_tile_end = pypto.min(q_tile_start + q_tile, seq_len_q)
@@ -166,86 +170,100 @@ def flash_attention_varlen_forward_kernel(
                     k_tile_end = pypto.min(k_tile_start + k_tile, seq_len_k)
                     k_tile_len = k_tile_end - k_tile_start
 
-                    q_tile_view = pypto.view(q_2d, [q_tile, head_dim],
-                                        [q_start + q_tile_start, h_offset],
-                                        valid_shape=[q_tile_len, head_dim])
+                    for h_s_idx in range(2):
+                        h_act_idx = h_idx * 2 + h_s_idx
+                        h_offset = h_act_idx * head_dim
 
-                    k_tile_view = pypto.view(k_2d, [k_tile, head_dim],
-                                        [k_start + k_tile_start, h_offset],
-                                        valid_shape=[k_tile_len, head_dim])
-                    v_tile_view = pypto.view(v_2d, [k_tile, head_dim],
-                                        [k_start + k_tile_start, h_offset],
-                                        valid_shape=[k_tile_len, head_dim])
+                        if h_s_idx == 0:
+                            li_update = li_update_0
+                            mi_update = mi_update_0
+                            oi_update = oi_update_0
+                        else:
+                            li_update = li_update_1
+                            mi_update = mi_update_1
+                            oi_update = oi_update_1
 
-                    pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])
+                        q_tile_view = pypto.view(q_2d, [q_tile, head_dim],
+                                            [q_start + q_tile_start, h_offset],
+                                            valid_shape=[q_tile_len, head_dim])
 
-                    pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                        k_tile_view = pypto.view(k_2d, [k_tile, head_dim],
+                                            [k_start + k_tile_start, h_offset],
+                                            valid_shape=[k_tile_len, head_dim])
+                        v_tile_view = pypto.view(v_2d, [k_tile, head_dim],
+                                            [k_start + k_tile_start, h_offset],
+                                            valid_shape=[k_tile_len, head_dim])
 
-                    scores = pypto.matmul(q_tile_view, k_tile_view, out_dtype=pypto.DT_FP32, b_trans=True)
+                        pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])
 
-                    pypto.set_pass_options(sg_set_scope=1)
+                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
-                    scores_scaled = pypto.mul(scores, scale)
+                        pypto.set_pass_options(sg_set_scope=5001)
 
-                    mij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
-                    s_shifted = pypto.sub(scores_scaled, mij)
-                    pij = pypto.exp(s_shifted)
-                    lij = pypto.sum(pij, dim=-1, keepdim=True)
+                        scores = pypto.matmul(q_tile_view, k_tile_view, out_dtype=pypto.DT_FP32, b_trans=True)
 
-                    pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
+                        scores_scaled = pypto.mul(scores, scale)
+                        mij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                        s_shifted = pypto.sub(scores_scaled, mij)
+                        pij = pypto.exp(s_shifted)
+                        lij = pypto.sum(pij, dim=-1, keepdim=True)
 
-                    if pypto.is_loop_begin(k_tile_idx):
-                        if pypto.is_loop_end(k_tile_idx):
-                            pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                            pij_div = pypto.div(pij, lij, precision_type=pypto.DivAlgorithm.INTRINSIC)
-                            pij_bf16 = pypto.cast(pij_div, pypto.DT_BF16)
-                            pypto.set_pass_options(sg_set_scope=-1)
+                        pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
 
-                            oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_BF16)
+                        if pypto.is_loop_begin(k_tile_idx):
+                            if pypto.is_loop_end(k_tile_idx):
+                                pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                                pij_div = pypto.div(pij, lij, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                pij_bf16 = pypto.cast(pij_div, pypto.DT_BF16)
 
-                            pypto.assemble(lij, [q_start + q_tile_start, h_idx], l_output)
-                            pypto.assemble(mij, [q_start + q_tile_start, h_idx], m_output)
-                            pypto.assemble(oij, [q_start + q_tile_start, h_offset], output)
+                                oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_BF16)
+                                pypto.set_pass_options(sg_set_scope=-1)
 
+                                pypto.assemble(lij, [q_start + q_tile_start, h_act_idx], l_output)
+                                pypto.assemble(mij, [q_start + q_tile_start, h_act_idx], m_output)
+                                pypto.assemble(oij, [q_start + q_tile_start, h_offset], output)
+
+                            else:
+                                pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                                pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
+
+                                oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
+                                pypto.set_pass_options(sg_set_scope=-1)
+
+                                oi_update[:] = oij
+                                li_update[:] = lij
+                                mi_update[:] = mij
                         else:
                             pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
                             pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
-                            pypto.set_pass_options(sg_set_scope=-1)
 
                             oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
 
-                            oi_update[:] = oij
-                            li_update[:] = lij
-                            mi_update[:] = mij
-                    else:
-                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                        pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
-                        pypto.set_pass_options(sg_set_scope=-1)
+                            pypto.set_pass_options(sg_set_scope=-1)
 
-                        oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
+                            pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
 
-                        pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
+                            li = pypto.view(li_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
+                            mi = pypto.view(mi_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
+                            oi = pypto.view(oi_update, [q_tile, head_dim], [0, 0], valid_shape=[q_tile_len, head_dim])
 
-                        li = pypto.view(li_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-                        mi = pypto.view(mi_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-                        oi = pypto.view(oi_update, [q_tile, head_dim], [0, 0], valid_shape=[q_tile_len, head_dim])
+                            mi_new = pypto.maximum(mi, mij)
+                            t1 = pypto.sub(mi, mi_new)
+                            t2 = pypto.exp(t1)
+                            t3 = pypto.sub(mij, mi_new)
+                            t4 = pypto.exp(t3)
 
-                        mi_new = pypto.maximum(mi, mij)
-                        t1 = pypto.sub(mi, mi_new)
-                        t2 = pypto.exp(t1)
-                        t3 = pypto.sub(mij, mi_new)
-                        t4 = pypto.exp(t3)
+                            li_new = pypto.add(pypto.mul(t2, li), pypto.mul(t4, lij))
+                            oi_tmp = pypto.add(pypto.mul(oi, t2), pypto.mul(oij, t4))
 
-                        li_new = pypto.add(pypto.mul(t2, li), pypto.mul(t4, lij))
-                        oi_tmp = pypto.add(pypto.mul(oi, t2), pypto.mul(oij, t4))
-                        if pypto.is_loop_end(k_tile_idx):
-                            out_fp32 = pypto.div(oi_tmp, li_new, precision_type=pypto.DivAlgorithm.INTRINSIC)
-                            out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
+                            if pypto.is_loop_end(k_tile_idx):
+                                out_fp32 = pypto.div(oi_tmp, li_new, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
 
-                            pypto.assemble(li_new, [q_start + q_tile_start, h_idx], l_output)
-                            pypto.assemble(mi_new, [q_start + q_tile_start, h_idx], m_output)
-                            pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
-                        else:  
-                            oi_update[:] = oi_tmp
-                            li_update[:] = li_new
-                            mi_update[:] = mi_new
+                                pypto.assemble(li_new, [q_start + q_tile_start, h_act_idx], l_output)
+                                pypto.assemble(mi_new, [q_start + q_tile_start, h_act_idx], m_output)
+                                pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
+                            else: 
+                                oi_update[:] = oi_tmp
+                                li_update[:] = li_new
+                                mi_update[:] = mi_new
