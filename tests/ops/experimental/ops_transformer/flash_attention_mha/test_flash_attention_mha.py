@@ -121,38 +121,107 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
 
 def attention_forward_golden(q, k, v, scale):
     """
-    Golden reference: Flash Attention Forward计算。
+    Golden reference: Flash Attention (online softmax)算法实现。
 
     Q: [s1_size, head_dim],  KV: [s2_size, head_dim]
     输入 q/k/v 均为 BF16。
 
-    严格模拟 Kernel 的 dtype 转换流程：
-      1. scores = Q(BF16) @ K^T(BF16) * scale → FP32
-      2. M = max(scores_scaled) → FP32
-      3. P = exp(scores_scaled - M) → FP32 (未归一化)
-      4. L = sum(P) → FP32 (归一化分母)
-      5. P_norm = P / L → FP32
-      6. O = P_norm @ V(BF16) → FP32
+    采用 online softmax 算法，分块计算避免存储完整的 [s1, s2] attention matrix。
+    通过增量更新 O, M, L，实现内存高效的 attention 计算。
 
     Args:
         q:     [s1_size, head_dim] BF16 — Q 切片
         k, v:  [s2_size, head_dim] BF16 — KV 切片
         scale: attention scale factor (1/sqrt(head_dim))
     Returns:
-        o:     [s1_size, head_dim] FP32 — 输出 O
+        o:     [s1_size, head_dim] BF16 — 输出 O
         m:     [s1_size, 1] FP32 — softmax 最大值 M
         l:     [s1_size, 1] FP32 — softmax 分母 L
     """
-    scores = torch.matmul(q.cpu().to(torch.float32), k.cpu().transpose(1, 0).to(torch.float32)) * scale
-    m = scores.amax(dim=-1, keepdim=True)
+    s1_size, head_dim = q.shape
+    s2_size = k.shape[0]
 
-    p_unnorm = torch.exp(scores - m)
-    l = p_unnorm.sum(dim=-1, keepdim=True)
+    q_f = q.cpu().to(torch.float32)
+    k_f = k.cpu().to(torch.float32)
+    v_f = v.cpu().to(torch.float32)
 
-    p_norm = p_unnorm / l
-    o = torch.matmul(p_norm.to(torch.bfloat16).to(torch.float32), v.cpu().to(torch.float32)).to(torch.bfloat16)
+    q_tile = Q_TILE
+    k_tile = K_TILE
 
-    return o, m, l
+    q_tile_count = (s1_size + q_tile - 1) // q_tile
+    k_tile_count = (s2_size + k_tile - 1) // k_tile
+
+    o_out = torch.zeros(s1_size, head_dim, dtype=torch.bfloat16)
+    l_out = torch.zeros(s1_size, 1, dtype=torch.float32)
+    m_out = torch.zeros(s1_size, 1, dtype=torch.float32)
+
+    for q_tile_idx in range(q_tile_count):
+        q_tile_start = q_tile_idx * q_tile
+        q_tile_end = min(q_tile_start + q_tile, s1_size)
+        q_tile_len = q_tile_end - q_tile_start
+
+        q_tile_view = q_f[q_tile_start:q_tile_end, :]
+
+        oi_update = torch.zeros(q_tile, head_dim, dtype=torch.float32)
+        li_update = torch.zeros(q_tile, 1, dtype=torch.float32)
+        mi_update = torch.full((q_tile, 1), float('-inf'), dtype=torch.float32)
+
+        for k_tile_idx in range(k_tile_count):
+            k_tile_start = k_tile_idx * k_tile
+            k_tile_end = min(k_tile_start + k_tile, s2_size)
+            k_tile_len = k_tile_end - k_tile_start
+
+            k_tile_view = k_f[k_tile_start:k_tile_end, :]
+            v_tile_view = v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
+
+            scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+
+            mij = scores.amax(dim=-1, keepdim=True)
+            s_shifted = scores - mij
+            pij = torch.exp(s_shifted)
+            lij = pij.sum(dim=-1, keepdim=True)
+
+            p_bf16 = pij.to(torch.bfloat16)
+            oij = torch.matmul(p_bf16, v_tile_view)
+
+            if k_tile_idx == 0:
+                if k_tile_idx == k_tile_count - 1:
+                    pij_div = pij / lij
+                    pij_bf16 = pij_div.to(torch.bfloat16)
+                    out_bf16 = torch.matmul(pij_bf16, v_tile_view)
+                    
+                    o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
+                    l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
+                    m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
+                else:
+                    oi_update[:q_tile_len, :] = oij[:q_tile_len, :]
+                    li_update[:q_tile_len, :] = lij[:q_tile_len, :]
+                    mi_update[:q_tile_len, :] = mij[:q_tile_len, :]
+            else:
+                mi = mi_update[:q_tile_len, :]
+                li = li_update[:q_tile_len, :]
+                oi = oi_update[:q_tile_len, :]
+
+                mi_new = torch.maximum(mi, mij[:q_tile_len, :])
+                t1 = torch.exp(mi - mi_new)
+                t2 = torch.exp(mij[:q_tile_len, :] - mi_new)
+
+                li_new = t1 * li + t2 * lij[:q_tile_len, :]
+                oi_tmp = t1 * oi + t2 * oij[:q_tile_len, :]
+
+                if k_tile_idx == k_tile_count - 1:
+                    out_fp32 = oi_tmp / li_new
+                    out_bf16 = out_fp32.to(torch.bfloat16)
+                    
+                    o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
+                    l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
+                    m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]
+                else:
+                    oi_update[:q_tile_len, :] = oi_tmp
+                    li_update[:q_tile_len, :] = li_new
+                    mi_update[:q_tile_len, :] = mi_new
+
+    return o_out, m_out, l_out
 
 
 def run_test(device, batch_size=None, num_heads=None, s1_size=None,
