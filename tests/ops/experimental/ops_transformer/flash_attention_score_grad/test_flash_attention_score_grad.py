@@ -15,6 +15,11 @@ FlashAttentionScoreGrad PyPTO 算子测试
 支持多个测试级别，验证不同规模下的正确性。
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import os
 import argparse
 import logging
@@ -31,7 +36,7 @@ from flash_attention_score_grad_golden import (
     ForwardDataConfig, ForwardDataResult,
     flash_attention_score_grad_golden,
 )
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import flash_attention_score_grad_wrapper
+from experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import flash_attention_score_grad_wrapper
 
 
 def get_device_id():

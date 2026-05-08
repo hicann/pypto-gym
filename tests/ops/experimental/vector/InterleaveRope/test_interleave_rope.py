@@ -19,6 +19,11 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+
 import json
 import os
 import sys
@@ -29,13 +34,10 @@ import torch
 import torch_npu  # noqa: F401  # required to enable npu backend
 from numpy.testing import assert_allclose
 
-# Make sibling files importable regardless of CWD.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
 
-from interleave_rope_golden import interleave_rope_golden  # noqa: E402
-from interleave_rope_impl import interleave_rope_wrapper    # noqa: E402
+from interleave_rope_golden import interleave_rope_golden
+from experimental.vector.InterleaveRope.interleave_rope_impl import interleave_rope_wrapper    # noqa: E402
 
 
 DTYPE_MAP = {

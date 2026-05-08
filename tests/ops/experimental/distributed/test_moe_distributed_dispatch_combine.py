@@ -20,6 +20,11 @@ Main Functions:
     - moe_distributed_combine_kernel: JIT compiled combine kernel
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import dataclasses
 from typing import Callable
 import traceback
@@ -29,10 +34,11 @@ import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
+import torch_npu  # noqa: F401
 
 import pypto
 
-from pypto_gym.ops.pypto_tile.experimental.distributed.distributed_config import DistributedConfig, collect_process_errors
+from experimental.distributed.distributed_config import DistributedConfig, collect_process_errors
 
 TensorList = list[torch.Tensor]
 

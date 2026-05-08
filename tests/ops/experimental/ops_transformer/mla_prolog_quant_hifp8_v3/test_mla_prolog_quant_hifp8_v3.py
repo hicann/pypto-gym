@@ -28,11 +28,16 @@ import logging
 from pathlib import Path
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import pypto
 
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.mla_prolog_quant_hifp8_v3.mla_prolog_quant_hifp8_v3_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
+from deepseek_v32_exp.utils.compare import compare
+from experimental.ops_transformer.mla_prolog_quant_hifp8_v3.mla_prolog_quant_hifp8_v3_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
 
 
 def prep_env():

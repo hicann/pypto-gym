@@ -15,13 +15,18 @@ import math
 import logging
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import pypto
 
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_prolog_quant_impl import (
+from deepseek_v32_exp.lightning_indexer_prolog_quant_impl import (
     IndexerPrologQuantInput, IndexerPrologQuantOutput, IndexerPrologQuantAttr, IndexerPrologQuantConfigs,
     lightning_indexer_prolog_quant)
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+from deepseek_v32_exp.utils.compare import compare
 
 
 def gen_dims(params):

@@ -16,73 +16,17 @@ PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym
 
 - 覆盖 DeepSeek V3.2、GLM V4.5、Qwen3-Next、Qwen3-1.7B、Arctic、QAT 等模型的关键算子实现
 - 提供实验性目录 `experimental/` 收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
-- 算子实现与测试分离：kernel 实现位于 `src/pypto_gym/ops/pypto_tile/<model>/`，对应测试位于 `tests/ops/<model>/`，通过绝对包路径互相引用
+- 算子实现与测试分离：kernel 实现位于 `src/pypto_gym/ops/pypto_tile/<model>/`，对应测试位于 `tests/ops/<model>/`
 - 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
 
 ## 环境准备
 
-### 系统要求
+pypto-gym 无需单独安装。请先参照 PyPTO 文档完成环境部署：
 
-| 组件 | 版本要求 |
-|------|---------|
-| 华为昇腾 CANN | ≥ 8.5.0 |
-| Python | 3.9+ |
-| PyTorch | 2.7.x |
-| torch_npu | 与 PyTorch 版本配套 |
-| [PyPTO](https://gitcode.com/cann/pypto) | ≥ 0.2.1（需从源码编译安装） |
-| [pto-isa](https://gitcode.com/cann/pto-isa) | 与 PyPTO 主仓同步的最新版本 |
+- [环境部署](https://gitcode.com/cann/pypto/blob/master/docs/install/prepare_environment.md)：介绍项目基础环境的搭建，包括软件包和第三方依赖的获取和安装。
+- [编译安装](https://gitcode.com/cann/pypto/blob/master/docs/install/build_and_install.md)：环境部署后，介绍如何快速获取或编译 PyPTO 软件包并安装。
 
-### 第一步：安装 CANN 环境
-
-按照昇腾官方文档安装 CANN toolkit，安装完成后加载环境变量：
-
-```bash
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
-```
-
-### 第二步：安装 torch_npu
-
-torch_npu 需要与 PyTorch 版本严格对应，按照昇腾官方发布的配套表安装：
-
-```bash
-pip install torch torch_npu -i https://mirrors.aliyun.com/pypi/simple/
-```
-
-torch_npu 依赖 `scipy` 和 `decorator`，需一并安装：
-
-```bash
-pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
-```
-
-### 第三步：克隆并编译安装 pto-isa
-
-pto-isa 提供底层 ISA 接口头文件，PyPTO 编译时依赖。
-
-```bash
-git clone https://gitcode.com/cann/pto-isa.git
-```
-
-> pto-isa 无需单独编译，仅需将仓库路径通过环境变量 `PTO_TILE_LIB_CODE_PATH` 指定给 PyPTO 编译系统即可。
-
-### 第四步：克隆并编译安装 PyPTO
-
-```bash
-git clone https://gitcode.com/cann/pypto.git
-cd pypto
-
-# 设置 pto-isa 路径（必须在编译前设置）
-export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
-
-# 编译 C++ 扩展（约 1~2 分钟）
-python setup.py build_ext --inplace
-
-# 可编辑模式安装
-pip install -e . -i https://mirrors.aliyun.com/pypi/simple/
-```
-
-### 第五步：设置运行时环境变量
-
-每次运行前需设置以下环境变量：
+PyPTO 环境就绪后，克隆本仓并设置运行时环境变量：
 
 ```bash
 # 加载 CANN 环境
@@ -97,19 +41,6 @@ export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
 
-### 第六步：安装 pypto-gym
-
-```bash
-git clone https://gitcode.com/cann/pypto-gym.git
-cd pypto-gym
-pip install -e . -i https://mirrors.aliyun.com/pypi/simple/
-```
-
-开发模式附加依赖：
-
-```bash
-pip install -e ".[dev]" -i https://mirrors.aliyun.com/pypi/simple/
-```
 
 ## 快速上手
 

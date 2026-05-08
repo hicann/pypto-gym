@@ -140,7 +140,6 @@ python infer.py \
 - Use `--precision bfloat16` (default)
 
 **Import Errors**
-- Ensure `pypto-gym` is installed: `pip install -e .` (from repo root)
 - Ensure Ascend toolkit is sourced: `source /usr/local/Ascend/ascend-toolkit/set_env.sh`
 - Ensure `PTO_TILE_LIB_CODE_PATH` is set
 

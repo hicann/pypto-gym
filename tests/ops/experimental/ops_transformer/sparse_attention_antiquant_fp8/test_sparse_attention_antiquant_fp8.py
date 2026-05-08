@@ -16,13 +16,18 @@ import logging
 from dataclasses import dataclass
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 import pytest
 import pypto
 
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.sparse_attention_antiquant_fp8.sparse_attention_antiquant_fp8_impl \
+from experimental.ops_transformer.sparse_attention_antiquant_fp8.sparse_attention_antiquant_fp8_impl \
     import sparse_attention_antiquant_d, sparse_attention_antiquant_p, SaTileShapeConfig
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+from deepseek_v32_exp.utils.compare import compare
 
 
 @dataclass

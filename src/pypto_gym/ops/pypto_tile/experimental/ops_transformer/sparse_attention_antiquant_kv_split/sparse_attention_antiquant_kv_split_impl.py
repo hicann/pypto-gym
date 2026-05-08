@@ -24,10 +24,16 @@ Main Functions:
 Example:
     See deepseekv32_sparse_attention_antiquant.py for usage examples.
 """
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+
 import os
 import math
 from dataclasses import dataclass
 import numpy as np
+import torch_npu  # noqa: F401
 import pypto
 from pypto.experimental import gather_in_ub
 
@@ -208,7 +214,6 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
     pass_options={
-        "pg_upper_bound": 5000000,
         "vec_nbuffer_setting": {-1: 2, 0: 4},
         "cube_l1_reuse_setting": {-1: 2},
     },
@@ -273,7 +278,6 @@ def sparse_attention_antiquant_kv_split_d(
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
     pass_options={
-        "pg_upper_bound": 5000000,
         "vec_nbuffer_setting": {-1: 4, 0: 4},
         "cube_l1_reuse_setting": {-1: 4},
     },

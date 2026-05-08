@@ -18,18 +18,24 @@ Main Functions:
     - matmul_allreduce_add_rmsnorm: Main function for fused matmul, all-reduce, add, and RMSNorm computation
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import multiprocessing as mp
 import traceback
 
 import numpy as np
 import pytest
 import torch
+import torch_npu  # noqa: F401
 from torch._dynamo import allow_in_graph
 from torch._subclasses import fake_tensor
 
 import pypto
 
-from pypto_gym.ops.pypto_tile.experimental.distributed.distributed_config import DistributedConfig, collect_process_errors
+from experimental.distributed.distributed_config import DistributedConfig, collect_process_errors
 
 
 @pypto.frontend.jit()

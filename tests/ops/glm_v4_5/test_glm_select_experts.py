@@ -11,9 +11,14 @@
 import os
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 from numpy.testing import assert_allclose
-from pypto_gym.ops.pypto_tile.glm_v4_5.glm_select_experts_impl import select_experts
+from glm_v4_5.glm_select_experts_impl import select_experts
 
 
 def gen_row_idx_gloden(hidden_states, top_k):

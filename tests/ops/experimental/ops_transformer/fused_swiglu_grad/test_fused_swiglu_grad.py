@@ -16,6 +16,11 @@ import math
 import logging
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
@@ -68,7 +73,7 @@ def test_bwd(device_id):
     dg_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
     dfc_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
 
-    from pypto_gym.ops.pypto_tile.experimental.ops_transformer.fused_swiglu_grad.fused_swiglu_grad_impl import fused_swiglu_bwd_b_kernel, fused_swiglu_bwd_w_kernel, fused_swiglu_bwd_x_kernel
+    from experimental.ops_transformer.fused_swiglu_grad.fused_swiglu_grad_impl import fused_swiglu_bwd_b_kernel, fused_swiglu_bwd_w_kernel, fused_swiglu_bwd_x_kernel
     fused_swiglu_bwd_b_kernel(dy, g, fc, dg_out, dfc_out, db_g_out, db_fc_out, db_g_out, db_fc_out)
     fused_swiglu_bwd_w_kernel(x, dg_out, dfc_out, dw_g_out, dw_fc_out)
     fused_swiglu_bwd_x_kernel(dg_out, dfc_out, w_g, w_fc, dx_out)

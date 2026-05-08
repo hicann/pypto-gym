@@ -22,16 +22,22 @@ from [s1_size, s2_size] to [s1_size, S2_TILE] per iteration.
 dK and dV are accumulated across kv tiles.
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import os
 import logging
 from dataclasses import dataclass
 
 import torch
+import torch_npu  # noqa: F401  # must come before pypto kernel imports
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl \
+from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl \
     import flash_attention_varlen_backward_kernel_small_seq, flash_attention_mha_grad_kernel_long_seq
 
 

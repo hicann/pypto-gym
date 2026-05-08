@@ -12,12 +12,17 @@ import os
 import logging
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import numpy as np
 import pypto
 from numpy.testing import assert_allclose
-from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_pre_quant_impl import attention_pre_quant
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
+from glm_v4_5.glm_attention_pre_quant_impl import attention_pre_quant
+from glm_v4_5.utils.get_format import get_format
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)

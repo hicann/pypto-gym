@@ -14,11 +14,16 @@ import os
 import numpy as np
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pypto
 import pytest
-from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_fusion_impl import attention, get_qwen_common_config
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.np_compare import detailed_allclose_manual as compare
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.golden import attn_golden
+from glm_v4_5.glm_attention_fusion_impl import attention, get_qwen_common_config
+from glm_v4_5.utils.np_compare import detailed_allclose_manual as compare
+from glm_v4_5.utils.golden import attn_golden
 
 
 np.random.seed(0)

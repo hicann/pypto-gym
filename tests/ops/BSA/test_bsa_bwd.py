@@ -21,6 +21,11 @@ Usage:
   BSA_ROOT=/path/to/BSA python /any/where/test_bsa_bwd.py
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import sys
 import os
 

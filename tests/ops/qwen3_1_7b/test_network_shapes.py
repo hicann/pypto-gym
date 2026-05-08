@@ -11,12 +11,17 @@ import torch
 
 os.environ.setdefault("TILE_FWK_DEVICE_ID", "7")
 import torch_npu  # noqa: F401
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 torch.npu.set_device(int(os.environ["TILE_FWK_DEVICE_ID"]))
 device = f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}"
 
-from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_iter1a_kernel import qwen3_pre_qkv_iter1a, H, Nq, Nkv, D, EPS
-from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k2_qk_rope import qwen3_qk_rope_q, qwen3_qk_rope_k
-from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k3_post_attn import qwen3_post_attn_k3, INT_SIZE
+from qwen3_1_7b.qwen3_iter1a_kernel import qwen3_pre_qkv_iter1a, H, Nq, Nkv, D, EPS
+from qwen3_1_7b.qwen3_k2_qk_rope import qwen3_qk_rope_q, qwen3_qk_rope_k
+from qwen3_1_7b.qwen3_k3_post_attn import qwen3_post_attn_k3, INT_SIZE
 
 
 def rms_norm_torch(x, w, eps=EPS):

@@ -8,7 +8,7 @@ import math
 
 import torch
 
-from pypto_gym.ops.pypto_tile.experimental.matmul.grouped_matmul_finalize_routing.gmm_finalize_routing_impl import (
+from experimental.matmul.grouped_matmul_finalize_routing.gmm_finalize_routing_impl import (
     FinalizeRoutingConfig,
     FinalizeRoutingGoldenInputs,
 )

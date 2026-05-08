@@ -28,10 +28,15 @@ from dataclasses import dataclass
 
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 import pytest
 
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel
+from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
@@ -339,7 +344,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
         max_diff = np.abs(npu_np - golden_np).max()
 
         try:
-            from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+            from deepseek_v32_exp.utils.compare import compare
             compare(npu_tensor.cpu(), golden_tensor, name, atol=atol, rtol=rtol, max_error_count=10)
 
             logging.info(f"  {name}: PASSED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")

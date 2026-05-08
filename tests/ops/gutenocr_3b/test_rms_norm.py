@@ -11,11 +11,16 @@ import json
 import argparse
 import torch
 import torch_npu  # noqa: F401
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 from numpy.testing import assert_allclose
 
 from rms_norm_golden import rms_norm_golden
-from pypto_gym.ops.pypto_tile.gutenocr_3b.rms_norm.rms_norm_impl import rms_norm_impl
+from gutenocr_3b.rms_norm.rms_norm_impl import rms_norm_impl
 
 
 def get_device():

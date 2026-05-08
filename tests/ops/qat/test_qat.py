@@ -33,9 +33,14 @@ import numpy as np
 import pytest
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 from numpy.testing import assert_allclose
 
-from pypto_gym.ops.pypto_tile.qat.qat_impl import (
+from qat.qat_impl import (
     ai_infra_qat_asymmetric_per_group,
     ai_infra_qat_asymmetric_per_group_backward,
     ai_infra_qat_symmetric_per_channel,

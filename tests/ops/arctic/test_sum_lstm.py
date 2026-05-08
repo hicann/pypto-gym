@@ -17,6 +17,11 @@ This file contains:
 - Precision and performance tests
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import os
 import sys
 import time
@@ -28,7 +33,7 @@ import torch
 from numpy.testing import assert_allclose
 import pytest
 
-from pypto_gym.ops.pypto_tile.arctic.sum_lstm import sum_lstm, LstmConfig
+from arctic.sum_lstm import sum_lstm, LstmConfig
 
 BATCH_SIZE = 32
 D_GATE = 4096

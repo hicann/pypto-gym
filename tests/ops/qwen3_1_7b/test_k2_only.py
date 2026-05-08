@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """K2 only - Q variant."""
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import torch
+import torch_npu  # noqa: F401
 
-from pypto_gym.ops.pypto_tile.qwen3_1_7b.qwen3_k2_qk_rope import qwen3_qk_rope_q, D, EPS
+from qwen3_1_7b.qwen3_k2_qk_rope import qwen3_qk_rope_q, D, EPS
 
 Nq = 16
 

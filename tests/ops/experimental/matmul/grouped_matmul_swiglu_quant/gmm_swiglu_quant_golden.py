@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import torch
 
-from pypto_gym.ops.pypto_tile.experimental.matmul.grouped_matmul_swiglu_quant.gmm_swiglu_quant_impl import (
+from experimental.matmul.grouped_matmul_swiglu_quant.gmm_swiglu_quant_impl import (
     GroupedMatmulInputs,
     TransposeConfig,
 )

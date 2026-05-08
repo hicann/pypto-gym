@@ -12,11 +12,16 @@ import os
 import math
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import numpy as np
 from numpy.testing import assert_allclose
 import pypto
-from pypto_gym.ops.pypto_tile.glm_v4_5.glm_attention_impl import (
+from glm_v4_5.glm_attention_impl import (
     attention, attention_for_950, set_qwen_common_config,
     get_common_config,
 )

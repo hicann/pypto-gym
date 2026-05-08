@@ -18,6 +18,11 @@ Main Functions:
     - matmul_allreduce: Main function for fused matmul and all-reduce computation
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import logging
 import multiprocessing as mp
 import os
@@ -32,8 +37,8 @@ import torch
 
 import pypto
 
-from pypto_gym.ops.pypto_tile.experimental.distributed.distributed_config import DistributedConfig
-from pypto_gym.ops.pypto_tile.experimental.distributed.swimlane_analyzer import SwimlaneAnalyzer
+from experimental.distributed.distributed_config import DistributedConfig
+from experimental.distributed.swimlane_analyzer import SwimlaneAnalyzer
 
 logger = logging.getLogger(__name__)
 

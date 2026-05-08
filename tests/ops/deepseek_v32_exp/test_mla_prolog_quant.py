@@ -17,10 +17,15 @@ import logging
 from pathlib import Path
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import pypto
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.mla_prolog_quant_impl import mla_prolog_quant_p, mla_prolog_quant_d, MlaTileConfig
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+from deepseek_v32_exp.mla_prolog_quant_impl import mla_prolog_quant_p, mla_prolog_quant_d, MlaTileConfig
+from deepseek_v32_exp.utils.compare import compare
 
 
 def prep_env():
@@ -612,7 +617,7 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, w_dtype, is_
     output_data = [output_q_norm_data, output_q_norm_scale_data, output_q_nope_data,
                 output_q_rope_data, output_kv_cache_data, output_kr_cache_data, k_scale_cache_data_out]
 
-    from pypto_gym.ops.pypto_tile.deepseek_v32_exp.mla_prolog_quant_impl import RopeTileShapeConfig
+    from deepseek_v32_exp.mla_prolog_quant_impl import RopeTileShapeConfig
     rope_tile_shape = RopeTileShapeConfig(two_dim=[32, 64], three_dim=[32, 32, 128], four_dim=[16, 128, 128, 128])
     if is_p:
         mla_prolog_quant_p(*input_data, *output_data, 1e-5, 1e-5, cache_mode, tile_config, rope_tile_shape)

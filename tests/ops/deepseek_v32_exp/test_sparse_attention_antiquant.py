@@ -16,13 +16,18 @@ import logging
 from dataclasses import dataclass
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 import pytest
 import pypto
 
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.sparse_attention_antiquant_impl \
+from deepseek_v32_exp.sparse_attention_antiquant_impl \
     import sparse_attention_antiquant_d, sparse_attention_antiquant_p, SaTileShapeConfig
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+from deepseek_v32_exp.utils.compare import compare
 
 
 def gen_uniform_data(data_shape, min_value, max_value, dtype):

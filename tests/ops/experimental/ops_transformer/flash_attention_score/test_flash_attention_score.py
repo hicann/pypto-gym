@@ -35,10 +35,15 @@ from typing import Optional
 from dataclasses import dataclass
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 from numpy.testing import assert_allclose
 
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import (
+from experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import (
     flash_attention_score_kernel_with_mask_origin,
     flash_attention_score_kernel_with_mask,
     flash_attention_score_kernel_with_pse_and_dropout,

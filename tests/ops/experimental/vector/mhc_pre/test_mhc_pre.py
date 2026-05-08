@@ -16,18 +16,24 @@ MHC Pre-processing 算子精度验证测试
   - 无标记 + exit ≠ 0: 功能问题
 """
 
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import os
 import sys
 import argparse
 
 import torch
+import torch_npu  # noqa: F401
 import numpy as np
 from numpy.testing import assert_allclose
 
 # golden 文件从同级目录导入
 from mhc_pre_golden import mhc_pre_golden
 # impl 文件使用包导入方式（假设 pypto_gym 已通过 pip install -e . 安装）
-from pypto_gym.ops.pypto_tile.experimental.vector.mhc_pre.mhc_pre_impl import mhc_pre_wrapper
+from experimental.vector.mhc_pre.mhc_pre_impl import mhc_pre_wrapper
 
 
 # 精度容差（来自 SPEC.md）

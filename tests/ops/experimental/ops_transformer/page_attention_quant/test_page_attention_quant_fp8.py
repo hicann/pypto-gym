@@ -26,13 +26,18 @@ import math
 import enum
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import pytest
 import numpy as np
 from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 
-from pypto_gym.ops.pypto_tile.experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import ifa_func_kernel, set_qwen_common_config, get_common_config
+from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import ifa_func_kernel, set_qwen_common_config, get_common_config
 import pypto
 
 np.random.seed(0)

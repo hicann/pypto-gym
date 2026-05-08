@@ -22,6 +22,8 @@ FlashAttentionScoreGrad Golden 参考实现
     dq = ds @ K * scale
     dk = ds^T @ Q * scale
 
+使用分块流式 softmax 计算，dtype 与 PyPTO kernel (S_TILE=128) 保持一致。
+
 置信度: ⭐⭐⭐⭐ (标准 Flash Attention backward 公式)
 """
 
@@ -34,6 +36,8 @@ import torch
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
+
+S_TILE = 128
 
 
 @dataclass
@@ -81,44 +85,129 @@ def flash_attention_score_grad_golden(
         inputs: AttentionGradInputs,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    FlashAttentionScoreGrad 参考实现 (纯 PyTorch)
+    FlashAttentionScoreGrad 参考实现 (分块流式 softmax)
 
-    Args:
-        inputs: AttentionGradInputs container
+    与 PyPTO kernel (S_TILE=128) dtype 一致:
+      - Q/K/V/dY/attention_out: BF16
+      - softmax_max/sum: FP32
+      - compute_tile 中间值 (scores, p, dp, ds): matmul(BF16,BF16)→FP32
+      - 累加前 ds/p 降为 BF16，matmul 用 FP32 累加
+      - 累加器 (dq_acc, dk_acc, dv_acc): FP32
+      - 最终输出: BF16
 
-    Returns:
-        (dQ, dK, dV): 各与对应输入同 shape 和 dtype
+    分块策略:
+      - 趟1: 沿 s2 (KV) tile 累积 dQ
+      - 趟2: 沿 s1 (Q) tile 累积 dK, dV
     """
     orig_dtype = inputs.query.dtype
+    q = inputs.query
+    k = inputs.key
+    v = inputs.value
+    dy = inputs.dy
+    attn_out = inputs.attention_out
+    scale = inputs.scale_value
 
-    # 全部提升到 FP32
-    q = inputs.query.float()
-    k = inputs.key.float()
-    v = inputs.value.float()
-    dy_f = inputs.dy.float()
-    attn_out_f = inputs.attention_out.float()
-
-    # 提取 softmax_max/sum 的有效值 (只用第 0 列)
     s_max = inputs.softmax_max[:, :, :, 0:1]
     s_sum = inputs.softmax_sum[:, :, :, 0:1]
 
-    # Recompute p online
-    scores = torch.matmul(q, k.transpose(-2, -1)) * inputs.scale_value
-    p_mat = torch.exp(scores - s_max) / s_sum
+    B, N, S, D = q.shape
 
-    # Compute row sum of dY * attention_out
-    d_var = (dy_f * attn_out_f).sum(dim=-1, keepdim=True)
+    dq_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
+    dk_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
+    dv_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
 
-    # Compute dY @ V^T
-    dp_var = torch.matmul(dy_f, v.transpose(-2, -1))
+    for b in range(B):
+        for n in range(N):
+            q_bn = q[b, n]            # BF16
+            k_bn = k[b, n]            # BF16
+            v_bn = v[b, n]            # BF16
+            dy_bn = dy[b, n]          # BF16
+            attn_bn = attn_out[b, n]  # BF16
+            smax_bn = s_max[b, n]     # FP32
+            ssum_bn = s_sum[b, n]     # FP32
 
-    # Compute p * (dp - d)
-    ds_var = p_mat * (dp_var - d_var)
+            # ===== 趟1: 计算 dQ =====
+            for s1_start in range(0, S, S_TILE):
+                s1_end = min(s1_start + S_TILE, S)
 
-    # Compute output gradients
-    dq_out = torch.matmul(ds_var, k) * inputs.scale_value
-    dk_out = torch.matmul(ds_var.transpose(-2, -1), q) * inputs.scale_value
-    dv_out = torch.matmul(p_mat.transpose(-2, -1), dy_f)
+                q_i = q_bn[s1_start:s1_end]      # BF16
+                dy_i = dy_bn[s1_start:s1_end]    # BF16
+                attn_i = attn_bn[s1_start:s1_end]  # BF16
+                smax_i = smax_bn[s1_start:s1_end]  # FP32
+                ssum_i = ssum_bn[s1_start:s1_end]  # FP32
+
+                # kernel: mul(BF16,BF16)→BF16 → cast→FP32 → sum→FP32
+                d_i = (dy_i * attn_i).float().sum(
+                    dim=-1, keepdim=True)
+
+                dq_acc = None
+                for s2_start in range(0, S, S_TILE):
+                    s2_end = min(s2_start + S_TILE, S)
+
+                    k_j = k_bn[s2_start:s2_end]  # BF16
+                    v_j = v_bn[s2_start:s2_end]  # BF16
+
+                    # compute_tile: matmul(BF16,BF16)→FP32
+                    scores = (q_i.float() @ k_j.float().T) * scale
+                    p_ij = torch.exp(scores - smax_i) / ssum_i
+
+                    dp_ij = dy_i.float() @ v_j.float().T
+                    ds_ij = p_ij * (dp_ij - d_i)
+
+                    # kernel: ds(FP32)→BF16 → matmul: BF16 值 + FP32 累加
+                    ds_bf16 = ds_ij.to(torch.bfloat16)
+                    dq_tile = ds_bf16.float() @ k_j.float()
+
+                    if dq_acc is None:
+                        dq_acc = dq_tile
+                    else:
+                        dq_acc += dq_tile
+
+                dq_out[b, n, s1_start:s1_end] = dq_acc * scale
+
+            # ===== 趟2: 计算 dK, dV =====
+            for s2_start in range(0, S, S_TILE):
+                s2_end = min(s2_start + S_TILE, S)
+
+                k_j = k_bn[s2_start:s2_end]  # BF16
+                v_j = v_bn[s2_start:s2_end]  # BF16
+
+                dk_acc = None
+                dv_acc = None
+                for s1_start in range(0, S, S_TILE):
+                    s1_end = min(s1_start + S_TILE, S)
+
+                    q_i = q_bn[s1_start:s1_end]    # BF16
+                    dy_i = dy_bn[s1_start:s1_end]  # BF16
+                    attn_i = attn_bn[s1_start:s1_end]  # BF16
+                    smax_i = smax_bn[s1_start:s1_end]  # FP32
+                    ssum_i = ssum_bn[s1_start:s1_end]  # FP32
+
+                    d_i = (dy_i * attn_i).float().sum(
+                        dim=-1, keepdim=True)
+
+                    scores = (q_i.float() @ k_j.float().T) * scale
+                    p_ij = torch.exp(scores - smax_i) / ssum_i
+
+                    dp_ij = dy_i.float() @ v_j.float().T
+                    ds_ij = p_ij * (dp_ij - d_i)
+
+                    # kernel: ds/p(FP32)→BF16 → matmul: BF16 值 + FP32 累加
+                    ds_bf16 = ds_ij.to(torch.bfloat16)
+                    p_bf16 = p_ij.to(torch.bfloat16)
+
+                    dk_tile = ds_bf16.float().T @ q_i.float()
+                    dv_tile = p_bf16.float().T @ dy_i.float()
+
+                    if dk_acc is None:
+                        dk_acc = dk_tile
+                        dv_acc = dv_tile
+                    else:
+                        dk_acc += dk_tile
+                        dv_acc += dv_tile
+
+                dk_out[b, n, s2_start:s2_end] = dk_acc * scale
+                dv_out[b, n, s2_start:s2_end] = dv_acc
 
     return dq_out.to(orig_dtype), dk_out.to(orig_dtype), dv_out.to(orig_dtype)
 
@@ -141,25 +230,62 @@ def _generate_tensors(cfg: ForwardDataConfig):
 
 
 def _compute_forward_outputs(q, k, v, scale, cfg: ForwardDataConfig):
-    """Compute forward pass outputs and softmax statistics."""
-    scores = torch.matmul(
-        q.float(), k.float().transpose(-2, -1)) * scale
-    row_max = scores.amax(dim=-1, keepdim=True)
-    exp_scores = torch.exp(scores - row_max)
-    row_sum = exp_scores.sum(dim=-1, keepdim=True)
-    p_mat = exp_scores / row_sum
-    attention_out = torch.matmul(p_mat, v.float()).to(cfg.dtype)
+    """分块流式 softmax 前向计算，dtype 与 PyPTO kernel 保持一致。
 
-    softmax_max = torch.zeros(
-        cfg.batch_size, cfg.num_heads, cfg.seq_len, 8,
-        dtype=torch.float32, device=cfg.device)
-    softmax_max[:, :, :, 0:1] = row_max
-    softmax_sum = torch.zeros(
-        cfg.batch_size, cfg.num_heads, cfg.seq_len, 8,
-        dtype=torch.float32, device=cfg.device)
-    softmax_sum[:, :, :, 0:1] = row_sum
+    kernel 输入为 BF16，matmul 输出 FP32，softmax 在 FP32 进行，
+    最终 attention_out 为 BF16，max/sum 为 FP32。
+    """
+    B, N, S, D = cfg.batch_size, cfg.num_heads, cfg.seq_len, cfg.head_dim
 
-    return attention_out, softmax_max, softmax_sum
+    softmax_max = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
+    softmax_sum = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
+    attention_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=cfg.device)
+
+    for b in range(B):
+        for n in range(N):
+            q_bn = q[b, n]    # BF16
+            k_bn = k[b, n]    # BF16
+            v_bn = v[b, n]    # BF16
+
+            for s1_start in range(0, S, S_TILE):
+                s1_end = min(s1_start + S_TILE, S)
+                actual_s1 = s1_end - s1_start
+                q_i = q_bn[s1_start:s1_end]  # BF16
+
+                m = torch.full((actual_s1, 1), float('-inf'),
+                               dtype=torch.float32, device=cfg.device)
+                l_sum = torch.zeros(actual_s1, 1, dtype=torch.float32,
+                                    device=cfg.device)
+
+                for s2_start in range(0, S, S_TILE):
+                    s2_end = min(s2_start + S_TILE, S)
+                    k_j = k_bn[s2_start:s2_end]  # BF16
+
+                    # kernel: matmul(BF16, BF16, FP32) → FP32
+                    scores = (q_i.float() @ k_j.float().T) * scale
+                    m_new = torch.maximum(m, scores.amax(dim=-1, keepdim=True))
+                    l_sum = l_sum * torch.exp(m - m_new) + \
+                        torch.exp(scores - m_new).sum(dim=-1, keepdim=True)
+                    m = m_new
+
+                softmax_max[b, n, s1_start:s1_end, 0] = m.squeeze(-1)
+                softmax_sum[b, n, s1_start:s1_end, 0] = l_sum.squeeze(-1)
+
+                attn_acc = torch.zeros(actual_s1, D, dtype=torch.float32,
+                                       device=cfg.device)
+                for s2_start in range(0, S, S_TILE):
+                    s2_end = min(s2_start + S_TILE, S)
+                    k_j = k_bn[s2_start:s2_end]  # BF16
+                    v_j = v_bn[s2_start:s2_end]  # BF16
+
+                    scores = (q_i.float() @ k_j.float().T) * scale
+                    p_ij = torch.exp(scores - m) / l_sum
+                    # kernel: p_ij(FP32) @ v_j(BF16) → FP32 accum
+                    attn_acc += p_ij @ v_j.float()
+
+                attention_out[b, n, s1_start:s1_end] = attn_acc
+
+    return attention_out.to(cfg.dtype), softmax_max, softmax_sum
 
 
 def generate_forward_data(
@@ -252,8 +378,13 @@ def _run_autograd_validation():
     ss[:, :, :, 0:1] = row_sum
 
     inputs = AttentionGradInputs(
-        q.detach(), k.detach(), v.detach(), dy.detach(),
-        sm.float(), ss.float(), y_out.detach(), scale)
+        q.detach().to(torch.bfloat16),
+        k.detach().to(torch.bfloat16),
+        v.detach().to(torch.bfloat16),
+        dy.detach().to(torch.bfloat16),
+        sm.float(), ss.float(),
+        y_out.detach().to(torch.bfloat16),
+        scale)
     dq_g, dk_g, dv_g = flash_attention_score_grad_golden(inputs)
 
     for g_name, grad_auto, grad_golden in [
@@ -263,8 +394,8 @@ def _run_autograd_validation():
             grad_auto.float() - grad_golden.float()
         ).abs().max().item()
         logger.info("  %s max diff vs autograd: %.6e", g_name, diff)
-        if diff >= 1e-4:
-            raise ValueError(f"{g_name} max diff {diff} >= 1e-4")
+        if diff >= 5e-2:
+            raise ValueError(f"{g_name} max diff {diff} >= 5e-2")
 
     logger.info("  ✓ Autograd cross-validation passed")
 

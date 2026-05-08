@@ -16,10 +16,15 @@ import math
 import pytest
 import torch
 import torch_npu
+
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import numpy as np
 import pypto
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_quant_impl import LightningIndexerConfigs
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.utils.compare import compare
+from deepseek_v32_exp.lightning_indexer_quant_impl import LightningIndexerConfigs
+from deepseek_v32_exp.utils.compare import compare
 
 
 def gen_cache_tensor(k_tensor, block_table, block_num, block_size, b):
@@ -288,7 +293,7 @@ def topk_idx_compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, error_cou
 
 
 def lightning_indexer(case_name: str) -> bool:
-    from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_quant_impl import lightning_indexer_decode
+    from deepseek_v32_exp.lightning_indexer_quant_impl import lightning_indexer_decode
     # 设置设备ID
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

@@ -33,8 +33,13 @@ import torch
 import torch.nn.functional as F
 import torch_npu
 
+import sys, os; _p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+
 import pypto
-from pypto_gym.ops.pypto_tile.qwen3_next.gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
+from qwen3_next.gated_delta_rule_impl import chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
 
 
 def gen_dims(params):
