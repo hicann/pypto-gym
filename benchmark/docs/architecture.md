@@ -46,7 +46,7 @@ flowchart TD
     J --> K{"verifier_mode"}
     K -- opencode --> L["pypto-kernel-validator<br/>cwd = pypto-gym repo"]
     K -- direct --> M["KernelVerifier direct call"]
-    L --> N["cheat check + correctness + optional performance"]
+    L --> N["cheat check + correctness + performance（默认 verifier.mode=performance）"]
     M --> N
     N --> O["write result.json"]
     O --> P["write summary.json / summary.md"]
@@ -101,6 +101,8 @@ flowchart TB
 | 批次报告 | `<output.root_dir>/report/` | `summary.json`、`summary.md` 和单 case 结果 |
 | 运行状态 | `<output.root_dir>/state/state.json` | `monitor` 子命令读取该文件 |
 | 原始日志 | `<output.root_dir>/report/<level>/<op>/` | `pypto_run.log`、`verifier.log` 和会话导出 |
+| PyPTO custom 副本 | `<output.root_dir>/report/<level>/<op>/custom/<op>/` | 对应 case 的 custom 产物副本，复制时排除 `output*` |
+| 断裂点综合分析 | `<output.root_dir>/report/fracture-points/` | benchmark 结束后的可选后处理产物，见 `docs/fracture-analysis.md` |
 | 后台 run 子进程日志 | `<output.root_dir>/logs/benchmark.out` / `benchmark.err` | 默认 detached 时子进程标准输出与错误流 |
 
 ## 隔离原则

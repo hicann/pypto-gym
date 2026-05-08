@@ -113,7 +113,7 @@ def test_config_loader_merges_partial_yaml_with_defaults(tmp_path) -> None:
     assert cfg["cases"] == "pto_case=1"
     assert cfg["pypto"]["timeout_sec"] == 60
     assert cfg["pypto"]["agent"] == "pypto-op-orchestrator"
-    assert cfg["verifier"]["mode"] == "correctness"
+    assert cfg["verifier"]["mode"] == "performance"
     assert "arch" not in cfg["verifier"]
     assert cfg["monitor"]["poll_sec"] == 3
 
@@ -209,6 +209,33 @@ def test_run_cfg_unifies_artifact_dirs_under_configured_root(tmp_path) -> None:
     assert cfg.log_dir == root_dir / "logs"
     assert cfg.report_dir == root_dir / "report"
     assert cfg.monitor_state_dir == root_dir / "state"
+
+
+def test_copy_pypto_custom_to_report_excludes_output_paths(tmp_path: Path) -> None:
+    op_dir = tmp_path / "repo" / "custom" / "level1" / "Foo"
+    op_dir.mkdir(parents=True)
+    (op_dir / "Foo_impl.py").write_text("# impl\n", encoding="utf-8")
+    (op_dir / "output").mkdir()
+    (op_dir / "output" / "large.bin").write_text("x", encoding="utf-8")
+    (op_dir / "output_20260507").mkdir()
+    (op_dir / "output_20260507" / "large.bin").write_text("x", encoding="utf-8")
+    (op_dir / "nested").mkdir()
+    (op_dir / "nested" / "output_cache").mkdir()
+    (op_dir / "nested" / "output_cache" / "large.bin").write_text("x", encoding="utf-8")
+    (op_dir / "nested" / "keep.txt").write_text("keep\n", encoding="utf-8")
+
+    copied = run_kernelbench._copy_pypto_custom_to_report(
+        op_dir,
+        tmp_path / "run" / "report" / "level1" / "Foo",
+        "Foo",
+    )
+
+    assert copied == tmp_path / "run" / "report" / "level1" / "Foo" / "custom" / "Foo"
+    assert (copied / "Foo_impl.py").is_file()
+    assert (copied / "nested" / "keep.txt").is_file()
+    assert not (copied / "output").exists()
+    assert not (copied / "output_20260507").exists()
+    assert not (copied / "nested" / "output_cache").exists()
 
 
 def test_run_cfg_defaults_pypto_repo_to_benchmark_cache(monkeypatch) -> None:

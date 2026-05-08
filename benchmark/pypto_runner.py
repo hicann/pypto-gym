@@ -245,7 +245,11 @@ ModelNew 文件硬约束:
 10. 不得修改已生成的 `{op_name}_impl.py` 的导出符号或函数签名, 除非是为修正
    与 task_desc 调用约定不兼容的问题.
 11. 输出 shape 必须与 task_desc 参考 `Model` 完全一致; scalar `torch.Size([])`
-   与 `torch.Size([1])` 不等价, 不得作为通过处理.
+    与 `torch.Size([1])` 不等价, 不得作为通过处理.
+12. 桥接文件中的 import 必须使用本地导入, 如 `from {op_name}_impl import {op_name}_wrapper`.
+    禁止使用基于路径的包导入 (如 `from custom.level1.ReLU.ReLU_impl import ReLU_wrapper`),
+    因为下游 verifier 在临时工作目录中用扁平文件布局执行, 不存在 `custom/` 目录树.
+
 
 ModelNew 文件自检 (必须通过):
 ----------------------------------------------------------------------
@@ -299,6 +303,16 @@ for key in task_keys:
     )
 model.to("cpu")
 model(*task_mod.get_inputs())
+
+_bridge_source = open('{op_dir_rel}/{op_name}_pypto_impl.py').read()
+import re as _re
+_found = _re.findall(r'^from custom\.', _bridge_source, _re.MULTILINE)
+assert len(_found) == 0, (
+    "桥接文件禁止使用 from custom.* 路径导入. "
+    f"发现 {{len(_found)}} 处: {{_found}}. "
+    "请改为本地导入: from {op_name}_impl import {op_name}_wrapper"
+)
+
 print(type(model).__name__, calls)
 PY
 ----------------------------------------------------------------------

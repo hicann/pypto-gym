@@ -54,11 +54,16 @@ custom/<op>/
 <report-dir>/
 ├── summary.json
 ├── summary.md
+├── fracture-points/              # 可选：断裂点综合分析后处理产物
+│   ├── README.md
+│   ├── benchmark_fracture_report.md
+│   └── <level>_<op>_attempt1.md
 └── <level>/<op>/
     ├── pypto_run.log
     ├── pypto_session.md
     ├── verifier.log
     ├── verifier_session.md
+    ├── custom/<op>/             # PyPTO custom 产物副本，排除 output*
     ├── skill_report.json
     ├── <op>_task_desc.py
     └── result.json
@@ -111,6 +116,8 @@ benchmark/
 - PyPTO 产物缺失：查看对应 case 的 `pypto_run.log`。
 - `skill_report.json` 未产出：查看对应 case 的 `verifier.log`。
 - KernelVerifier 失败：查看对应 case 的 `verifier.log` 和 `result.json`。
+- 断裂点综合报告统计异常：检查单算子报告是否包含 `聚合分类`
+  和 `分类依据`；缺少分类的断裂点不应计入 Type-1 统计。
 - 默认后台 `benchmark run` 若迟迟不出现 `state.json`：stderr 会给出子进程状态和
   `logs/benchmark.err` / `benchmark.out` 尾部；优先查看预检错误或子进程 traceback，
   必要时使用 `python -m benchmark run … --foreground`。

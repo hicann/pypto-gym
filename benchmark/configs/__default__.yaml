@@ -93,7 +93,7 @@ verifier:
   #   correctness  — 仅精度
   #   performance  — 精度 + 性能 (gen vs base speedup)
   #   full         — 当前等价于 performance
-  mode: "correctness"
+  mode: "performance"
   # 执行模式 (谁来跑反作弊+精度+性能):
   #   opencode — spawn `opencode run --agent pypto-kernel-validator` 加载
   #              `.opencode/skills/pypto-kernel-validate`, agent 在 skill

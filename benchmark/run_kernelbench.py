@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -290,6 +291,22 @@ def _write_case_phase(
     tmp.replace(out)
 
 
+def _copy_pypto_custom_to_report(op_dir: Path, case_report_dir: Path, op_name: str) -> Optional[Path]:
+    """Copy ``custom/<op>`` artifacts into the case report dir, excluding bulky output* paths."""
+    if not op_dir.is_dir():
+        return None
+
+    dest = case_report_dir / "custom" / op_name
+    if dest.exists():
+        shutil.rmtree(dest)
+
+    def _ignore_output_paths(_dir: str, names: List[str]) -> set[str]:
+        return {name for name in names if name.startswith("output")}
+
+    shutil.copytree(op_dir, dest, ignore=_ignore_output_paths)
+    return dest
+
+
 @dataclass
 class _RunCfg:
     pypto_repo_root: Path
@@ -544,6 +561,16 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
         )
         record.pypto_session_export_message = pypto_result.opencode_session_export_message
         record.pypto_artifacts = {k: str(v) for k, v in pypto_result.artifacts.items()}
+        try:
+            copied_custom_dir = _copy_pypto_custom_to_report(op_dir, case_report_dir, op_name)
+            if copied_custom_dir is not None:
+                record.pypto_artifacts["report_custom_dir"] = str(copied_custom_dir)
+                logger.info("[%s] copied pypto custom artifacts to %s",
+                            case.case_id, copied_custom_dir)
+        except Exception as exc:
+            record.pypto_artifacts["report_custom_copy_error"] = str(exc)
+            logger.warning("[%s] failed to copy pypto custom artifacts: %s",
+                           case.case_id, exc)
 
         if not pypto_result.ok:
             record.overall_status = "pypto_failed"

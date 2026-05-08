@@ -84,4 +84,5 @@ pytest 集合覆盖无需 NPU/LLM 的 CLI 契约和基础逻辑。更多说明�
 - `docs/monitor.md`: `monitor` 子命令与状态目录。
 - `docs/kernelbench.md`: KernelBench 下载、布局和数据集约束。
 - `docs/add-new-case.md`: 新增 KernelBench 风格 case 的规则。
+- `docs/fracture-analysis.md`: benchmark 运行后的断裂点综合分析流程。
 - `docs/development.md`: 内部流程、产物布局和已知约束。

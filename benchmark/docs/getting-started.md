@@ -50,7 +50,8 @@ cp benchmark/configs/relu.yaml benchmark/configs/local.yaml
 ```
 
 按需修改 `benchmark/configs/local.yaml`。未填写字段会从
-`benchmark/configs/__default__.yaml` 继承，例如：
+`benchmark/configs/__default__.yaml` 继承（其中 `verifier.mode` 默认为
+`performance`，即精度与性能一并验证），例如：
 
 ```yaml
 bench_dir: ""
@@ -144,6 +145,7 @@ python -m benchmark monitor /tmp/pypto_gym_benchmark/state
 │       ├── pypto_session.md
 │       ├── verifier.log
 │       ├── verifier_session.md
+│       ├── custom/<op>/     # PyPTO custom 产物副本，已排除 output*
 │       └── result.json
 └── state/
     └── state.json
@@ -156,7 +158,13 @@ python -m benchmark monitor /tmp/pypto_gym_benchmark/state
 - `report/<level>/<op>/verifier.log`：gym 侧验证日志。
 - `report/<level>/<op>/pypto_session.md`：PyPTO 开发阶段完整会话。
 - `report/<level>/<op>/verifier_session.md`：验证阶段完整会话。
+- `report/<level>/<op>/custom/<op>/`：对应 case 的 PyPTO custom 产物副本，复制时会排除 `output*` 路径以控制体积。
 - `benchmark/.cache/pypto/custom/<op>/`：PyPTO 生成的算子开发产物。
+
+若需要分析 PyPTO agent 在批量运行中的共性卡点，可在 benchmark 结束后对
+`report/` 执行断裂点综合分析。分析产物写入
+`report/fracture-points/`，包括全局报告 `benchmark_fracture_report.md` 和单算子
+断裂点报告。详细流程见 `docs/fracture-analysis.md`。
 
 ## 7. 运行精选 case 集合
 

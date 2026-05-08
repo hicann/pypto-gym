@@ -29,7 +29,7 @@ python -m benchmark monitor <root_dir>/state
 | `pypto.timeout_sec` | 单 case PyPTO 工作流超时时间 |
 | `pypto.skip_pypto_gen` | 是否复用已有 `custom/<op>/` 产物，只复跑 verifier |
 | `pypto.force_regen` | 是否强制重跑 PyPTO 生成 |
-| `verifier.mode` | 验证范围：`correctness` / `performance` / `full` |
+| `verifier.mode` | 验证范围：`correctness` / `performance` / `full`；`configs/__default__.yaml` 默认为 `performance` |
 | `verifier.verifier_mode` | `opencode` 或 `direct`；`direct` 仅用于离线开发调试 |
 | `verifier.verify_rtol` / `verifier.verify_atol` | 精度比较阈值 |
 | `verifier.keep_artifacts` | 是否保留 verifier 临时脚本和源码副本 |
