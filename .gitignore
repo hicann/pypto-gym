@@ -53,6 +53,17 @@ kernel_aicpu
 kernel_meta/
 golden/
 
+# Benchmark / test build artifacts
+extra-info/
+fusion_result.json
+
+# npm / node
+node_modules/
+package-lock.json
+
+# Agent local settings
+.claude/settings.local.json
+
 # Logs
 *.log
 

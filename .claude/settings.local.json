@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(conda run:*)",
-      "Bash(npu-smi info:*)",
-      "Bash(mkdir -p /data/z00885570/pypto-master/pypto-gym/.claude/skills/migrate-huggingface-to-npu/references)"
-    ]
-  }
-}

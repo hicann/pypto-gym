@@ -1,8 +1,15 @@
 # PyPTO-Gym
 
+[English](#overview-en) | 简体中文
+
 PyPTO-Gym 是基于 [PyPTO](https://gitcode.com/cann/pypto) 编程框架构建的算子/模型样例仓库。它收录了一批用 PyPTO 写成的高性能融合算子与典型大模型结构实现，作为 PyPTO 的"算子体操场"，方便开发者学习、复用、压测与对比。
 
 > 本仓原为 `pypto/models/` 目录，现已拆分为独立仓，与 PyPTO 主仓解耦演进。
+
+<a name="overview-en"></a>
+PyPTO-Gym is an operator / model example library built on the [PyPTO](https://gitcode.com/cann/pypto) programming framework. It collects a set of high-performance fused operators and typical LLM structure implementations written in PyPTO, serving as a "kernel gym" for PyPTO — a place to learn, reuse, benchmark, and compare operators.
+
+> This repository was originally the `pypto/models/` directory, now split out as an independent repository decoupled from the PyPTO core.
 
 ## 概述
 
@@ -18,6 +25,7 @@ PyPTO-Gym 的定位类似 NVIDIA 的 [TileGym](https://github.com/NVIDIA/TileGym
 - 提供实验性目录 `experimental/` 收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
 - 算子实现与测试分离：kernel 实现位于 `src/pypto_gym/ops/pypto_tile/<model>/`，对应测试位于 `tests/ops/<model>/`
 - 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
+- 内置 Benchmark 子系统：基于 KernelBench 数据集的端到端自动化评测，含反作弊验证、精度校验与性能测试，支持 LLM 驱动的批量算子生成与回归
 
 ## 环境准备
 
@@ -104,6 +112,52 @@ pytest src/pypto_gym/ops/pypto_tile/experimental/distributed --device 0 1 --card
 
 测试用例通过 `@pytest.mark.soc` 标注适用芯片（`"950"` 对应 910B/910C，`"910"` 对应 910A），conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例通过 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
 
+## Benchmark
+
+`benchmark/` 目录提供了基于 KernelBench 数据集的端到端自动化评测子系统，用于批量验证 PyPTO 算子生成流程的正确性与性能。
+
+核心能力：
+- **批量算子生成**：对接 PyPTO 的 7 阶段 LLM agent 工作流（`pypto-op-orchestrator`），自动生成目标算子的 PyPTO kernel 实现
+- **多层验证**：含反作弊检测（AST / 模式 / 运行时三层）、精度校验（与 PyTorch golden 对比）、性能测试（端到端加速比）
+- **实时监控**：内置 TUI dashboard，运行中可查看各 case 状态与进度
+- **报告沉淀**：自动产出 per-case `result.json` 与全局 `summary.md` / `summary.json`
+
+### 前置准备
+
+```bash
+# 下载 PyPTO 源码（算子生成阶段需要）
+bash benchmark/scripts/download_pypto.sh
+
+# 下载 KernelBench 数据集（测试用例来源）
+bash benchmark/scripts/download_kernelbench.sh
+```
+
+### 快速运行
+
+```bash
+# 创建一个最小配置（2 行即可）
+echo 'cases: "level1=19_ReLU"' > benchmark/configs/local.yaml
+
+# 后台运行 + 自动打开实时监控
+python -m benchmark run --config configs/local.yaml
+
+# 或者前台阻塞模式（适合 CI / 调试）
+python -m benchmark run --config configs/local.yaml --foreground
+```
+
+### 查看结果
+
+```bash
+# 运行结束后，在输出目录下查看报告
+cat <root_dir>/report/summary.md       # 全局 Markdown 报告
+cat <root_dir>/report/summary.json     # 全局 JSON 结果
+
+# 也可在运行中或事后重连实时监控
+python -m benchmark monitor <root_dir>/state
+```
+
+详细配置说明、架构设计、监控面板使用等参见 `benchmark/` 目录下的文档与 `benchmark/README.md`。
+
 ## 常见问题排查
 
 **Q: 报错 `key: runtime.stitch_cfgcache_size does not exist`**
@@ -134,6 +188,12 @@ pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 
 ```
 pypto-gym/
+├── benchmark/                                # KernelBench 自动化评测子系统
+│   ├── configs/                              # YAML 配置文件
+│   ├── docs/                                 # 架构 / 配置 / 监控等文档
+│   ├── scripts/                              # 下载 PyPTO 源码和 KernelBench 数据集的脚本
+│   ├── verifier/                             # 反作弊 + 精度 + 性能验证模块
+│   └── README.md
 ├── docs/                                    # 文档资源（规划中）
 ├── modeling/                                # 模型端到端执行脚本与样例输入
 │   └── transformers/                        # Qwen3-1.7B 推理示例
@@ -168,7 +228,7 @@ pypto-gym/
 │       │   │   │   ├── glm_moe_fusion_impl.py
 │       │   │   │   ├── glm_select_experts_impl.py
 │       │   │   │   ├── utils/
-│       │   │   │   ├── intergrated_example.md
+│       │   │   │   ├── integrated_example.md
 │       │   │   │   └── README.md
 │       │   │   ├── qat/                     # 量化感知训练
 │       │   │   │   ├── qat_impl.py

@@ -15,9 +15,12 @@
   - [../src/pypto_gym/ops/qat/README.md](../src/pypto_gym/ops/qat/README.md)
   - [../src/pypto_gym/ops/qwen3_next/README.md](../src/pypto_gym/ops/qwen3_next/README.md)
 
+## 已有文档
+
+- [CONTRIBUTING.md](../CONTRIBUTING.md) —— 贡献指南：提交新算子的流程、测试规约、性能门槛
+
 ## 计划补充
 
 - `design/` —— 算子库整体定位与与 PyPTO 主仓的边界划分
 - `tutorials/` —— 从 PyPTO 框架到典型融合算子的渐进示例
 - `benchmarks/` —— 各算子在不同 SoC、不同 shape 下的性能基线
-- `contributing.md` —— 提交新算子的流程、测试规约、性能门槛
