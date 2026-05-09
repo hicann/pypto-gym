@@ -257,7 +257,7 @@ def quant_fp8e4m3_per_channel_value(x: torch.Tensor):
     return y_fp8e4m3, scale_dequant
 
 
-def fp8_bsnd_to_pa_format(tensor_bsnd, block_table, actual_seq, block_size):
+def fp8_bsnd_to_pa_format(tensor_bsnd, block_table, actual_seq, block_size, device):
     """
     转换为最终 PA 格式：shape [total_blocks, 128, n, d]
     每个全局 block 存储 128 个 token 位置，有效 token 填充，无效位置补 0
@@ -302,7 +302,7 @@ def fp8_bsnd_to_pa_format(tensor_bsnd, block_table, actual_seq, block_size):
                 src_token_idx = token_start + token_in_block_offset  # 原始张量的 token 索引
                 # 填充：PA[全局block_id, 块内偏移, :, :] = 原始token数据
                 pa_tensor[global_pa_block_id, token_in_block_offset] = curr_tokens[src_token_idx]
-    return pa_tensor
+    return pa_tensor.to(device)
 
 
 @allow_in_graph
@@ -349,10 +349,11 @@ def attention(
 
     inputs = [query, query_scale, key_cache, key_cache_scale, value_cache, value_cache_sclae, block_tables,
               actual_seqs, attn_res]
-    ifa_func_kernel(*inputs)
+    for _ in range(1):
+        ifa_func_kernel(*inputs)
 
 
-def ifa(atten_cfg):
+def ifa(atten_cfg, is_high_precision=True):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch_dtype = torch.bfloat16
     torch.npu.set_device(int(device_id))
@@ -384,61 +385,57 @@ def ifa(atten_cfg):
     # 2. 生成block table - 传入 torch tensor
     block_table = gen_block_table(kv_cache_actual_seq, block_size, block_table_shape)
 
-    # 3. 根据block table 将pa格式的数据转换成
+    # # 3. 根据block table 将pa格式的数据转换成
     k_cache_bsnd, v_cache_bsnd, k_sclae_bsnd = kv_cache_concat_bsnd(k_fp8_e4m3, v, k_scale, block_table, atten_cfg)
     v_fp8_e4m3_bsnd, v_scale = quant_fp8e4m3_per_channel_value(v_cache_bsnd)
-    v_fp8_e4m3 = fp8_bsnd_to_pa_format(v_fp8_e4m3_bsnd.cpu(), block_table.cpu(), kv_cache_actual_seq.cpu(),
-                                       atten_cfg.block_size)
+    v_fp8_e4m3 = fp8_bsnd_to_pa_format(v_fp8_e4m3_bsnd, block_table, kv_cache_actual_seq,
+                                       atten_cfg.block_size, device)
     v_scale = v_scale.reshape(b * 1, nkv, d)
-    k_cache_bsnd_cpu = k_cache_bsnd.cpu()
-    v_cache_bsnd_cpu = v_fp8_e4m3_bsnd.cpu()
-    q_fp8_e4m3 = q_fp8_e4m3.cpu()
-
-    for i in range(b):
-        for j in range(s1):
-            for n2_idx in range(nkv):
-                # 从 torch tensor 获取值
-                kv_seq_len = kv_cache_actual_seq[i].item()  # 使用 .item() 获取标量值
-                seq_len = kv_seq_len - s1 + 1 + j
-                q_bs = q_fp8_e4m3[i * s1 + j]
-                q_scale_b = q_scale[i]
-                k_bs = k_cache_bsnd_cpu[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, d)
-                k_value_bs = k_sclae_bsnd[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, 1)
-                v_bs = v_cache_bsnd_cpu[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, d)
-                v_bs_scale = v_scale[i, n2_idx:n2_idx + 1].reshape(1, d)
-                # MM1: 矩阵乘法
-                # 1,nq, d  -> n_q,d @ d, s2_actual_len
-                qk_bmm_res = torch.matmul(q_bs.to(torch.float32), k_bs.to(torch.float32).transpose(1, 0))
-                qk_bmm_res_npu = qk_bmm_res.npu()
-                q_scale_b_npu = q_scale_b.npu()
-                k_value_bs_npu = k_value_bs.npu()
-                qk_bmm_res_npu = qk_bmm_res_npu * q_scale_b_npu
-                qk_bmm_res_npu = qk_bmm_res_npu * k_value_bs_npu.transpose(1, 0)
-                qk_ele_res = qk_bmm_res_npu * atten_cfg.softmax_scale
-                # Softmax计算
-                softmax_res, _, _ = softmax(qk_ele_res, False)
-                softmax_res_fp8_e4m3, softmax_res_scale = quant_fp8e4m3_per_token(softmax_res)
-                softmax_res_cpu = softmax_res_fp8_e4m3.cpu()
-                # MM2: 矩阵乘法
-                bmm2_res = torch.matmul(softmax_res_cpu.to(torch.float32), v_bs.to(torch.float32))
-                bmm2_res_npu = bmm2_res.npu()
-                bmm2_res_npu = bmm2_res_npu * softmax_res_scale
-                bmm2_res_npu = bmm2_res_npu * v_bs_scale
-                bmm2_res_npu = bmm2_res_npu.to(torch_dtype)
-                bmm2_res_cpu = bmm2_res_npu.cpu()
-                # 存储结果
-                attention_output[i * s1 + j] = bmm2_res_cpu
 
     # 4. 准备测试数据 - 直接使用 torch 张量
     block_table_torch = block_table.to(dtype=torch.int32, device=device)
     act_seq_torch = kv_cache_actual_seq.to(dtype=torch.int32, device=device)
-    q_fp8_e4m3 = q_fp8_e4m3.to(device=device)
-    q_scale = q_scale.to(device=device)
-    k_fp8_e4m3 = k_fp8_e4m3.to(device=device)
-    k_scale = k_scale.to(device=device)
-    v_fp8_e4m3 = v_fp8_e4m3.to(device=device)
-    v_scale = v_scale.to(device=device)
     out_torch = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
+
+    if is_high_precision:
+        for i in range(b):
+            for j in range(s1):
+                for n2_idx in range(nkv):
+                    # 从 torch tensor 获取值
+                    kv_seq_len = kv_cache_actual_seq[i].item()  # 使用 .item() 获取标量值
+                    seq_len = kv_seq_len - s1 + 1 + j
+                    q_bs = q_fp8_e4m3[i * s1 + j]
+                    q_scale_b = q_scale[i]
+                    k_bs = k_cache_bsnd[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, d)
+                    k_value_bs = k_sclae_bsnd[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, 1)
+                    v_bs = v_fp8_e4m3_bsnd[i, :seq_len, n2_idx:n2_idx + 1].reshape(seq_len, d)
+                    v_bs_scale = v_scale[i, n2_idx:n2_idx + 1].reshape(1, d)
+                    # MM1: 矩阵乘法
+                    # 1,nq, d  -> n_q,d @ d, s2_actual_len
+                    qk_bmm_res = torch.matmul(q_bs.to(torch.float32), k_bs.to(torch.float32).transpose(1, 0))
+                    qk_bmm_res_npu = qk_bmm_res.npu()
+                    q_scale_b_npu = q_scale_b.npu()
+                    k_value_bs_npu = k_value_bs.npu()
+                    qk_bmm_res_npu = qk_bmm_res_npu * q_scale_b_npu
+                    qk_bmm_res_npu = qk_bmm_res_npu * k_value_bs_npu.transpose(1, 0)
+                    qk_ele_res = qk_bmm_res_npu * atten_cfg.softmax_scale
+                    # Softmax计算
+                    softmax_res, _, _ = softmax(qk_ele_res, False)
+                    softmax_res_fp8_e4m3, softmax_res_scale = quant_fp8e4m3_per_token(softmax_res)
+              
+                    # MM2: 矩阵乘法
+                    bmm2_res = torch.matmul(softmax_res_fp8_e4m3.to(torch.float32), v_bs.to(torch.float32))
+                    bmm2_res_npu = bmm2_res.npu()
+                    bmm2_res_npu = bmm2_res_npu * softmax_res_scale
+                    bmm2_res_npu = bmm2_res_npu * v_bs_scale
+                    bmm2_res_npu = bmm2_res_npu.to(torch_dtype)
+                  
+                    # 存储结果
+                    attention_output[i * s1 + j] = bmm2_res_npu
+    else:
+        ifa_flash_torch(q=q_fp8_e4m3, q_scale=q_scale, k=k_fp8_e4m3, k_sclae_bsnd=k_scale, v=v_fp8_e4m3,
+                        v_scale=v_scale, block_table=block_table_torch, kv_act_seqs=act_seq_torch,
+                        out=attention_output)
 
     inputs = [
         q_fp8_e4m3,
@@ -457,7 +454,161 @@ def ifa(atten_cfg):
     # 6. 与PyTorch参考实现对比
     assert_allclose(np.array(attention_output.cpu().flatten().tolist()),
                     np.array(out_torch.cpu().flatten().tolist()),
-                    rtol=0.0078125, atol=0.001)
+                    rtol=0.0078125, atol=0.0001)
+
+def matmul_proxy(left, right):
+    FP32 = torch.float32
+    return torch.matmul(left.to(FP32), right.to(FP32))
+
+
+def ifa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, is_fp32=False):
+    """
+    PyTorch版本的FP8量化Flash Attention golden实现
+    
+    参数说明：
+        q: torch.Tensor, shape [b*s1, n1, d], dtype=float8_e4m3fn
+        q_scale: torch.Tensor, shape [b*s1, n1, 1], dtype=float32
+        k: torch.Tensor, shape [block_num, block_size, n2, d], dtype=float8_e4m3fn
+        k_sclae_bsnd: torch.Tensor, shape [block_num, block_size, n2, 1], dtype=float32
+        v: torch.Tensor, shape [block_num, block_size, n2, d], dtype=float8_e4m3fn
+        v_scale: torch.Tensor, shape [b*1, n2, d], dtype=float32
+        block_table: torch.Tensor, shape [b, max_block], dtype=int32
+        kv_act_seqs: torch.Tensor, shape [b], dtype=int32
+        out: torch.Tensor, shape [b*s1, n1, d], dtype=bfloat16
+    """
+    FP32 = torch.float32
+    
+    q_shape = q.shape
+    bs1, n1, d = q_shape[0], q_shape[1], q_shape[2]
+    b = kv_act_seqs.shape[0]
+    s1 = bs1 // b
+    k_shape = k.shape
+    block_num, block_size, n2, _ = k_shape
+    g = n1 // n2
+    g_tile = g
+    
+    softmax_scale = d ** -0.5
+    
+    k_2d_shape = (block_num * block_size, n2 * d)
+    k_scale_2d_shape = (block_num * block_size, n2 * 1)
+    v_2d_shape = (block_num * block_size, n2 * d)
+    q_2d_shape = (b * s1 * n1, d)
+    q_scale_2d_shape = (b * s1 * n1, 1)
+    
+    k_2d = k.reshape(k_2d_shape)
+    k_scale_2d = k_sclae_bsnd.reshape(k_scale_2d_shape)
+    v_2d = v.reshape(v_2d_shape)
+    q_2d = q.reshape(q_2d_shape)
+    q_scale_2d = q_scale.reshape(q_scale_2d_shape)
+    
+    device = q.device
+    dtype_out = out.dtype
+    
+    for b_idx in range(b):
+        for s1_idx in range(s1):
+            cur_seq = kv_act_seqs[b_idx] - (s1 - 1 - s1_idx)
+            cur_seq = max(cur_seq.item(), 0)
+            s2_loop = math.ceil(cur_seq / block_size)
+            
+            for n2_idx in range(n2):
+                for g_idx in range(g // g_tile):
+                    oi_upd = torch.zeros((g_tile, d), device=device, dtype=FP32)
+                    li_upd = torch.zeros((g_tile, 1), device=device, dtype=FP32)
+                    mi_upd = torch.zeros((g_tile, 1), device=device, dtype=FP32)
+                    
+                    for s2_idx in range(s2_loop):
+                        block_idx = block_table[b_idx][s2_idx].item()
+                        block_idx = max(block_idx, 0)
+                        
+                        bs_ofs = b_idx * s1 + s1_idx
+                        n1g_ofs = n2_idx * g + g_idx * g_tile
+                        actual_s2_tile = min(block_size, cur_seq - s2_idx * block_size)
+                        
+                        qi_start = bs_ofs * n1 + n1g_ofs
+                        qi_end = qi_start + g_tile
+                        qi = q_2d[qi_start:qi_end, :]
+                        qi_scale = q_scale_2d[qi_start:qi_end, :]
+                        
+                        kj_start = block_idx * block_size
+                        kj_end = kj_start + block_size
+                        kj = k_2d[kj_start:kj_end, :]
+                        kj_scale = k_scale_2d[kj_start:kj_end, :]
+                        
+                        kj = kj[:, n2_idx * d:(n2_idx + 1) * d]
+                        kj_scale = kj_scale[:, n2_idx * 1:(n2_idx + 1) * 1]
+                        
+                        kj = kj[:actual_s2_tile, :]
+                        kj_scale = kj_scale[:actual_s2_tile, :]
+                        
+                        vj_start = block_idx * block_size
+                        vj_end = vj_start + block_size
+                        vj = v_2d[vj_start:vj_end, :]
+                        
+                        vj = vj[:, n2_idx * d:(n2_idx + 1) * d]
+                        
+                        vj = vj[:actual_s2_tile, :]
+                        
+                        mm1_quant = matmul_proxy(qi, kj.t()).to(FP32)
+                        mm1_fp32 = mm1_quant * qi_scale * kj_scale.t()
+                        muls_res = mm1_fp32 * softmax_scale
+
+                        tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
+                        tsub = muls_res - tilda_mij
+                        tilda_pij = torch.exp(tsub)
+                        tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
+
+                        if s2_idx == 0:
+                            tilda_pij_fp8, tilda_pij_scale = quant_fp8e4m3_per_token(tilda_pij)
+                            
+                            v_scale_bs = v_scale[b_idx * 1, n2_idx:n2_idx + 1, :].reshape(1, d)
+                            
+                            oi_tmp_quant = matmul_proxy(tilda_pij_fp8, vj).to(FP32)
+                            oi_tmp = oi_tmp_quant * tilda_pij_scale * v_scale_bs
+                            
+                            if s2_idx == s2_loop - 1:
+                                oi_upd = oi_tmp / tilda_lij
+                                out[bs_ofs:bs_ofs + 1, n1g_ofs:n1g_ofs + g_tile, :] = oi_upd.unsqueeze(0).to(dtype_out)
+                            else:
+                                oi_upd = oi_tmp
+                            li_upd = tilda_lij
+                            mi_upd = tilda_mij
+                        else:
+                            mi_new, _ = torch.max(torch.cat([mi_upd, tilda_mij], dim=-1), dim=-1, keepdim=True)
+                            
+                            t1 = mi_upd - mi_new
+                            t2 = torch.exp(t1)
+                            t3 = tilda_mij - mi_new
+                            t4 = torch.exp(t3)
+                            
+                            t5 = t4 * tilda_lij
+                            t6 = t2 * li_upd
+                            li_new = t6 + t5
+                            
+                            tilda_pij_fp8, tilda_pij_scale = quant_fp8e4m3_per_token(tilda_pij)
+                            
+                            v_scale_bs = v_scale[b_idx * 1, n2_idx:n2_idx + 1, :].reshape(1, d)
+                            
+                            oi_tmp_quant = matmul_proxy(tilda_pij_fp8, vj).to(FP32)
+                            oi_tmp = oi_tmp_quant * tilda_pij_scale * v_scale_bs
+                            
+                            q3 = oi_upd * t2
+                            q2 = oi_tmp * t4
+                            oi_tmp_new = q3 + q2
+                            
+                            if s2_idx == s2_loop - 1:
+                                oi_upd = oi_tmp_new / li_new
+                                oi_upd_3d = oi_upd.unsqueeze(0)
+                                attn_out_start_col = n1g_ofs
+                                attn_out_end_col = n1g_ofs + g_tile
+                                if attn_out_end_col > out.shape[1]:
+                                    attn_out_end_col = out.shape[1]
+                                    attn_out_start_col = attn_out_end_col - g_tile
+                                out[bs_ofs:bs_ofs + 1, attn_out_start_col:attn_out_end_col, :] = oi_upd_3d.to(dtype_out)
+                            else:
+                                oi_upd = oi_tmp_new
+                            li_upd = li_new
+                            mi_upd = mi_new
+    return out
 
 
 def ifa_test_impl(b=16, s1=1, s2=8192):
@@ -476,7 +627,7 @@ def ifa_test_impl(b=16, s1=1, s2=8192):
         actual_seq_cpu = atten_cfg.actual_seq
 
     check_cond(all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2")
-    ifa(atten_cfg)
+    ifa(atten_cfg, is_high_precision=False)
 
 
 @pytest.mark.soc("950")
@@ -487,7 +638,7 @@ def test_ifa_01():
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
 def test_ifa_02():
-    ifa_test_impl(b=8, s1=1, s2=8192)
+    ifa_test_impl(b=8, s1=1, s2=16384)
 
 
 if __name__ == "__main__":

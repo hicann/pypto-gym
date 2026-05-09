@@ -80,7 +80,8 @@ def set_qwen_common_config(b=16, s1=1, s2=8192):
     kv_layout = "PA_BSND"
     softmax_scale = q_d ** -0.5
     block_table_batch = b
-    block_size = 128
+    s2_tile = 1024
+    block_size = s2_tile
     kv_num_blocks = b * ((s2 + block_size - 1) // block_size)
 
     # 创建 torch tensor 类型的 actual_seq
@@ -93,12 +94,11 @@ def set_qwen_common_config(b=16, s1=1, s2=8192):
     atten_cfg.max_num_blocks_per_query = (s2 + block_size - 1) // block_size
     cube_tile = 128
     m_tile = 128
-    s2_tile = 1024
     tile_cfg = AttentionTileConfig(
         nq,
         s2_tile,
         [[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
-        [m_tile, 1024],
+        [m_tile, s2_tile],
         [[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
         [m_tile, 512])
     global_config = atten_cfg
@@ -148,7 +148,7 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128},
+    runtime_options={"stitch_function_max_num": 1024},
     # 当子图大小达到上界不允许与其他子图合并
     pass_options={
         # Q常驻，0代表第一组mmad，4代表4次matmul合并
@@ -178,6 +178,10 @@ def ifa_func_kernel(
     pypto.experimental.set_operation_options(combine_axis=True)
 
     atten_cfg, tile_cfg = get_common_config()
+    if tile_cfg.c1_tile_shape is None:
+        set_qwen_common_config(b=16, s1=1, s2=8192)
+        atten_cfg, tile_cfg = get_common_config()
+    
     softmax_scale = atten_cfg.softmax_scale
 
     # 2. 从入参拿到输入和输出tensor
@@ -250,7 +254,7 @@ def ifa_func_kernel(
                             kj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
                                 pypto.view(k_2d, [block_size, dn], [block_idx_valid * block_size, 0])
                             kj_sclae_assemble[i * block_size:(i + 1) * block_size, 0:] = \
-                                pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, 0])
+                                pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, n2_idx])
                         kj_assemble = pypto.view(kj_assemble, [s2_tile, dn], [0, 0], valid_shape=[s2_tile, dn])
                         kj_sclae_assemble = pypto.view(kj_sclae_assemble, [s2_tile, 1], [0, 0], 
                                             valid_shape=[s2_tile, 1])
@@ -283,7 +287,7 @@ def ifa_func_kernel(
 
                             pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
                             vj_scale_assemble = pypto.tensor([1, dn], v_scale_2d.dtype, "vj_assemble")
-                            vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, 0])
+                            vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, n2_idx * dn])
 
                             for i in range(block_num):
                                 block_idx = block_table[b_idx, idx + i]
@@ -327,7 +331,7 @@ def ifa_func_kernel(
                             vj_assemble = pypto.view(vj_assemble, [s2_tile, dn],
                                                         [0, 0], valid_shape=[actual_s2_tile, dn])
                             vj_scale_assemble = pypto.tensor([1, dn], v_scale_2d.dtype, "vj_assemble")
-                            vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, 0])
+                            vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, n2_idx * dn])
                             tilda_pij_fp8_e4m3, tilda_pij_scale = symmetric_quantization_per_token_fp8_e4m3(tilda_pij)
 
                             pypto.set_cube_tile_shapes(c2_tile[0], c2_tile[1], c2_tile[2])
