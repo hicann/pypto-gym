@@ -19,6 +19,7 @@ readable Markdown transcript per case.
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
 import os
@@ -45,8 +46,15 @@ class OpencodeExportResult:
 
     session_id: Optional[str] = None
     markdown_file: Optional[Path] = None
+    json_file: Optional[Path] = None
+    export_dir: Optional[Path] = None
+    session_tree_file: Optional[Path] = None
+    nodes_dir: Optional[Path] = None
     status: str = "skipped"
     message: str = ""
+    session_updated_at_ms: Optional[int] = None
+    tree_updated_at_ms: Optional[int] = None
+    node_session_count: int = 0
 
     @property
     def ok(self) -> bool:
@@ -56,8 +64,17 @@ class OpencodeExportResult:
         return {
             "session_id": self.session_id,
             "markdown_file": str(self.markdown_file) if self.markdown_file else None,
+            "json_file": str(self.json_file) if self.json_file else None,
+            "export_dir": str(self.export_dir) if self.export_dir else None,
+            "session_tree_file": (
+                str(self.session_tree_file) if self.session_tree_file else None
+            ),
+            "nodes_dir": str(self.nodes_dir) if self.nodes_dir else None,
             "status": self.status,
             "message": self.message,
+            "session_updated_at_ms": self.session_updated_at_ms,
+            "tree_updated_at_ms": self.tree_updated_at_ms,
+            "node_session_count": self.node_session_count,
         }
 
 
@@ -89,6 +106,7 @@ def export_session_from_log(
     *,
     log_file: Optional[Path],
     output_file: Path,
+    output_dir: Optional[Path] = None,
     session_title: str = "",
     opencode_bin: str = "",
     cwd: Optional[Path] = None,
@@ -117,6 +135,7 @@ def export_session_from_log(
     return export_session_to_markdown(
         session_id=session_id,
         output_file=output_file,
+        output_dir=output_dir,
         opencode_bin=opencode_bin,
         cwd=cwd,
         timeout_sec=timeout_sec,
@@ -218,6 +237,7 @@ def export_session_to_markdown(
     *,
     session_id: str,
     output_file: Path,
+    output_dir: Optional[Path] = None,
     opencode_bin: str = "",
     cwd: Optional[Path] = None,
     raw_json_file: Optional[Path] = None,
@@ -230,6 +250,7 @@ def export_session_to_markdown(
             session_id=session_id,
             data=data,
             output_file=output_file,
+            output_dir=output_dir,
             raw_json_file=raw_json_file,
             message="Markdown transcript exported from OpenCode sqlite storage.",
         )
@@ -289,6 +310,7 @@ def export_session_to_markdown(
         session_id=session_id,
         data=data,
         output_file=output_file,
+        output_dir=output_dir,
         raw_json_file=raw_json_file,
         message="Markdown transcript exported.",
     )
@@ -299,9 +321,18 @@ def _write_session_markdown(
     session_id: str,
     data: Dict[str, Any],
     output_file: Path,
+    output_dir: Optional[Path],
     raw_json_file: Optional[Path],
     message: str,
 ) -> OpencodeExportResult:
+    if output_dir is not None:
+        return _write_session_directory(
+            session_id=session_id,
+            data=data,
+            output_dir=output_dir,
+            message=message,
+        )
+
     try:
         if raw_json_file is not None:
             raw_json_file.parent.mkdir(parents=True, exist_ok=True)
@@ -322,15 +353,179 @@ def _write_session_markdown(
     return OpencodeExportResult(
         session_id=session_id,
         markdown_file=output_file,
+        json_file=raw_json_file.resolve() if raw_json_file is not None else None,
+        export_dir=output_file.parent,
         status="exported",
         message=message,
+        session_updated_at_ms=_session_updated_at_ms(data),
+        tree_updated_at_ms=_tree_updated_at_ms(data),
+        node_session_count=_node_session_count(data),
     )
+
+
+def _write_session_directory(
+    *,
+    session_id: str,
+    data: Dict[str, Any],
+    output_dir: Path,
+    message: str,
+) -> OpencodeExportResult:
+    try:
+        output_dir = output_dir.resolve()
+        nodes_dir = output_dir / "nodes"
+        root_md_file = output_dir / "root_full.md"
+        root_json_file = output_dir / "root_full.json"
+        session_tree_file = output_dir / "session_tree.tsv"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        nodes_dir.mkdir(parents=True, exist_ok=True)
+
+        root_json_file.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        root_md_file.write_text(render_transcript(data), encoding="utf-8")
+        rows = _write_session_nodes(data, nodes_dir=nodes_dir, base_dir=output_dir)
+        _write_session_tree(rows, session_tree_file)
+    except OSError as exc:
+        return OpencodeExportResult(
+            session_id=session_id,
+            status="error",
+            message=f"Session 目录写入失败: {exc}",
+        )
+
+    return OpencodeExportResult(
+        session_id=session_id,
+        markdown_file=root_md_file,
+        json_file=root_json_file,
+        export_dir=output_dir,
+        session_tree_file=session_tree_file,
+        nodes_dir=nodes_dir,
+        status="exported",
+        message=message,
+        session_updated_at_ms=_session_updated_at_ms(data),
+        tree_updated_at_ms=_tree_updated_at_ms(data),
+        node_session_count=len(rows),
+    )
+
+
+def _write_session_nodes(
+    data: Dict[str, Any],
+    *,
+    nodes_dir: Path,
+    base_dir: Path,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for order, depth, node in _flatten_session_tree(data):
+        info = node.get("info") or {}
+        node_session_id = str(info.get("id") or f"unknown_{order}")
+        role = "root" if depth == 0 else "subagent"
+        basename = _safe_file_part(
+            "__".join(
+                [
+                    f"{order:04d}",
+                    f"depth{depth:02d}",
+                    role,
+                    node_session_id,
+                    str(info.get("title") or ""),
+                ]
+            ),
+            limit=180,
+        )
+        node_json_file = nodes_dir / f"{basename}.json"
+        node_md_file = nodes_dir / f"{basename}.md"
+        node_data = _session_without_children(node)
+        node_json_file.write_text(
+            json.dumps(node_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        node_md_file.write_text(
+            render_single_session(node, subagent=depth > 0),
+            encoding="utf-8",
+        )
+        rows.append(
+            {
+                "order": order,
+                "depth": depth,
+                "role": role,
+                "session_id": node_session_id,
+                "parent_id": info.get("parent_id") or "",
+                "title": info.get("title") or "",
+                "created": _format_timestamp((info.get("time") or {}).get("created")),
+                "updated": _format_timestamp((info.get("time") or {}).get("updated")),
+                "md_file": str(node_md_file.relative_to(base_dir)),
+                "json_file": str(node_json_file.relative_to(base_dir)),
+            }
+        )
+    return rows
+
+
+def _write_session_tree(rows: List[Dict[str, Any]], session_tree_file: Path) -> None:
+    fields = [
+        "order",
+        "depth",
+        "role",
+        "session_id",
+        "parent_id",
+        "title",
+        "created",
+        "updated",
+        "md_file",
+        "json_file",
+    ]
+    with session_tree_file.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _flatten_session_tree(data: Dict[str, Any]) -> List[tuple[int, int, Dict[str, Any]]]:
+    out: List[tuple[int, int, Dict[str, Any]]] = []
+
+    def visit(node: Dict[str, Any], depth: int) -> None:
+        out.append((len(out), depth, node))
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                visit(child, depth + 1)
+
+    visit(data, 0)
+    return out
+
+
+def _session_without_children(data: Dict[str, Any]) -> Dict[str, Any]:
+    node = dict(data)
+    node.pop("children", None)
+    return node
+
+
+def _node_session_count(data: Dict[str, Any]) -> int:
+    return len(_flatten_session_tree(data))
+
+
+def _session_updated_at_ms(data: Dict[str, Any]) -> Optional[int]:
+    value = ((data.get("info") or {}).get("time") or {}).get("updated")
+    return value if isinstance(value, int) else None
+
+
+def _tree_updated_at_ms(data: Dict[str, Any]) -> Optional[int]:
+    values: List[int] = []
+
+    def visit(node: Dict[str, Any]) -> None:
+        updated = _session_updated_at_ms(node)
+        if updated is not None:
+            values.append(updated)
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                visit(child)
+
+    visit(data)
+    return max(values) if values else None
 
 
 def render_transcript(data: Dict[str, Any]) -> str:
     """Render OpenCode export JSON as Markdown."""
     info = data.get("info") or {}
     messages = data.get("messages") or []
+    children = data.get("children") or []
     title = info.get("title") or info.get("id") or "OpenCode Session"
     session_id = info.get("id") or ""
     time_block = info.get("time") or {}
@@ -340,13 +535,21 @@ def render_transcript(data: Dict[str, Any]) -> str:
         "",
         f"**Session ID:** {session_id}",
         "",
-        f"**Created:** {_format_timestamp(time_block.get('created'))}",
-        "",
-        f"**Updated:** {_format_timestamp(time_block.get('updated'))}",
-        "",
-        "---",
-        "",
     ]
+    if info.get("parent_id"):
+        lines.extend([f"**Parent Session ID:** {info.get('parent_id')}", ""])
+    if info.get("directory"):
+        lines.extend([f"**Directory:** {info.get('directory')}", ""])
+    lines.extend(
+        [
+            f"**Created:** {_format_timestamp(time_block.get('created'))}",
+            "",
+            f"**Updated:** {_format_timestamp(time_block.get('updated'))}",
+            "",
+            "---",
+            "",
+        ]
+    )
 
     for msg in messages:
         msg_info = msg.get("info") or {}
@@ -354,7 +557,78 @@ def render_transcript(data: Dict[str, Any]) -> str:
         lines.append(_format_message(msg_info, parts).rstrip())
         lines.extend(["---", ""])
 
+    if children:
+        lines.extend(["# Subagent Sessions", ""])
+        for child in children:
+            lines.extend(_render_subagent_session(child, heading_level=2))
+            lines.append("")
+
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_single_session(data: Dict[str, Any], *, subagent: bool = False) -> str:
+    """Render one session only, without recursively embedding child sessions."""
+    node = _session_without_children(data)
+    if subagent:
+        return "\n".join(_render_subagent_session(node, heading_level=1)).rstrip() + "\n"
+    return render_transcript(node)
+
+
+def _render_subagent_session(
+    data: Dict[str, Any],
+    *,
+    heading_level: int,
+) -> List[str]:
+    info = data.get("info") or {}
+    messages = data.get("messages") or []
+    children = data.get("children") or []
+    title = info.get("title") or info.get("id") or "OpenCode Subagent Session"
+    session_id = info.get("id") or ""
+    time_block = info.get("time") or {}
+    marker = "#" * min(max(heading_level, 1), 6)
+
+    lines: List[str] = [
+        f"{marker} Subagent: {title}",
+        "",
+        f"**Session ID:** {session_id}",
+        "",
+    ]
+    if info.get("parent_id"):
+        lines.extend([f"**Parent Session ID:** {info.get('parent_id')}", ""])
+    if info.get("directory"):
+        lines.extend([f"**Directory:** {info.get('directory')}", ""])
+    lines.extend(
+        [
+            f"**Created:** {_format_timestamp(time_block.get('created'))}",
+            "",
+            f"**Updated:** {_format_timestamp(time_block.get('updated'))}",
+            "",
+            "---",
+            "",
+        ]
+    )
+    message_heading_level = min(heading_level + 1, 6)
+    for msg in messages:
+        msg_info = msg.get("info") or {}
+        parts = msg.get("parts") or []
+        lines.append(
+            _format_message(
+                msg_info,
+                parts,
+                heading_level=message_heading_level,
+            ).rstrip()
+        )
+        lines.extend(["---", ""])
+
+    for child in children:
+        lines.extend(
+            _render_subagent_session(
+                child,
+                heading_level=min(heading_level + 1, 6),
+            )
+        )
+        lines.append("")
+    return lines
 
 
 def append_export_result_to_log(
@@ -409,23 +683,56 @@ def _write_export_result_sidecar(
                     f"status={result.status}",
                     f"session_id={result.session_id or ''}",
                     f"markdown_file={result.markdown_file or ''}",
+                    f"json_file={result.json_file or ''}",
+                    f"export_dir={result.export_dir or ''}",
+                    f"session_tree_file={result.session_tree_file or ''}",
+                    f"nodes_dir={result.nodes_dir or ''}",
+                    f"node_session_count={result.node_session_count}",
                     f"message={result.message}",
                     "",
                 ]
             ),
             encoding="utf-8",
         )
+        attempt_suffix = _log_attempt_suffix(log_file)
+        if attempt_suffix:
+            suffixed_json = log_file.parent / f"{label}_session_export{attempt_suffix}.json"
+            suffixed_log = log_file.parent / f"{label}_session_export{attempt_suffix}.log"
+            suffixed_json.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            suffixed_log.write_text(status_log.read_text(encoding="utf-8"), encoding="utf-8")
+        if result.export_dir is not None:
+            export_status_json = result.export_dir / f"{label}_session_export.json"
+            export_status_json.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            export_status_log = result.export_dir / f"{label}_session_export.log"
+            export_status_log.write_text(status_log.read_text(encoding="utf-8"), encoding="utf-8")
     except OSError:
         pass
 
 
-def _format_message(info: Dict[str, Any], parts: List[Dict[str, Any]]) -> str:
+def _log_attempt_suffix(log_file: Path) -> str:
+    match = re.search(r"(\.attempt\d+)$", log_file.stem)
+    return match.group(1) if match else ""
+
+
+def _format_message(
+    info: Dict[str, Any],
+    parts: List[Dict[str, Any]],
+    *,
+    heading_level: int = 2,
+) -> str:
     role = info.get("role")
     chunks: List[str] = []
+    marker = "#" * min(max(heading_level, 1), 6)
     if role == "user":
-        chunks.append("## User\n")
+        chunks.append(f"{marker} User\n")
     else:
-        chunks.append(_assistant_header(info))
+        chunks.append(_assistant_header(info, heading_level=heading_level))
 
     for part in parts:
         rendered = _format_part(part)
@@ -434,11 +741,12 @@ def _format_message(info: Dict[str, Any], parts: List[Dict[str, Any]]) -> str:
     return "\n".join(chunk.rstrip() for chunk in chunks if chunk is not None) + "\n"
 
 
-def _assistant_header(info: Dict[str, Any]) -> str:
+def _assistant_header(info: Dict[str, Any], *, heading_level: int = 2) -> str:
     pieces: List[str] = []
     agent = info.get("agent")
     model = info.get("modelID")
     duration = _message_duration(info.get("time") or {})
+    marker = "#" * min(max(heading_level, 1), 6)
     if agent:
         pieces.append(_titlecase(str(agent)))
     if model:
@@ -446,8 +754,8 @@ def _assistant_header(info: Dict[str, Any]) -> str:
     if duration:
         pieces.append(duration)
     if pieces:
-        return f"## Assistant ({' - '.join(pieces)})\n"
-    return "## Assistant\n"
+        return f"{marker} Assistant ({' - '.join(pieces)})\n"
+    return f"{marker} Assistant\n"
 
 
 def _format_part(part: Dict[str, Any]) -> str:
@@ -538,6 +846,11 @@ def _safe_title_part(value: str, *, limit: int) -> str:
     return (cleaned or "unknown")[:limit]
 
 
+def _safe_file_part(value: str, *, limit: int) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "unknown").strip("_")
+    return (cleaned or "unknown")[:limit]
+
+
 def _resolve_opencode(opencode_bin: str = "") -> str:
     if opencode_bin:
         candidate = Path(opencode_bin).expanduser()
@@ -570,26 +883,42 @@ def _load_session_export_from_db_path(
         return None
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
-            session = conn.execute(
-                "select id, title, directory, version, time_created, time_updated "
-                "from session where id = ?",
-                (session_id,),
-            ).fetchone()
-            if session is None:
-                return None
-
-            message_rows = conn.execute(
-                "select id, data from message where session_id = ? "
-                "order by time_created asc, id asc",
-                (session_id,),
-            ).fetchall()
-            part_rows = conn.execute(
-                "select message_id, data from part where session_id = ? "
-                "order by time_created asc, id asc",
-                (session_id,),
-            ).fetchall()
+            return _load_session_export_from_conn(conn, session_id, seen=set())
     except sqlite3.Error:
         return None
+
+
+def _load_session_export_from_conn(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    seen: set[str],
+) -> Optional[Dict[str, Any]]:
+    """Build one session export, recursively appending OpenCode child sessions."""
+    if session_id in seen:
+        return None
+    seen.add(session_id)
+
+    session_cols = _table_columns(conn, "session")
+    parent_expr = "parent_id" if "parent_id" in session_cols else "null as parent_id"
+    session = conn.execute(
+        "select id, title, directory, version, time_created, time_updated, "
+        f"{parent_expr} from session where id = ?",
+        (session_id,),
+    ).fetchone()
+    if session is None:
+        return None
+
+    message_rows = conn.execute(
+        "select id, data from message where session_id = ? "
+        "order by time_created asc, id asc",
+        (session_id,),
+    ).fetchall()
+    part_rows = conn.execute(
+        "select message_id, data from part where session_id = ? "
+        "order by time_created asc, id asc",
+        (session_id,),
+    ).fetchall()
 
     parts_by_message: Dict[str, List[Dict[str, Any]]] = {}
     for message_id, part_text in part_rows:
@@ -610,10 +939,11 @@ def _load_session_export_from_db_path(
             }
         )
 
-    sid, title, directory, version, created, updated = session
-    return {
+    sid, title, directory, version, created, updated, parent_id = session
+    data = {
         "info": {
             "id": sid,
+            "parent_id": parent_id,
             "title": title,
             "directory": directory,
             "version": version,
@@ -624,6 +954,45 @@ def _load_session_export_from_db_path(
         },
         "messages": messages,
     }
+
+    child_rows: List[Any] = []
+    try:
+        if "parent_id" not in session_cols:
+            raise sqlite3.Error("session.parent_id not available")
+        child_rows = conn.execute(
+            "select id from session where parent_id = ? "
+            "order by time_created asc, id asc",
+            (session_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        # Older OpenCode schemas did not expose parent_id; single-session export
+        # still works in that case.
+        child_rows = []
+
+    children: List[Dict[str, Any]] = []
+    for (child_id,) in child_rows:
+        child_data = _load_session_export_from_conn(
+            conn,
+            str(child_id),
+            seen=seen,
+        )
+        if child_data is not None:
+            children.append(child_data)
+    if children:
+        data["children"] = children
+
+    return data
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {
+            str(row[1])
+            for row in conn.execute(f"pragma table_info({table})").fetchall()
+        }
+    except sqlite3.Error:
+        return set()
+
 
 
 def _loads_json_object(text: Any) -> Optional[Dict[str, Any]]:

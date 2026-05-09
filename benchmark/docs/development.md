@@ -60,7 +60,12 @@ custom/<op>/
 │   └── <level>_<op>_attempt1.md
 └── <level>/<op>/
     ├── pypto_run.log
-    ├── pypto_session.md
+    ├── pypto_sessions/
+    │   └── attempt_XX/
+    │       ├── root_full.md
+    │       ├── root_full.json
+    │       ├── session_tree.tsv
+    │       └── nodes/*.md
     ├── verifier.log
     ├── verifier_session.md
     ├── custom/<op>/             # PyPTO custom 产物副本，排除 output*

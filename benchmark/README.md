@@ -46,6 +46,14 @@ bash benchmark/scripts/download_kernelbench.sh
 PyPTO 默认下载到 `benchmark/.cache/pypto/`；更多数据集说明见
 `docs/kernelbench.md`。
 
+仓库根目录也提供两个无参数 quick start 脚本，会先执行上述两个下载脚本，再
+启动对应配置：
+
+```bash
+bash benchmark/scripts/single_quick_start.sh
+bash benchmark/scripts/pypto_quick_start.sh
+```
+
 ## 运行方式
 
 ```bash

@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import shlex
@@ -41,7 +42,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, TextIO
+from typing import Dict, List, Optional, TextIO, Tuple
 
 from benchmark.opencode_exporter import (
     OpencodeExportResult,
@@ -80,6 +81,7 @@ class PyptoRunResult:
     opencode_session_id: Optional[str] = None
     opencode_session_md_file: Optional[Path] = None
     opencode_session_export_message: str = ""
+    incomplete_retry_attempts: List[dict] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -103,6 +105,7 @@ class PyptoRunResult:
                 if self.opencode_session_md_file else None
             ),
             "opencode_session_export_message": self.opencode_session_export_message,
+            "incomplete_retry_attempts": self.incomplete_retry_attempts,
         }
 
 
@@ -430,6 +433,100 @@ def _incomplete_retry_reason(timed_out: bool, returncode: Optional[int]) -> str:
     return f"OpenCode 异常退出 code={returncode} 且 PyPTO 状态机未完成"
 
 
+def _format_epoch_ms(epoch_ms: Optional[int]) -> str:
+    if epoch_ms is None:
+        return ""
+    return dt.datetime.fromtimestamp(epoch_ms / 1000).isoformat(timespec="seconds")
+
+
+def _incomplete_retry_gap_sec(
+    session_export: OpencodeExportResult,
+    finished_at_ms: int,
+) -> Optional[float]:
+    last_update_ms = (
+        session_export.tree_updated_at_ms
+        if session_export.tree_updated_at_ms is not None
+        else session_export.session_updated_at_ms
+    )
+    if last_update_ms is None:
+        return None
+    return max(0.0, (finished_at_ms - last_update_ms) / 1000.0)
+
+
+def _build_incomplete_retry_attempt(
+    *,
+    attempt_index: int,
+    timed_out: bool,
+    returncode: Optional[int],
+    session_export: OpencodeExportResult,
+    finished_at_ms: int,
+    threshold_sec: int,
+    retry_allowed_by_count: bool,
+) -> dict:
+    last_update_ms = (
+        session_export.tree_updated_at_ms
+        if session_export.tree_updated_at_ms is not None
+        else session_export.session_updated_at_ms
+    )
+    gap_sec = _incomplete_retry_gap_sec(session_export, finished_at_ms)
+    if not retry_allowed_by_count:
+        decision = "skip_retry_limit"
+    elif gap_sec is None:
+        decision = "skip_unknown_last_update"
+    elif gap_sec >= threshold_sec:
+        decision = "retry"
+    else:
+        decision = "skip_gap_below_threshold"
+
+    return {
+        "attempt": attempt_index,
+        "decision": decision,
+        "reason": _incomplete_retry_reason(timed_out, returncode),
+        "session_id": session_export.session_id,
+        "last_update_at": _format_epoch_ms(last_update_ms),
+        "finished_at": _format_epoch_ms(finished_at_ms),
+        "gap_sec": round(gap_sec, 2) if gap_sec is not None else None,
+        "threshold_sec": threshold_sec,
+    }
+
+
+def _append_incomplete_retry_attempt_to_log(
+    log_file: Optional[Path],
+    attempt: dict,
+) -> None:
+    if log_file is None:
+        return
+    try:
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\n[incomplete workflow retry gate] "
+                f"decision={attempt.get('decision')} "
+                f"gap_sec={attempt.get('gap_sec')} "
+                f"threshold_sec={attempt.get('threshold_sec')} "
+                f"last_update_at={attempt.get('last_update_at') or '<unknown>'} "
+                f"finished_at={attempt.get('finished_at')}\n"
+            )
+    except OSError:
+        pass
+
+
+def _load_default_incomplete_retry_options() -> Tuple[int, int]:
+    default_cfg = Path(__file__).resolve().parent / "configs" / "__default__.yaml"
+    try:
+        import yaml
+
+        data = yaml.safe_load(default_cfg.read_text(encoding="utf-8")) or {}
+        pypto_cfg = data.get("pypto", {}) or {}
+        return (
+            int(pypto_cfg["incomplete_workflow_retry"]),
+            int(pypto_cfg["incomplete_workflow_retry_min_gap_sec"]),
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"无法从默认配置读取 incomplete retry 参数: {default_cfg}"
+        ) from exc
+
+
 # ────────────────────────────────────────────────────────────
 # 后台 stdout 排水线程 (实时落盘)
 # ────────────────────────────────────────────────────────────
@@ -493,7 +590,8 @@ def run_pypto_workflow(
     case_init_source: str = "# (未提取到 __init__ 源码)",
     case_forward_source: str = "# (未提取到 forward 源码)",
     stop_event: Optional[threading.Event] = None,
-    incomplete_workflow_retry: int = 1,
+    incomplete_workflow_retry: Optional[int] = None,
+    incomplete_workflow_retry_min_gap_sec: Optional[int] = None,
     _attempt_index: int = 1,
 ) -> PyptoRunResult:
     """跑一次 pypto 7 阶段工作流.
@@ -531,6 +629,9 @@ def run_pypto_workflow(
         case_forward_source: 传给 prompt 的 ``Model.forward/__call__`` 源码摘要.
         incomplete_workflow_retry: 若状态机未完成且无失败阶段,
             自动重跑 PyPTO workflow 的次数.
+        incomplete_workflow_retry_min_gap_sec: 只有当 OpenCode session tree
+            的最后更新时间到本次 PyPTO finished 的空窗不小于该阈值时,
+            才消耗一次 incomplete retry. 设为 0 可恢复“未完成即重试”.
 
     Returns:
         ``PyptoRunResult``.
@@ -541,6 +642,12 @@ def run_pypto_workflow(
     op_dir = pypto_repo_root / workdir_root / op_name
     op_dir_rel = f"{workdir_root}/{op_name}"
     artifacts = expected_artifact_paths(op_name, op_dir, need_kernelbench=need_kernelbench)
+    if incomplete_workflow_retry is None or incomplete_workflow_retry_min_gap_sec is None:
+        default_retry, default_gap_sec = _load_default_incomplete_retry_options()
+        if incomplete_workflow_retry is None:
+            incomplete_workflow_retry = default_retry
+        if incomplete_workflow_retry_min_gap_sec is None:
+            incomplete_workflow_retry_min_gap_sec = default_gap_sec
 
     # 断点续跑: 已完成则跳过
     if skip_if_done:
@@ -737,6 +844,7 @@ def run_pypto_workflow(
                 pass
 
     duration = time.monotonic() - start
+    run_finished_at_ms = int(time.time() * 1000)
     if interrupted:
         return PyptoRunResult(
             op_name=op_name,
@@ -749,13 +857,15 @@ def run_pypto_workflow(
             message="收到中断信号, 已清理 opencode 进程组.",
         )
 
-    session_md_output = (
-        log_file.parent / "pypto_session.md"
-        if log_file else Path("pypto_session.md")
+    session_export_dir = (
+        log_file.parent / "pypto_sessions" / f"attempt_{_attempt_index:02d}"
+        if log_file else Path("pypto_sessions") / f"attempt_{_attempt_index:02d}"
     )
+    session_md_output = session_export_dir / "root_full.md"
     session_export = export_session_from_log(
         log_file=log_file,
         output_file=session_md_output,
+        output_dir=session_export_dir,
         session_title=session_title,
         opencode_bin=opencode,
         cwd=pypto_repo_root,
@@ -769,7 +879,28 @@ def run_pypto_workflow(
     missing = all_artifacts_present(artifacts)
 
     workflow_incomplete = _state_incomplete_without_failure(state)
-    if workflow_incomplete and _attempt_index <= max(0, incomplete_workflow_retry):
+    retry_threshold_sec = max(0, int(incomplete_workflow_retry_min_gap_sec))
+    retry_allowed_by_count = _attempt_index <= max(0, incomplete_workflow_retry)
+    incomplete_retry_attempts: List[dict] = []
+    if workflow_incomplete:
+        attempt_decision = _build_incomplete_retry_attempt(
+            attempt_index=_attempt_index,
+            timed_out=timed_out,
+            returncode=proc.returncode,
+            session_export=session_export,
+            finished_at_ms=run_finished_at_ms,
+            threshold_sec=retry_threshold_sec,
+            retry_allowed_by_count=retry_allowed_by_count,
+        )
+        incomplete_retry_attempts.append(attempt_decision)
+        _append_incomplete_retry_attempt_to_log(log_file, attempt_decision)
+
+    if (
+        workflow_incomplete
+        and retry_allowed_by_count
+        and incomplete_retry_attempts
+        and incomplete_retry_attempts[-1].get("decision") == "retry"
+    ):
         retry_reason = _incomplete_retry_reason(timed_out, proc.returncode)
         retry_result = run_pypto_workflow(
             op_name=op_name,
@@ -791,16 +922,33 @@ def run_pypto_workflow(
             case_forward_source=case_forward_source,
             stop_event=stop_event,
             incomplete_workflow_retry=incomplete_workflow_retry,
+            incomplete_workflow_retry_min_gap_sec=incomplete_workflow_retry_min_gap_sec,
             _attempt_index=_attempt_index + 1,
         )
         retry_result.duration_sec += duration
         retry_result.retry_count += 1
         retry_result.attempt_log_files = _attempt_logs(log_file) + retry_result.attempt_log_files
+        retry_result.incomplete_retry_attempts = (
+            incomplete_retry_attempts + retry_result.incomplete_retry_attempts
+        )
         retry_result.message = (
-            f"第{_attempt_index}次 {retry_reason}, 已自动重试; "
+            f"第{_attempt_index}次 {retry_reason}, "
+            f"session tree last update 到 finished 空窗 "
+            f"{incomplete_retry_attempts[-1].get('gap_sec')}s >= "
+            f"{retry_threshold_sec}s, 已自动重试; "
             f"{retry_result.message}"
         )
         return retry_result
+
+    retry_skip_suffix = ""
+    if workflow_incomplete and incomplete_retry_attempts:
+        decision = incomplete_retry_attempts[-1]
+        if decision.get("decision") != "skip_retry_limit":
+            retry_skip_suffix = (
+                f"; 未自动重试: session tree last update 到 finished 空窗 "
+                f"{decision.get('gap_sec')}s, 阈值 {retry_threshold_sec}s, "
+                f"decision={decision.get('decision')}"
+            )
 
     if timed_out:
         return PyptoRunResult(
@@ -811,11 +959,15 @@ def run_pypto_workflow(
             log_file=log_file,
             attempt_log_files=_attempt_logs(log_file),
             duration_sec=duration,
-            message=f"opencode run 超时 (>{timeout_sec}s); 缺失产物: {missing or '(齐全)'}",
+            message=(
+                f"opencode run 超时 (>{timeout_sec}s); "
+                f"缺失产物: {missing or '(齐全)'}{retry_skip_suffix}"
+            ),
             orchestrator_state=state,
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
     if missing:
@@ -827,11 +979,15 @@ def run_pypto_workflow(
             log_file=log_file,
             attempt_log_files=_attempt_logs(log_file),
             duration_sec=duration,
-            message=f"opencode 退出 code={proc.returncode}, 缺少产物: {missing}",
+            message=(
+                f"opencode 退出 code={proc.returncode}, "
+                f"缺少产物: {missing}{retry_skip_suffix}"
+            ),
             orchestrator_state=state,
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
     if proc.returncode != 0:
@@ -843,11 +999,15 @@ def run_pypto_workflow(
             log_file=log_file,
             attempt_log_files=_attempt_logs(log_file),
             duration_sec=duration,
-            message=f"opencode 异常退出 code={proc.returncode}, 但产物齐全 (可能仍可用).",
+            message=(
+                f"opencode 异常退出 code={proc.returncode}, "
+                f"但产物齐全 (可能仍可用).{retry_skip_suffix}"
+            ),
             orchestrator_state=state,
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
     if _state_has_failed_stage(state):
@@ -864,6 +1024,7 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
     if not _state_all_stages_completed(state):
@@ -875,11 +1036,12 @@ def run_pypto_workflow(
             log_file=log_file,
             attempt_log_files=_attempt_logs(log_file),
             duration_sec=duration,
-            message=_blocked_message(state),
+            message=f"{_blocked_message(state)}{retry_skip_suffix}",
             orchestrator_state=state,
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
     return PyptoRunResult(
@@ -895,6 +1057,7 @@ def run_pypto_workflow(
         opencode_session_id=session_id,
         opencode_session_md_file=session_md_file,
         opencode_session_export_message=session_export_message,
+        incomplete_retry_attempts=incomplete_retry_attempts,
     )
 
 
@@ -921,8 +1084,10 @@ def _main_cli() -> int:
     parser.add_argument("--log-file", type=Path, default=None)
     parser.add_argument("--no-skip", action="store_true",
                         help="即使产物齐全也强制重跑")
-    parser.add_argument("--incomplete-workflow-retry", type=int, default=1,
-                        help="PyPTO 状态机未完成且无失败阶段时自动重试次数")
+    parser.add_argument("--incomplete-workflow-retry", type=int, default=None,
+                        help="PyPTO 状态机未完成且无失败阶段时自动重试次数; 缺省读取 configs/__default__.yaml")
+    parser.add_argument("--incomplete-workflow-retry-min-gap-sec", type=int, default=None,
+                        help="状态机未完成时, 仅当 session tree last update 到 finished 的空窗达到该秒数才重试; 缺省读取 configs/__default__.yaml")
     args = parser.parse_args()
 
     using_default_repo_root = args.repo_root is None
@@ -968,6 +1133,7 @@ def _main_cli() -> int:
         log_file=args.log_file,
         skip_if_done=not args.no_skip,
         incomplete_workflow_retry=args.incomplete_workflow_retry,
+        incomplete_workflow_retry_min_gap_sec=args.incomplete_workflow_retry_min_gap_sec,
     )
     sys.stdout.write(json.dumps(result.to_dict(), indent=2, ensure_ascii=False) + "\n")
     return 0 if result.ok else 1

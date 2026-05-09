@@ -30,7 +30,6 @@ pypto:
   timeout_sec: 7200
   skip_pypto_gen: false
   force_regen: false
-  incomplete_workflow_retry: 1
   workdir_root: "custom"
   output_format: "default"
 

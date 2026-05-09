@@ -77,7 +77,7 @@ def _check_env():
         print(f"[ENV] PyPTO path = {pypto_path}")
 
     try:
-        result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             warnings.append("npu-smi info returned non-zero")
         else:

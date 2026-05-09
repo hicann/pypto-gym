@@ -498,6 +498,7 @@ def refresh_run_state(
 
 _MAIN_STATUS_LABEL = {
     "正在进行": "正在进行",
+    "预检查中": "预检查中",
     "已完成": "已完成",
     "未完成": "未完成",
 }
@@ -607,6 +608,9 @@ def _render_dashboard(state: Dict[str, Any]) -> str:
 
     lines.append(f"  主进程 PID: {mp}    状态: {ms}    退出码: {ec if ec is not None else '—'}")
     lines.append(f"  启动时间:   {sa}    更新时间: {ua}")
+    preflight_msg = state.get("preflight_message")
+    if preflight_msg:
+        lines.append(f"  预检查:     {preflight_msg}")
     lines.append("")
 
     ops = state.get("operators", [])

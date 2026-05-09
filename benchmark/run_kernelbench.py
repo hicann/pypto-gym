@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from benchmark import case_loader, monitor, pypto_runner, verifier_runner, report
+from benchmark.constants import NPU_SMI_INFO_TIMEOUT_SEC
 from benchmark.case_loader import CaseSpec, derive_op_name
 from benchmark.opencode_exporter import OpencodeExportResult, append_export_result_to_log
 from benchmark.process_registry import cleanup_registered_process_groups
@@ -77,6 +78,8 @@ DEFAULT_PYPTO_REPO_ROOT = BENCHMARK_ROOT / ".cache" / "pypto"
 BENCHMARK_ARTIFACT_ROOT_ENV = "_BENCHMARK_ARTIFACT_ROOT_DIR"
 # 仅由 ``benchmark.__main__`` 在 fork 子进程中设置，用于区分默认后台 run 与 --foreground。
 _BENCHMARK_BACKGROUND_CHILD_ENV = "_BENCHMARK_BACKGROUND_CHILD"
+# 与 ``benchmark.constants.NPU_SMI_INFO_TIMEOUT_SEC`` 一致；保留别名供 ``state.json`` 文案等引用。
+BENCHMARK_PREFLIGHT_TIMEOUT_SEC = NPU_SMI_INFO_TIMEOUT_SEC
 
 
 def resolve_config_path(path: Path) -> Path:
@@ -115,6 +118,15 @@ def load_yaml_config(path: Path) -> Dict[str, Any]:
     if path == DEFAULT_CONFIG_PATH:
         return default_cfg
     return _merge_yaml_config(default_cfg, _read_yaml_mapping(path))
+
+
+def _merge_with_default_config(yaml_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a config normalized through ``configs/__default__.yaml``.
+
+    Public CLI paths already call ``load_yaml_config``.  Keeping this merge here
+    protects direct tests/internal callers from growing hidden code defaults.
+    """
+    return _merge_yaml_config(_read_yaml_mapping(DEFAULT_CONFIG_PATH), yaml_cfg or {})
 
 
 def parse_csv_int_list(text: str) -> List[int]:
@@ -319,6 +331,7 @@ class _RunCfg:
     pypto_timeout: int
     pypto_output_format: str
     incomplete_workflow_retry: int
+    incomplete_workflow_retry_min_gap_sec: int
     arch: str
     arch_by_device: Dict[int, str]
     backend: str
@@ -356,16 +369,28 @@ def _normalize_ascend_arch(soc_version: Any) -> str:
 
 def _parse_npu_smi_arches(text: str) -> Dict[int, str]:
     arches: Dict[int, str] = {}
+    pending_arch: Optional[str] = None
+    has_phy_id = False
     for line in text.splitlines():
+        if "Phy-ID" in line:
+            has_phy_id = True
+            continue
+        if re.match(r"^\|\s*NPU\s+Chip\s*\|", line):
+            break
         match = re.match(r"^\|\s*(\d+)\s+([0-9A-Za-z]+)\s+\|", line)
         if not match:
             continue
-        device_id = int(match.group(1))
-        raw_name = match.group(2)
+        first_id = int(match.group(1))
+        second_field = match.group(2)
         try:
-            arches[device_id] = _normalize_ascend_arch(raw_name)
+            pending_arch = _normalize_ascend_arch(second_field)
         except ValueError:
+            if has_phy_id and pending_arch and second_field.isdigit():
+                arches[int(second_field)] = pending_arch
+                pending_arch = None
             continue
+        if not has_phy_id:
+            arches[first_id] = pending_arch
     return arches
 
 
@@ -376,7 +401,7 @@ def _detect_ascend_arches_from_npu_smi() -> Dict[int, str]:
         stderr=subprocess.PIPE,
         text=True,
         check=False,
-        timeout=10,
+        timeout=NPU_SMI_INFO_TIMEOUT_SEC,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "npu-smi info failed")
@@ -533,6 +558,9 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
                 log_file=pypto_log,
                 output_format=cfg.pypto_output_format,
                 incomplete_workflow_retry=cfg.incomplete_workflow_retry,
+                incomplete_workflow_retry_min_gap_sec=(
+                    cfg.incomplete_workflow_retry_min_gap_sec
+                ),
                 skip_if_done=not cfg.force_regen,
                 task_desc_rel=f"{workdir_root}/{op_name}/task_desc.py",
                 case_init_args_repr=case.init_args_repr,
@@ -841,6 +869,7 @@ def pre_resolve_state_dir(config_path: Path) -> Path:
 
 
 def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
+    yaml_cfg = _merge_with_default_config(yaml_cfg)
     pypto_yaml = yaml_cfg.get("pypto", {}) or {}
     repo_root_opt = _optional_path(pypto_yaml.get("repo_root"))
     pypto_repo_root = _resolve_pypto_repo_root(repo_root_opt)
@@ -870,7 +899,11 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         pypto_timeout=int(pypto_yaml.get("timeout_sec", 1800) or 1800),
         pypto_output_format=pypto_yaml.get("output_format", "default") or "default",
         incomplete_workflow_retry=(
-            int(pypto_yaml.get("incomplete_workflow_retry", 1) or 0)
+            int(pypto_yaml["incomplete_workflow_retry"] or 0)
+        ),
+        incomplete_workflow_retry_min_gap_sec=max(
+            0,
+            int(pypto_yaml["incomplete_workflow_retry_min_gap_sec"] or 0),
         ),
         arch="",
         arch_by_device={},
@@ -1174,6 +1207,30 @@ def run_from_config(config_path: Path) -> int:
                 }
                 monitor.write_state(dry_state)
             return 0
+
+        if os.environ.get(_BENCHMARK_BACKGROUND_CHILD_ENV) == "1":
+            cfg.monitor_state_dir.mkdir(parents=True, exist_ok=True)
+            monitor.configure_state_dir(cfg.monitor_state_dir)
+            now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            monitor.write_state({
+                "main_pid": os.getpid(),
+                "main_status": "预检查中",
+                "main_exit_code": None,
+                "preflight_message": (
+                    "运行预检查（KernelBench / npu-smi 等），"
+                    f"最长约 {BENCHMARK_PREFLIGHT_TIMEOUT_SEC}s"
+                ),
+                "preflight_timeout_sec": BENCHMARK_PREFLIGHT_TIMEOUT_SEC,
+                "artifact_root_dir": str(cfg.artifact_root_dir),
+                "run_subdir": cfg.run_subdir,
+                "started_at": now,
+                "updated_at": now,
+                "cases": [],
+                "timeout_sec": cfg.pypto_timeout,
+                "report_dir": str(cfg.report_dir),
+                "log_dir": str(cfg.log_dir),
+                "operators": [],
+            })
 
         bench_dir, case_paths, levels, devices, concurrency = _assert_run_batch_prerequisites(yaml_cfg, cfg)
 

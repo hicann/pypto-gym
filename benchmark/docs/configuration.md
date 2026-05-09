@@ -13,6 +13,10 @@ python -m benchmark monitor <root_dir>/state
 `configs/relu.yaml` 为本地配置文件并修改 YAML 内容。未填写字段会从
 `configs/__default__.yaml` 继承。除 `run --foreground` 外，CLI 不提供其他参数覆盖这些字段。
 
+配置维护原则：`configs/__default__.yaml` 是默认策略的集中来源；内置示例配置只写
+相对默认值的差异。本地或实验 YAML 可以按需覆盖任意字段，但不建议把与默认值完全
+相同的字段重复粘贴到多个配置里，避免默认策略调整时产生漂移。
+
 ## 常用字段
 
 | 字段 | 说明 |
@@ -27,6 +31,8 @@ python -m benchmark monitor <root_dir>/state
 | `pypto.repo_root` | PyPTO 源码仓根；留空时使用 `benchmark/.cache/pypto/`。路径须存在且为目录，并含 **`.opencode/`**，否则 `_build_cfg` / 后台 `run` 预检会立即失败 |
 | `pypto.opencode_model` | 传给 opencode 的模型名；留空时沿用 opencode 默认配置 |
 | `pypto.timeout_sec` | 单 case PyPTO 工作流超时时间 |
+| `pypto.incomplete_workflow_retry` | 状态机未完成且无 failed/blocked/cancelled 阶段时，最多自动重试次数 |
+| `pypto.incomplete_workflow_retry_min_gap_sec` | 只有 OpenCode session tree 的 last update 到 PyPTO finished 空窗达到该阈值时，才消耗 incomplete retry；默认 1800 秒 |
 | `pypto.skip_pypto_gen` | 是否复用已有 `custom/<op>/` 产物，只复跑 verifier |
 | `pypto.force_regen` | 是否强制重跑 PyPTO 生成 |
 | `verifier.mode` | 验证范围：`correctness` / `performance` / `full`；`configs/__default__.yaml` 默认为 `performance` |
@@ -73,7 +79,8 @@ level1=
 单 case 常见产物包括：
 
 - `<root_dir>/report/<level>/<op>/pypto_run.log`
-- `<root_dir>/report/<level>/<op>/pypto_session.md`
+- `<root_dir>/report/<level>/<op>/pypto_sessions/attempt_XX/root_full.md`
+- `<root_dir>/report/<level>/<op>/pypto_sessions/attempt_XX/nodes/*.md`
 - `<root_dir>/report/<level>/<op>/verifier.log`
 - `<root_dir>/report/<level>/<op>/verifier_session.md`
 - `<root_dir>/report/<level>/<op>/result.json`

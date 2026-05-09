@@ -20,6 +20,8 @@ from benchmark.pypto_runner import (
     PyptoRunStatus,
     _attempt_log_file,
     _attempt_logs,
+    _build_incomplete_retry_attempt,
+    _incomplete_retry_gap_sec,
     _state_all_stages_completed,
     _state_has_failed_stage,
     _state_incomplete_without_failure,
@@ -53,6 +55,51 @@ def test_attempt_log_file_suffix(tmp_path) -> None:
     assert _attempt_logs(None) == []
 
 
+def test_incomplete_retry_gate_uses_session_tree_last_update() -> None:
+    export = pypto_runner.OpencodeExportResult(
+        session_id="ses_parent",
+        session_updated_at_ms=1_000,
+        tree_updated_at_ms=3_000,
+    )
+
+    assert _incomplete_retry_gap_sec(export, 3_603_000) == 3600.0
+    attempt = _build_incomplete_retry_attempt(
+        attempt_index=1,
+        timed_out=True,
+        returncode=-15,
+        session_export=export,
+        finished_at_ms=3_602_000,
+        threshold_sec=3600,
+        retry_allowed_by_count=True,
+    )
+    assert attempt["decision"] == "skip_gap_below_threshold"
+
+    attempt = _build_incomplete_retry_attempt(
+        attempt_index=1,
+        timed_out=True,
+        returncode=-15,
+        session_export=export,
+        finished_at_ms=3_603_000,
+        threshold_sec=3600,
+        retry_allowed_by_count=True,
+    )
+    assert attempt["decision"] == "retry"
+
+
+def test_incomplete_retry_gate_skips_unknown_last_update() -> None:
+    attempt = _build_incomplete_retry_attempt(
+        attempt_index=1,
+        timed_out=True,
+        returncode=-15,
+        session_export=pypto_runner.OpencodeExportResult(session_id="ses_parent"),
+        finished_at_ms=3_603_000,
+        threshold_sec=3600,
+        retry_allowed_by_count=True,
+    )
+    assert attempt["decision"] == "skip_unknown_last_update"
+    assert attempt["gap_sec"] is None
+
+
 def test_run_result_serializes_retry_metadata(tmp_path) -> None:
     log_file = tmp_path / "pypto_run.attempt2.log"
     result = PyptoRunResult(
@@ -62,9 +109,11 @@ def test_run_result_serializes_retry_metadata(tmp_path) -> None:
         log_file=log_file,
         attempt_log_files=[tmp_path / "pypto_run.log", log_file],
         retry_count=1,
+        incomplete_retry_attempts=[{"decision": "retry"}],
     )
     data = result.to_dict()
     assert data["retry_count"] == 1
+    assert data["incomplete_retry_attempts"] == [{"decision": "retry"}]
     assert data["attempt_log_files"] == [
         str(tmp_path / "pypto_run.log"),
         str(log_file),
@@ -150,11 +199,11 @@ def test_run_pypto_workflow_uses_noninteractive_permissions(tmp_path, monkeypatc
             return self.returncode
 
     monkeypatch.setattr(pypto_runner.subprocess, "Popen", FakePopen)
-    monkeypatch.setattr(
-        pypto_runner,
-        "export_session_from_log",
-        lambda *args, **kwargs: pypto_runner.OpencodeExportResult(status="skipped"),
-    )
+    def fake_export_session_from_log(*args, **kwargs):
+        seen["export_kwargs"] = kwargs
+        return pypto_runner.OpencodeExportResult(status="skipped")
+
+    monkeypatch.setattr(pypto_runner, "export_session_from_log", fake_export_session_from_log)
 
     result = run_pypto_workflow(
         op_name="Foo",
@@ -166,6 +215,10 @@ def test_run_pypto_workflow_uses_noninteractive_permissions(tmp_path, monkeypatc
     )
 
     assert "--dangerously-skip-permissions" in seen["cmd"]
+    assert seen["export_kwargs"]["output_dir"] == tmp_path / "pypto_sessions" / "attempt_01"
+    assert seen["export_kwargs"]["output_file"] == (
+        tmp_path / "pypto_sessions" / "attempt_01" / "root_full.md"
+    )
     assert result.status == PyptoRunStatus.ARTIFACT_MISSING
 
 

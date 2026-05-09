@@ -46,6 +46,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from benchmark.constants import NPU_SMI_INFO_TIMEOUT_SEC
+
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +286,7 @@ def _list_idle_chip_ids() -> List[str]:
             ["npu-smi", "info"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=NPU_SMI_INFO_TIMEOUT_SEC,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):

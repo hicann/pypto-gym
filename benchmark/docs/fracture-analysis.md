@@ -19,7 +19,8 @@ benchmark_runs/Task_xxx/report/
 ├── summary.md
 └── level2/<op>/
     ├── pypto_run.log
-    ├── pypto_session.md
+    ├── pypto_sessions/attempt_XX/root_full.md
+    ├── pypto_sessions/attempt_XX/nodes/*.md
     ├── verifier.log
     ├── verifier_session.md
     └── result.json

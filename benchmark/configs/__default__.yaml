@@ -73,6 +73,9 @@ pypto:
   # 状态机未完成且无 failed/blocked/cancelled 阶段时, 自动重跑 PyPTO workflow 的次数.
   # 默认 1 表示最多两次尝试: 初次运行 + 1 次 retry.
   incomplete_workflow_retry: 1
+  # 仅当 OpenCode session tree 的 last update 到 PyPTO finished 空窗达到该秒数时,
+  # 才消耗上面的 incomplete retry. 这避免正常长任务被无意义重试.
+  incomplete_workflow_retry_min_gap_sec: 1800
   # 算子产物落地的根目录 (相对 pypto 仓根); 形成 custom/{op}/.
   workdir_root: "custom"
   # opencode --format; default 输出可读, json 输出结构化事件流.

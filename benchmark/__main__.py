@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from benchmark import monitor, run_kernelbench
+from benchmark.constants import STATE_JSON_STUB_WAIT_SEC
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
@@ -56,12 +57,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _wait_for_state_json(state_json: Path, *, timeout_sec: float = 10.0,
-                         poll_sec: float = 0.05) -> bool:
-    deadline = time.monotonic() + timeout_sec
+def _wait_for_state_json(
+    state_json: Path,
+    *,
+    timeout_sec: float,
+    poll_sec: float = 0.05,
+    progress_interval_sec: float = 10.0,
+) -> bool:
+    start = time.monotonic()
+    deadline = start + timeout_sec
+    next_progress = start + progress_interval_sec
     while time.monotonic() < deadline:
         if state_json.exists():
             return True
+        now = time.monotonic()
+        if now >= next_progress:
+            elapsed = now - start
+            print(
+                f"等待 state.json（stub 落盘） {elapsed:.0f}s/{timeout_sec:.0f}s",
+                flush=True,
+            )
+            next_progress += progress_interval_sec
         time.sleep(poll_sec)
     return False
 
@@ -185,7 +201,8 @@ def _handle_run(config_path: Path, *, foreground: bool) -> int:
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 
     state_json = state_dir / "state.json"
-    if not _wait_for_state_json(state_json):
+    stub_wait = float(STATE_JSON_STUB_WAIT_SEC)
+    if not _wait_for_state_json(state_json, timeout_sec=stub_wait):
         child_note = _describe_fork_child_status(pid)
         err_tail = _read_log_tail(log_dir / "benchmark.err")
         out_tail = _read_log_tail(log_dir / "benchmark.out")
@@ -193,7 +210,11 @@ def _handle_run(config_path: Path, *, foreground: bool) -> int:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        print(f"错误: 等待 state.json 超时（超过 10s）: {state_json}", file=sys.stderr)
+        print(
+            f"错误: 等待 state.json 超时（超过 {int(stub_wait)}s；预检耗时由子进程内 npu-smi 等自行上限）: "
+            f"{state_json}",
+            file=sys.stderr,
+        )
         print(child_note, file=sys.stderr)
         if err_tail.strip():
             print(f"--- logs/benchmark.err (tail) ---\n{err_tail}", file=sys.stderr)

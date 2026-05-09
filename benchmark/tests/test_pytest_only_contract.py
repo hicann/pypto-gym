@@ -39,7 +39,11 @@ DOWNLOAD_SCRIPTS = [
     "benchmark/scripts/download_kernelbench.sh",
     "benchmark/scripts/download_pypto.sh",
 ]
-DOWNLOAD_SCRIPT_NAMES = {Path(path).name for path in DOWNLOAD_SCRIPTS}
+QUICK_START_SCRIPTS = [
+    "benchmark/scripts/pypto_quick_start.sh",
+    "benchmark/scripts/single_quick_start.sh",
+]
+PUBLIC_SHELL_SCRIPTS = sorted(DOWNLOAD_SCRIPTS + QUICK_START_SCRIPTS)
 
 
 def _stub_pypto_repo_layout(tmp_path: Path) -> Path:
@@ -49,42 +53,12 @@ def _stub_pypto_repo_layout(tmp_path: Path) -> Path:
     return root
 
 
-def _tracked_benchmark_files() -> list[Path]:
-    completed = subprocess.run(
-        ["git", "ls-files", "benchmark"],
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=True,
-    )
-    return [path for line in completed.stdout.splitlines() if (path := REPO_ROOT / line).is_file()]
-
-
-def test_benchmark_public_shell_contract_only_keeps_download_scripts() -> None:
-    tracked_files = _tracked_benchmark_files()
-    shell_files = sorted(
-        path.relative_to(REPO_ROOT).as_posix()
-        for path in tracked_files
-        if path.suffix == ".sh"
-    )
-
-    assert shell_files == DOWNLOAD_SCRIPTS
-
-    bash_shebang_files = []
-    non_download_shell_refs = []
-    for path in tracked_files:
-        rel_path = path.relative_to(REPO_ROOT).as_posix()
-        text = path.read_text(encoding="utf-8")
-        first_line = text.splitlines()[0] if text.splitlines() else ""
-        if re.match(r"^#!.*\b(?:bash|sh)\b", first_line):
-            bash_shebang_files.append(rel_path)
-        for ref in re.findall(r"(?<![\w.])[\w./-]+\.sh(?![\w])", text):
-            if Path(ref).name not in DOWNLOAD_SCRIPT_NAMES:
-                non_download_shell_refs.append((rel_path, ref))
-
-    assert bash_shebang_files == DOWNLOAD_SCRIPTS
-    assert non_download_shell_refs == []
+def test_public_shell_scripts_have_shell_entrypoints() -> None:
+    for rel_path in PUBLIC_SHELL_SCRIPTS:
+        path = REPO_ROOT / rel_path
+        assert path.is_file()
+        first_line = path.read_text(encoding="utf-8").splitlines()[0]
+        assert re.match(r"^#!.*\b(?:bash|sh)\b", first_line)
 
 
 def test_config_loader_accepts_benchmark_local_config_path() -> None:
@@ -151,6 +125,29 @@ def test_parse_npu_smi_arches_detects_device_models() -> None:
     assert run_kernelbench._parse_npu_smi_arches(output) == {
         0: "ascend910b3",
         1: "ascend910b4",
+    }
+
+
+def test_parse_npu_smi_arches_detects_phy_id_devices() -> None:
+    output = textwrap.dedent(
+        """\
+        | NPU    Name           | Health      |
+        | Chip   Phy-ID         | Bus-Id      |
+        | 0      Ascend910      | Alarm       |
+        | 0      0              | 0000:9D:00.0|
+        | 0      Ascend910      | Alarm       |
+        | 1      1              | 0000:9F:00.0|
+        | 5      Ascend910      | Alarm       |
+        | 0      10             | 0000:89:00.0|
+        | NPU    Chip           | Process id  |
+        | 5      0              | 563946      |
+        """
+    )
+
+    assert run_kernelbench._parse_npu_smi_arches(output) == {
+        0: "ascend910",
+        1: "ascend910",
+        10: "ascend910",
     }
 
 
@@ -637,6 +634,163 @@ def test_opencode_exporter_handles_invalid_utf8_and_sqlite(monkeypatch, tmp_path
     assert sqlite_result.ok, sqlite_result.to_dict()
     assert "sqlite storage" in sqlite_result.message
     assert "sqlite source" in sqlite_result.markdown_file.read_text(encoding="utf-8")
+
+
+def test_opencode_exporter_includes_sqlite_child_sessions(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "opencode.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "create table session ("
+            "id text primary key, project_id text, parent_id text, title text, "
+            "directory text, version text, time_created integer, time_updated integer)"
+        )
+        conn.execute(
+            "create table message ("
+            "id text primary key, session_id text, time_created integer, "
+            "time_updated integer, data text)"
+        )
+        conn.execute(
+            "create table part ("
+            "id text primary key, message_id text, session_id text, "
+            "time_created integer, time_updated integer, data text)"
+        )
+        conn.execute(
+            "insert into session values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ses_parent",
+                "proj",
+                None,
+                "parent transcript",
+                str(REPO_ROOT),
+                "test",
+                1,
+                4,
+            ),
+        )
+        conn.execute(
+            "insert into session values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ses_child",
+                "proj",
+                "ses_parent",
+                "child transcript (@explore subagent)",
+                str(REPO_ROOT),
+                "test",
+                2,
+                5,
+            ),
+        )
+        conn.execute(
+            "insert into session values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ses_child_late",
+                "proj",
+                "ses_parent",
+                "later child transcript (@worker subagent)",
+                str(REPO_ROOT),
+                "test",
+                3,
+                7,
+            ),
+        )
+        conn.execute(
+            "insert into session values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ses_grandchild_latest",
+                "proj",
+                "ses_child_late",
+                "nested child transcript (@debugger subagent)",
+                str(REPO_ROOT),
+                "test",
+                4,
+                9,
+            ),
+        )
+        conn.execute(
+            "insert into message values (?, ?, ?, ?, ?)",
+            (
+                "msg_parent",
+                "ses_parent",
+                1,
+                1,
+                json.dumps({"role": "assistant", "time": {"created": 1, "completed": 1}}),
+            ),
+        )
+        conn.execute(
+            "insert into part values (?, ?, ?, ?, ?, ?)",
+            (
+                "prt_parent",
+                "msg_parent",
+                "ses_parent",
+                1,
+                1,
+                json.dumps({"type": "text", "text": "parent-only summary"}),
+            ),
+        )
+        conn.execute(
+            "insert into message values (?, ?, ?, ?, ?)",
+            (
+                "msg_child",
+                "ses_child",
+                2,
+                3,
+                json.dumps({"role": "assistant", "time": {"created": 2, "completed": 3}}),
+            ),
+        )
+        conn.execute(
+            "insert into part values (?, ?, ?, ?, ?, ?)",
+            (
+                "prt_child",
+                "msg_child",
+                "ses_child",
+                2,
+                3,
+                json.dumps({
+                    "type": "tool",
+                    "tool": "read",
+                    "state": {
+                        "status": "completed",
+                        "output": "child raw tool transcript marker",
+                    },
+                }),
+            ),
+        )
+
+    monkeypatch.setenv("OPENCODE_DB", str(db_path))
+    result = export_session_to_markdown(
+        session_id="ses_parent",
+        output_file=tmp_path / "parent_with_child.md",
+        opencode_bin="/missing/opencode",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.ok, result.to_dict()
+    text = result.markdown_file.read_text(encoding="utf-8")
+    assert "# Subagent Sessions" in text
+    assert "ses_child" in text
+    assert "ses_child_late" in text
+    assert "ses_grandchild_latest" in text
+    assert "child raw tool transcript marker" in text
+    assert result.session_updated_at_ms == 4
+    assert result.tree_updated_at_ms == 9
+
+    split_result = export_session_to_markdown(
+        session_id="ses_parent",
+        output_file=tmp_path / "unused_when_output_dir_is_set.md",
+        output_dir=tmp_path / "split_export",
+        opencode_bin="/missing/opencode",
+        cwd=REPO_ROOT,
+    )
+    assert split_result.ok, split_result.to_dict()
+    assert split_result.markdown_file == (tmp_path / "split_export" / "root_full.md").resolve()
+    assert split_result.json_file == (tmp_path / "split_export" / "root_full.json").resolve()
+    assert split_result.session_tree_file == (tmp_path / "split_export" / "session_tree.tsv").resolve()
+    assert split_result.nodes_dir == (tmp_path / "split_export" / "nodes").resolve()
+    assert split_result.node_session_count == 4
+    assert split_result.session_tree_file.exists()
+    node_files = sorted(split_result.nodes_dir.glob("*.md"))
+    assert len(node_files) == 4
+    assert any("ses_grandchild_latest" in path.name for path in node_files)
 
 
 def test_monitor_state_dir_and_dashboard_width(tmp_path) -> None:

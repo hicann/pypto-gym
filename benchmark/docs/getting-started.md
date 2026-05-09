@@ -142,7 +142,11 @@ python -m benchmark monitor /tmp/pypto_gym_benchmark/state
 │   ├── summary.md
 │   └── <level>/<op>/
 │       ├── pypto_run.log
-│       ├── pypto_session.md
+│       ├── pypto_sessions/attempt_01/
+│       │   ├── root_full.md
+│       │   ├── root_full.json
+│       │   ├── session_tree.tsv
+│       │   └── nodes/*.md
 │       ├── verifier.log
 │       ├── verifier_session.md
 │       ├── custom/<op>/     # PyPTO custom 产物副本，已排除 output*
@@ -156,7 +160,8 @@ python -m benchmark monitor /tmp/pypto_gym_benchmark/state
 - `report/summary.md`：本批次最终报告。
 - `report/<level>/<op>/pypto_run.log`：PyPTO 算子开发日志。
 - `report/<level>/<op>/verifier.log`：gym 侧验证日志。
-- `report/<level>/<op>/pypto_session.md`：PyPTO 开发阶段完整会话。
+- `report/<level>/<op>/pypto_sessions/attempt_XX/root_full.md`：PyPTO 开发阶段完整会话，含 subagent。
+- `report/<level>/<op>/pypto_sessions/attempt_XX/nodes/*.md`：main/subagent 单独会话。
 - `report/<level>/<op>/verifier_session.md`：验证阶段完整会话。
 - `report/<level>/<op>/custom/<op>/`：对应 case 的 PyPTO custom 产物副本，复制时会排除 `output*` 路径以控制体积。
 - `benchmark/.cache/pypto/custom/<op>/`：PyPTO 生成的算子开发产物。
