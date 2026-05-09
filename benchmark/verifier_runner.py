@@ -18,7 +18,7 @@
 
 - ``verifier_mode="opencode"`` (默认):
   spawn ``opencode run --agent pypto-kernel-validator``, cwd=pypto-gym 仓根,
-  让 opencode 自动 discover gym 侧 ``.opencode/skills/pypto-kernel-validate``.
+  使用 gym 侧 ``.agents/skills/pypto-kernel-validate``.
   agent 按 SKILL 4 步执行 (脚本机械检测 → LLM 语义审阅 → 精度+性能 → JSON 报告),
   落 ``<output_dir>/skill_report.json``. 本 runner 读该 JSON 转 ``VerifierResult``.
   这是对外贡献候选物 + 默认评测路径.
@@ -201,7 +201,7 @@ async def run_verifier(
 
     执行模式 (``verifier_mode``):
         - ``opencode`` (默认): spawn ``opencode run --agent pypto-kernel-validator``,
-          opencode 自己加载 ``.opencode/skills/pypto-kernel-validate``, agent 在
+          opencode 加载 ``.agents/skills/pypto-kernel-validate``, agent 在
           skill 引导下做"脚本机械检测 + LLM 语义审阅 + 精度 + 性能", 落
           ``<output_dir>/skill_report.json``. 本函数读 JSON 转 VerifierResult.
         - ``direct``: 跳过 opencode, 直接 await KernelVerifier (没有 LLM 语义层).

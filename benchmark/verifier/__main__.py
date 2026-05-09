@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""统一 verifier CLI — 给 ``.opencode/skills/pypto-kernel-validate`` 直接调用.
+"""统一 verifier CLI — 给 ``.agents/skills/pypto-kernel-validate`` 直接调用.
 
 子命令:
     cheat-check    仅跑机械层反作弊检测 (无需 NPU 设备).

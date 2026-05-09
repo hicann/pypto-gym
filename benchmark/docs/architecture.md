@@ -72,7 +72,7 @@ flowchart TD
 flowchart TB
     subgraph GymRepo["pypto-gym repo"]
         Bench["benchmark/"]
-        GymAgents[".opencode/agents<br/>.opencode/skills"]
+        GymAgents[".opencode/agents<br/>.agents/skills"]
         Runs["benchmark_runs/ or output.root_dir"]
         KB["benchmark/.cache/KernelBench"]
         PyCache["benchmark/.cache/pypto"]
@@ -80,7 +80,7 @@ flowchart TB
 
     subgraph PyPTO["Downloaded PyPTO repo"]
         Custom["custom/&lt;op&gt;/"]
-        PyAgents["PyPTO native .opencode agents/skills"]
+        PyAgents["PyPTO native .opencode/agents<br/>.agents/skills"]
     end
 
     PyCache -. "is" .-> PyPTO

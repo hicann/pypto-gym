@@ -12,7 +12,7 @@
 
 仅做**确定性**检查 — AST 基础结构 + 字符串匹配, 不依赖 LLM.
 语义层的隐性作弊判定 (jit 函数体是 pass-through, forward 走 if-branch
-绕开 pypto, 等等) 由 ``.opencode/skills/pypto-kernel-validate`` 让 LLM
+绕开 pypto, 等等) 由 ``.agents/skills/pypto-kernel-validate`` 让 LLM
 亲自审阅, 与本检测互补不替代.
 
 机械检查项:

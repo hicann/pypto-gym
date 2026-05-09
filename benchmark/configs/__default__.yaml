@@ -96,7 +96,7 @@ verifier:
   mode: "performance"
   # 执行模式 (谁来跑反作弊+精度+性能):
   #   opencode — spawn `opencode run --agent pypto-kernel-validator` 加载
-  #              `.opencode/skills/pypto-kernel-validate`, agent 在 skill
+  #              `.agents/skills/pypto-kernel-validate`, agent 在 skill
   #              引导下做"脚本机械检测 + LLM 语义审阅 + 精度 + 性能",
   #              落 skill_report.json. 这是默认 + 对外贡献候选物.
   #   direct   — 直调内置 KernelVerifier, 跳过 LLM 语义层 (无反作弊审阅).

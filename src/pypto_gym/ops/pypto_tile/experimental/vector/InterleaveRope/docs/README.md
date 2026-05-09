@@ -74,7 +74,7 @@ y = interleave_rope_wrapper(x, cos, sin)
 ## 测试
 
 ```bash
-export TILE_FWK_DEVICE_ID=$(bash .claude/skills/pypto-op-develop/scripts/list_idle_chip_ids.sh | awk '{print $1}')
+export TILE_FWK_DEVICE_ID=$(bash .agents/skills/pypto-op-develop/scripts/list_idle_chip_ids.sh | awk '{print $1}')
 
 # 运行全部用例
 python3 custom/interleave_rope/test_interleave_rope.py
