@@ -198,7 +198,8 @@ def flash_attention_varlen_forward_kernel(
 
                         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
-                        pypto.set_pass_options(sg_set_scope=5001)
+                        if pypto.platform.npuarch == 'DAV_3510':
+                            pypto.set_pass_options(sg_set_scope=5001)
 
                         scores = pypto.matmul(q_tile_view, k_tile_view, out_dtype=pypto.DT_FP32, b_trans=True)
 
@@ -217,7 +218,9 @@ def flash_attention_varlen_forward_kernel(
                                 pij_bf16 = pypto.cast(pij_div, pypto.DT_BF16)
 
                                 oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_BF16)
-                                pypto.set_pass_options(sg_set_scope=-1)
+
+                                if pypto.platform.npuarch == 'DAV_3510':
+                                    pypto.set_pass_options(sg_set_scope=-1)
 
                                 pypto.assemble(lij, [q_start + q_tile_start, h_act_idx], l_output)
                                 pypto.assemble(mij, [q_start + q_tile_start, h_act_idx], m_output)
@@ -228,7 +231,9 @@ def flash_attention_varlen_forward_kernel(
                                 pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
 
                                 oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
-                                pypto.set_pass_options(sg_set_scope=-1)
+
+                                if pypto.platform.npuarch == 'DAV_3510':
+                                    pypto.set_pass_options(sg_set_scope=-1)
 
                                 oi_update[:] = oij
                                 li_update[:] = lij
@@ -239,7 +244,8 @@ def flash_attention_varlen_forward_kernel(
 
                             oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
 
-                            pypto.set_pass_options(sg_set_scope=-1)
+                            if pypto.platform.npuarch == 'DAV_3510':
+                                pypto.set_pass_options(sg_set_scope=-1)
 
                             pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
 
