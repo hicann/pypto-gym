@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from benchmark import monitor
+from benchmark.constants import BENCHMARK_AUTO_MONITOR_ENV
 from benchmark.opencode_exporter import append_export_result_to_log, export_session_to_markdown
 from benchmark import run_kernelbench
 from benchmark.run_kernelbench import _build_cfg, _validate_pypto_repo_root, load_yaml_config
@@ -36,7 +37,6 @@ from benchmark.verifier import cheat_detector
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 DOWNLOAD_SCRIPTS = [
-    "benchmark/scripts/download_kernelbench.sh",
     "benchmark/scripts/download_pypto.sh",
 ]
 QUICK_START_SCRIPTS = [
@@ -68,12 +68,21 @@ def test_config_loader_accepts_benchmark_local_config_path() -> None:
     assert cfg["output"]["base_dir"] == "benchmark_runs"
 
 
+def test_config_loader_accepts_local_pool_yaml() -> None:
+    cfg = load_yaml_config(Path("configs/local_pool.yaml"))
+
+    assert cfg["device_mode"] == "pool"
+    assert cfg["cases"] == "level1=19_ReLU"
+    assert cfg["devices"] == [0]
+    assert cfg["concurrency"] == 1
+
+
 def test_config_loader_merges_partial_yaml_with_defaults(tmp_path) -> None:
     partial = tmp_path / "pypto.yaml"
     partial.write_text(
         textwrap.dedent(
             """\
-            cases: "pto_case=1"
+            cases: "custom=1"
             pypto:
               timeout_sec: 60
             """
@@ -84,12 +93,14 @@ def test_config_loader_merges_partial_yaml_with_defaults(tmp_path) -> None:
     cfg = load_yaml_config(partial)
 
     assert run_kernelbench.DEFAULT_CONFIG_PATH.name == "__default__.yaml"
-    assert cfg["cases"] == "pto_case=1"
+    assert cfg["cases"] == "custom=1"
     assert cfg["pypto"]["timeout_sec"] == 60
+    assert cfg["pypto"]["pref_round"] == 3
     assert cfg["pypto"]["agent"] == "pypto-op-orchestrator"
     assert cfg["verifier"]["mode"] == "performance"
     assert "arch" not in cfg["verifier"]
     assert cfg["monitor"]["poll_sec"] == 3
+    assert cfg["device_mode"] == "normal"
 
 
 def test_detect_ascend_arch_uses_torch_npu_soc_version(monkeypatch) -> None:
@@ -175,12 +186,12 @@ def test_detect_ascend_arches_maps_each_configured_device(monkeypatch) -> None:
     assert calls == ["npu-smi"]
 
 
-def test_case_selector_accepts_pto_case_level() -> None:
-    parsed = run_kernelbench.parse_cases_by_level("level1=19;pto_case=1:3")
+def test_case_selector_accepts_custom_level() -> None:
+    parsed = run_kernelbench.parse_cases_by_level("level1=19;custom=1:3")
 
     assert parsed == {
         "level1": ["19"],
-        "pto_case": ["1", "2", "3"],
+        "custom": ["1", "2", "3"],
     }
 
 
@@ -191,6 +202,28 @@ def test_case_selector_requires_level_even_for_single_level() -> None:
         assert "level=cases" in str(exc)
     else:
         raise AssertionError("bare case selector must be rejected")
+
+
+def test_builtin_kernelbench_preserves_full_upstream_case_set_and_pypto_curated_config() -> None:
+    root = run_kernelbench.DEFAULT_KERNELBENCH_ROOT
+    expected_counts = {
+        "level1": 60,
+        "level2": 35,
+        "level3": 22,
+        "level4": 20,
+        "pto_case": 44,
+    }
+
+    for level, expected in expected_counts.items():
+        cases = run_kernelbench.discover_cases(root / level)
+        assert len(cases) == expected
+
+    cfg = load_yaml_config(Path("configs/pypto.yaml"))
+    assert cfg["cases"] == (
+        "level1=1,3,10,18,19,24,26,33,35,36,47,51,89,94,95;"
+        "level2=9,14,29,30,37,51,56,62,64,68,70,88,94,95,99;"
+        "level3=43,46,50"
+    )
 
 
 def test_run_cfg_unifies_artifact_dirs_under_configured_root(tmp_path) -> None:
@@ -205,10 +238,11 @@ def test_run_cfg_unifies_artifact_dirs_under_configured_root(tmp_path) -> None:
     assert cfg.run_subdir == "run-root"
     assert cfg.log_dir == root_dir / "logs"
     assert cfg.report_dir == root_dir / "report"
+    assert cfg.artifact_custom_dir == root_dir / "custom"
     assert cfg.monitor_state_dir == root_dir / "state"
 
 
-def test_copy_pypto_custom_to_report_excludes_output_paths(tmp_path: Path) -> None:
+def test_copy_pypto_custom_artifacts_excludes_output_paths(tmp_path: Path) -> None:
     op_dir = tmp_path / "repo" / "custom" / "level1" / "Foo"
     op_dir.mkdir(parents=True)
     (op_dir / "Foo_impl.py").write_text("# impl\n", encoding="utf-8")
@@ -221,13 +255,12 @@ def test_copy_pypto_custom_to_report_excludes_output_paths(tmp_path: Path) -> No
     (op_dir / "nested" / "output_cache" / "large.bin").write_text("x", encoding="utf-8")
     (op_dir / "nested" / "keep.txt").write_text("keep\n", encoding="utf-8")
 
-    copied = run_kernelbench._copy_pypto_custom_to_report(
+    copied = run_kernelbench._copy_pypto_custom_artifacts(
         op_dir,
-        tmp_path / "run" / "report" / "level1" / "Foo",
-        "Foo",
+        tmp_path / "run" / "custom" / "level1" / "Foo",
     )
 
-    assert copied == tmp_path / "run" / "report" / "level1" / "Foo" / "custom" / "Foo"
+    assert copied == tmp_path / "run" / "custom" / "level1" / "Foo"
     assert (copied / "Foo_impl.py").is_file()
     assert (copied / "nested" / "keep.txt").is_file()
     assert not (copied / "output").exists()
@@ -241,6 +274,28 @@ def test_run_cfg_defaults_pypto_repo_to_benchmark_cache(monkeypatch) -> None:
     cfg = _build_cfg({})
 
     assert cfg.pypto_repo_root == run_kernelbench.DEFAULT_PYPTO_REPO_ROOT.resolve()
+    assert cfg.pypto_pref_round == 3
+
+
+def test_build_cfg_accepts_pypto_pref_round(tmp_path) -> None:
+    stub = _stub_pypto_repo_layout(tmp_path)
+    cfg = _build_cfg({
+        "output": {"root_dir": str(tmp_path / "run")},
+        "pypto": {"repo_root": str(stub), "pref_round": 6},
+    })
+
+    assert cfg.pypto_pref_round == 6
+
+
+def test_build_cfg_rejects_negative_pypto_pref_round(tmp_path) -> None:
+    stub = _stub_pypto_repo_layout(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        _build_cfg({
+            "output": {"root_dir": str(tmp_path / "run")},
+            "pypto": {"repo_root": str(stub), "pref_round": -1},
+        })
+
+    assert "pref_round" in str(ei.value)
 
 
 def test_run_cfg_uses_base_dir_with_random_session(tmp_path, monkeypatch) -> None:
@@ -256,6 +311,7 @@ def test_run_cfg_uses_base_dir_with_random_session(tmp_path, monkeypatch) -> Non
     assert cfg.artifact_root_dir == base_dir / cfg.run_subdir
     assert cfg.log_dir.parent == cfg.artifact_root_dir
     assert cfg.report_dir.parent == cfg.artifact_root_dir
+    assert cfg.artifact_custom_dir.parent == cfg.artifact_root_dir
     assert cfg.monitor_state_dir.parent == cfg.artifact_root_dir
 
 
@@ -286,6 +342,50 @@ def test_validate_pypto_repo_root_custom_no_opencode_rejected(tmp_path: Path) ->
 def test_validate_pypto_repo_root_passes_stub_layout(tmp_path: Path) -> None:
     stub = _stub_pypto_repo_layout(tmp_path)
     _validate_pypto_repo_root(stub, is_default=False)
+
+
+def test_build_cfg_device_mode_defaults_to_normal(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(run_kernelbench, "_validate_pypto_repo_root", lambda *_a, **_k: None)
+
+    cfg = _build_cfg({})
+
+    assert cfg.device_mode == "normal"
+
+
+def test_build_cfg_accepts_pool_device_mode_normalized(tmp_path) -> None:
+    stub = _stub_pypto_repo_layout(tmp_path)
+    cfg = _build_cfg({
+        "device_mode": "PoOl",
+        "output": {"root_dir": str(tmp_path / "run")},
+        "pypto": {"repo_root": str(stub)},
+    })
+
+    assert cfg.device_mode == "pool"
+
+
+def test_build_cfg_device_mode_null_is_normal(tmp_path) -> None:
+    stub = _stub_pypto_repo_layout(tmp_path)
+    cfg = _build_cfg({
+        "device_mode": None,
+        "output": {"root_dir": str(tmp_path / "run")},
+        "pypto": {"repo_root": str(stub)},
+    })
+
+    assert cfg.device_mode == "normal"
+
+
+def test_build_cfg_rejects_invalid_device_mode(tmp_path) -> None:
+    stub = _stub_pypto_repo_layout(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        _build_cfg({
+            "device_mode": "shared",
+            "output": {"root_dir": str(tmp_path / "run")},
+            "pypto": {"repo_root": str(stub)},
+        })
+
+    msg = str(ei.value)
+    assert "device_mode" in msg
+    assert "shared" in msg
 
 
 def test_build_cfg_rejects_custom_repo_without_dot_opencode(tmp_path: Path) -> None:
@@ -344,6 +444,57 @@ def test_unified_cli_smoke_uses_expected_contract(tmp_path) -> None:
         )
 
         assert completed.returncode == 0, completed.stderr
+
+
+def test_resolve_auto_monitor_env_overrides_cli(monkeypatch) -> None:
+    from benchmark import __main__ as benchmark_cli
+
+    monkeypatch.delenv(BENCHMARK_AUTO_MONITOR_ENV, raising=False)
+    assert benchmark_cli._resolve_auto_monitor(False) is True
+    assert benchmark_cli._resolve_auto_monitor(True) is False
+
+    monkeypatch.setenv(BENCHMARK_AUTO_MONITOR_ENV, "1")
+    assert benchmark_cli._resolve_auto_monitor(True) is True
+    assert benchmark_cli._resolve_auto_monitor(False) is True
+
+    monkeypatch.setenv(BENCHMARK_AUTO_MONITOR_ENV, "0")
+    assert benchmark_cli._resolve_auto_monitor(True) is False
+    assert benchmark_cli._resolve_auto_monitor(False) is False
+
+
+def test_handle_run_no_auto_monitor_skips_tui_and_prints_command(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    from benchmark import __main__ as benchmark_cli
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    monitor_calls: list[Path] = []
+
+    def fake_monitor_main(sd: Path) -> int:
+        monitor_calls.append(sd)
+        return 0
+
+    monkeypatch.setattr(benchmark_cli.run_kernelbench, "pre_resolve_state_dir", lambda _p: state_dir)
+    monkeypatch.setattr(benchmark_cli.run_kernelbench, "preflight_background_run", lambda _p: None)
+    monkeypatch.setattr(benchmark_cli.os, "fork", lambda: 12345)
+    monkeypatch.setattr(benchmark_cli, "_wait_for_state_json", lambda *a, **k: True)
+    monkeypatch.setattr(benchmark_cli.monitor, "main", fake_monitor_main)
+
+    rc = benchmark_cli._handle_run(
+        REPO_ROOT / "benchmark/configs/cli_smoke.yaml",
+        foreground=False,
+        auto_monitor=False,
+    )
+    assert rc == 0
+    assert monitor_calls == []
+
+    out = capsys.readouterr().out
+    assert "monitor_state_dir:" in out
+    assert "monitor_command:" in out
+    assert str(state_dir) in out
+    assert "pid=12345" in out
 
 
 def test_unified_cli_monitor_requires_state_dir() -> None:
@@ -429,7 +580,7 @@ def test_run_batch_waits_for_slot_before_starting_case(monkeypatch, tmp_path) ->
     async def scenario() -> None:
         release_first = asyncio.Event()
 
-        async def fake_run_one_case(case_path, device_id, cfg, semaphore):
+        async def fake_run_one_case(case_path, device_id, cfg, semaphore, *, device_pool=None):
             started.append(case_path.stem)
             if case_path == case_a:
                 await release_first.wait()

@@ -46,6 +46,10 @@ report/
 │   ├── MinGPTCausalAttention/
 │   │   └── ...
 │   └── ...
+├── level4/
+│   └── ...
+├── pto_case/
+│   └── ...
 ├── summary.json       (可选，用于获取 meta 信息)
 └── summary.md         (可选)
 ```
@@ -56,10 +60,11 @@ report/
 
 ### Step 1.1：扫描算子目录
 
-扫描 `report_path` 下的 `level1/`、`level2/` 和 `level3/` 子目录，列出所有算子目录。
+扫描 `report_path` 下除汇总产物目录外的各 level 子目录，列出所有算子目录。
 
 ```
-const levels = ["level1", "level2", "level3"]
+const ignored = new Set(["fracture-points", "logs"])
+const levels = direct child directories under report_path excluding ignored
 for each level:
   for each operator_dir in report_path/level/:
     record: { level, operator_name, path }

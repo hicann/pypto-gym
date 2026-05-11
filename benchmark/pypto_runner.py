@@ -22,10 +22,13 @@
   ``tail -f log_file`` 能实时看到 agent 进度 (默认不传 ``--print-logs``,
   避免 opencode 内部 server log 把真正的 agent 输出淹没).
 - 主线程仅做 ``timeout_sec`` 硬墙轮询; 不做 early-stop, 让 agent 跑完它
-  自己的状态机 (含 Stage 5↔6 修正循环; Stage 7 可按外部参数决定是否跳过
-  迭代性能调优).
+  自己的状态机 (含 Stage 5↔6 修正循环; Stage 7 性能优化轮次由
+  ``pref_round`` prompt 约束控制).
 - prompt 含 ``{op}_pypto_impl.py`` (ModelNew 包装) 的硬约束; runner 不替
   agent 兜底生成. 若 agent 没产出, ``ARTIFACT_MISSING``, 由调用方决策.
+- PyPTO 内置 SKILL/agent 由外部 PyPTO/OpenCode 工作区提供 (gym 不修改其源码
+  也不在下载后打 patch); device_mode=pool 时只能通过 ``TILE_FWK_DEVICE_ID`` 与
+  initial prompt 约束外层已分配设备, 无法强行改写黑盒 skill 内部逻辑.
 """
 
 from __future__ import annotations
@@ -64,6 +67,19 @@ class PyptoRunStatus(str, Enum):
 
 
 _REQUIRED_ORCHESTRATOR_STAGES = tuple(str(i) for i in range(1, 8))
+DEFAULT_PREF_ROUND = 3
+
+
+def normalize_pref_round(value: object = DEFAULT_PREF_ROUND) -> int:
+    if value is None or str(value).strip() == "":
+        return DEFAULT_PREF_ROUND
+    try:
+        pref_round = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"pref_round 必须是非负整数, 收到: {value!r}") from exc
+    if pref_round < 0:
+        raise ValueError(f"pref_round 必须是非负整数, 收到: {value!r}")
+    return pref_round
 
 
 @dataclass
@@ -150,9 +166,32 @@ def all_artifacts_present(artifacts: Dict[str, Path]) -> List[str]:
 # Prompt 渲染
 # ────────────────────────────────────────────────────────────
 
+# device_mode=pool 时追加: 外层已占设备号, 禁止 workflow 内 find-free / 换卡.
+_POOL_DEVICE_SECTION_TEMPLATE = """\
+================================================================
+【设备约束 -- device_mode=pool, 外层 runner 已分配并独占设备】
+================================================================
+
+本阶段运行于 **device_mode=pool**：设备 **{pool_device_id}** 已由外层 benchmark runner
+从设备池分配并在本 opencode 子进程中独占；环境变量 **TILE_FWK_DEVICE_ID={pool_device_id}**
+为唯一权威设备号 (runner 已注入子进程环境)。
+
+pypto 工作流内必须遵守:
+- 全程只使用该固定设备号；**禁止** find-free / 扫描或抢占“空闲卡”；**禁止** 在 workflow
+  内部换卡、重映射或自行挑选其它设备号。
+- **不得** 忽略、覆盖、清空 **TILE_FWK_DEVICE_ID**，也不得绕过该变量自行默认别的卡。
+
+说明: PyPTO 侧 SKILL/agent 为外部黑盒, gym **不修改** PyPTO 仓内 skill/agent 逻辑;
+设备隔离依赖本 initial prompt 与 **TILE_FWK_DEVICE_ID** 协同; 若仍违约需走 PyPTO 上游修复。
+
+================================================================
+
+"""
+
 _PROMPT_TEMPLATE = """\
 请以 pypto-op-orchestrator 角色为算子 `{op_name}` 跑完本次 benchmark 所需的 pypto 工作流.
 
+{device_pool_section}
 工作目录: `{op_dir_rel}/`
 SPEC.md (已就绪, 请直接读取并按其内容推进): `{op_dir_rel}/SPEC.md`
 KernelBench task_desc (已就绪, 需要用它校准包装接口): `{task_desc_rel}`
@@ -333,6 +372,7 @@ PY
 ================================================================
 Stage 7 约束:
 - Stage 7 必须按 pypto-op-orchestrator 自带规范正常执行性能调优与收尾.
+- stage7 性能优化轮次严格控制在{pref_round}轮
 - benchmark 不改写 PyPTO 原生 Stage 7 行为.
 
 ================================================================
@@ -349,19 +389,36 @@ Stage 7 约束:
 """
 
 
+def _pool_device_prompt_section(pool_device_id: int) -> str:
+    return _POOL_DEVICE_SECTION_TEMPLATE.format(pool_device_id=int(pool_device_id))
+
+
 def render_prompt(op_name: str, op_dir_rel: str, *,
                   task_desc_rel: Optional[str] = None,
                   init_args_repr: str = "[]",
                   model_init_source: str = "# (未提取到 __init__ 源码)",
-                  forward_source: str = "# (未提取到 forward 源码)") -> str:
+                  forward_source: str = "# (未提取到 forward 源码)",
+                  device_mode: str = "normal",
+                  pool_device_id: Optional[int] = None,
+                  pref_round: int = DEFAULT_PREF_ROUND) -> str:
+    """渲染 pypto initial prompt.
+
+    ``device_mode=pool`` 且提供 ``pool_device_id`` 时插入设备池独占约束段;
+    ``normal`` 模式不追加该段, 保持与历史 prompt 尽量一致."""
     task_desc_rel = task_desc_rel or f"{op_dir_rel}/task_desc.py"
+    device_pool_section = ""
+    if device_mode == "pool" and pool_device_id is not None:
+        device_pool_section = _pool_device_prompt_section(pool_device_id)
+    pref_round = normalize_pref_round(pref_round)
     return _PROMPT_TEMPLATE.format(
+        device_pool_section=device_pool_section,
         op_name=op_name,
         op_dir_rel=op_dir_rel,
         task_desc_rel=task_desc_rel,
         init_args_repr=init_args_repr,
         model_init_source=model_init_source,
         forward_source=forward_source,
+        pref_round=pref_round,
     )
 
 
@@ -579,6 +636,7 @@ def run_pypto_workflow(
     opencode_model: str = "",
     agent: str = "pypto-op-orchestrator",
     timeout_sec: int = 7200,
+    pref_round: int = DEFAULT_PREF_ROUND,
     device_id: Optional[int] = None,
     log_file: Optional[Path] = None,
     output_format: str = "default",
@@ -592,6 +650,7 @@ def run_pypto_workflow(
     stop_event: Optional[threading.Event] = None,
     incomplete_workflow_retry: Optional[int] = None,
     incomplete_workflow_retry_min_gap_sec: Optional[int] = None,
+    device_mode: str = "normal",
     _attempt_index: int = 1,
 ) -> PyptoRunResult:
     """跑一次 pypto 7 阶段工作流.
@@ -603,7 +662,7 @@ def run_pypto_workflow(
         (1) 子进程是否退出
         (2) 是否到 ``timeout_sec`` (硬墙)
       不做任何 artifact-based 的 early-stop — agent 自己有 Stage 5↔6 修正
-      循环; Stage 7 始终按 PyPTO 原生工作流执行.
+      循环; Stage 7 性能优化轮次通过 initial prompt 中的 ``pref_round`` 约束控制.
     - 子进程退出后, 用 ``expected_artifact_paths`` 检查产物齐全性. 缺
       ``{op}_pypto_impl.py`` 也算 ``ARTIFACT_MISSING`` — runner 不兜底,
       由 prompt 里的硬约束驱动 agent 自己产出.
@@ -615,8 +674,8 @@ def run_pypto_workflow(
         opencode_bin: opencode 可执行路径; 留空则按 PATH 查找.
         agent: opencode agent 名.
         opencode_model: 显式传给 ``opencode run -m`` 的模型名; 留空则沿用 CLI 当前默认配置.
-        timeout_sec: 子进程整体超时 (硬墙). 默认 120 min, 覆盖 7 阶段
-            含 Stage 7 性能调优 10 轮迭代.
+        timeout_sec: 子进程整体超时 (硬墙). 默认 120 min, 覆盖 7 阶段.
+        pref_round: 写入 initial prompt 的 Stage 7 性能优化轮次上限.
         device_id: 注入 ``TILE_FWK_DEVICE_ID``; ``None`` 时不覆盖外部已设值.
         log_file: 子进程 stdout+stderr 落地; ``None`` 时不落盘.
         output_format: ``opencode run --format`` 参数.
@@ -632,11 +691,14 @@ def run_pypto_workflow(
         incomplete_workflow_retry_min_gap_sec: 只有当 OpenCode session tree
             的最后更新时间到本次 PyPTO finished 的空窗不小于该阈值时,
             才消耗一次 incomplete retry. 设为 0 可恢复“未完成即重试”.
+        device_mode: ``normal`` / ``pool``; ``pool`` 时在 initial prompt 中写入
+            固定 ``pool_device_id`` (与 ``device_id`` 一致) 的设备独占约束.
 
     Returns:
         ``PyptoRunResult``.
     """
     pypto_repo_root = pypto_repo_root.resolve()
+    pref_round = normalize_pref_round(pref_round)
     base_log_file = log_file
     log_file = _attempt_log_file(log_file, _attempt_index)
     op_dir = pypto_repo_root / workdir_root / op_name
@@ -721,6 +783,10 @@ def run_pypto_workflow(
             message=f"SPEC.md 不存在: {spec_path} (应由 case_loader 预先写入).",
         )
 
+    pool_id_for_prompt: Optional[int] = None
+    if device_mode == "pool" and device_id is not None:
+        pool_id_for_prompt = int(device_id)
+
     prompt = render_prompt(
         op_name,
         op_dir_rel,
@@ -728,6 +794,9 @@ def run_pypto_workflow(
         init_args_repr=case_init_args_repr,
         model_init_source=case_init_source,
         forward_source=case_forward_source,
+        device_mode=device_mode,
+        pool_device_id=pool_id_for_prompt,
+        pref_round=pref_round,
     )
 
     # 注意: 不加 --print-logs! 它会把 opencode 内部 server/storage/agent 的
@@ -751,6 +820,9 @@ def run_pypto_workflow(
         env["TILE_FWK_DEVICE_ID"] = str(device_id)
     if extra_env:
         env.update(extra_env)
+    # subprocess.Popen(cwd=...) 不会同步更新 $PWD; opencode 用 $PWD
+    # 解析 workspace, 不一致会导致 opencode session 挂错 project (pypto-gym 而非 pypto).
+    env["PWD"] = str(pypto_repo_root)
 
     log_handle: Optional[TextIO] = None
     if log_file is not None:
@@ -760,6 +832,16 @@ def run_pypto_workflow(
         log_handle.write(f"$ TILE_FWK_DEVICE_ID={env.get('TILE_FWK_DEVICE_ID', '<unset>')} "
                          f"{shlex.join(cmd[:-1])} <prompt>\n")
         log_handle.write(f"# opencode session title: {session_title}\n")
+        if pool_id_for_prompt is not None:
+            log_handle.write(
+                "# initial prompt 设备约束摘录 (device_mode=pool, 完整内容已随 opencode prompt 传入):\n"
+            )
+            for line in _pool_device_prompt_section(pool_id_for_prompt).strip().splitlines():
+                log_handle.write(f"#   {line}\n")
+        log_handle.write(
+            "# initial prompt Stage 7 轮次约束: "
+            f"stage7 性能优化轮次严格控制在{pref_round}轮\n"
+        )
         log_handle.write("# (实时 stdout 从下行起追加; tail -f 可观察 agent 进度)\n")
         log_handle.flush()
 
@@ -910,6 +992,7 @@ def run_pypto_workflow(
             opencode_model=opencode_model,
             agent=agent,
             timeout_sec=timeout_sec,
+            pref_round=pref_round,
             device_id=device_id,
             log_file=base_log_file,
             output_format=output_format,
@@ -923,6 +1006,7 @@ def run_pypto_workflow(
             stop_event=stop_event,
             incomplete_workflow_retry=incomplete_workflow_retry,
             incomplete_workflow_retry_min_gap_sec=incomplete_workflow_retry_min_gap_sec,
+            device_mode=device_mode,
             _attempt_index=_attempt_index + 1,
         )
         retry_result.duration_sec += duration
@@ -1080,6 +1164,8 @@ def _main_cli() -> int:
     parser.add_argument("--opencode-model", default="",
                         help="显式传给 opencode run -m 的模型名")
     parser.add_argument("--timeout-sec", type=int, default=7200)
+    parser.add_argument("--pref-round", type=int, default=DEFAULT_PREF_ROUND,
+                        help="写入 opencode initial prompt 的 Stage 7 性能优化轮次上限")
     parser.add_argument("--device", type=int, default=None)
     parser.add_argument("--log-file", type=Path, default=None)
     parser.add_argument("--no-skip", action="store_true",
@@ -1129,6 +1215,7 @@ def _main_cli() -> int:
         workdir_root=args.workdir_root,
         opencode_model=args.opencode_model,
         timeout_sec=args.timeout_sec,
+        pref_round=args.pref_round,
         device_id=args.device,
         log_file=args.log_file,
         skip_if_done=not args.no_skip,

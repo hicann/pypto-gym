@@ -85,3 +85,53 @@ def test_benchmark_report_cli_pass_shows_em_dash_legacy_aggregates(tmp_path: Pat
     assert "by_failure_category" in totals
     assert totals["by_failure_category"] == {"": 2}
     assert totals["total"] == 2
+
+
+def test_benchmark_summary_subcommand_idempotent_with_preserved_meta(tmp_path: Path) -> None:
+    """``python -m benchmark summary`` 与 ``benchmark.report`` 同源逻辑；保留 meta 时再导出应逐字节一致."""
+    report_dir = tmp_path / "report"
+    report_dir.mkdir(parents=True)
+
+    ok = CaseRunRecord(
+        op_name="GoodOp",
+        case_id="1_GoodOp",
+        source_file="g.py",
+        level="level1",
+        report_subdir="level1/GoodOp",
+        overall_status="success",
+        pypto_status="success",
+        verifier_status="passed",
+        correctness=True,
+        failure_category="",
+        pypto_duration_sec=0.1,
+        verifier_duration_sec=0.2,
+        pypto_retry_count=0,
+        started_at="2026-01-01T00:00:00",
+        finished_at="2026-01-01T00:00:10",
+    )
+    write_case_result(ok, report_dir)
+    _write_legacy_record_without_failure_category(report_dir)
+
+    env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT)}
+    proc_report = subprocess.run(
+        [sys.executable, "-m", "benchmark.report", str(report_dir)],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_report.returncode == 0, proc_report.stdout + proc_report.stderr
+    md_after_report = (report_dir / "summary.md").read_text(encoding="utf-8")
+
+    proc_summary = subprocess.run(
+        [sys.executable, "-m", "benchmark", "summary", str(report_dir)],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_summary.returncode == 0, proc_summary.stdout + proc_summary.stderr
+    md_after_summary = (report_dir / "summary.md").read_text(encoding="utf-8")
+    assert md_after_summary == md_after_report

@@ -16,18 +16,15 @@ dry_run: false
 # Python logging 级别: DEBUG / INFO / WARN / WARNING / ERROR.
 log_level: "INFO"
 
-# --- 数据集 (PyPTO 维护的 KernelBench fork, PyTorch 原版支持子集) ---
-# 来源: https://github.com/zwx2238/KernelBench.git
-# 分支: pypto-supported-21fbe
-# 下载: bash benchmark/scripts/download_kernelbench.sh
-# bench_dir 指 KernelBench/KernelBench/ (含 level1 / level2 / level3 / pto_case 子目录).
-# 留空则 CLI 自动 fallback 到桥接层 .cache/KernelBench/KernelBench/.
+# --- 数据集 (内置完整 KernelBench case 集) ---
+# bench_dir 指包含 KernelBench level 子目录的根目录.
+# 留空则 CLI 自动使用 benchmark/KernelBench/.
 bench_dir: ""
 
 # case selector, 必须写明 level, 支持完整 stem、序号和闭区间:
 #   "level1=19_ReLU"
-#   "level1=1:21,31,41:50"
-#   "level1=1:21;level2=31,41:50;pto_case=1:6"
+#   "level1=1:40"
+#   "level1=;level2=;level3=;level4=;pto_case="
 # 使用 "level1=" 可选择该 level 下全部 case.
 cases: "level1=19_ReLU"
 
@@ -42,6 +39,12 @@ devices: [0]
 # --- 并发 ---
 # 同时跑的 case 数, 上限不应超过 len(devices).
 concurrency: 1
+
+# --- 设备调度 ---
+# normal — 使用上方 devices / concurrency 静态轮询分配（默认）.
+# pool   — asyncio 设备池：prepare / pypto / verifier 分阶段 acquire-release；
+#          case_loader 探针禁止 find-free；启动前对各卡做 softmax quick test 预检（fail-fast）.
+device_mode: normal
 
 # --- 输出根目录 ---
 # root_dir 非空时直接作为本次运行根目录:
@@ -63,9 +66,10 @@ pypto:
   opencode_model: ""
   # 调用的 agent 名 (须在 pypto/.opencode/agents/ 下注册).
   agent: "pypto-op-orchestrator"
-  # 单 case 工作流超时, 秒. 7 阶段实跑可能很慢, 默认 120 min 覆盖 Stage 7
-  # 性能调优 10 轮迭代; 单纯 correctness 实验可显式调小.
+  # 单 case 工作流超时, 秒. 7 阶段实跑可能很慢; 单纯 correctness 实验可显式调小.
   timeout_sec: 7200
+  # 写入 opencode initial prompt 的 Stage 7 性能优化轮次上限.
+  pref_round: 3
   # 跳过 pypto 生成, 仅复跑 verifier; 要求 custom/<op>/ 产物已就绪.
   skip_pypto_gen: false
   # 即使产物齐全也强制重跑 pypto 生成.

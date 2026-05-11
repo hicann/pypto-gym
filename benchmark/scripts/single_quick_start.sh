@@ -25,8 +25,5 @@ fi
 echo "==> Download or update PyPTO"
 bash benchmark/scripts/download_pypto.sh
 
-echo "==> Download or update KernelBench"
-bash benchmark/scripts/download_kernelbench.sh
-
 echo "==> Run single-case benchmark"
 exec "${PYTHON_BIN}" -m benchmark run --config configs/relu.yaml

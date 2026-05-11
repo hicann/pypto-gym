@@ -37,9 +37,9 @@ benchmark_runs/Task_xxx/report/
 分析这次 benchmark 的断裂点，report 路径是 benchmark_runs/Task_xxx/report
 ```
 
-触发的 skill 是 `pypto-benchmark-fracture-aggregator`。它会扫描
-`report/level1`、`report/level2`、`report/level3` 下的算子目录，逐个生成单算子
-断裂点报告，再汇总全局报告。
+触发的 skill 是 `pypto-benchmark-fracture-aggregator`。它会扫描 `report/`
+下除汇总产物外的各 level 子目录，例如 `level1` / `level2` / `level3` /
+`level4` / `pto_case`，逐个生成单算子断裂点报告，再汇总全局报告。
 
 ## 输出目录
 

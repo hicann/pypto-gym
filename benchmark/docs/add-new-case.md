@@ -1,22 +1,23 @@
 # 新增 KernelBench Case
 
-本文档说明如何为 benchmark 增加 PyPTO 自维护的 KernelBench 风格 case，并让
+本文档说明如何为 benchmark 增加本地实验用 KernelBench 风格 case，并让
 `case_loader.py` 自动生成符合 PyPTO 工作流要求的 `SPEC.md`。
 
 ## 放置位置
 
-新增 case 应提交到 PyPTO 维护的 KernelBench fork，并放在 `pto_case` level 下：
+新增 case 可放在仓内 `benchmark/KernelBench/<level>/`，也可放在自定义
+KernelBench 根目录的某个 level 下，例如：
 
 ```text
-KernelBench/pto_case/<N>_<Name>.py
+/data/my-kernelbench/custom/<N>_<Name>.py
 ```
 
 约束：
 
-- `pto_case` 是 PyPTO 自维护 case 的 level 名。
+- level 名可自定义，例如 `custom` 或 `pto_case`。
 - 文件名使用 KernelBench 扁平布局：`<序号>_<CaseName>.py`。
-- 序号建议从 `pto_case` 目录未占用编号继续递增。
-- PyPTO 仓内不保存这些 case 文件；本仓通过下载后的 KernelBench 数据集读取。
+- 使用仓内内置目录时无需设置 `bench_dir`；使用外部目录时通过 YAML 的
+  `bench_dir` 指向该目录。
 
 ## 必需代码结构
 
@@ -116,12 +117,12 @@ python -m pytest benchmark/tests
 
 ## 运行 benchmark
 
-使用 `pto_case` 跑新增 case 时，先下载包含该目录的 KernelBench fork，
-再在 YAML 中设置 `bench_dir`、`cases`、`devices` 和 verifier 配置：
+跑新增本地实验 case 时，准备一个符合 KernelBench 布局的目录，再在 YAML 中设置
+`bench_dir`、`cases`、`devices` 和 verifier 配置：
 
 ```yaml
-bench_dir: "/path/to/KernelBench/KernelBench"
-cases: "pto_case=1"
+bench_dir: "/path/to/KernelBench"
+cases: "custom=1"
 ```
 
 然后使用公开 CLI：

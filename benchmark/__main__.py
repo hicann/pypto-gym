@@ -21,7 +21,28 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from benchmark import monitor, run_kernelbench
-from benchmark.constants import STATE_JSON_STUB_WAIT_SEC
+from benchmark.constants import BENCHMARK_AUTO_MONITOR_ENV, STATE_JSON_STUB_WAIT_SEC
+from benchmark.report import regenerate_summary
+
+
+def _env_auto_monitor_preference() -> Optional[bool]:
+    raw = os.environ.get(BENCHMARK_AUTO_MONITOR_ENV, "").strip()
+    if not raw:
+        return None
+    val = raw.lower()
+    if val in ("1", "true", "yes", "on"):
+        return True
+    if val in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def _resolve_auto_monitor(cli_no_auto_monitor: bool) -> bool:
+    """后台 detached run 是否自动打开 monitor TUI；环境变量显式取值优先于 CLI 与默认行为。"""
+    pref = _env_auto_monitor_preference()
+    if pref is not None:
+        return pref
+    return not cli_no_auto_monitor
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
@@ -47,12 +68,37 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="前台运行评测（原行为）；默认后台 detached 并自动打开 monitor TUI",
     )
+    run_parser.add_argument(
+        "--no-auto-monitor",
+        action="store_true",
+        help=(
+            "后台 detached 时不自动 attach monitor TUI（适合 cron/自动化）；"
+            "仍会等待 state.json 并打印可手动执行的 monitor 命令；"
+            f"环境变量 {BENCHMARK_AUTO_MONITOR_ENV}=1|true|yes|on 强制自动、"
+            f"=0|false|no|off 强制不自动（均优先于本选项）"
+        ),
+    )
 
     monitor_parser = subcommands.add_parser("monitor", help="view benchmark monitor state directory")
     monitor_parser.add_argument(
         "state_dir",
         type=Path,
         help="Directory containing state.json written by `python -m benchmark run`",
+    )
+
+    summary_parser = subcommands.add_parser(
+        "summary",
+        help="regenerate summary.json and summary.md from per-case result.json under report dir",
+    )
+    summary_parser.add_argument(
+        "report_path",
+        type=Path,
+        help="Benchmark report directory (contains **/result.json and optional summary.json)",
+    )
+    summary_parser.add_argument(
+        "--fresh-meta",
+        action="store_true",
+        help="do not reuse meta from existing summary.json (new generated_at / platform)",
     )
     return parser
 
@@ -168,7 +214,7 @@ def _child_run_detached_benchmark(config_path: Path, log_dir: Path) -> None:
     os._exit(exit_code)
 
 
-def _handle_run(config_path: Path, *, foreground: bool) -> int:
+def _handle_run(config_path: Path, *, foreground: bool, auto_monitor: bool) -> int:
     if foreground:
         return run_kernelbench.run_from_config(config_path)
 
@@ -197,53 +243,81 @@ def _handle_run(config_path: Path, *, foreground: bool) -> int:
     if pid == 0:
         _child_run_detached_benchmark(config_path, log_dir)
 
+    previous_sigchld = None
     if hasattr(signal, "SIGCHLD"):
+        previous_sigchld = signal.getsignal(signal.SIGCHLD)
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 
-    state_json = state_dir / "state.json"
-    stub_wait = float(STATE_JSON_STUB_WAIT_SEC)
-    if not _wait_for_state_json(state_json, timeout_sec=stub_wait):
-        child_note = _describe_fork_child_status(pid)
-        err_tail = _read_log_tail(log_dir / "benchmark.err")
-        out_tail = _read_log_tail(log_dir / "benchmark.out")
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        print(
-            f"错误: 等待 state.json 超时（超过 {int(stub_wait)}s；预检耗时由子进程内 npu-smi 等自行上限）: "
-            f"{state_json}",
-            file=sys.stderr,
-        )
-        print(child_note, file=sys.stderr)
-        if err_tail.strip():
-            print(f"--- logs/benchmark.err (tail) ---\n{err_tail}", file=sys.stderr)
-        else:
-            print("--- logs/benchmark.err: (空) ---", file=sys.stderr)
-        if out_tail.strip():
-            print(f"--- logs/benchmark.out (tail) ---\n{out_tail}", file=sys.stderr)
-        else:
-            print("--- logs/benchmark.out: (空) ---", file=sys.stderr)
-        print(
-            f"提示: 若子进程在意想不到处失败, 可用前台重放查看完整输出:\n"
-            f"  {sys.executable} -m benchmark run --config {config_path} --foreground",
-            file=sys.stderr,
-        )
-        print(f"日志目录: {log_dir}", file=sys.stderr)
-        return 1
+    try:
+        state_json = state_dir / "state.json"
+        stub_wait = float(STATE_JSON_STUB_WAIT_SEC)
+        if not _wait_for_state_json(state_json, timeout_sec=stub_wait):
+            child_note = _describe_fork_child_status(pid)
+            err_tail = _read_log_tail(log_dir / "benchmark.err")
+            out_tail = _read_log_tail(log_dir / "benchmark.out")
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            print(
+                f"错误: 等待 state.json 超时（超过 {int(stub_wait)}s；预检耗时由子进程内 npu-smi 等自行上限）: "
+                f"{state_json}",
+                file=sys.stderr,
+            )
+            print(child_note, file=sys.stderr)
+            if err_tail.strip():
+                print(f"--- logs/benchmark.err (tail) ---\n{err_tail}", file=sys.stderr)
+            else:
+                print("--- logs/benchmark.err: (空) ---", file=sys.stderr)
+            if out_tail.strip():
+                print(f"--- logs/benchmark.out (tail) ---\n{out_tail}", file=sys.stderr)
+            else:
+                print("--- logs/benchmark.out: (空) ---", file=sys.stderr)
+            print(
+                f"提示: 若子进程在意想不到处失败, 可用前台重放查看完整输出:\n"
+                f"  {sys.executable} -m benchmark run --config {config_path} --foreground",
+                file=sys.stderr,
+            )
+            print(f"日志目录: {log_dir}", file=sys.stderr)
+            return 1
 
-    rc = monitor.main(state_dir)
-    reconnect_cmd = f"{sys.executable} -m benchmark monitor {state_dir}"
-    print(f"如需重连 monitor: {reconnect_cmd}", flush=True)
-    return rc
+        if not auto_monitor:
+            reconnect_cmd = f"{sys.executable} -m benchmark monitor {state_dir}"
+            print(f"monitor_state_dir: {state_dir}", flush=True)
+            print(f"monitor_command: {reconnect_cmd}", flush=True)
+            print(
+                f"后台评测已在子进程运行 (pid={pid})，日志目录: {log_dir}",
+                flush=True,
+            )
+            return 0
+
+        rc = monitor.main(state_dir)
+        reconnect_cmd = f"{sys.executable} -m benchmark monitor {state_dir}"
+        print(f"如需重连 monitor: {reconnect_cmd}", flush=True)
+        return rc
+    finally:
+        if previous_sigchld is not None:
+            signal.signal(signal.SIGCHLD, previous_sigchld)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "run":
-        return _handle_run(args.config, foreground=args.foreground)
+        return _handle_run(
+            args.config,
+            foreground=args.foreground,
+            auto_monitor=_resolve_auto_monitor(args.no_auto_monitor),
+        )
     if args.command == "monitor":
         return monitor.main(args.state_dir)
+    if args.command == "summary":
+        paths = regenerate_summary(
+            args.report_path,
+            preserve_meta=not args.fresh_meta,
+        )
+        for key, path in paths.items():
+            print(f"{key}: {path}", flush=True)
+        return 0
     raise AssertionError(f"unhandled command: {args.command}")
 
 

@@ -1,0 +1,6 @@
+# Minimal pool-mode example: same case as relu.yaml, with device_mode=pool.
+# See benchmark/docs/getting-started.md (device_mode=normal 与 pool).
+device_mode: pool
+cases: "level1=19_ReLU"
+devices: [0]
+concurrency: 1

@@ -84,6 +84,7 @@ def test_preflight_background_run_rejects_missing_kernelbench_level(
     runs = tmp_path / "runs"
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text(
+        f'bench_dir: "{(tmp_path / "missing_kernelbench").as_posix()}"\n'
         f'cases: "level1=1"\n'
         f'pypto:\n  repo_root: "{stub.as_posix()}"\n'
         f'output:\n  base_dir: "{runs.as_posix()}"\n'

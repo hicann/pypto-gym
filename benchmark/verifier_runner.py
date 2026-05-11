@@ -822,6 +822,7 @@ async def _run_via_opencode_skill_once(
 
     env = os.environ.copy()
     env["TILE_FWK_DEVICE_ID"] = str(device_id)
+    env["PWD"] = str(_BENCHMARK_REPO_ROOT)
 
     log_handle: Optional[TextIO] = None
     if log_file is not None:

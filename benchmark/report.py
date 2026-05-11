@@ -124,6 +124,30 @@ def derive_overall_status(pypto_ok: bool, verifier_status: Optional[str],
     return "verify_error"
 
 
+def _failure_category_is_profile_failure(failure_category: str) -> bool:
+    """skill / direct 侧与 profile、性能裁决相关的 failure_category."""
+    fc = (failure_category or "").strip()
+    if not fc:
+        return False
+    if fc.lower() == "performance":
+        return True
+    return fc.upper() == "PERFORMANCE_FAILED"
+
+
+def is_profile_only_failure(record: CaseRunRecord) -> bool:
+    """仅 profile/性能阶段失败、精度已通过 — 明细仍记失败类, 汇总按「通过」口径统计."""
+    if record.overall_status == "pypto_failed":
+        return False
+    if record.correctness is not True:
+        return False
+    return _failure_category_is_profile_failure(record.failure_category)
+
+
+def counts_as_aggregate_success(record: CaseRunRecord) -> bool:
+    """批跑收尾/退出码与 summary 成功计数: overall success 或仅 profile 失败."""
+    return record.succeeded or is_profile_only_failure(record)
+
+
 # ────────────────────────────────────────────────────────────
 # 落盘
 # ────────────────────────────────────────────────────────────
@@ -179,17 +203,23 @@ def _build_meta(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 def _compute_totals(records: List[CaseRunRecord], *, include_by_level: bool = True) -> Dict[str, Any]:
     total = len(records)
     if total == 0:
-        return {"total": 0}
+        return {"total": 0, "profile_only_failures": 0}
 
     overall_buckets: Dict[str, int] = {}
     correctness_pass = 0
     correctness_fail = 0
     correctness_unknown = 0
     by_failure_category: Dict[str, int] = {}
+    profile_only_failures = 0
     for r in records:
-        overall_buckets[r.overall_status] = overall_buckets.get(r.overall_status, 0) + 1
-        fc_key = (r.failure_category or "").strip()
-        by_failure_category[fc_key] = by_failure_category.get(fc_key, 0) + 1
+        eff = r.overall_status
+        if is_profile_only_failure(r):
+            eff = "success"
+            profile_only_failures += 1
+        else:
+            fc_key = (r.failure_category or "").strip()
+            by_failure_category[fc_key] = by_failure_category.get(fc_key, 0) + 1
+        overall_buckets[eff] = overall_buckets.get(eff, 0) + 1
         if r.correctness is True:
             correctness_pass += 1
         elif r.correctness is False:
@@ -217,6 +247,7 @@ def _compute_totals(records: List[CaseRunRecord], *, include_by_level: bool = Tr
             "unknown": correctness_unknown,
         },
         "by_failure_category": by_failure_category,
+        "profile_only_failures": profile_only_failures,
         "duration_sec": {
             "pypto_total": round(sum(pypto_durations), 2),
             "pypto_mean": round(statistics.mean(pypto_durations), 2) if pypto_durations else 0.0,
@@ -313,6 +344,15 @@ def _failure_category_display(raw: Any) -> str:
     return s
 
 
+def _case_dict_is_profile_only_failure(case: Dict[str, Any]) -> bool:
+    """与 :func:`is_profile_only_failure` 相同判定, 入参为 ``summary.json`` 中的 case dict."""
+    if case.get("overall_status") == "pypto_failed":
+        return False
+    if case.get("correctness") is not True:
+        return False
+    return _failure_category_is_profile_failure(str(case.get("failure_category") or ""))
+
+
 def _fmt_perf_num(value: Any, suffix: str = "", spec: str = ".2f") -> str:
     if isinstance(value, (int, float)) and value is not None:
         return f"{value:{spec}}{suffix}"
@@ -337,7 +377,7 @@ def _render_markdown(payload: Dict[str, Any]) -> str:
         lines.append("> 无 case.")
     else:
         lines.append(f"- **总用例数**: {totals['total']}")
-        lines.append(f"- **总通过 (overall=success)**: {totals['success']} "
+        lines.append(f"- **总通过 (汇总口径)**: {totals['success']} "
                      f"({totals['success_rate']*100:.1f}%)")
         cor = totals.get("correctness", {})
         lines.append(
@@ -347,16 +387,25 @@ def _render_markdown(payload: Dict[str, Any]) -> str:
         bucket_str = ", ".join(f"{k}={v}" for k, v in totals.get("by_status", {}).items())
         lines.append(f"- **总状态分布**: {bucket_str}")
 
+        pof = int(totals.get("profile_only_failures") or 0)
+        if pof:
+            lines.append(
+                f"- **仅 profile/性能失败 (精度已通过；计入总通过；明细见「PASS (prof 失败)」)**: {pof}"
+            )
+
         fc_totals = totals.get("by_failure_category") or {}
         fc_fail = {k: v for k, v in fc_totals.items() if k}
+        fc_title = "失败类别分布"
+        if pof:
+            fc_title += "（不含仅 profile/性能失败）"
         if fc_fail:
             fc_bits = [
                 f"{_failure_category_display(k)}={v}"
                 for k, v in sorted(fc_fail.items(), key=lambda kv: (-kv[1], kv[0]))
             ]
-            lines.append(f"- **失败类别分布**: {', '.join(fc_bits)}")
+            lines.append(f"- **{fc_title}**: {', '.join(fc_bits)}")
         else:
-            lines.append("- **失败类别分布**: 无")
+            lines.append(f"- **{fc_title}**: 无")
 
         perf_agg = totals.get("perf")
         if perf_agg:
@@ -421,7 +470,10 @@ def _render_markdown(payload: Dict[str, Any]) -> str:
             "------------:|---------:|----------:|------------:|------|"
         )
         for c in cases:
-            badge = _STATUS_BADGE.get(c.get("overall_status", ""), c.get("overall_status", ""))
+            if _case_dict_is_profile_only_failure(c):
+                badge = "PASS (prof 失败)"
+            else:
+                badge = _STATUS_BADGE.get(c.get("overall_status", ""), c.get("overall_status", ""))
             fc_cell = _failure_category_display(c.get("failure_category"))
             cor = c.get("correctness")
             cor_cell = "✓" if cor is True else ("✗" if cor is False else "—")
@@ -563,6 +615,55 @@ def _case_sort_key(record: CaseRunRecord) -> tuple:
         return (record.level or "", sys.maxsize, record.case_id)
 
 
+def collect_case_records_from_report_dir(report_dir: Path) -> List[CaseRunRecord]:
+    """从 ``report_dir`` 下全部 ``result.json`` 构造 ``CaseRunRecord`` 列表."""
+    records: List[CaseRunRecord] = []
+    for result_file in sorted(Path(report_dir).rglob("result.json")):
+        if not result_file.is_file():
+            continue
+        try:
+            data = json.loads(result_file.read_text(encoding="utf-8"))
+            records.append(CaseRunRecord(**data))
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning("skip %s: %s", result_file, e)
+    records.sort(key=_case_sort_key)
+    return records
+
+
+def read_summary_meta_from_json(report_dir: Path) -> Optional[Dict[str, Any]]:
+    """若存在有效的 ``summary.json``, 返回其 ``meta`` 字段供重新渲染时保留."""
+    summary_json = Path(report_dir) / "summary.json"
+    if not summary_json.is_file():
+        return None
+    try:
+        existing = json.loads(summary_json.read_text(encoding="utf-8"))
+        existing_meta = existing.get("meta")
+        if isinstance(existing_meta, dict):
+            return existing_meta
+    except json.JSONDecodeError:
+        logger.warning("ignore invalid existing summary metadata: %s", summary_json)
+    return None
+
+
+def regenerate_summary(
+    report_dir: Path,
+    *,
+    preserve_meta: bool = True,
+    meta_override: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Path]:
+    """重读各 case 的 ``result.json`` 并覆写 ``summary.json`` / ``summary.md``.
+
+    ``preserve_meta`` 为真且未传 ``meta_override`` 时, 尝试沿用已有 ``summary.json`` 的
+    ``meta`` (含 ``generated_at`` 等)，便于与历史导出对齐调试。
+    """
+    report_dir = Path(report_dir)
+    records = collect_case_records_from_report_dir(report_dir)
+    meta = meta_override
+    if meta is None and preserve_meta:
+        meta = read_summary_meta_from_json(report_dir)
+    return write_summary(records, report_dir, meta=meta)
+
+
 # ────────────────────────────────────────────────────────────
 # CLI (调试用)
 # ────────────────────────────────────────────────────────────
@@ -573,30 +674,7 @@ def _main_cli() -> int:
     parser.add_argument("report_dir", type=Path)
     args = parser.parse_args()
 
-    records: List[CaseRunRecord] = []
-    for result_file in sorted(args.report_dir.rglob("result.json")):
-        if not result_file.is_file():
-            continue
-        try:
-            data = json.loads(result_file.read_text(encoding="utf-8"))
-            records.append(CaseRunRecord(**data))
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.warning("skip %s: %s", result_file, e)
-
-    records.sort(key=_case_sort_key)
-
-    meta = None
-    summary_json = args.report_dir / "summary.json"
-    if summary_json.is_file():
-        try:
-            existing = json.loads(summary_json.read_text(encoding="utf-8"))
-            existing_meta = existing.get("meta")
-            if isinstance(existing_meta, dict):
-                meta = existing_meta
-        except json.JSONDecodeError:
-            logger.warning("ignore invalid existing summary metadata: %s", summary_json)
-
-    paths = write_summary(records, args.report_dir, meta=meta)
+    paths = regenerate_summary(args.report_dir)
     for k, p in paths.items():
         logger.info("%s: %s", k, p)
     return 0

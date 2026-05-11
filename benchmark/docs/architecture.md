@@ -19,7 +19,7 @@ flowchart LR
     CLI --> Config["YAML config"]
     CLI --> Gym["pypto-gym/benchmark"]
 
-    Gym --> KernelBench["KernelBench dataset<br/>benchmark/.cache/KernelBench"]
+    Gym --> KernelBench["KernelBench dataset<br/>benchmark/KernelBench"]
     Gym --> PyPTORepo["PyPTO source repo<br/>benchmark/.cache/pypto"]
 
     PyPTORepo --> Generation["PyPTO op generation<br/>cwd = PyPTO repo"]
@@ -57,7 +57,7 @@ flowchart TD
 
 | 模块 | 职责 | 运行位置 |
 | --- | --- | --- |
-| `benchmark.__main__` | 公开 CLI：`run`（默认 fork 后台 + 预检 + 自动 monitor）/ `monitor` | `pypto-gym` |
+| `benchmark.__main__` | 公开 CLI：`run`（默认 fork 后台 + 预检 + 自动 monitor，可关闭自动附着）/ `monitor` / `summary` | `pypto-gym` |
 | `run_kernelbench.py` | 批处理调度、并发、状态写入、报告汇总 | `pypto-gym` |
 | `case_loader.py` | 读取 KernelBench case，生成 `CaseSpec`、`SPEC.md` 和 `task_desc.py` | `pypto-gym` |
 | `pypto_runner.py` | 启动 PyPTO 7 阶段工作流 | 子进程 cwd 为 PyPTO 仓 |
@@ -74,7 +74,7 @@ flowchart TB
         Bench["benchmark/"]
         GymAgents[".opencode/agents<br/>.agents/skills"]
         Runs["benchmark_runs/ or output.root_dir"]
-        KB["benchmark/.cache/KernelBench"]
+        KB["benchmark/KernelBench"]
         PyCache["benchmark/.cache/pypto"]
     end
 
@@ -96,12 +96,12 @@ flowchart TB
 | 产物 | 默认位置 | 说明 |
 | --- | --- | --- |
 | PyPTO 源码仓 | `benchmark/.cache/pypto/` | 由 `download_pypto.sh` 下载，仅用于生成阶段 |
-| KernelBench 数据集 | `benchmark/.cache/KernelBench/` | 由 `download_kernelbench.sh` 下载 |
+| KernelBench 数据集 | `benchmark/KernelBench/` | 仓内内置完整 case 集，保留上游原始编号 |
 | 算子生成产物 | `benchmark/.cache/pypto/custom/<op>/` | PyPTO 工作流生成的实现、golden、测试和状态文件 |
 | 批次报告 | `<output.root_dir>/report/` | `summary.json`、`summary.md` 和单 case 结果 |
 | 运行状态 | `<output.root_dir>/state/state.json` | `monitor` 子命令读取该文件 |
 | 原始日志 | `<output.root_dir>/report/<level>/<op>/` | `pypto_run.log`、`verifier.log` 和会话导出 |
-| PyPTO custom 副本 | `<output.root_dir>/report/<level>/<op>/custom/<op>/` | 对应 case 的 custom 产物副本，复制时排除 `output*` |
+| PyPTO custom 副本 | `<output.root_dir>/custom/<level>/<op>/` | 与 `report/` 同级，便于单独打包报告；复制时排除 `output*` |
 | 断裂点综合分析 | `<output.root_dir>/report/fracture-points/` | benchmark 结束后的可选后处理产物，见 `docs/fracture-analysis.md` |
 | 后台 run 子进程日志 | `<output.root_dir>/logs/benchmark.out` / `benchmark.err` | 默认 detached 时子进程标准输出与错误流 |
 
@@ -113,4 +113,4 @@ flowchart TB
 - `pypto_runner` 可以在 PyPTO 仓下运行 `pypto-op-orchestrator`，并把生成产物写入 PyPTO 仓的 `custom/<op>/`。
 - `verifier_runner` 在 `pypto-gym` 仓下运行 validator，读取 PyPTO 生成产物进行验证。
 - `pypto-gym` verifier 不要求 PyPTO 仓内存在 benchmark 包、validator skill 或 gym 自定义 agent。
-- 新增 benchmark case 通过 KernelBench fork 管理，不直接提交到 PyPTO 或 `pypto-gym` 的源码目录。
+- 默认 benchmark case 内置在 `benchmark/KernelBench/`；自定义实验 case 可通过 `bench_dir` 指向外部 KernelBench 布局目录。

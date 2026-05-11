@@ -78,7 +78,7 @@ custom/<op>/
 
 ```text
 benchmark/
-├── __main__.py                 # 唯一公开 Python CLI: run --config / monitor <dir>
+├── __main__.py                 # 唯一公开 Python CLI: run --config / monitor <dir> / summary <report>
 ├── case_loader.py              # KernelBench .py -> SPEC.md + task_desc
 ├── pypto_runner.py             # PyPTO 工作流调用
 ├── verifier_runner.py          # opencode skill / direct KernelVerifier 调度
@@ -89,33 +89,34 @@ benchmark/
 ├── configs/__default__.yaml    # 默认配置
 ├── configs/relu.yaml           # ReLU 示例配置
 ├── scripts/
-│   ├── download_kernelbench.sh
 │   └── download_pypto.sh
+├── KernelBench/                # 内置完整 KernelBench case 集
 ├── tests/                      # pytest-only 测试与测试 fixture
 ├── docs/
 └── README.md
 ```
 
-## 已知约束
+## 设备池（`device_mode=pool`）
 
-- 完整 PyPTO 工作流会调用 LLM，单 case 可能耗时较长。
+- **调度**：`run_kernelbench.run_batch` 在 `device_mode=pool` 时构造 `device_pool.DevicePool(devices)`。每个 case 在 `run_one_case` 内对 **prepare**（`case_loader.load_case`，`allow_find_free=False`）、**pypto**（`run_pypto_workflow`，`device_mode` 传入以渲染 prompt）、**verifier**（`run_verifier`）三阶段分别 `acquire` / `release`，日志前缀为 `pool acquire phase=… device=…`。
+- **预检**：`run_from_config` 与 `preflight_background_run` 在 `backend=ascend` 且 `pool` 时调用 `device_pool.collect_softmax_preflight_failures`，失败则 `SystemExit`，消息由 `format_preflight_failure_report` 格式化。
+- **非目标**：不做跨进程/跨机分布式锁；不修改 PyPTO 仓内 skill；不在下载脚本后对 PyPTO 打 patch。workflow 内设备语义仅能通过 **环境变量 `TILE_FWK_DEVICE_ID`** 与 **initial prompt**（`pypto_runner.render_prompt` 中的 pool 段）约束。
 - 当前 benchmark 业务验证面向 NPU/Ascend 后端和 PyTorch 框架。
 - `pypto.repo_root` 留空时默认使用 `benchmark/.cache/pypto/`；路径必须含 **`.opencode/`**
   （与 `_build_cfg` / 后台 fork 前预检一致）。运行前通过
   `bash benchmark/scripts/download_pypto.sh` 下载或更新 PyPTO master。
 - 内部调试单算子时，`python benchmark/pypto_runner.py <Op> …` 的 `--repo-root` 会与
   `run` 使用同一套合法性检查（存在、目录、含 `.opencode/`）；默认缓存未初始化时会提示下载脚本。
-- `bench_dir` 需要指向包含 `KernelBench/<level>/{N}_{name}.py` 的目录；
-  PyPTO 自维护 case 的 level 名为 `pto_case`。
+- `bench_dir` 需要指向包含 `<level>/{N}_{name}.py` 的 KernelBench 根目录；
+  留空时使用内置 `benchmark/KernelBench/`。
 - 多卡并发依赖 `TILE_FWK_DEVICE_ID` 隔离，同一时刻每卡仅 1 个 case。
 
 ## 失败排查
 
-- `level dir 不存在`: 先确认已下载 KernelBench 数据集，并检查 `bench_dir`
-  是否指向包含目标 level 的目录，例如 `level1` / `level2` / `level3` /
-  `pto_case`。
+- `level dir 不存在`: 先确认内置 `benchmark/KernelBench/` 存在，或检查自定义
+  `bench_dir` 是否指向包含目标 level 的目录，例如 `level1` / `level4` / `pto_case`。
 - `level_dir 下找不到任何 .py 用例`: 检查 `bench_dir` 是否指到
-  `KernelBench/KernelBench/` 这一层。
+  包含各 level 子目录的 KernelBench 根目录。
 - opencode 子进程超时：调大 YAML 中的 `pypto.timeout_sec` 或
   `verifier.skill_timeout_sec`，并检查 LLM / opencode 配置。
 - PyPTO 产物缺失：查看对应 case 的 `pypto_run.log`。

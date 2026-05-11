@@ -36,13 +36,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-from benchmark import case_loader, monitor, pypto_runner, verifier_runner, report
+from benchmark import case_loader, device_pool, monitor, pypto_runner, verifier_runner, report
 from benchmark.constants import NPU_SMI_INFO_TIMEOUT_SEC
 from benchmark.case_loader import CaseSpec, derive_op_name
 from benchmark.opencode_exporter import OpencodeExportResult, append_export_result_to_log
 from benchmark.process_registry import cleanup_registered_process_groups
 from benchmark.pypto_runner import PyptoRunResult, PyptoRunStatus, run_pypto_workflow
-from benchmark.report import CaseRunRecord, derive_overall_status, write_case_result, write_summary
+from benchmark.report import (
+    CaseRunRecord,
+    counts_as_aggregate_success,
+    derive_overall_status,
+    write_case_result,
+    write_summary,
+)
 from benchmark.verifier_runner import VerifierResult, VerifierStatus, run_verifier
 
 
@@ -73,6 +79,8 @@ def _color_pypto_finish_log(status: str, text: str) -> str:
 
 BENCHMARK_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BENCHMARK_ROOT / "configs" / "__default__.yaml"
+_ALLOWED_DEVICE_MODES = frozenset({"normal", "pool"})
+DEFAULT_KERNELBENCH_ROOT = BENCHMARK_ROOT / "KernelBench"
 DEFAULT_PYPTO_REPO_ROOT = BENCHMARK_ROOT / ".cache" / "pypto"
 # Fork 模式下父进程先解析 artifact 路径并注入，子进程 _build_artifact_root() 可读此变量避免重复 UUID。
 BENCHMARK_ARTIFACT_ROOT_ENV = "_BENCHMARK_ARTIFACT_ROOT_DIR"
@@ -120,6 +128,19 @@ def load_yaml_config(path: Path) -> Dict[str, Any]:
     return _merge_yaml_config(default_cfg, _read_yaml_mapping(path))
 
 
+def _parse_device_mode(yaml_cfg: Dict[str, Any]) -> str:
+    """解析顶层 ``device_mode``：默认 ``normal``，允许 ``normal`` / ``pool``。"""
+    raw = yaml_cfg.get("device_mode", "normal")
+    if raw is None:
+        return "normal"
+    text = str(raw).strip().lower()
+    if not text:
+        return "normal"
+    if text not in _ALLOWED_DEVICE_MODES:
+        raise SystemExit(f"device_mode 必须是 normal 或 pool, 收到: {raw!r}")
+    return text
+
+
 def _merge_with_default_config(yaml_cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Return a config normalized through ``configs/__default__.yaml``.
 
@@ -165,13 +186,13 @@ def parse_cases_by_level(cases_text: str) -> Dict[str, Optional[List[str]]]:
     """解析 YAML 中的 cases 字段.
 
     每个 level 都必须直接在 cases 中写完整坐标:
-    ``level1=1:21;level2=31,41:50;pto_case=1:6``.
+    ``level1=;level2=;level3=;level4=;pto_case=``.
     使用 ``level1=`` 可选择该 level 下全部 case.
     """
     if not cases_text:
         raise ValueError(
             "config.cases 必须显式指定 level, "
-            "例如 'level1=19_ReLU' 或 'level1=1:21;pto_case=1:6'."
+            "例如 'level1=19_ReLU' 或 'level1=;level2='."
         )
 
     if "=" not in cases_text:
@@ -206,9 +227,8 @@ def discover_cases(level_dir: Path, requested: Optional[List[str]] = None,
                    limit: Optional[int] = None) -> List[Path]:
     """在 ``level_dir`` (即 ``KernelBench/<level>/``) 下查找用例.
 
-    PyPTO 维护的 KernelBench fork (github.com/zwx2238/KernelBench @ e7f018e)
-    用例文件形如 ``KernelBench/level1/19_ReLU.py`` 或
-    ``KernelBench/pto_case/1_Foo.py``. 每个 .py
+    内置 KernelBench case 集位于 ``benchmark/KernelBench``.
+    用例文件形如 ``KernelBench/level1/19_ReLU.py``. 每个 .py
     即一个用例, ``case_id`` = 文件名 stem (不含 ``.py``).
 
     Args:
@@ -230,12 +250,21 @@ def discover_cases(level_dir: Path, requested: Optional[List[str]] = None,
     if not level_dir.is_dir():
         raise ValueError(f"level dir 不是目录: {level_dir}")
 
-    py_files = sorted(p for p in level_dir.iterdir() if p.is_file() and p.suffix == ".py")
+    def _case_sort_key(path: Path) -> tuple[int, int | str, str]:
+        stem = path.stem
+        idx = stem.split("_", 1)[0]
+        if idx.isdigit():
+            return (0, int(idx), stem)
+        return (1, stem, stem)
+
+    py_files = sorted(
+        (p for p in level_dir.iterdir() if p.is_file() and p.suffix == ".py"),
+        key=_case_sort_key,
+    )
     if not py_files:
         raise ValueError(
             f"{level_dir} 下找不到任何 .py 用例. 检查路径是否指向 "
-            f"KernelBench/<level>/ (例如 .cache/KernelBench/KernelBench/level1 "
-            f"或 .cache/KernelBench/KernelBench/pto_case)."
+            f"KernelBench/<level>/ (例如 benchmark/KernelBench/level1)."
         )
 
     by_stem: Dict[str, Path] = {p.stem: p for p in py_files}
@@ -303,12 +332,12 @@ def _write_case_phase(
     tmp.replace(out)
 
 
-def _copy_pypto_custom_to_report(op_dir: Path, case_report_dir: Path, op_name: str) -> Optional[Path]:
-    """Copy ``custom/<op>`` artifacts into the case report dir, excluding bulky output* paths."""
+def _copy_pypto_custom_artifacts(op_dir: Path, case_custom_dir: Path) -> Optional[Path]:
+    """Copy PyPTO op workdir tree into artifact ``custom/<report_subdir>/``, excluding bulky output* paths."""
     if not op_dir.is_dir():
         return None
 
-    dest = case_report_dir / "custom" / op_name
+    dest = case_custom_dir
     if dest.exists():
         shutil.rmtree(dest)
 
@@ -329,6 +358,7 @@ class _RunCfg:
     opencode_model: str
     pypto_agent: str
     pypto_timeout: int
+    pypto_pref_round: int
     pypto_output_format: str
     incomplete_workflow_retry: int
     incomplete_workflow_retry_min_gap_sec: int
@@ -339,6 +369,7 @@ class _RunCfg:
     verify_timeout: int
     log_dir: Path
     report_dir: Path
+    artifact_custom_dir: Path  # sibling of report/: PyPTO custom mirror per case
     mode: str                      # correctness / performance / full
     skip_pypto_gen: bool
     force_regen: bool
@@ -351,6 +382,7 @@ class _RunCfg:
     skill_retry_interval_sec: int  # opencode/API 层重试间隔秒数
     monitor_state_dir: Path
     monitor_poll_sec: int
+    device_mode: str  # normal / pool
 
 
 def _normalize_ascend_arch(soc_version: Any) -> str:
@@ -463,13 +495,34 @@ def detect_ascend_arches(device_ids: List[int]) -> Dict[int, str]:
     return {device_id: detected[device_id] for device_id in device_ids}
 
 
-async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
-                       semaphore: Any) -> CaseRunRecord:
+async def run_one_case(
+    case_path: Path,
+    device_id: int,
+    cfg: _RunCfg,
+    semaphore: Any,
+    *,
+    device_pool: Optional[device_pool.DevicePool] = None,
+) -> CaseRunRecord:
     started_at = dt.datetime.now().isoformat(timespec="seconds")
-    logger.info("[%s] case start: device=%s source=%s", case_path.stem, device_id, case_path)
+    if device_pool is not None:
+        logger.info("[%s] case start (device_mode=pool): source=%s", case_path.stem, case_path)
+    else:
+        logger.info("[%s] case start: device=%s source=%s", case_path.stem, device_id, case_path)
 
     logger.info("[%s] loading case + probing inputs", case_path.stem)
-    case = case_loader.load_case(case_path, case_id=case_path.stem)
+    if device_pool is not None:
+        prepare_dev = await device_pool.acquire(case_id=case_path.stem, phase="prepare")
+        try:
+            case = case_loader.load_case(
+                case_path,
+                case_id=case_path.stem,
+                output_probe_device_id=str(prepare_dev),
+                allow_find_free=False,
+            )
+        finally:
+            device_pool.release(prepare_dev, case_id=case_path.stem, phase="prepare")
+    else:
+        case = case_loader.load_case(case_path, case_id=case_path.stem)
     op_name = case.op_name
     report_subdir = f"{case.level}/{op_name}" if cfg.use_level_dirs and case.level else op_name
     workdir_root = (
@@ -479,6 +532,7 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
     op_workdir = cfg.pypto_repo_root / workdir_root
     op_dir = op_workdir / op_name
     case_report_dir = cfg.report_dir / report_subdir
+    case_custom_dir = cfg.artifact_custom_dir / report_subdir
     case_report_dir.mkdir(parents=True, exist_ok=True)
     _write_case_phase(
         case_report_dir,
@@ -545,29 +599,45 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
                 status="running",
                 message=f"log={pypto_log}",
             )
-            pypto_result = await asyncio.to_thread(
-                run_pypto_workflow,
-                op_name=op_name,
-                pypto_repo_root=cfg.pypto_repo_root,
-                workdir_root=workdir_root,
-                opencode_bin=cfg.opencode_bin,
-                opencode_model=cfg.opencode_model,
-                agent=cfg.pypto_agent,
-                timeout_sec=cfg.pypto_timeout,
-                device_id=device_id,
-                log_file=pypto_log,
-                output_format=cfg.pypto_output_format,
-                incomplete_workflow_retry=cfg.incomplete_workflow_retry,
-                incomplete_workflow_retry_min_gap_sec=(
-                    cfg.incomplete_workflow_retry_min_gap_sec
-                ),
-                skip_if_done=not cfg.force_regen,
-                task_desc_rel=f"{workdir_root}/{op_name}/task_desc.py",
-                case_init_args_repr=case.init_args_repr,
-                case_init_source=case.init_source,
-                case_forward_source=case.forward_source,
-                stop_event=_stop_event,
-            )
+            pypto_device_id = device_id
+            if device_pool is not None:
+                pypto_device_id = await device_pool.acquire(
+                    case_id=case.case_id,
+                    phase="pypto",
+                )
+            try:
+                pypto_result = await asyncio.to_thread(
+                    run_pypto_workflow,
+                    op_name=op_name,
+                    pypto_repo_root=cfg.pypto_repo_root,
+                    workdir_root=workdir_root,
+                    opencode_bin=cfg.opencode_bin,
+                    opencode_model=cfg.opencode_model,
+                    agent=cfg.pypto_agent,
+                    timeout_sec=cfg.pypto_timeout,
+                    pref_round=cfg.pypto_pref_round,
+                    device_id=pypto_device_id,
+                    log_file=pypto_log,
+                    output_format=cfg.pypto_output_format,
+                    incomplete_workflow_retry=cfg.incomplete_workflow_retry,
+                    incomplete_workflow_retry_min_gap_sec=(
+                        cfg.incomplete_workflow_retry_min_gap_sec
+                    ),
+                    skip_if_done=not cfg.force_regen,
+                    task_desc_rel=f"{workdir_root}/{op_name}/task_desc.py",
+                    case_init_args_repr=case.init_args_repr,
+                    case_init_source=case.init_source,
+                    case_forward_source=case.forward_source,
+                    stop_event=_stop_event,
+                    device_mode=cfg.device_mode,
+                )
+            finally:
+                if device_pool is not None:
+                    device_pool.release(
+                        pypto_device_id,
+                        case_id=case.case_id,
+                        phase="pypto",
+                    )
             status_value = pypto_result.status.value
             finish_log = (
                 f"[{case.case_id}] pypto workflow finished: "
@@ -590,7 +660,7 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
         record.pypto_session_export_message = pypto_result.opencode_session_export_message
         record.pypto_artifacts = {k: str(v) for k, v in pypto_result.artifacts.items()}
         try:
-            copied_custom_dir = _copy_pypto_custom_to_report(op_dir, case_report_dir, op_name)
+            copied_custom_dir = _copy_pypto_custom_artifacts(op_dir, case_custom_dir)
             if copied_custom_dir is not None:
                 record.pypto_artifacts["report_custom_dir"] = str(copied_custom_dir)
                 logger.info("[%s] copied pypto custom artifacts to %s",
@@ -619,7 +689,13 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
 
         # 3) KernelVerifier (仍占设备号槽位避免冲突)
         verifier_log = case_report_dir / "verifier.log"
-        verifier_arch = cfg.arch_by_device.get(device_id, cfg.arch)
+        verifier_dev_id = device_id
+        if device_pool is not None:
+            verifier_dev_id = await device_pool.acquire(
+                case_id=case.case_id,
+                phase="verifier",
+            )
+        verifier_arch = cfg.arch_by_device.get(verifier_dev_id, cfg.arch)
         try:
             logger.info("[%s] launching verifier; mode=%s log=%s",
                         case.case_id, cfg.verifier_mode, verifier_log)
@@ -639,7 +715,7 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
                 arch=verifier_arch,
                 backend=cfg.backend,
                 framework=cfg.framework,
-                device_id=device_id,
+                device_id=verifier_dev_id,
                 log_dir=cfg.log_dir,
                 task_id=f"benchmark_{op_name}_{int(time.time()*1000)}",
                 verify_timeout=cfg.verify_timeout,
@@ -665,6 +741,13 @@ async def run_one_case(case_path: Path, device_id: int, cfg: _RunCfg,
                 message=f"run_verifier 抛异常: {e}",
                 failure_category="system_error",
             )
+        finally:
+            if device_pool is not None:
+                device_pool.release(
+                    verifier_dev_id,
+                    case_id=case.case_id,
+                    phase="verifier",
+                )
 
     record.verifier_status = verifier_result.status.value
     record.verifier_message = verifier_result.message
@@ -723,6 +806,9 @@ async def run_batch(case_paths: List[Path], devices: List[int], concurrency: int
     # 并发仅由 concurrency 控制; device 按 case 索引轮询 (idx % len(devices)),
     # 与 NPU 侧/工作流内部的占卡策略解耦, 不在此处用 len(devices) 夹逼并发度.
     semaphore = asyncio.Semaphore(concurrency)
+    pool: Optional[device_pool.DevicePool] = None
+    if cfg.device_mode == "pool":
+        pool = device_pool.DevicePool(devices, log=logger)
 
     class _AcquiredSlot:
         async def __aenter__(self) -> None:
@@ -737,7 +823,7 @@ async def run_batch(case_paths: List[Path], devices: List[int], concurrency: int
             logger.info("[%s] waiting for execution slot (device=%s)", path.stem, device_id)
             async with semaphore:
                 logger.info("[%s] acquired execution slot", path.stem)
-                return await run_one_case(path, device_id, cfg, _AcquiredSlot())
+                return await run_one_case(path, device_id, cfg, _AcquiredSlot(), device_pool=pool)
         except Exception as e:
             logger.exception(f"[{path.name}] run_one_case 异常: {e}")
             op_name = derive_op_name(path.parent.name)
@@ -786,7 +872,16 @@ def preflight_background_run(config_path: Path) -> None:
     cfg = _build_cfg(yaml_cfg)
     if bool(yaml_cfg.get("dry_run", False)):
         return
-    _assert_run_batch_prerequisites(yaml_cfg, cfg)
+    _bench_dir, _case_paths, _levels, devices, _concurrency = _assert_run_batch_prerequisites(
+        yaml_cfg, cfg,
+    )
+    if cfg.backend == "ascend" and cfg.device_mode == "pool":
+        failures = device_pool.collect_softmax_preflight_failures(
+            devices, timeout_sec=int(yaml_cfg.get("pool_preflight_timeout_sec", 120) or 120)
+        )
+        if failures:
+            msg = device_pool.format_preflight_failure_report(failures)
+            raise SystemExit(msg)
 
 
 def _validate_pypto_repo_root(pypto_repo_root: Path, *, is_default: bool) -> None:
@@ -871,6 +966,12 @@ def pre_resolve_state_dir(config_path: Path) -> Path:
 def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
     yaml_cfg = _merge_with_default_config(yaml_cfg)
     pypto_yaml = yaml_cfg.get("pypto", {}) or {}
+    try:
+        pypto_pref_round = pypto_runner.normalize_pref_round(
+            pypto_yaml.get("pref_round", pypto_runner.DEFAULT_PREF_ROUND)
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     repo_root_opt = _optional_path(pypto_yaml.get("repo_root"))
     pypto_repo_root = _resolve_pypto_repo_root(repo_root_opt)
     _validate_pypto_from_yaml(pypto_yaml)
@@ -887,6 +988,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         extra_verifier_config["verify_atol"] = float(verify_atol)
     keep_artifacts = bool(verifier_yaml.get("keep_artifacts", False))
     extra_verifier_config["keep_artifacts"] = bool(keep_artifacts)
+    device_mode = _parse_device_mode(yaml_cfg)
 
     return _RunCfg(
         pypto_repo_root=pypto_repo_root,
@@ -897,6 +999,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         opencode_model=pypto_yaml.get("opencode_model", "") or "",
         pypto_agent=pypto_yaml.get("agent", "pypto-op-orchestrator") or "pypto-op-orchestrator",
         pypto_timeout=int(pypto_yaml.get("timeout_sec", 1800) or 1800),
+        pypto_pref_round=pypto_pref_round,
         pypto_output_format=pypto_yaml.get("output_format", "default") or "default",
         incomplete_workflow_retry=(
             int(pypto_yaml["incomplete_workflow_retry"] or 0)
@@ -912,6 +1015,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         verify_timeout=int(verifier_yaml.get("verify_timeout", 900) or 900),
         log_dir=artifact_root_dir / "logs",
         report_dir=artifact_root_dir / "report",
+        artifact_custom_dir=artifact_root_dir / "custom",
         mode=verifier_yaml.get("mode", "correctness") or "correctness",
         skip_pypto_gen=bool(pypto_yaml.get("skip_pypto_gen", False)),
         force_regen=bool(pypto_yaml.get("force_regen", False)),
@@ -926,6 +1030,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         ),
         monitor_state_dir=artifact_root_dir / "state",
         monitor_poll_sec=int(monitor_yaml.get("poll_sec", 2) or 2),
+        device_mode=device_mode,
     )
 
 
@@ -936,7 +1041,7 @@ def _assert_run_batch_prerequisites(yaml_cfg: Dict[str, Any], cfg: _RunCfg) -> T
     if yaml_bench:
         bench_dir = Path(yaml_bench).expanduser()
     else:
-        bench_dir = Path(__file__).resolve().parent / ".cache" / "KernelBench" / "KernelBench"
+        bench_dir = DEFAULT_KERNELBENCH_ROOT
     if not bench_dir.is_absolute():
         cwd_candidate = (Path.cwd() / bench_dir).resolve()
         repo_candidate = (cfg.pypto_repo_root / bench_dir).resolve()
@@ -964,7 +1069,7 @@ def _assert_run_batch_prerequisites(yaml_cfg: Dict[str, Any], cfg: _RunCfg) -> T
                 f"level dir 不存在: {level_dir}\n"
                 f"  bench_dir = {bench_dir}\n"
                 f"  level     = {level}\n"
-                f"请先运行: bash benchmark/scripts/download_kernelbench.sh"
+                f"请确认内置 benchmark/KernelBench 存在，或通过 bench_dir 指向自定义数据集。"
             )
         requested = cases_by_level.get(level)
         case_paths.extend(discover_cases(level_dir, requested=requested, limit=case_limit))
@@ -1110,6 +1215,7 @@ def _build_initial_monitor_state(case_paths: List[Path], cfg: _RunCfg) -> tuple[
         "cases": [path.stem for path in case_paths],
         "timeout_sec": cfg.pypto_timeout,
         "report_dir": str(cfg.report_dir),
+        "artifact_custom_dir": str(cfg.artifact_custom_dir),
         "log_dir": str(cfg.log_dir),
         "operators": operators,
     }
@@ -1185,7 +1291,14 @@ def run_from_config(config_path: Path) -> int:
         cfg = _build_cfg(yaml_cfg)
         if bool(yaml_cfg.get("dry_run", False)):
             logger.info("dry-run: config=%s", config_path)
-            logger.info("dry-run: report_dir=%s log_dir=%s mode=%s", cfg.report_dir, cfg.log_dir, cfg.mode)
+            logger.info(
+                "dry-run: report_dir=%s artifact_custom_dir=%s log_dir=%s mode=%s device_mode=%s",
+                cfg.report_dir,
+                cfg.artifact_custom_dir,
+                cfg.log_dir,
+                cfg.mode,
+                cfg.device_mode,
+            )
             logger.info("dry-run: monitor_state_dir=%s", cfg.monitor_state_dir)
             if os.environ.get(_BENCHMARK_BACKGROUND_CHILD_ENV) == "1":
                 cfg.monitor_state_dir.mkdir(parents=True, exist_ok=True)
@@ -1202,6 +1315,7 @@ def run_from_config(config_path: Path) -> int:
                     "cases": [],
                     "timeout_sec": cfg.pypto_timeout,
                     "report_dir": str(cfg.report_dir),
+                    "artifact_custom_dir": str(cfg.artifact_custom_dir),
                     "log_dir": str(cfg.log_dir),
                     "operators": [],
                 }
@@ -1228,13 +1342,23 @@ def run_from_config(config_path: Path) -> int:
                 "cases": [],
                 "timeout_sec": cfg.pypto_timeout,
                 "report_dir": str(cfg.report_dir),
+                "artifact_custom_dir": str(cfg.artifact_custom_dir),
                 "log_dir": str(cfg.log_dir),
                 "operators": [],
             })
 
         bench_dir, case_paths, levels, devices, concurrency = _assert_run_batch_prerequisites(yaml_cfg, cfg)
 
+        if cfg.backend == "ascend" and cfg.device_mode == "pool":
+            failures = device_pool.collect_softmax_preflight_failures(
+                devices, timeout_sec=int(yaml_cfg.get("pool_preflight_timeout_sec", 120) or 120)
+            )
+            if failures:
+                msg = device_pool.format_preflight_failure_report(failures)
+                raise SystemExit(msg)
+
         cfg.report_dir.mkdir(parents=True, exist_ok=True)
+        cfg.artifact_custom_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"pypto_repo_root  = {cfg.pypto_repo_root}")
         logger.info(f"artifact_root    = {cfg.artifact_root_dir}")
         logger.info(f"run_subdir       = {cfg.run_subdir}")
@@ -1244,6 +1368,7 @@ def run_from_config(config_path: Path) -> int:
         logger.info(f"devices          = {devices}, concurrency = {concurrency}")
         logger.info(f"arch / backend   = {cfg.arch} / {cfg.backend}")
         logger.info(f"report_dir       = {cfg.report_dir}")
+        logger.info(f"artifact_custom_dir={cfg.artifact_custom_dir}")
         logger.info(f"monitor_state_dir= {cfg.monitor_state_dir}")
         print(f"monitor_state_dir: {cfg.monitor_state_dir}", flush=True)
         print(f"monitor_command: {sys.executable} -m benchmark monitor {cfg.monitor_state_dir}", flush=True)
@@ -1264,7 +1389,7 @@ def run_from_config(config_path: Path) -> int:
                     "bench_dir": str(bench_dir),
                     "level": ",".join(levels),
                     "levels": levels,
-                    "kernelbench_branch": "pypto-supported-21fbe",
+                    "kernelbench_source": "builtin",
                     "arch": cfg.arch,
                     "backend": cfg.backend,
                     "framework": cfg.framework,
@@ -1276,10 +1401,11 @@ def run_from_config(config_path: Path) -> int:
                     "devices": devices,
                     "concurrency": concurrency,
                     "pypto_repo_root": str(cfg.pypto_repo_root),
+                    "device_mode": cfg.device_mode,
                 },
             )
 
-            success_n = sum(1 for r in records if r.succeeded)
+            success_n = sum(1 for r in records if counts_as_aggregate_success(r))
             total = len(records)
             logger.info(f"完成: {success_n}/{total} 通过")
             logger.info(f"summary: {summary_paths['md']}")

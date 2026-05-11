@@ -1,4 +1,4 @@
-# 上游 KernelBench 下载缓存 (由 scripts/download_kernelbench.sh 拉取)
+# 本地缓存 (PyPTO 源码仓等)
 .cache/
 
 # Python 字节码
@@ -7,6 +7,7 @@ __pycache__/
 
 # 本地 benchmark 配置副本
 configs/local_*.yaml
+!configs/local_pool.yaml
 
 # 测试产物 (skill_validate 结果) — 避免误提交
 custom/*/.skill_validate/

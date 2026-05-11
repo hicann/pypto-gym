@@ -10,10 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """KernelBench 用例加载器 (上游 PyTorch 扁平布局).
 
-数据集来源: https://github.com/zwx2238/KernelBench
-分支: pypto-supported-21fbe. 由
-``scripts/download_kernelbench.sh`` 落到
-``pypto-gym/benchmark/.cache/KernelBench/``, 布局为
+内置数据集位于 ``pypto-gym/benchmark/KernelBench/``，内容来自
+PyPTO 支持的 KernelBench 仓库并保留上游原始目录/编号。布局为
 ``KernelBench/<level>/{N}_{name}.py`` 的扁平结构, 每个 .py 内含一个
 ``class Model(nn.Module)`` + ``get_inputs()`` + ``get_init_inputs()``.
 
@@ -71,7 +69,7 @@ class CaseSpec:
     case_id: str                           # 上游文件 stem, 例如 "19_relu"
     source_file: str                       # 绝对路径
     task_desc: str                         # 原始源码 (KernelBench 风格)
-    level: str = ""                        # KernelBench level, 例如 level1 / pto_case
+    level: str = ""                        # KernelBench level, 例如 level1 / custom
     framework_module: str = "torch"        # 上游 KernelBench 一律 torch; 探针时若 import 不同, 会被覆盖
     init_source: str = ""                  # Model.__init__ 的源码片段
     forward_source: str = ""               # Model.forward / __call__ 的源码片段
@@ -352,11 +350,16 @@ def _probe_io_specs(
     case_path: Path,
     timeout_sec: int = 30,
     max_output_attempts: int = 3,
+    output_probe_device_id: Optional[str] = None,
+    allow_find_free: bool = True,
 ) -> tuple[List[TensorSpec], List[TensorSpec], str]:
     """探测输入和输出规格。
 
     输入/init 参数探针不绑定设备；输出规格通过真实执行 ``Model.forward`` 获取。
-    forward 前先选择空闲 chip，失败后换其他空闲 chip 重试，最多 ``max_output_attempts`` 次。
+    若给定 ``output_probe_device_id``，仅在该设备上探测输出，不调用空闲卡发现。
+    否则在 ``allow_find_free`` 为真时，forward 前从 ``npu-smi info`` 解析的空闲 chip 中选卡，
+    失败后换其他空闲 chip 重试，最多 ``max_output_attempts`` 次。
+    ``allow_find_free`` 为假且未指定显式设备时，跳过输出探针（pool 模式由外部固定设备）。
     所有失败都降级为空输出规格，不阻断 SPEC.md 生成。
     """
     inputs, _, init_repr = _run_probe_subprocess(
@@ -366,6 +369,20 @@ def _probe_io_specs(
     )
 
     if not inputs or max_output_attempts <= 0:
+        return inputs, [], init_repr
+
+    if output_probe_device_id is not None:
+        chip = str(output_probe_device_id).strip()
+        if chip:
+            _, outputs, _ = _run_probe_subprocess(
+                case_path,
+                timeout_sec=timeout_sec,
+                probe_outputs=True,
+                chip_id=chip,
+            )
+            return inputs, outputs, init_repr
+
+    if not allow_find_free:
         return inputs, [], init_repr
 
     attempted: set[str] = set()
@@ -429,7 +446,9 @@ def derive_op_name(case_id: str) -> str:
 def load_case(case_path: Path, op_name: Optional[str] = None,
               case_id: Optional[str] = None,
               probe_timeout_sec: int = 30,
-              max_output_probe_attempts: int = 3) -> CaseSpec:
+              max_output_probe_attempts: int = 3,
+              output_probe_device_id: Optional[str] = None,
+              allow_find_free: bool = True) -> CaseSpec:
     """加载并解析一个 KernelBench 用例 (上游 PyTorch 扁平布局).
 
     Args:
@@ -440,7 +459,12 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
             (上游扁平布局下文件名即标识).
         probe_timeout_sec: 子进程执行 ``get_inputs()`` 的超时.
         max_output_probe_attempts: 执行 ``Model.forward`` 探测输出规格的最大选卡
-            尝试次数。每次尝试都从空闲 chip 列表中选择一张未尝试过的卡。
+            尝试次数。每次尝试都从空闲 chip 列表中选择一张未尝试过的卡
+            （未指定 ``output_probe_device_id`` 且 ``allow_find_free`` 为真时生效）。
+        output_probe_device_id: 显式指定输出探针使用的设备 id（``TILE_FWK_DEVICE_ID``），
+            pool 模式传入配置卡号；指定后不再做空闲卡发现。
+        allow_find_free: 为假时禁止通过 ``_list_idle_chip_ids`` 扫空闲卡做输出探针；
+            需配合 ``output_probe_device_id`` 或由调用方接受空输出规格。
 
     Raises:
         FileNotFoundError: 文件不存在.
@@ -473,6 +497,8 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
         case_path,
         timeout_sec=probe_timeout_sec,
         max_output_attempts=max_output_probe_attempts,
+        output_probe_device_id=output_probe_device_id,
+        allow_find_free=allow_find_free,
     )
     supported_dtypes, p0_shapes, tolerance = _derive_front_matter_fields(inputs)
 
@@ -514,7 +540,8 @@ tolerance: {tolerance_json}
 > 本 SPEC 由 ``benchmark.case_loader`` 自动生成, 用于驱动
 > ``pypto-op-orchestrator`` 7 阶段工作流.
 >
-> 数据集来源: github.com/zwx2238/KernelBench @ e7f018e
+> 数据集来源: 内置 benchmark/KernelBench
+> (github.com/zwx2238/KernelBench @ 5bb8dda, 保留上游原始编号)
 
 ## 元数据
 

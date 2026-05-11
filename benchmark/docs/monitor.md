@@ -12,9 +12,17 @@
 python -m benchmark monitor <root_dir>/state
 ```
 
-若父进程在等待 `state.json` 时超时（约 10s），会根据子进程状态和
+若父进程在等待 `state.json` 时超时（约 90s），会根据子进程状态和
 `<root_dir>/logs/benchmark.err` / `benchmark.out` 尾部打印诊断；典型修复包括修正
 YAML、补齐 PyPTO 仓或改用 `--foreground` 查看完整 traceback。
+
+需要后台运行但不自动进入 TUI 时，可使用：
+
+```bash
+python -m benchmark run --config configs/relu.yaml --no-auto-monitor
+```
+
+此时父进程仍会打印可手动执行的 `monitor_command`。
 
 `monitor` 只读取传入目录下的 `state.json` 并渲染看板，不读取运行
 YAML，也不负责启动 benchmark。状态路径为 `<本次产物根>/state/`，产物根由

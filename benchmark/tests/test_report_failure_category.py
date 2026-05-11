@@ -5,12 +5,52 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from benchmark.report import (
     CaseRunRecord,
     _compute_totals,
     _failure_category_display,
     _render_markdown,
+    is_profile_only_failure,
 )
+
+
+def test_profile_only_failure_counts_as_success_in_totals_not_in_failure_category() -> None:
+    prof = CaseRunRecord(
+        op_name="p",
+        case_id="9",
+        source_file="p.py",
+        overall_status="verify_failed",
+        failure_category="performance",
+        correctness=True,
+        pypto_status="success",
+        verifier_status="failed",
+        pypto_duration_sec=0.0,
+        verifier_duration_sec=0.0,
+        pypto_retry_count=0,
+    )
+    bad = CaseRunRecord(
+        op_name="b",
+        case_id="10",
+        source_file="b.py",
+        overall_status="verify_error",
+        failure_category="error",
+        correctness=False,
+        pypto_status="success",
+        verifier_status="error",
+        pypto_duration_sec=0.0,
+        verifier_duration_sec=0.0,
+        pypto_retry_count=0,
+    )
+    assert is_profile_only_failure(prof) is True
+    assert is_profile_only_failure(bad) is False
+    t = _compute_totals([prof, bad], include_by_level=False)
+    assert t["total"] == 2
+    assert t["success"] == 1
+    assert t["by_status"] == {"success": 1, "verify_error": 1}
+    assert t["profile_only_failures"] == 1
+    assert t["by_failure_category"] == {"error": 1}
 
 
 def test_case_run_record_accepts_missing_failure_category_from_json() -> None:
@@ -44,6 +84,7 @@ def test_compute_totals_by_failure_category() -> None:
     ]
     t = _compute_totals(records, include_by_level=False)
     assert t["by_failure_category"] == {"": 1, "error": 2}
+    assert t["profile_only_failures"] == 0
 
 
 def test_failure_category_display_pass_empty() -> None:
@@ -60,6 +101,7 @@ def test_render_markdown_detail_and_overview_fc() -> None:
                 "total": 2,
                 "success": 1,
                 "success_rate": 0.5,
+                "profile_only_failures": 0,
                 "correctness": {"pass": 1, "fail": 1, "unknown": 0},
                 "by_status": {"success": 1, "verify_error": 1},
                 "by_failure_category": {"": 1, "missing_input": 1},
@@ -116,7 +158,39 @@ def test_render_markdown_detail_and_overview_fc() -> None:
         }
     )
     assert "| level | op | case | 总状态 | 错误类别 | 精度 |" in md
+    assert "总通过 (汇总口径)" in md
     assert "失败类别分布" in md
     assert "缺少输入=1" in md
     assert "PASS | — | ✓ |" in md
     assert "| ERROR | 缺少输入 | ✗ |" in md
+
+
+def test_render_markdown_profile_only_shows_badge_and_count() -> None:
+    prof = CaseRunRecord(
+        op_name="p",
+        case_id="9_p",
+        source_file="p.py",
+        level="L1",
+        overall_status="verify_failed",
+        failure_category="performance",
+        correctness=True,
+        pypto_status="success",
+        verifier_status="failed",
+        pypto_duration_sec=0.1,
+        verifier_duration_sec=0.2,
+        pypto_retry_count=0,
+        pypto_message="",
+        verifier_message="perf bad",
+        started_at="2026-01-01T00:00:00",
+        finished_at="2026-01-01T00:01:00",
+    )
+    md = _render_markdown(
+        {
+            "meta": {},
+            "totals": _compute_totals([prof], include_by_level=False),
+            "cases": [asdict(prof)],
+        }
+    )
+    assert "PASS (prof 失败)" in md
+    assert "仅 profile/性能失败" in md
+    assert "| `L1` | `p` | `9_p` | PASS (prof 失败) | 性能失败 | ✓ |" in md

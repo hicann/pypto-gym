@@ -15,3 +15,7 @@ NPU_SMI_INFO_TIMEOUT_SEC = 300
 
 # Detached ``run``: parent only waits for stub ``state.json`` (written right after child ``_build_cfg``).
 STATE_JSON_STUB_WAIT_SEC = 90
+
+# 后台 detached ``run`` 是否自动 attach monitor TUI：`1|true|yes|on` 强制打开，`0|false|no|off` 强制关闭；
+# 任一显式取值均优先于 CLI ``--no-auto-monitor`` 与默认行为。
+BENCHMARK_AUTO_MONITOR_ENV = "BENCHMARK_AUTO_MONITOR"

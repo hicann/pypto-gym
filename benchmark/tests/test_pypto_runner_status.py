@@ -295,6 +295,13 @@ def test_modelnew_prompt_requires_nn_module_and_to() -> None:
     assert "failed" in prompt
     assert "禁止清理 `/tmp/*`, `~/.cache/*`, `/home/*/.cache/*`" in prompt
     assert "不要请求 external_directory 权限" in prompt
+    assert "stage7 性能优化轮次严格控制在3轮" in prompt
+
+
+def test_render_prompt_accepts_custom_pref_round() -> None:
+    prompt = render_prompt("Foo", "custom/Foo", pref_round=5)
+
+    assert "stage7 性能优化轮次严格控制在5轮" in prompt
 
 
 def test_verifier_script_checks_state_dict_structure() -> None:

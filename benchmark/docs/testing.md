@@ -12,10 +12,11 @@ python -m pytest benchmark/tests
 
 当前 pytest 集合主要覆盖无需 NPU/LLM 的基础契约：
 
-- 公开 CLI 只包含 `python -m benchmark run --config [--foreground] …` 和
-  `python -m benchmark monitor <state_dir>`。
-- benchmark 目录中仅保留 `benchmark/scripts/download_kernelbench.sh` 和
-  `benchmark/scripts/download_pypto.sh` 作为 shell 脚本。
+- 公开 CLI 只包含 `python -m benchmark run --config [--foreground] [--no-auto-monitor] …`、
+  `python -m benchmark monitor <state_dir>` 和
+  `python -m benchmark summary <report_dir>`。
+- benchmark 目录中保留 `benchmark/scripts/download_pypto.sh` 和 quick start
+  脚本作为公开 shell 入口；KernelBench 数据集使用仓内内置目录。
 - YAML 配置可从 benchmark 本地 `configs/` 解析。
 - monitor 状态目录逻辑可离线冒烟。
 - 机械层反作弊 fixture 和 opencode transcript 导出容错。
@@ -29,6 +30,7 @@ python -m pytest benchmark/tests
 - 新增 KernelBench case loader 行为时，应断言生成的 `SPEC.md` front matter
   和正文关键字段。
 - 测试中如需调用公开 benchmark CLI，`run` 使用 `--config configs/xxx.yaml`
-  （按用例需要可加 `--foreground`），`monitor` 使用状态目录参数。
+  （按用例需要可加 `--foreground` 或 `--no-auto-monitor`），`monitor` 使用状态目录参数，
+  `summary` 使用报告目录参数。
 - 不要在文档或测试中引入新的 Python CLI 入口、shell runner，或除 `run --foreground`
-  以外的额外 benchmark CLI 开关。
+  / `run --no-auto-monitor` 以外的额外 benchmark CLI 开关。

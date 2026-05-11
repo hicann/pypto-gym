@@ -27,8 +27,8 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 export PTO_TILE_LIB_CODE_PATH=/workspace/project/pto-isa
 # 检查 3: NPU 设备
 test -n "$TILE_FWK_DEVICE_ID" || export TILE_FWK_DEVICE_ID=0
-# 检查 4: benchmark 数据集已下载
-bash benchmark/scripts/download_kernelbench.sh
+# 检查 4: benchmark 内置数据集存在
+test -d benchmark/KernelBench
 # 检查 5: PyPTO 可正常 import python3 -c "import pypto; print(pypto.__version__)"
 ```
 
@@ -42,7 +42,7 @@ bash benchmark/scripts/download_kernelbench.sh
 **转换开始前，必须先向用户确认**：
 
 - 是否需要执行 Phase 2 回归验证？
-- 如果需要，询问日志和 report 生成路径（`BENCHMARK_LOG_DIR`，默认当前目录）
+- 如果需要，询问运行产物根目录（YAML `output.root_dir`，默认当前目录下临时目录）
 
 如用户回答不需要回归验证，则仅完成 Phase 1 的 case 生成即可结束。
 
@@ -59,7 +59,7 @@ bash benchmark/scripts/download_kernelbench.sh
 
 | 确认项                   | 来源                  | 示例                                                                                                |
 | --------------------- | ------------------- | ------------------------------------------------------------------------------------------------- |
-| case 放置路径             | add-new-case.md 第1节 | KernelBench fork 的 `KernelBench/pto_case/` |
+| case 放置路径             | add-new-case.md 第1节 | 仓内 `benchmark/KernelBench/pto_case/` 或外部 `KernelBench/<level>/` |
 | 命名格式                  | add-new-case.md 第1节 | `<N>_<CaseName>.py`                                                                               |
 | 序号规则                  | add-new-case.md 第1节 | 从当前 level 未占用编号继续递增                                                                               |
 | **FORMULA（数学公式）**     | add-new-case.md 第3节 | 文件顶层添加 `FORMULA = "out[m,n] = x[m,k] @ w[k,n]"`                                                   |
@@ -68,9 +68,9 @@ bash benchmark/scripts/download_kernelbench.sh
 
 **注意路径职责**：
 
-- **源数据路径**：KernelBench fork 中的 `KernelBench/pto_case/`，新增 case 应提交到这里。
-- **下载缓存路径**：`.cache/KernelBench/KernelBench/pto_case/`，由 `download_kernelbench.sh` 拉取后供 benchmark 读取。
-- **PyPTO 仓库**：不保存 `pto_case` case 文件，只维护 benchmark 框架、文档和转换规则。
+- **仓内数据路径**：`benchmark/KernelBench/` 已完整内置上游 case 集；新增长期维护 case 可提交到 `benchmark/KernelBench/pto_case/`。
+- **外部实验路径**：临时 case 可放到外部 `KernelBench/<level>/` 目录，并通过 YAML `bench_dir` 指向。
+- **PyPTO 源码仓**：不保存 benchmark case 文件，只作为代码生成阶段的工作区。
 
 当前转换应以 `benchmark/docs/add-new-case.md` 文档为准。
 
@@ -311,40 +311,43 @@ Phase 1 完成后，**必须向用户确认**是否执行回归验证：
 
 ### 环境变量配置（如用户确认需要）
 
-**询问用户日志和 report 生成路径**，默认生成在当前目录下：
+**询问用户运行产物根目录**，默认生成在当前目录下：
 
 ```
-请输入 BENCHMARK_LOG_DIR（日志和 report 生成路径，默认当前目录 ./）：
+请输入 output.root_dir（运行产物根目录，默认 ./benchmark_runs/<本次任务名>）：
 ```
 
-设置环境变量并执行 benchmark：
+生成一个临时 YAML 并执行 benchmark：
+
+```yaml
+# /tmp/pypto_case_regression.yaml
+bench_dir: ""
+cases: "pto_case={N}_{OpName}"
+devices: [0]
+concurrency: 1
+output:
+  root_dir: "/path/to/output/root"
+pypto:
+  timeout_sec: 10800
+  pref_round: 3
+  skip_pypto_gen: true
+verifier:
+  mode: "performance"
+  verifier_mode: "direct"
+  verify_rtol: 1.0e-2
+  verify_atol: 2.5e-2
+```
 
 ```bash
-# 必填
-export CASES="{N}_{OpName}"              # Case 编号，支持逗号分隔多 case
-export FULL=0                             # 0=cheap模式（复用产物，~3min）；1=FULL模式（真跑7阶段，~50min）
-export DEVICE=0                           # 空闲 NPU 卡号
-export PTO_TILE_LIB_CODE_PATH=/workspace/project/pto-isa    #不提供会导致pto编译阶段失败
-
-# 可选
-export OPENCODE_MODEL=""                  # 使用模型名（仅 VERIFIER_MODE=opencode 时有效）
-export VERIFY_RTOL=1e-2                   # 精度阈值 rtol（可选）
-export VERIFY_ATOL=2.5e-2                 # 精度阈值 atol（可选）
-export SKIP_STAGE7_PERF_TUNE=1            # 1=跳过 stage7 性能调优（可选）
-export CONCURRENCY=2                      # 并行数量（可选，默认 1）
-export PYPTO_TIMEOUT=10800                # 超时时间，默认10800s
-export BENCHMARK_LOG_DIR="./"             # report 生成路径（可选，默认当前目录）
-
-# 执行
-bash benchmark/scripts/local/test-integration.sh
+python -m benchmark run --config /tmp/pypto_case_regression.yaml --foreground
 ```
 
 **说明**：
 
-- `FULL=0`（cheap 模式）：复用现成 `custom/<op>/` 产物，只跑 verifier 验证，单 case 约 3 分钟。回归验证推荐此模式。
-- `FULL=1`（完整模式）：让 pypto-op-orchestrator 真跑 Stage 1-7 算子开发，单 case 约 50 分钟。仅当需要完整端到端集成测试时使用。
-- `VERIFIER_MODE=direct`：不烧 LLM，直接调 KernelVerifier。快速回归推荐。
-- `VERIFIER_MODE=opencode`：走 LLM skill 验证（含反作弊审阅）。需要配置 opencode CLI。
+- `pypto.skip_pypto_gen=true`：复用现成 `custom/<op>/` 产物，只跑 verifier。回归验证推荐此模式。
+- `pypto.skip_pypto_gen=false`：让 pypto-op-orchestrator 真跑 Stage 1-7 算子开发。仅当需要完整端到端集成测试时使用。
+- `verifier.verifier_mode=direct`：不烧 LLM，直接调 KernelVerifier。快速回归推荐。
+- `verifier.verifier_mode=opencode`：走 LLM skill 验证（含反作弊审阅）。需要配置 opencode CLI。
 
 ### 测试失败时的分析逻辑
 
@@ -389,16 +392,16 @@ bash benchmark/scripts/local/test-integration.sh
 执行完成后，报告位于：
 
 ```
-${BENCHMARK_LOG_DIR}/report/summary.md       # 总览报告
-${BENCHMARK_LOG_DIR}/report/summary.json     # JSON 结果
-${BENCHMARK_LOG_DIR}/batch.log               # 批处理日志
+<output.root_dir>/report/summary.md       # 总览报告
+<output.root_dir>/report/summary.json     # JSON 结果
+<output.root_dir>/logs/benchmark.out      # 后台 run stdout；--foreground 时在当前终端
 ```
 
 单 case 详细结果：
 
 ```
-${BENCHMARK_LOG_DIR}/report/{OpName}/result.json
-${BENCHMARK_LOG_DIR}/report/{OpName}/verifier.log
+<output.root_dir>/report/<level>/{OpName}/result.json
+<output.root_dir>/report/<level>/{OpName}/verifier.log
 ```
 
 ---
