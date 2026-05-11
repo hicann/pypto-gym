@@ -1,15 +1,10 @@
-# PyPTO-Gym
+简体中文 | [English](README.en.md)
 
-[English](#overview-en) | 简体中文
+# PyPTO-Gym
 
 PyPTO-Gym 是基于 [PyPTO](https://gitcode.com/cann/pypto) 编程框架构建的算子/模型样例仓库。它收录了一批用 PyPTO 写成的高性能融合算子与典型大模型结构实现，作为 PyPTO 的"算子体操场"，方便开发者学习、复用、压测与对比。
 
 > 本仓原为 `pypto/models/` 目录，现已拆分为独立仓，与 PyPTO 主仓解耦演进。
-
-<a name="overview-en"></a>
-PyPTO-Gym is an operator / model example library built on the [PyPTO](https://gitcode.com/cann/pypto) programming framework. It collects a set of high-performance fused operators and typical LLM structure implementations written in PyPTO, serving as a "kernel gym" for PyPTO — a place to learn, reuse, benchmark, and compare operators.
-
-> This repository was originally the `pypto/models/` directory, now split out as an independent repository decoupled from the PyPTO core.
 
 ## 概述
 

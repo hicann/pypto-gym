@@ -31,20 +31,31 @@ report/
 ├── level1/
 │   ├── {OpName}/
 │   │   ├── pypto_run.log
-│   │   ├── pypto_run.attempt2.log   (可选)
-│   │   └── ...
+│   │   ├── result.json
+│   │   ├── verifier_session.md
+│   │   ├── ...
+│   │   └── pypto_sessions/
+│   │       ├── attempt_01/
+│   │       │   ├── nodes/
+│   │       │   ├── root_full.md        ← 主要分析目标
+│   │       │   ├── root_full.json
+│   │       │   └── ...
+│   │       └── attempt_02/             (可选，若存在第二次尝试)
+│   │           └── root_full.md
 │   └── ...
 ├── level2/
 │   ├── Gemm_GroupNorm_Hardtanh/
-│   │   ├── pypto_run.log
-│   │   ├── pypto_run.attempt2.log   (可选)
-│   │   └── ...
-│   ├── Matmul_Sigmoid_Sum/
-│   │   └── ...
+│   │   └── pypto_sessions/
+│   │       ├── attempt_01/
+│   │       │   └── root_full.md
+│   │       └── ...
 │   └── ...
 ├── level3/
 │   ├── MinGPTCausalAttention/
-│   │   └── ...
+│   │   └── pypto_sessions/
+│   │       ├── attempt_01/
+│   │       │   └── root_full.md
+│   │       └── ...
 │   └── ...
 ├── level4/
 │   └── ...
@@ -72,14 +83,14 @@ for each level:
 
 ### Step 1.2：发现日志文件
 
-对每个算子目录，检测以下日志文件：
+对每个算子目录，检测 `pypto_sessions/` 下的 attempt 子目录及其中 `root_full.md`：
 
-| 文件 | 说明 | 对应 attempt |
+| 路径 | 说明 | 对应 attempt |
 |------|------|-------------|
-| `pypto_run.log` | 首次运行日志 | attempt1 |
-| `pypto_run.attempt2.log` | 第二次运行日志（若存在） | attempt2 |
+| `pypto_sessions/attempt_01/root_full.md` | 首次运行日志 | attempt_01 |
+| `pypto_sessions/attempt_02/root_full.md` | 第二次运行日志（若存在） | attempt_02 |
 
-只处理存在的日志文件。无日志文件的算子目录：跳过该算子，在综合报告中标注"该算子无运行日志（可能为成功跳过或未执行）"。
+只处理存在的 `root_full.md`。无 `pypto_sessions/` 目录或无任何 `attempt_*/` 子目录的算子：跳过该算子，在综合报告中标注"该算子无运行日志（可能为成功跳过或未执行）"。
 
 ### Step 1.3：汇总待分析清单
 
@@ -88,7 +99,7 @@ for each level:
 ```
 发现 {N} 个算子，共 {M} 份日志文件：
 
-| 等级 | 算子名称 | attempt1 | attempt2 |
+| 等级 | 算子名称 | attempt_01 | attempt_02 |
 |------|----------|----------|----------|
 | level2 | Gemm_GroupNorm_Hardtanh | ✓ | ✓ |
 | level2 | Matmul_Sigmoid_Sum | ✓ | - |
@@ -231,8 +242,8 @@ mkdir -p {report_path}/fracture-points
 {report_path}/fracture-points/
 ├── README.md                              # 报告索引与快速概览
 ├── benchmark_fracture_report.md           # 全局综合报告（主产物）
-├── {level}_{OpName}_attempt1.md           # 单算子报告 × N
-├── {level}_{OpName}_attempt2.md
+├── {level}_{OpName}_attempt_01.md           # 单算子报告 × N
+├── {level}_{OpName}_attempt_02.md
 └── ...
 ```
 
