@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch_npu  # noqa: F401
 
-from qwen3_1_7b.qwen3_decode_attn import qwen3_decode_attn, Nq, D, SCALE
+from src.pypto_gym.ops.pypto_tile.qwen3_1_7b.decode_attention.qwen3_decode_attn import qwen3_decode_attn, Nq, D, SCALE
 
 
 def _golden(q, k, v):

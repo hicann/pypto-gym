@@ -1,103 +1,2201 @@
 {
-  "op_name": "rms_norm",
-  "source": "Qwen3-1.7B",
-  "description": "RMSNorm 算子真实测试用例（打点采集）",
-  "test_cases": [
-    {
-      "id": "case_001",
-      "description": "prefill阶段 input_layernorm/post_layernorm/final_norm",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 11, 2048], "dtype": "float16"},
-        "gamma": {"shape": [2048], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 11, 2048],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    },
-    {
-      "id": "case_002",
-      "description": "prefill阶段 q_norm（num_heads=16）",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 11, 16, 128], "dtype": "float16"},
-        "gamma": {"shape": [128], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 11, 16, 128],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    },
-    {
-      "id": "case_003",
-      "description": "prefill阶段 k_norm（num_kv_heads=8）",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 11, 8, 128], "dtype": "float16"},
-        "gamma": {"shape": [128], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 11, 8, 128],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    },
-    {
-      "id": "case_004",
-      "description": "decode阶段 input_layernorm/post_layernorm/final_norm",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 1, 2048], "dtype": "float16"},
-        "gamma": {"shape": [2048], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 1, 2048],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    },
-    {
-      "id": "case_005",
-      "description": "decode阶段 q_norm",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 1, 16, 128], "dtype": "float16"},
-        "gamma": {"shape": [128], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 1, 16, 128],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    },
-    {
-      "id": "case_006",
-      "description": "decode阶段 k_norm",
-      "seed": 42,
-      "input": {
-        "hidden_states": {"shape": [1, 1, 8, 128], "dtype": "float16"},
-        "gamma": {"shape": [128], "dtype": "float16"},
-        "eps": {"value": 1e-6}
-      },
-      "output": {
-        "shape": [1, 1, 8, 128],
-        "dtype": "float16"
-      },
-      "rtol": 1e-3,
-      "atol": 1e-3
-    }
-  ]
+  "layer0_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_gate_proj": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      6144
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      6144,
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_up_proj": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      6144
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      6144,
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_down_proj": {
+    "input_shape": [
+      1,
+      1,
+      6144
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048,
+      6144
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer0_mlp": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16"
+  },
+  "layer1_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer1_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer1_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer1_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer2_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer2_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer2_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer2_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer3_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer3_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer3_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer3_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer4_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer4_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer4_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer4_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer5_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer5_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer5_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer5_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer6_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer6_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer6_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer6_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer7_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer7_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer7_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer7_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer8_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer8_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer8_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer8_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer9_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer9_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer9_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer9_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer10_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer10_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer10_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer10_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer11_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer11_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer11_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer11_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer12_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer12_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer12_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer12_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer13_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer13_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer13_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer13_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer14_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer14_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer14_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer14_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer15_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer15_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer15_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer15_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer16_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer16_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer16_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer16_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer17_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer17_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer17_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer17_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer18_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer18_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer18_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer18_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer19_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer19_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer19_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer19_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer20_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer20_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer20_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer20_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer21_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer21_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer21_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer21_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer22_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer22_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer22_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer22_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer23_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer23_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer23_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer23_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer24_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer24_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer24_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer24_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer25_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer25_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer25_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer25_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer26_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer26_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer26_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer26_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer27_input_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer27_q_norm": {
+    "input_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      16,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer27_k_norm": {
+    "input_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      8,
+      128
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      128
+    ],
+    "weight_dtype": "torch.float16"
+  },
+  "layer27_post_ln": {
+    "input_shape": [
+      1,
+      1,
+      2048
+    ],
+    "input_dtype": "torch.float16",
+    "output_shape": [
+      1,
+      1,
+      2048
+    ],
+    "output_dtype": "torch.float16",
+    "weight_shape": [
+      2048
+    ],
+    "weight_dtype": "torch.float16"
+  }
 }
