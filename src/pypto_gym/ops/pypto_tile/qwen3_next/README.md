@@ -446,11 +446,11 @@ def test_kernel(
 
 ## 性能测试结果
 
-> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, T=2048, B=2, Nqk=2, Nv=4, D=128, L=128, FP32
-
-| 算子 | 执行时间 (μs) | 数据来源 |
-|------|-------------|---------|
-| chunk_gated_delta_rule | 6,220.58 | Bubble (NPU 硬件追踪) |
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
+>
+> `test_b2_nqk2_nv4_s1k` 测试触发 aicpu 异常 (`rtDeviceSynchronizeWithTimeout` / exception invalid error)，未能采集到 Swimlane 性能数据。其余测试用例均为大 shape，标记为 skip。
 
 ## 参考文献
 

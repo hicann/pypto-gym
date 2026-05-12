@@ -19,9 +19,9 @@
 
 ```bash
 cd tests/ops/qwen3_1_7b
-TILE_FWK_DEVICE_ID=7 python3 test_pre_attn_fused.py
-TILE_FWK_DEVICE_ID=7 python3 test_k3.py
-TILE_FWK_DEVICE_ID=7 python3 test_decode_attn.py
+python3 test_pre_attn_fused.py
+python3 test_k3.py
+python3 test_decode_attn.py
 ```
 
 ## 集成与端到端
@@ -36,3 +36,19 @@ TILE_FWK_DEVICE_ID=7 python3 test_decode_attn.py
 | torch_npu Baseline | 31 ms/token | 1.0× |
 | **PyPTO Fused (默认)** | **48 ms/token** | **1.55×** |
 | PyPTO + decode-attn fused | 59 ms/token | 1.9× |
+
+## 单算子 Kernel 性能
+
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
+
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|--------|-----------|-----------|-----------------|---------|
+| decode_attn | q=[16,128], kv=[8,64,128] (S=1) | bfloat16 | 58.4 | Swimlane |
+| pre_attn_fused | x=[1,2048], QKV/rope (S=1) | bfloat16 | 78.4 | Swimlane |
+| k2_Q RoPE | x=[32,16,128] | bfloat16 | 32.0 | Swimlane |
+| k2_K RoPE | x=[32,8,128] | bfloat16 | 27.3 | Swimlane |
+| k3_post_attn | attn=[32,2048], MLP | bfloat16 | 174.7 | Swimlane |
+
+> RMSNorm 性能数据见 [rms_norm/README.md](rms_norm/README.md)

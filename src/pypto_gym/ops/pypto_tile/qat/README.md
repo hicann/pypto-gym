@@ -864,11 +864,13 @@ print(f"Offset梯度形状: {grad_offset.shape}")
 
 ## 性能测试结果
 
-> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, `pytest --forked`
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
 
-| 算子 | 执行时间 (μs) | 数据来源 |
-|------|-------------|---------|
-| QAT 全量 (6 kernels 前向+反向) | 1,513.48 | Bubble (NPU 硬件追踪) |
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|------|-----------|-----------|-----------------|---------|
+| qat_symmetric_per_channel (forward) | weight=[1024, 2048] | bfloat16 | 23.1 | Swimlane |
 
 ## 与对称量化的对比
 

@@ -100,11 +100,13 @@ def sum_lstm_kernel(
 
 ## 性能测试结果
 
-> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, BATCH_SIZE=32, D_GATE=4096, FP16
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
 
-| 算子 | 执行时间 (μs) | 数据来源 |
-|------|-------------|---------|
-| sum_lstm | 63.94 | Bubble (NPU 硬件追踪) |
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|--------|-----------|-----------|-----------------|---------|
+| sum_lstm | states=[32,16384], z4=[32,16384], cell=[32,4096] | float16 | 51.5 | Swimlane |
 
 ## 调用示例
 - 算子入口与对外签名见 [sum_lstm.py](sum_lstm.py)

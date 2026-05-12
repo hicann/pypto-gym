@@ -17,7 +17,7 @@ pypto_gym/ops/pypto_tile/gutenocr_3b/
 
 ```bash
 cd tests/ops/gutenocr_3b
-export TILE_FWK_DEVICE_ID=0
+
 python3 test_rms_norm.py
 ```
 
@@ -39,12 +39,28 @@ python3 test_rms_norm.py
 
 使用 PyPTO 内置 `pypto.rms_norm` 融合算子实现。
 
+## 性能数据
+
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
+
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|------|-----------|-----------|-----------------|---------|
+| rms_norm (prefill 主 norm) | [1, 11, 2048] | float16 | 53.2 | Swimlane |
+| rms_norm (prefill q_norm) | [1, 11, 16, 128] | float16 | 31.9 | Swimlane |
+| rms_norm (prefill k_norm) | [1, 11, 8, 128] | float16 | 21.4 | Swimlane |
+| rms_norm (decode 主 norm) | [1, 1, 2048] | float16 | 28.1 | Swimlane |
+| rms_norm (decode q_norm) | [1, 1, 16, 128] | float16 | 6.6 | Swimlane |
+| rms_norm (decode k_norm) | [1, 1, 8, 128] | float16 | 5.3 | Swimlane |
+
 ## 状态
 
 ✅ 环境验证
 ✅ 网络基线验证
 ✅ 打点采集
 ✅ Golden 编写
-⏳ 单算子验证
+✅ 单算子精度验证
+✅ 单算子性能采集
 ⏳ 模型集成
 ⏳ 端到端验证

@@ -393,15 +393,15 @@ def lightning_indexer_decode_compute(
 
 ## 性能测试结果
 
-> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, `pytest --forked`
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
 
-| 算子 | 执行时间 (μs) | 数据来源 |
-|------|-------------|---------|
-| lightning_indexer_prolog_quant | 75.90 | Bubble |
-| sparse_attention_antiquant | 107.62 | Bubble |
-| sparse_flash_attention_quant | 112.22 | Bubble |
-| mla_prolog_quant | 113.54 | Bubble |
-| lightning_indexer_quant | 819.22 | Bubble |
-| mla_indexer_prolog_quant | — | 测试 skip (env error) |
-
-## 调用示例
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|------|-----------|-----------|-----------------|---------|
+| mla_prolog_quant     | b=4, s=2, h=7168, n1=128, s2=1024 | bfloat16/int8 | 117.7 | Swimlane |
+| lightning_indexer_decode | b=4, s1=2, s2=64k, n1=64, d=128 | fp16/int8    | 296.8 | Swimlane |
+| lightning_indexer_prolog | b=4, s1=2, s2=64k, h=7168, n=64, d=128 | bfloat16/int8 | 84.4  | Swimlane |
+| mla_indexer_prolog    | b=4, s1=2, s2=1k, h=7168, n1=128/64, d=128 | bfloat16/int8 | 159.2 | Swimlane |
+| sparse_flash_attention_quant | b=4, s=2, s2~64k, n1=128, n2=1, d=576 | bfloat16/int8 | 111.0 | Swimlane |
+| sparse_attention_antiquant   | b=4, s=2, s2~64k, n1=128, n2=1, d=576 | bfloat16/int8 | 105.0 | Swimlane |

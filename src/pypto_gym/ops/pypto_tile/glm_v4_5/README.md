@@ -589,16 +589,14 @@ def moe_fusion(
 
 ## 性能测试结果
 
-> 测试环境: Ascend 910, CANN 8.5.0, PyPTO 0.2.1, `pytest --forked`
+> 测试环境: Ascend 910B, CANN 8.5.0
 
-| 算子 | 执行时间 (μs) | 数据来源 |
-|------|-------------|---------|
-| ffn_shared_expert_quant | 39.02 | Bubble |
-| moe_fusion | 45.86 | Bubble |
-| attention_pre_quant | 65.62 | Bubble |
-| attention_fusion | 193.82 | Bubble |
-| attention | 275.86 | Bubble |
-| gate | — | NPUGraph (无 bubble) |
-| select_experts | — | NPUGraph (无 bubble) |
-
-## 调用示例
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|------|-----------|-----------|-----------------|---------|
+| ffn_shared_expert_quant | hidden_states [num_tokens, 5120], w13 [5120, 3072] | bfloat16/int8 | 61.2 | Swimlane |
+| gate                    | hidden_states [num_tokens, 5120], weight [160, 5120] | fp32          | 11.9 | Swimlane |
+| select_experts          | router_logits [num_tokens, 160]                        | fp32/bf16     | 7.3  | Swimlane |
+| attention               | b=16, s1=1, s2=16384, n1=12, d=128                     | bfloat16      | 273.2 | Swimlane |
+| attention_pre_quant     | num_tokens=8, hidden_size=5120, q_size=1536              | bfloat16/int8 | 76.4 | Swimlane |
+| attention_fusion        | b=16, s1=1, s2=8192, hidden=5120, n1=12, d=128          | bfloat16/int8 | 201.5 | Swimlane |
+| moe_fusion              | num_tokens=32, hidden=5120, ne=160, top_k=8              | bfloat16/int8 | 66.6 | Swimlane |
