@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, d] = argmin_i x[b, i, d]"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that finds the index of the minimum value along a specified dimension.

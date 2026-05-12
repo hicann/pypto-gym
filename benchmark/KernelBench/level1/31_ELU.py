@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+FORMULA = "out[b, d] = x[b, d] if x[b, d] >= 0 else alpha * (exp(x[b, d]) - 1)"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs an ELU activation.

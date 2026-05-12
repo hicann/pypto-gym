@@ -1,6 +1,15 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "m[b, 0] = max_{n}(z[b, n]); "
+    "out[b, 0] = GELU(m[b, 0] - mean(m, dim=1))"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a GEMM, followed by a max operation, subtraction, and GELU activation.

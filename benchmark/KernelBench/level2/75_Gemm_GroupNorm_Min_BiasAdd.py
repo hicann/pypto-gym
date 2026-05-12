@@ -1,6 +1,16 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "gn[b, n] = GroupNorm(z, dim=n); "
+    "m[b, 0] = min_{n}(gn[b, n]); "
+    "out = m + bias_add"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a GEMM, Group Normalization, Minimum operation, and Bias addition.

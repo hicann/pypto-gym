@@ -1,6 +1,16 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "s[b, n] = z[b, n] * scaling_factor; "
+    "h[b, n] = HardTanh(s[b, n], hardtanh_min, hardtanh_max); "
+    "out[b, n] = GELU(h[b, n])"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a GEMM, scaling, hardtanh, and GELU activation.

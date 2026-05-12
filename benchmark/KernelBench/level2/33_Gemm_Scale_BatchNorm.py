@@ -1,6 +1,15 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "s[b, n] = z[b, n] * scale[n]; "
+    "out[b, n] = BatchNorm(s, dim=n)"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Simple model that performs a GEMM (general matrix multiplication), applies scaling, 

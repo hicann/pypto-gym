@@ -1,6 +1,16 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "d[b, n] = Dropout(z[b, n]); "
+    "m[b, 0] = mean_{n}(d[b, n]); "
+    "out[b, 0] = Softmax(m, dim=1)"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     A model that performs matrix multiplication, applies dropout, calculates the mean, and then applies softmax.

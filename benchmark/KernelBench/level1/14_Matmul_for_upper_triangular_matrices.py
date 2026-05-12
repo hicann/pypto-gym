@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[m, n] = triu(A[m, k] @ B[k, n])"
+DYNAMIC_AXIS = ["M"]
+
 class Model(nn.Module):
     """
     Simple model that performs matrix multiplication (C = A * B) for upper triangular matrices.

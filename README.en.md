@@ -108,7 +108,7 @@ Test cases use `@pytest.mark.soc` to annotate supported chips (`"950"` for 910B/
 
 ## Benchmark
 
-The `benchmark/` directory provides an end-to-end automated evaluation subsystem based on the KernelBench dataset, used for batch verification of the correctness and performance of PyPTO operator generation workflows.
+The `benchmark/` directory provides an end-to-end automated evaluation subsystem based on the KernelBench dataset, used for batch verification of the correctness and performance of PyPTO operator generation workflows. The complete KernelBench test case set is built into `benchmark/KernelBench/` — no additional download required.
 
 Core capabilities:
 - **Batch operator generation**: Integrates with PyPTO's 7-stage LLM agent workflow (`pypto-op-orchestrator`) to automatically generate PyPTO kernel implementations for target operators
@@ -121,22 +121,29 @@ Core capabilities:
 ```bash
 # Download PyPTO source code (required for the operator generation phase)
 bash benchmark/scripts/download_pypto.sh
-
-# Download the KernelBench dataset (source of test cases)
-bash benchmark/scripts/download_kernelbench.sh
 ```
 
 ### Quick Run
 
 ```bash
-# Create a minimal configuration (2 lines)
-echo 'cases: "level1=19_ReLU"' > benchmark/configs/local.yaml
+# Run a single case using a built-in config (default: background + auto-open monitor)
+python -m benchmark run --config configs/relu.yaml
 
-# Run in background + auto-open real-time monitor
-python -m benchmark run --config configs/local.yaml
+# Foreground blocking mode (suitable for CI / debugging)
+python -m benchmark run --config configs/relu.yaml --foreground
 
-# Or run in foreground (suitable for CI / debugging)
-python -m benchmark run --config configs/local.yaml --foreground
+# Background mode without auto-entering monitor TUI
+python -m benchmark run --config configs/relu.yaml --no-auto-monitor
+```
+
+One-command quick start scripts are also available:
+
+```bash
+# Run a single case (ReLU)
+bash benchmark/scripts/single_quick_start.sh
+
+# Run the curated PyPTO benchmark set
+bash benchmark/scripts/pypto_quick_start.sh
 ```
 
 ### Viewing Results
@@ -145,6 +152,9 @@ python -m benchmark run --config configs/local.yaml --foreground
 # After execution completes, check the report in the output directory
 cat <root_dir>/report/summary.md       # Global Markdown report
 cat <root_dir>/report/summary.json     # Global JSON results
+
+# Regenerate summary reports from existing results
+python -m benchmark summary <root_dir>/report
 
 # Reattach to the real-time monitor during or after execution
 python -m benchmark monitor <root_dir>/state
@@ -185,7 +195,8 @@ pypto-gym/
 ├── benchmark/                                # KernelBench automated evaluation subsystem
 │   ├── configs/                              # YAML configuration files
 │   ├── docs/                                 # Architecture / config / monitoring documentation
-│   ├── scripts/                              # Scripts for downloading PyPTO source and KernelBench datasets
+│   ├── scripts/                              # Helper scripts (PyPTO source download, quick start, etc.)
+│   ├── KernelBench/                          # Built-in complete KernelBench test case set
 │   ├── verifier/                             # Anti-cheat + accuracy + performance verification module
 │   └── README.md
 ├── docs/                                    # Documentation resources (planned)

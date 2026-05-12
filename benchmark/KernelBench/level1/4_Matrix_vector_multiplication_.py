@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[m, 0] = A[m, k] @ B[k, 0]"
+DYNAMIC_AXIS = ["M"]
+
 class Model(nn.Module):
     """
     Simple model that performs matrix-vector multiplication (C = A * B).

@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out = mean_b(1 - cosine_sim(predictions[b, :], targets[b, :]))"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that computes Cosine Similarity Loss for comparing vectors.

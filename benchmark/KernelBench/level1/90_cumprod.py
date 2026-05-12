@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, i] = prod_{j <= i} x[b, j]"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that performs a cumulative product operation along a specified dimension.

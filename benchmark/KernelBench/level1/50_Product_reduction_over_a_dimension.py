@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, d] = prod_i x[b, i, d]"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs product reduction over a dimension.

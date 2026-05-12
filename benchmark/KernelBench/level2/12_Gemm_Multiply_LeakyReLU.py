@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = "out[b, n] = LeakyReLU((x[b, k] @ W^T[k, n] + bias[n]) * multiplier)"
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Simple model that performs a Gemm, multiplies the result, and applies LeakyReLU.

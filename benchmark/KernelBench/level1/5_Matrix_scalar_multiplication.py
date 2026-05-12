@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[m, n] = A[m, n] * s"
+DYNAMIC_AXIS = ["M"]
+
 class Model(nn.Module):
     """
     Simple model that performs a matrix-scalar multiplication (C = A * s)

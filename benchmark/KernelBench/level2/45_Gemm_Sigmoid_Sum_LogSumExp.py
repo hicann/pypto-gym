@@ -1,6 +1,16 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "s[b, n] = sigmoid(z[b, n]); "
+    "u[b] = sum_{n}(s[b, n]); "
+    "out = LogSumExp_{b}(u[b])"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a matrix multiplication (Gemm), applies Sigmoid, sums the result, and calculates the LogSumExp.

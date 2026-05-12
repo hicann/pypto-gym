@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, d] = x[b, d] / sqrt(sum_j x[b, j]^2)"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs L2 normalization.

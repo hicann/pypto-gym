@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, c, h, w] = gamma[c,h,w] * (x[b, c, h, w] - mean_{c,h,w}(x[b, :, :, :])) / sqrt(var_{c,h,w}(x[b, :, :, :]) + eps) + beta[c,h,w]"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs Layer Normalization.

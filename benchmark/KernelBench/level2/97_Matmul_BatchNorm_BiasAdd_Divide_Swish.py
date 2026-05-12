@@ -1,6 +1,17 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "bn[b, n] = BatchNorm(z, dim=n); "
+    "a[b, n] = bn[b, n] + extra_bias; "
+    "d[b, n] = a[b, n] / divide_value; "
+    "out[b, n] = d[b, n] * sigmoid(d[b, n])"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a matrix multiplication, batch normalization, bias addition, division, and Swish activation.

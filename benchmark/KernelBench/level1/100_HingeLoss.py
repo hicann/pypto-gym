@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out = mean_b max(0, 1 - predictions[b, 0] * targets[b, 0])"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that computes Hinge Loss for binary classification tasks.

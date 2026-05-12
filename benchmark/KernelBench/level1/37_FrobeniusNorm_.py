@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, c, h, w] = x[b, c, h, w] / sqrt(sum_{i,j,k,l} x[i, j, k, l]^2)"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs Frobenius norm normalization.

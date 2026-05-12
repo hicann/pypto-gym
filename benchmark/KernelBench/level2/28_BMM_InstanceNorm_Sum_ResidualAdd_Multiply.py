@@ -1,6 +1,15 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "inorm[b, n] = InstanceNorm(z[b, :]); "
+    "out[b, n] = (inorm[b, n] + y[b, n]) * y[b, n]"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a batch matrix multiplication, instance normalization, summation, residual addition, and multiplication.

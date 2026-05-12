@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, i] = sum_{j >= i} x[b, j]"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that performs a reverse cumulative sum operation along a specified dimension.

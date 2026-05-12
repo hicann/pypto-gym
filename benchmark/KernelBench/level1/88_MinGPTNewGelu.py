@@ -5,6 +5,9 @@ import math
 
 # From https://github.com/karpathy/minGPT/blob/master/mingpt/model.py
 
+FORMULA = "out[b, d] = NewGELU(x[b, d])"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).

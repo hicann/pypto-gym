@@ -1,6 +1,15 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "bn[b, n] = BatchNorm(z, dim=n); "
+    "out[b, n] = Softmax(bn[b, n] * scale, dim=n)"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a matrix multiplication (Gemm), Batch Normalization, scaling, and Softmax.

@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = "out[b, n] = GELU((x[b, k] @ W^T[k, n] + bias[n]) / divisor)"
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     A model that performs a matrix multiplication, divides by a scalar, and applies GELU activation.

@@ -1,6 +1,18 @@
 import torch
 import torch.nn as nn
 
+
+FORMULA = (
+    "z[b, n] = x[b, k] @ W^T[k, n] + bias[n]; "
+    "bn[b, n] = BatchNorm(z, dim=n); "
+    "g[b, n] = GELU(bn[b, n]); "
+    "gn[b, n] = GroupNorm(g, dim=n); "
+    "m[b, 0] = mean_{n}(gn[b, n]); "
+    "out[b, 0] = ReLU(m[b, 0])"
+)
+DYNAMIC_AXIS = ["B"]
+
+
 class Model(nn.Module):
     """
     Model that performs a GEMM, BatchNorm, GELU, GroupNorm, Mean, and ReLU operations in sequence.

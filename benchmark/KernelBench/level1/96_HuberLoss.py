@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out = mean_{b,d} smooth_l1(predictions[b, d] - targets[b, d])"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that computes Smooth L1 (Huber) Loss for regression tasks.

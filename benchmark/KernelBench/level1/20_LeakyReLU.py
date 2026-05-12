@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, d] = max(x[b, d], 0) + alpha * min(x[b, d], 0)"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     Simple model that performs a LeakyReLU activation.

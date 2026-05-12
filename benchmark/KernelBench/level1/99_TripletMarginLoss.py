@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out = mean_b max(||anchor[b,:] - positive[b,:]||_2 - ||anchor[b,:] - negative[b,:]||_2 + margin, 0)"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that computes Triplet Margin Loss for metric learning tasks.

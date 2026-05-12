@@ -109,7 +109,7 @@ pytest src/pypto_gym/ops/pypto_tile/experimental/distributed --device 0 1 --card
 
 ## Benchmark
 
-`benchmark/` 目录提供了基于 KernelBench 数据集的端到端自动化评测子系统，用于批量验证 PyPTO 算子生成流程的正确性与性能。
+`benchmark/` 目录提供了基于 KernelBench 数据集的端到端自动化评测子系统，用于批量验证 PyPTO 算子生成流程的正确性与性能。KernelBench 完整测试用例集已内置于 `benchmark/KernelBench/`，无需额外下载。
 
 核心能力：
 - **批量算子生成**：对接 PyPTO 的 7 阶段 LLM agent 工作流（`pypto-op-orchestrator`），自动生成目标算子的 PyPTO kernel 实现
@@ -122,22 +122,29 @@ pytest src/pypto_gym/ops/pypto_tile/experimental/distributed --device 0 1 --card
 ```bash
 # 下载 PyPTO 源码（算子生成阶段需要）
 bash benchmark/scripts/download_pypto.sh
-
-# 下载 KernelBench 数据集（测试用例来源）
-bash benchmark/scripts/download_kernelbench.sh
 ```
 
 ### 快速运行
 
 ```bash
-# 创建一个最小配置（2 行即可）
-echo 'cases: "level1=19_ReLU"' > benchmark/configs/local.yaml
+# 使用内置配置运行单个 case（默认后台运行 + 自动打开实时监控）
+python -m benchmark run --config configs/relu.yaml
 
-# 后台运行 + 自动打开实时监控
-python -m benchmark run --config configs/local.yaml
+# 前台阻塞模式（适合 CI / 调试）
+python -m benchmark run --config configs/relu.yaml --foreground
 
-# 或者前台阻塞模式（适合 CI / 调试）
-python -m benchmark run --config configs/local.yaml --foreground
+# 后台运行但不自动进入 monitor TUI
+python -m benchmark run --config configs/relu.yaml --no-auto-monitor
+```
+
+仓库根目录也提供一键启动脚本：
+
+```bash
+# 运行单个 case（relu）
+bash benchmark/scripts/single_quick_start.sh
+
+# 运行 PyPTO 精选评测集
+bash benchmark/scripts/pypto_quick_start.sh
 ```
 
 ### 查看结果
@@ -147,7 +154,10 @@ python -m benchmark run --config configs/local.yaml --foreground
 cat <root_dir>/report/summary.md       # 全局 Markdown 报告
 cat <root_dir>/report/summary.json     # 全局 JSON 结果
 
-# 也可在运行中或事后重连实时监控
+# 从既有 report 重新生成汇总报告
+python -m benchmark summary <root_dir>/report
+
+# 运行中或事后重连实时监控
 python -m benchmark monitor <root_dir>/state
 ```
 
@@ -186,7 +196,8 @@ pypto-gym/
 ├── benchmark/                                # KernelBench 自动化评测子系统
 │   ├── configs/                              # YAML 配置文件
 │   ├── docs/                                 # 架构 / 配置 / 监控等文档
-│   ├── scripts/                              # 下载 PyPTO 源码和 KernelBench 数据集的脚本
+│   ├── scripts/                              # 下载 PyPTO 源码等辅助脚本
+│   ├── KernelBench/                          # 内置完整 KernelBench 测试用例集
 │   ├── verifier/                             # 反作弊 + 精度 + 性能验证模块
 │   └── README.md
 ├── docs/                                    # 文档资源（规划中）

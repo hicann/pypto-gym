@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[b, i, j, k] = sum_l A[b, i, j, l] * B[l, k]"
+DYNAMIC_AXIS = ["B", "I"]
+
 class Model(nn.Module):
     """
     Performs 4D tensor-matrix multiplication: 

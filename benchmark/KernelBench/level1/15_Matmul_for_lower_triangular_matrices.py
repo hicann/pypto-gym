@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out[m, n] = tril(A[m, k] @ B[k, n])"
+DYNAMIC_AXIS = ["M"]
+
 class Model(nn.Module):
     """
     Simple model that performs a matrix multiplication (C = A * B) where A and B are lower triangular matrices. 

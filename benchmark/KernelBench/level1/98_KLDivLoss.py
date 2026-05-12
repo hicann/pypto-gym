@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+FORMULA = "out = mean_b kl_div(predictions[b, :], targets[b, :])"
+DYNAMIC_AXIS = ["B"]
+
 class Model(nn.Module):
     """
     A model that computes Kullback-Leibler Divergence for comparing two distributions.
