@@ -10,13 +10,16 @@
 # -----------------------------------------------------------------------------------------------------------
 import os
 import sys
-import pypto
+
 import torch
+import torch_npu
 import pytest
 
 import sys, os; _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+import pypto
 
 from deepseek_v4.hc_pre_impl import hc_pre_kernel, hc_pre_kernel_prefill, npu_hc_pre, check_input_output_shape_dtype
 from utils.compare import compare

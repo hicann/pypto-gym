@@ -12,16 +12,18 @@
 
 import os
 import sys
-from numpy.testing import assert_allclose
+
 import torch
+import torch.nn as nn
 import torch_npu
 import pytest
-import numpy as np
-import torch.nn as nn
 
 import sys, os; _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+import numpy as np
+from numpy.testing import assert_allclose
 
 from deepseek_v4.compressor_impl import compressor_pypto, npu_compressor
 

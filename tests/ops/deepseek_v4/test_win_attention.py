@@ -10,9 +10,11 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
-import math
 import os
+import math
+
 import torch
+import torch_npu
 import pytest
 
 import sys, os; _p = os.path.dirname(__file__)

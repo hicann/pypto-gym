@@ -31,7 +31,7 @@ from torch._dynamo import allow_in_graph
 from dataclasses import dataclass
 
 
-from common import inverse_rope_3d, quant_tensor
+from deepseek_v4.common import inverse_rope_3d, quant_tensor
 
 
 @dataclass

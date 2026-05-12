@@ -9,25 +9,69 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 """ """
+import os
+import logging
+
 import torch
 import torch_npu
-import pypto
-import os
 import pytest
-import logging
 
 import sys, os; _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
-from deepseek_v4.lightning_indexer_prolog_quant_v4_impl import *
+import pypto
 
-from utils.golden.common_func import (
-    apply_rotary_pos_emb,
-    gen_uniform_data,
-    quant_golden,
+from deepseek_v4.lightning_indexer_prolog_quant_v4_impl import (
+    IndexerPrologQuantConfig,
+    quant_lightning_indexer_prolog_kernel,
 )
 from utils.compare import compare
+
+
+def rotate_half(x):
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(x, cos, sin):
+    input_dtype = x.dtype
+    x_clone = x.clone()
+    t, nq, d = x.shape
+    x = x.reshape(t, nq, d // 2, 2).permute(0, 1, 3, 2).reshape(t, nq, d)
+    x_t = rotate_half(x)
+    x_new = x_t.reshape(t, nq, 2, d // 2).permute(0, 1, 3, 2).reshape(t, nq, d)
+    cos = torch.unsqueeze(cos, dim=1).to(torch.float32)
+    sin = torch.unsqueeze(sin, dim=1).to(torch.float32)
+    x_embed = x_clone.to(torch.float32) * cos + x_new.to(torch.float32) * sin
+    if input_dtype != torch.float32:
+        x_embed = x_embed.to(input_dtype)
+    return x_embed
+
+
+def gen_uniform_data(data_shape, min_value, max_value, dtype):
+    if min_value == 0 and max_value == 0:
+        return torch.zeros(data_shape, dtype=dtype)
+    if dtype == torch.bool:
+        return torch.randint(0, 2, data_shape, dtype=dtype)
+    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
+        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
+    else:
+        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
+
+
+def quant_golden(x):
+    input_fp32 = x.to(torch.float32)
+    abs_res = torch.abs(input_fp32)
+    max_value = torch.max(abs_res, dim=-1, keepdims=True)[0]
+    scale_quant = 127 / max_value
+    out_fp32 = input_fp32 * scale_quant
+    out_int32 = torch.round(out_fp32).to(torch.int32)
+    out_fp16 = out_int32.to(torch.float16)
+    out_int8 = torch.trunc(out_fp16).to(torch.int8)
+    scale_dequant = 1 / scale_quant
+    return out_int8, scale_dequant
 
 
 def compute_quant_lightning_indexer_prolog(inputs, params):

@@ -22,17 +22,20 @@ Main Functions:
     - kv_cache_concat_bsnd: Convert paged KV cache to BSND format
 """
 
-from dataclasses import dataclass
-import torch
-import pypto
-import pytest
-import numpy as np
-import math
 import os
+import math
+from dataclasses import dataclass
+
+import torch
+import torch_npu
+import pytest
 
 import sys, os; _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+import numpy as np
+import pypto
 
 from deepseek_v4.compress_flash_attention_impl import cfa_attention, cfa_graph
 
@@ -455,7 +458,6 @@ def test_c128_decode(enable_flash: bool=False, enable_high_perf: bool=False, ena
 
 if __name__ == "__main__":
     import argparse as ap
-    import utils.golden.attn_golden as attn_golden
     p = ap.ArgumentParser(description="参数配置")
     p.add_argument("-f", "--enable-flash", action="store_true", help="开启flash模式")
     p.add_argument("-p", "--high-perf", action="store_true", help="启用高性能模式")
