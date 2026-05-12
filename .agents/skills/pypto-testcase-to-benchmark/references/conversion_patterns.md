@@ -4,7 +4,7 @@
 
 **转换阶段只生成一个文件：`{N}_{OpName}.py`**。
 
-SPEC.md、task_desc.py、impl.py、golden.py、test.py、pypto_impl.py 等由 benchmark 测试流程**自动生成**，转换阶段不主动产生。
+REQUIRE.md、task_desc.py 由 benchmark 测试流程**自动生成**；SPEC.md、impl.py、golden.py、test.py、pypto_impl.py 等由 PyPTO 工作流生成，转换阶段不主动产生。
 
 ---
 
@@ -18,8 +18,8 @@ SPEC.md、task_desc.py、impl.py、golden.py、test.py、pypto_impl.py 等由 be
 | `test_*()` 中构造的权重 | `Model.__init__` + `nn.Parameter` | 必须用 `nn.Parameter`，否则 `to(device)` 无效 |
 | `test_*()` 中构造的输入 | `get_inputs()` 返回值 | 返回列表 `[x]`，数据类型需与 kernel 一致 |
 | 无（test 中直接创建） | `get_init_inputs()` 返回值 | 提供 `Model.__init__` 所需的初始化参数 |
-| 数学公式 | `FORMULA` 全局变量 | 文件顶层添加，case_loader 自动提取写入 SPEC.md |
-| 动态维度 | `DYNAMIC_AXIS` 全局变量 | 文件顶层添加，case_loader 自动提取写入 SPEC.md |
+| 数学公式 | `FORMULA` 全局变量 | 文件顶层添加，case_loader 自动提取写入 REQUIRE.md |
+| 动态维度 | `DYNAMIC_AXIS` 全局变量 | 文件顶层添加，case_loader 自动提取写入 REQUIRE.md |
 | **in-place 输出 tensor** | **移除，改为 `return`** | KernelBench 要求 `forward()` 返回结果 |
 | **控制参数（int/bool）** | **`Model.__init__` 参数** | 不能出现在 `get_inputs()` 中 |
 | **NPU 特有 API** | **纯 PyTorch 近似** | `torch_npu.npu_xxx` 需替换为等价纯 PyTorch 实现 |
@@ -106,7 +106,7 @@ def get_init_inputs():
 
 ### FORMULA — 数学公式
 
-**用途**：`case_loader.py` 自动提取并写入 `SPEC.md` 的 `### 1.3 数学公式` 小节
+**用途**：`case_loader.py` 自动提取并写入 `REQUIRE.md` 的 `### 1.3 数学公式` 小节
 
 **格式要求**：
 - 简洁的数学表达式，用下标索引描述运算
@@ -120,7 +120,7 @@ FORMULA = "out[m, n] = SiLU(x[m, k] @ W_g[k, n] + b_g[0, n]) * (x[m, k] @ W_fc[k
 
 ### DYNAMIC_AXIS — 动态轴
 
-**用途**：`case_loader.py` 自动提取并写入 `SPEC.md` front matter 的 `dynamic_axis` 字段
+**用途**：`case_loader.py` 自动提取并写入 `REQUIRE.md` front matter 的 `dynamic_axis` 字段
 
 **格式要求**：
 - 字符串列表，每个元素是动态维度的名称（大写字母）
@@ -406,4 +406,4 @@ Phase 1 完成后，检查以下事项：
 - [ ] **控制参数（int/bool）已移到 `__init__`，不在 `get_inputs` 中**
 - [ ] 环境变量 `PTO_TILE_LIB_CODE_PATH` 和 `TILE_FWK_DEVICE_ID` 已设置
 
-**注意**：不要检查 impl.py、golden.py、test.py、pypto_impl.py、SPEC.md、task_desc.py — 这些由 benchmark 流程自动生成。
+**注意**：不要检查 impl.py、golden.py、test.py、pypto_impl.py、SPEC.md、REQUIRE.md、task_desc.py — 这些由 benchmark + PyPTO 流程自动生成。

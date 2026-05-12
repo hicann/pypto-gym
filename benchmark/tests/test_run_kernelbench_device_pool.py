@@ -84,7 +84,7 @@ def test_pool_skip_pypto_gen_acquires_prepare_and_verifier_only(monkeypatch, tmp
         return VerifierResult(op_name="relu", status=VerifierStatus.SUCCESS, correctness=True)
 
     monkeypatch.setattr(run_kernelbench.case_loader, "load_case", fake_load)
-    monkeypatch.setattr(run_kernelbench.case_loader, "write_spec", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench, "run_verifier", fake_run_verifier)
 
@@ -157,7 +157,7 @@ def test_pool_pypto_verifier_acquire_order(monkeypatch, tmp_path: Path) -> None:
     )
 
     monkeypatch.setattr(run_kernelbench.case_loader, "load_case", lambda *_a, **_k: fake_case)
-    monkeypatch.setattr(run_kernelbench.case_loader, "write_spec", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
     monkeypatch.setattr(
         run_kernelbench,
@@ -228,7 +228,7 @@ def test_pool_caplog_acquire_release_lines(
         level="level1",
     )
     monkeypatch.setattr(run_kernelbench.case_loader, "load_case", lambda *_a, **_k: fake_case)
-    monkeypatch.setattr(run_kernelbench.case_loader, "write_spec", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
     if not skip:
         monkeypatch.setattr(

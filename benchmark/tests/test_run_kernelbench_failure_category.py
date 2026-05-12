@@ -52,7 +52,7 @@ def test_run_one_case_record_failure_category_matches_verifier(monkeypatch, tmp_
         return fake_case
 
     monkeypatch.setattr(run_kernelbench.case_loader, "load_case", fake_load)
-    monkeypatch.setattr(run_kernelbench.case_loader, "write_spec", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
 
     async def fake_run_verifier(**_kwargs):
@@ -105,7 +105,7 @@ def test_run_one_case_verifier_exception_sets_system_error(monkeypatch, tmp_path
         return fake_case
 
     monkeypatch.setattr(run_kernelbench.case_loader, "load_case", fake_load)
-    monkeypatch.setattr(run_kernelbench.case_loader, "write_spec", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
     monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
 
     async def fake_run_verifier(**_kwargs):

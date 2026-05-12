@@ -27,7 +27,7 @@ python -m pytest benchmark/tests
 ## 新增测试要求
 
 - 新增 benchmark 逻辑时，优先补充 `benchmark/tests` 下的 pytest 用例。
-- 新增 KernelBench case loader 行为时，应断言生成的 `SPEC.md` front matter
+- 新增 KernelBench case loader 行为时，应断言生成的 `REQUIRE.md` front matter
   和正文关键字段。
 - 测试中如需调用公开 benchmark CLI，`run` 使用 `--config configs/xxx.yaml`
   （按用例需要可加 `--foreground` 或 `--no-auto-monitor`），`monitor` 使用状态目录参数，

@@ -48,7 +48,7 @@ def test_run_pypto_workflow_pool_writes_log_prompt_excerpt(tmp_path, monkeypatch
     repo_root = tmp_path / "repo"
     op_dir = repo_root / "custom" / "Foo"
     op_dir.mkdir(parents=True)
-    (op_dir / "SPEC.md").write_text("# spec\n", encoding="utf-8")
+    (op_dir / "REQUIRE.md").write_text("# require\n", encoding="utf-8")
     opencode = tmp_path / "opencode"
     opencode.write_text("#!/bin/sh\n", encoding="utf-8")
     opencode.chmod(0o755)

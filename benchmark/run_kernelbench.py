@@ -540,13 +540,13 @@ async def run_one_case(
         case_id=case.case_id,
         phase="prepare",
         status="running",
-        message="case loaded; writing SPEC/task_desc",
+        message="case loaded; writing REQUIRE/task_desc",
     )
     logger.info("[%s] case loaded: op=%s report_dir=%s", case.case_id, op_name, case_report_dir)
 
-    # 1) 写 SPEC + task_desc
-    logger.info("[%s] writing SPEC/task_desc into %s", case.case_id, op_workdir)
-    case_loader.write_spec(case, op_workdir)
+    # 1) 写 REQUIRE + task_desc
+    logger.info("[%s] writing REQUIRE/task_desc into %s", case.case_id, op_workdir)
+    case_loader.write_require(case, op_workdir)
     case_loader.write_task_desc(case, op_workdir)
 
     # 2) Pypto 7-stage 工作流 (占设备号槽位)

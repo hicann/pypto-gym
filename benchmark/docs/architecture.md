@@ -36,7 +36,7 @@ flowchart LR
 flowchart TD
     A["Load YAML config"] --> B["Resolve KernelBench cases"]
     B --> C["case_loader.load_case"]
-    C --> D["Write SPEC.md and task_desc.py<br/>under PyPTO custom/&lt;op&gt;/"]
+    C --> D["Write REQUIRE.md and task_desc.py<br/>under PyPTO custom/&lt;op&gt;/"]
     D --> E["pypto_runner.run_pypto_workflow"]
     E --> F["opencode pypto-op-orchestrator<br/>cwd = PyPTO repo"]
     F --> G["Generated PyPTO artifacts"]
@@ -59,7 +59,7 @@ flowchart TD
 | --- | --- | --- |
 | `benchmark.__main__` | 公开 CLI：`run`（默认 fork 后台 + 预检 + 自动 monitor，可关闭自动附着）/ `monitor` / `summary` | `pypto-gym` |
 | `run_kernelbench.py` | 批处理调度、并发、状态写入、报告汇总 | `pypto-gym` |
-| `case_loader.py` | 读取 KernelBench case，生成 `CaseSpec`、`SPEC.md` 和 `task_desc.py` | `pypto-gym` |
+| `case_loader.py` | 读取 KernelBench case，生成 `CaseSpec`、`REQUIRE.md` 和 `task_desc.py` | `pypto-gym` |
 | `pypto_runner.py` | 启动 PyPTO 7 阶段工作流 | 子进程 cwd 为 PyPTO 仓 |
 | `verifier_runner.py` | 选择 opencode verifier 或 direct verifier | `pypto-gym` |
 | `verifier/` | 反作弊、精度验证、性能验证的内部实现 | `pypto-gym` |

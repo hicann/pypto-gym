@@ -12,8 +12,8 @@ description: >
 
 ## 核心原则
 
-1. **转换阶段**：只负责生成 benchmark case 文件（`{N}_{OpName}.py`），**不主动生成** SPEC.md、task_desc.py、impl.py、golden.py、test.py、pypto_impl.py
-2. **测试阶段**：benchmark 框架会自动生成后续产物（SPEC.md、task_desc.py、impl、golden、test、pypto_impl），这些不是转换阶段的职责
+1. **转换阶段**：只负责生成 benchmark case 文件（`{N}_{OpName}.py`），**不主动生成** REQUIRE.md、task_desc.py、SPEC.md、impl.py、golden.py、test.py、pypto_impl.py
+2. **测试阶段**：benchmark 框架会自动生成 `REQUIRE.md`、`task_desc.py`；PyPTO 工作流会生成 `SPEC.md`、impl、golden、test、pypto_impl，这些不是转换阶段的职责
 3. **问题定位**：测试失败时，先确认是 case 本身转换错误还是后续算子生成异常，转换错误自行修正，算子生成异常作为结果汇报给用户
 
 ## 前置环境检查
@@ -226,7 +226,7 @@ def get_init_inputs():
 
 `**FORMULA` — 数学公式**
 
-- 用途：`case_loader.py` 自动提取并写入 `SPEC.md` 的 `### 1.3 数学公式` 小节
+- 用途：`case_loader.py` 自动提取并写入 `REQUIRE.md` 的 `### 1.3 数学公式` 小节
 - 格式：简洁的数学表达式，用下标索引描述运算
 - 示例：
   ```python
@@ -236,7 +236,7 @@ def get_init_inputs():
 
 `**DYNAMIC_AXIS` — 动态轴列表**
 
-- 用途：`case_loader.py` 自动提取并写入 `SPEC.md` front matter 的 `dynamic_axis` 字段
+- 用途：`case_loader.py` 自动提取并写入 `REQUIRE.md` front matter 的 `dynamic_axis` 字段
 - 格式：字符串列表，每个元素是动态维度的名称（大写字母）
 - 示例：
   ```python
@@ -419,12 +419,13 @@ python -m benchmark run --config /tmp/pypto_case_regression.yaml --foreground
 
 | 文件                       | 来源             | 作用                     |
 | ------------------------ | -------------- | ---------------------- |
-| `SPEC.md`                | benchmark 自动生成 | 算子需求规格                 |
+| `REQUIRE.md`             | benchmark 自动生成 | Stage 1 用户需求输入          |
 | `task_desc.py`           | benchmark 自动生成 | 原始用例缓存                 |
-| `{OpName}_impl.py`       | benchmark 自动生成 | PyPTO kernel + wrapper |
-| `{OpName}_golden.py`     | benchmark 自动生成 | PyTorch 参考实现           |
-| `test_{OpName}.py`       | benchmark 自动生成 | 精度测试脚本                 |
-| `{OpName}_pypto_impl.py` | benchmark 自动生成 | ModelNew 包装（桥接入口）      |
+| `SPEC.md`                | PyPTO 工作流生成    | 算子需求规格                 |
+| `{OpName}_impl.py`       | PyPTO 工作流生成    | PyPTO kernel + wrapper |
+| `{OpName}_golden.py`     | PyPTO 工作流生成    | PyTorch 参考实现           |
+| `test_{OpName}.py`       | PyPTO 工作流生成    | 精度测试脚本                 |
+| `{OpName}_pypto_impl.py` | PyPTO 工作流生成    | ModelNew 包装（桥接入口）      |
 
 
 ## 常见陷阱

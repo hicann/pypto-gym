@@ -265,6 +265,22 @@ def _compute_dev_status(op: Dict[str, Any], timeout_sec: int) -> str:
     if rs == "verify_error":
         return "Verifier异常"
 
+    current_phase = op.get("phase")
+    current_phase_status = op.get("phase_status")
+    if current_phase == "done":
+        if current_phase_status == "success":
+            return "已完成"
+        if current_phase_status == "pypto_failed":
+            if op.get("pypto_status") == "timeout":
+                return "PyPTO超时"
+            return "PyPTO失败"
+        if current_phase_status == "verify_failed":
+            return "Verifier失败"
+        if current_phase_status == "baseline_failed":
+            return "Baseline失败"
+        if current_phase_status == "verify_error":
+            return "Verifier异常"
+
     phases = op.get("phases") or {}
     for phase, label in (("verifier", "Verifier验证中"), ("pypto", "PyPTO生成中")):
         info = phases.get(phase) if isinstance(phases, dict) else None
@@ -282,16 +298,14 @@ def _compute_dev_status(op: Dict[str, Any], timeout_sec: int) -> str:
 
     pid = op.get("opencode_pid")
     started = op.get("started_at")
-    phase = op.get("phase")
-    phase_status = op.get("phase_status")
-    if phase == "prepare" and phase_status == "running":
+    if current_phase == "prepare" and current_phase_status == "running":
         return "准备中"
-    if phase == "pypto":
-        if phase_status == "skipped":
+    if current_phase == "pypto":
+        if current_phase_status == "skipped":
             return "PyPTO跳过"
-        if phase_status == "running":
+        if current_phase_status == "running":
             return "PyPTO生成中"
-    if phase == "verifier" and phase_status == "running":
+    if current_phase == "verifier" and current_phase_status == "running":
         return "Verifier验证中"
 
     if not pid and not started:
@@ -375,6 +389,17 @@ def _update_phase_pid(op: Dict[str, Any], phase: str, pid: int, first_seen: str)
         info["ended_at"] = _now()
 
 
+def _clear_terminal_phase_pids(op: Dict[str, Any]) -> None:
+    for phase in ("pypto", "verifier"):
+        info = _ensure_phase(op, phase)
+        info["pid"] = None
+        phase_status = op.get(f"{phase}_status")
+        if phase_status:
+            info["status"] = phase_status
+        elif info.get("status") == "running":
+            info["status"] = None
+
+
 # ────────────────────────────────────────────────────────────
 # 状态聚合
 # ────────────────────────────────────────────────────────────
@@ -432,18 +457,6 @@ def refresh_run_state(
             if ps.get("verifier_status"):
                 op["verifier_status"] = ps["verifier_status"]
 
-        active_pid: Optional[int] = None
-        for phase in ("pypto", "verifier"):
-            key = (name, phase)
-            if key in seen_pids:
-                pid, first = seen_pids[key]
-                _update_phase_pid(op, phase, pid, first)
-                if _pid_alive(pid):
-                    active_pid = pid
-                if not op["started_at"]:
-                    op["started_at"] = first
-        op["opencode_pid"] = active_pid
-
         if report_key in reports:
             r = reports[report_key]
             op["result_status"] = r.get("overall_status", "")
@@ -474,6 +487,21 @@ def refresh_run_state(
             if r.get("finished_at") and r.get("overall_status"):
                 op["phase"] = "done"
                 op["phase_status"] = r["overall_status"]
+
+        active_pid: Optional[int] = None
+        if op.get("phase") == "done":
+            _clear_terminal_phase_pids(op)
+        else:
+            for phase in ("pypto", "verifier"):
+                key = (name, phase)
+                if key in seen_pids:
+                    pid, first = seen_pids[key]
+                    _update_phase_pid(op, phase, pid, first)
+                    if _pid_alive(pid):
+                        active_pid = pid
+                    if not op["started_at"]:
+                        op["started_at"] = first
+        op["opencode_pid"] = active_pid
 
         phase_total = 0.0
         for phase in ("pypto", "verifier"):

@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Tests for KernelBench SPEC.md YAML front matter generation."""
+"""Tests for KernelBench REQUIRE.md YAML front matter generation."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from benchmark.case_loader import (
     CaseSpec,
     TensorSpec,
     load_case,
-    render_spec_md,
-    write_spec,
+    render_require_md,
+    write_require,
 )
 
 
@@ -41,7 +41,7 @@ def _parse_front_matter(markdown: str) -> dict:
     return out
 
 
-def test_render_spec_front_matter_from_tensor_specs() -> None:
+def test_render_require_front_matter_from_tensor_specs() -> None:
     case = CaseSpec(
         op_name="Foo",
         case_id="1_Foo",
@@ -55,7 +55,7 @@ def test_render_spec_front_matter_from_tensor_specs() -> None:
         outputs=[TensorSpec(name="y0", shape=[2, 3], dtype="torch.float16")],
     )
 
-    markdown = render_spec_md(case)
+    markdown = render_require_md(case)
     front_matter = _parse_front_matter(markdown)
 
     assert front_matter["schema_version"] == 1
@@ -68,7 +68,7 @@ def test_render_spec_front_matter_from_tensor_specs() -> None:
     assert "`y0` | `2x3` | `torch.float16`" in markdown
 
 
-def test_render_spec_front_matter_probe_fallback() -> None:
+def test_render_require_front_matter_probe_fallback() -> None:
     case = CaseSpec(
         op_name="Fallback",
         case_id="2_Fallback",
@@ -76,16 +76,16 @@ def test_render_spec_front_matter_probe_fallback() -> None:
         task_desc="def get_inputs(): return []",
     )
 
-    front_matter = _parse_front_matter(render_spec_md(case))
+    front_matter = _parse_front_matter(render_require_md(case))
 
     assert front_matter["supported_dtypes"] == ["float32"]
     assert front_matter["p0_shapes"] == []
     assert front_matter["tolerance"] == {"rtol": 0.001, "atol": 0.001}
     assert "dynamic_axis" not in front_matter
-    assert "### 1.3 数学公式" not in render_spec_md(case)
+    assert "### 1.3 数学公式" not in render_require_md(case)
 
 
-def test_render_spec_new_interface_globals_when_present() -> None:
+def test_render_require_new_interface_globals_when_present() -> None:
     case = CaseSpec(
         op_name="DynamicAxisAdd",
         case_id="101_DynamicAxisAdd",
@@ -96,7 +96,7 @@ def test_render_spec_new_interface_globals_when_present() -> None:
         formula="out[b, s, d] = x[b, s, d] + bias[d]",
     )
 
-    markdown = render_spec_md(case)
+    markdown = render_require_md(case)
     front_matter = _parse_front_matter(markdown)
 
     assert front_matter["dynamic_axis"] == ["B", "S"]
@@ -122,7 +122,7 @@ def test_parse_idle_chip_ids_without_shell_helper() -> None:
     assert case_loader._parse_idle_chip_ids(npu_smi_output) == ["0", "3"]
 
 
-def test_load_case_populates_front_matter_fields_and_write_spec(tmp_path, monkeypatch) -> None:
+def test_load_case_populates_front_matter_fields_and_write_require(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(case_loader, "_list_idle_chip_ids", lambda: ["0"])
     case_file = tmp_path / "19_Softmax.py"
     case_file.write_text(
@@ -150,8 +150,8 @@ def test_load_case_populates_front_matter_fields_and_write_spec(tmp_path, monkey
     )
 
     case = load_case(case_file, case_id="19_Softmax")
-    spec_path = write_spec(case, tmp_path / "custom")
-    front_matter = _parse_front_matter(spec_path.read_text(encoding="utf-8"))
+    require_path = write_require(case, tmp_path / "custom")
+    front_matter = _parse_front_matter(require_path.read_text(encoding="utf-8"))
 
     assert case.supported_dtypes == ["float32"]
     assert case.p0_shapes == [[16, 256, 256]]
@@ -205,7 +205,7 @@ def test_load_case_extracts_formula_and_dynamic_axis_globals(tmp_path, monkeypat
     )
 
     case = load_case(case_file, case_id="101_DynamicAxisAdd")
-    markdown = render_spec_md(case)
+    markdown = render_require_md(case)
     front_matter = _parse_front_matter(markdown)
 
     assert case.formula == "out[b, s, d] = x[b, s, d] + bias[d]"

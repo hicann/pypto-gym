@@ -1,7 +1,7 @@
 # 新增 KernelBench Case
 
 本文档说明如何为 benchmark 增加本地实验用 KernelBench 风格 case，并让
-`case_loader.py` 自动生成符合 PyPTO 工作流要求的 `SPEC.md`。
+`case_loader.py` 自动生成作为 PyPTO Stage 1 输入的 `REQUIRE.md`。
 
 ## 放置位置
 
@@ -61,9 +61,9 @@ FORMULA = "out[b, s, d] = x[b, s, d] + bias[d]"
 DYNAMIC_AXIS = ["B", "S"]
 ```
 
-- `FORMULA`: 数学公式或简洁计算语义，会写入 `SPEC.md` 的
+- `FORMULA`: 数学公式或简洁计算语义，会写入 `REQUIRE.md` 的
   `### 1.3 数学公式` 小节。
-- `DYNAMIC_AXIS`: 动态轴名称列表，会写入 `SPEC.md` front matter 的
+- `DYNAMIC_AXIS`: 动态轴名称列表，会写入 `REQUIRE.md` front matter 的
   `dynamic_axis` 字段。
 - 两者必须是可被 `ast.literal_eval` 解析的常量表达式。
 
@@ -112,7 +112,7 @@ python -m pytest benchmark/tests
 ```
 
 新增 case 的 loader 行为应在 `benchmark/tests` 中补充或更新断言。生成的
-`SPEC.md` front matter 应包含 dtype、shape、tolerance 和动态轴信息；正文中
+`REQUIRE.md` front matter 应包含 dtype、shape、tolerance 和动态轴信息；正文中
 应包含公式小节。
 
 ## 运行 benchmark

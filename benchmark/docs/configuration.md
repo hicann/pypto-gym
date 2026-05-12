@@ -38,8 +38,8 @@ python -m benchmark summary <root_dir>/report
 | `pypto.opencode_model` | 传给 opencode 的模型名；留空时沿用 opencode 默认配置 |
 | `pypto.timeout_sec` | 单 case PyPTO 工作流超时时间 |
 | `pypto.pref_round` | 写入 opencode initial prompt 的 Stage 7 性能优化轮次上限；默认 3 |
-| `pypto.incomplete_workflow_retry` | 状态机未完成且无 failed/blocked/cancelled 阶段时，最多自动重试次数 |
-| `pypto.incomplete_workflow_retry_min_gap_sec` | 只有 OpenCode session tree 的 last update 到 PyPTO finished 空窗达到该阈值时，才消耗 incomplete retry；默认 1800 秒 |
+| `pypto.incomplete_workflow_retry` | 状态机未完成且无 failed/blocked/cancelled 阶段时，最多自动重试次数；OpenCode 非 timeout 异常退出会直接消耗一次 retry |
+| `pypto.incomplete_workflow_retry_min_gap_sec` | 除 OpenCode 非 timeout 异常退出外，只有 OpenCode session tree 的 last update 到 PyPTO finished 空窗达到该阈值时，才消耗 incomplete retry；默认 1800 秒 |
 | `pypto.skip_pypto_gen` | 是否复用已有 `custom/<op>/` 产物，只复跑 verifier |
 | `pypto.force_regen` | 是否强制重跑 PyPTO 生成 |
 | `verifier.mode` | 验证范围：`correctness` / `performance` / `full`；`configs/__default__.yaml` 默认为 `performance` |

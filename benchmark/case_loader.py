@@ -19,14 +19,14 @@ PyPTO 支持的 KernelBench 仓库并保留上游原始目录/编号。布局为
 
 1. ``task_desc``: 原始源码字符串, 直接喂给 ``KernelVerifier``
    (作为 ``framework_code`` 参数).
-2. ``SPEC.md``: 自然语言 + 半结构化的算子规格, 喂给 pypto 7 阶段 agent
-   工作流.
+2. ``REQUIRE.md``: 自然语言 + 半结构化的算子需求文档, 作为 pypto
+   Stage 1 的用户需求输入.
 
 设计要点:
 - 优先 AST 解析 (无副作用); 形状/dtype 推断走"在子进程中真实执行
   ``get_inputs()`` 并打印 shape/dtype" 以避免 torch / numpy 表达式自行求值
   的复杂度, 同时不污染主进程.
-- 对解析失败的字段做 best-effort fallback: 即便没拿到 shape, SPEC.md 仍可
+- 对解析失败的字段做 best-effort fallback: 即便没拿到 shape, REQUIRE.md 仍可
   落地, 让 pypto 工作流自己按源码推断.
 """
 
@@ -145,7 +145,7 @@ def _has_kernelbench_layout(tree: ast.Module) -> List[str]:
 def _extract_new_interface_globals(tree: ast.Module) -> tuple[str, Optional[List[str]]]:
     """提取新增 KernelBench case 顶层接口: ``FORMULA`` / ``DYNAMIC_AXIS``.
 
-    旧 case 没有这两个全局变量时保持空值, SPEC.md 渲染时不会输出对应字段。
+    旧 case 没有这两个全局变量时保持空值, REQUIRE.md 渲染时不会输出对应字段。
     """
     formula = ""
     dynamic_axis: Optional[List[str]] = None
@@ -360,7 +360,7 @@ def _probe_io_specs(
     否则在 ``allow_find_free`` 为真时，forward 前从 ``npu-smi info`` 解析的空闲 chip 中选卡，
     失败后换其他空闲 chip 重试，最多 ``max_output_attempts`` 次。
     ``allow_find_free`` 为假且未指定显式设备时，跳过输出探针（pool 模式由外部固定设备）。
-    所有失败都降级为空输出规格，不阻断 SPEC.md 生成。
+    所有失败都降级为空输出规格，不阻断 REQUIRE.md 生成。
     """
     inputs, _, init_repr = _run_probe_subprocess(
         case_path,
@@ -523,10 +523,10 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
 
 
 # ────────────────────────────────────────────────────────────
-# SPEC.md 渲染
+# REQUIRE.md 渲染
 # ────────────────────────────────────────────────────────────
 
-_SPEC_TEMPLATE = """\
+_REQUIRE_TEMPLATE = """\
 ---
 schema_version: 1
 op_name: {op_name}
@@ -537,8 +537,8 @@ tolerance: {tolerance_json}
 
 # {op_name} 算子需求规格 (派生自上游 KernelBench)
 
-> 本 SPEC 由 ``benchmark.case_loader`` 自动生成, 用于驱动
-> ``pypto-op-orchestrator`` 7 阶段工作流.
+> 本 REQUIRE 由 ``benchmark.case_loader`` 自动生成, 用作
+> ``pypto-op-orchestrator`` Stage 1 的用户需求输入.
 >
 > 数据集来源: 内置 benchmark/KernelBench
 > (github.com/zwx2238/KernelBench @ 5bb8dda, 保留上游原始编号)
@@ -612,7 +612,7 @@ outputs = model(*get_inputs())
 3. 若存在 init 参数, 不得要求外部把 init_args 和 forward inputs 错误拍平后再调用 wrapper.
 4. 本算子由外部 KernelBench 桥接消费; 调用方会在 prompt 中要求额外产出
    ``{op_name}_pypto_impl.py`` (含 ``ModelNew`` 类), 文件契约以 prompt 为准,
-   本 SPEC 不重复声明.
+   本 REQUIRE 不重复声明.
 5. golden / impl / test 三文件分离.
 6. 输入/输出 dtype 必须与原 KernelBench 用例一致.
 
@@ -710,7 +710,7 @@ def _normalize_dtype(dtype: str) -> str:
 def _derive_front_matter_fields(
     inputs: List[TensorSpec],
 ) -> tuple[List[str], List[List[int]], Dict[str, float]]:
-    """从探针输入规格派生 SPEC.md YAML front matter 字段."""
+    """从探针输入规格派生 REQUIRE.md YAML front matter 字段."""
     supported_dtypes: List[str] = []
     seen_dtypes = set()
     for spec in inputs:
@@ -736,12 +736,12 @@ def _derive_front_matter_fields(
     return supported_dtypes, p0_shapes, tolerance
 
 
-def render_spec_md(case: CaseSpec) -> str:
-    """把 ``CaseSpec`` 渲染成 SPEC.md 文本."""
+def render_require_md(case: CaseSpec) -> str:
+    """把 ``CaseSpec`` 渲染成 REQUIRE.md 文本."""
     supported_dtypes, p0_shapes, tolerance = _derive_front_matter_fields(
         case.inputs
     )
-    return _SPEC_TEMPLATE.format(
+    return _REQUIRE_TEMPLATE.format(
         op_name=case.op_name,
         supported_dtypes_json=json.dumps(supported_dtypes, ensure_ascii=False),
         p0_shapes_json=json.dumps(p0_shapes, ensure_ascii=False),
@@ -767,19 +767,19 @@ def render_spec_md(case: CaseSpec) -> str:
     )
 
 
-def write_spec(case: CaseSpec, workdir: Path) -> Path:
-    """把 SPEC.md 写到 ``workdir/{op}/SPEC.md`` 并返回路径.
+def write_require(case: CaseSpec, workdir: Path) -> Path:
+    """把 REQUIRE.md 写到 ``workdir/{op}/REQUIRE.md`` 并返回路径.
 
     若文件已存在且内容一致, 不重写以利于断点续跑.
     """
     op_dir = workdir / case.op_name
     op_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = op_dir / "SPEC.md"
-    new_content = render_spec_md(case)
-    if spec_path.exists() and spec_path.read_text(encoding="utf-8") == new_content:
-        return spec_path
-    spec_path.write_text(new_content, encoding="utf-8")
-    return spec_path
+    require_path = op_dir / "REQUIRE.md"
+    new_content = render_require_md(case)
+    if require_path.exists() and require_path.read_text(encoding="utf-8") == new_content:
+        return require_path
+    require_path.write_text(new_content, encoding="utf-8")
+    return require_path
 
 
 def write_task_desc(case: CaseSpec, workdir: Path) -> Path:
@@ -800,11 +800,11 @@ def write_task_desc(case: CaseSpec, workdir: Path) -> Path:
 
 def _main_cli() -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="Inspect a KernelBench case → CaseSpec / SPEC.md")
+    parser = argparse.ArgumentParser(description="Inspect a KernelBench case → CaseSpec / REQUIRE.md")
     parser.add_argument("case_file", type=Path, help="Path to KernelBench .py")
     parser.add_argument("--op-name", type=str, default=None)
     parser.add_argument("--write", type=Path, default=None,
-                        help="写出 SPEC.md 到此目录的 {op}/SPEC.md")
+                        help="写出 REQUIRE.md 到此目录的 {op}/REQUIRE.md")
     parser.add_argument("--probe-timeout", type=int, default=30)
     args = parser.parse_args()
 
@@ -815,9 +815,9 @@ def _main_cli() -> int:
     sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
     if args.write:
-        spec_path = write_spec(case, args.write)
+        require_path = write_require(case, args.write)
         td_path = write_task_desc(case, args.write)
-        logger.info("Wrote: %s", spec_path)
+        logger.info("Wrote: %s", require_path)
         logger.info("Wrote: %s", td_path)
     return 0
 

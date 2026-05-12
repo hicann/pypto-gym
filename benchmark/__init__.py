@@ -15,7 +15,7 @@
 全部代码自包含在本目录, 无外部源码依赖 (除 pypto 本身与 opencode CLI).
 
 公共入口:
-    - case_loader.load_case / case_loader.write_spec
+    - case_loader.load_case / case_loader.write_require
     - pypto_runner.run_pypto_workflow
     - verifier_runner.run_verifier
     - python -m benchmark run --config configs/xxx.yaml (CLI)

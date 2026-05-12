@@ -8,7 +8,7 @@
 ```text
 KernelBench/<level>/{N}_{name}.py
   -> case_loader.load_case
-  -> case_loader.write_spec
+  -> case_loader.write_require
   -> pypto_runner.run_pypto_workflow
   -> verifier_runner.run_verifier
   -> report.write_summary
@@ -16,7 +16,7 @@ KernelBench/<level>/{N}_{name}.py
 
 各阶段职责：
 
-- `case_loader`: 读取 KernelBench case，生成 `CaseSpec` 和 `SPEC.md`。
+- `case_loader`: 读取 KernelBench case，生成 `CaseSpec` 和 `REQUIRE.md`。
 - `pypto_runner`: 调用 PyPTO 7 阶段工作流生成算子产物。
 - `verifier_runner`: 按 YAML 配置选择 opencode verifier 或 direct verifier。
 - `report`: 汇总 JSON 和 Markdown 报告。
@@ -79,7 +79,7 @@ custom/<op>/
 ```text
 benchmark/
 ├── __main__.py                 # 唯一公开 Python CLI: run --config / monitor <dir> / summary <report>
-├── case_loader.py              # KernelBench .py -> SPEC.md + task_desc
+├── case_loader.py              # KernelBench .py -> REQUIRE.md + task_desc
 ├── pypto_runner.py             # PyPTO 工作流调用
 ├── verifier_runner.py          # opencode skill / direct KernelVerifier 调度
 ├── verifier/                   # 内部验证实现

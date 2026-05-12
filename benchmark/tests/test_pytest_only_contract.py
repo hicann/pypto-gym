@@ -1025,3 +1025,92 @@ def test_monitor_state_dir_and_dashboard_width(tmp_path) -> None:
     ]
     widths = {monitor.wcswidth(line) for line in table_lines}
     assert len(widths) == 1, "\n".join(table_lines)
+
+
+def test_monitor_done_success_ignores_stale_pypto_pid(monkeypatch) -> None:
+    monkeypatch.setattr(monitor, "_pid_alive", lambda pid: True)
+
+    op = {
+        "op_name": "RetryOk",
+        "phase": "done",
+        "phase_status": "success",
+        "result_status": None,
+        "pypto_status": "success",
+        "started_at": "2026-04-25 00:00:00",
+        "opencode_pid": 123456,
+        "phases": {
+            "pypto": {
+                "pid": 123456,
+                "started_at": "2026-04-25 00:00:00",
+                "status": "running",
+            },
+            "verifier": {"pid": None},
+        },
+    }
+
+    assert monitor._compute_dev_status(op, timeout_sec=1) == "已完成"
+
+
+def test_refresh_run_state_done_success_clears_stale_pypto_pid(tmp_path, monkeypatch) -> None:
+    report_dir = tmp_path / "report"
+    op_dir = report_dir / "level2" / "RetryOk"
+    op_dir.mkdir(parents=True)
+    (op_dir / "phase_state.json").write_text(
+        json.dumps({
+            "phase": "done",
+            "status": "success",
+            "updated_at": "2026-04-25 04:04:20",
+            "pypto_status": "success",
+            "verifier_status": "passed",
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(monitor, "_find_opencode_procs", lambda root_pid: {})
+    monkeypatch.setattr(monitor, "_pid_alive", lambda pid: True)
+
+    state = {
+        "operators": [
+            {
+                "op_name": "RetryOk",
+                "report_key": "level2/RetryOk",
+                "phase": "pypto",
+                "phase_status": "running",
+                "phase_message": "",
+                "started_at": "2026-04-25 00:00:00",
+                "ended_at": None,
+                "duration_sec": 0.0,
+                "dev_status": "PyPTO超时",
+                "result_status": None,
+                "pypto_status": "timeout",
+                "verifier_status": None,
+                "opencode_pid": 123456,
+                "phases": {
+                    "pypto": {
+                        "pid": 123456,
+                        "started_at": "2026-04-25 00:00:00",
+                        "duration_sec": 14400.0,
+                        "status": "running",
+                    },
+                    "verifier": {"pid": None},
+                },
+            },
+        ],
+    }
+
+    monitor.refresh_run_state(
+        state,
+        root_pid=999999,
+        report_dir=report_dir,
+        report_keys=["level2/RetryOk"],
+        timeout_sec=1,
+        seen_pids={("RetryOk", "pypto"): (123456, "2026-04-25 00:00:00")},
+    )
+
+    op = state["operators"][0]
+    assert op["phase"] == "done"
+    assert op["phase_status"] == "success"
+    assert op["dev_status"] == "已完成"
+    assert op["opencode_pid"] is None
+    assert op["phases"]["pypto"]["pid"] is None
+    assert op["phases"]["pypto"]["status"] == "success"

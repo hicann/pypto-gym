@@ -193,11 +193,15 @@ _PROMPT_TEMPLATE = """\
 
 {device_pool_section}
 工作目录: `{op_dir_rel}/`
-SPEC.md (已就绪, 请直接读取并按其内容推进): `{op_dir_rel}/SPEC.md`
+算子需求文档 REQUIRE.md (已就绪, 请读取其内容作为 Stage 1 用户需求输入): `{op_dir_rel}/REQUIRE.md`
 KernelBench task_desc (已就绪, 需要用它校准包装接口): `{task_desc_rel}`
 
+注意: REQUIRE.md 是 benchmark 预生成的外部需求输入, 不是 PyPTO 标准工件。
+请按 pypto-op-orchestrator 正常 7 阶段流程推进, 并在 Stage 1 基于 REQUIRE.md
+生成标准 `SPEC.md`。
+
 请严格按 pypto 现有 7 阶段产出以下标准产物 (按 pypto-op-orchestrator 自带规范):
-  - SPEC.md (已存在)
+  - SPEC.md (由 Stage 1 基于 REQUIRE.md 生成)
   - API_REPORT.md
   - DESIGN.md
   - {op_name}_golden.py
@@ -490,6 +494,10 @@ def _incomplete_retry_reason(timed_out: bool, returncode: Optional[int]) -> str:
     return f"OpenCode 异常退出 code={returncode} 且 PyPTO 状态机未完成"
 
 
+def _is_nontimeout_abnormal_exit(timed_out: bool, returncode: Optional[int]) -> bool:
+    return not timed_out and returncode not in (None, 0)
+
+
 def _format_epoch_ms(epoch_ms: Optional[int]) -> str:
     if epoch_ms is None:
         return ""
@@ -526,25 +534,42 @@ def _build_incomplete_retry_attempt(
         else session_export.session_updated_at_ms
     )
     gap_sec = _incomplete_retry_gap_sec(session_export, finished_at_ms)
+    retry_trigger: Optional[str] = None
     if not retry_allowed_by_count:
         decision = "skip_retry_limit"
+    elif _is_nontimeout_abnormal_exit(timed_out, returncode):
+        decision = "retry"
+        retry_trigger = "opencode_abnormal_exit"
     elif gap_sec is None:
         decision = "skip_unknown_last_update"
     elif gap_sec >= threshold_sec:
         decision = "retry"
+        retry_trigger = "session_tree_stale"
     else:
         decision = "skip_gap_below_threshold"
 
     return {
         "attempt": attempt_index,
         "decision": decision,
+        "trigger": retry_trigger,
         "reason": _incomplete_retry_reason(timed_out, returncode),
+        "timed_out": timed_out,
+        "returncode": returncode,
         "session_id": session_export.session_id,
         "last_update_at": _format_epoch_ms(last_update_ms),
         "finished_at": _format_epoch_ms(finished_at_ms),
         "gap_sec": round(gap_sec, 2) if gap_sec is not None else None,
         "threshold_sec": threshold_sec,
     }
+
+
+def _format_incomplete_retry_detail(attempt: dict) -> str:
+    if attempt.get("trigger") == "opencode_abnormal_exit":
+        return f"opencode 非 timeout 异常退出 code={attempt.get('returncode')}"
+    return (
+        "session tree last update 到 finished 空窗 "
+        f"{attempt.get('gap_sec')}s >= {attempt.get('threshold_sec')}s"
+    )
 
 
 def _append_incomplete_retry_attempt_to_log(
@@ -558,6 +583,9 @@ def _append_incomplete_retry_attempt_to_log(
             handle.write(
                 "\n[incomplete workflow retry gate] "
                 f"decision={attempt.get('decision')} "
+                f"trigger={attempt.get('trigger') or '<none>'} "
+                f"returncode={attempt.get('returncode')} "
+                f"timed_out={attempt.get('timed_out')} "
                 f"gap_sec={attempt.get('gap_sec')} "
                 f"threshold_sec={attempt.get('threshold_sec')} "
                 f"last_update_at={attempt.get('last_update_at') or '<unknown>'} "
@@ -688,9 +716,10 @@ def run_pypto_workflow(
         case_forward_source: 传给 prompt 的 ``Model.forward/__call__`` 源码摘要.
         incomplete_workflow_retry: 若状态机未完成且无失败阶段,
             自动重跑 PyPTO workflow 的次数.
-        incomplete_workflow_retry_min_gap_sec: 只有当 OpenCode session tree
-            的最后更新时间到本次 PyPTO finished 的空窗不小于该阈值时,
-            才消耗一次 incomplete retry. 设为 0 可恢复“未完成即重试”.
+        incomplete_workflow_retry_min_gap_sec: 当 OpenCode 非 timeout 异常退出时,
+            直接消耗一次 incomplete retry; 否则只有当 session tree 的最后更新时间
+            到本次 PyPTO finished 的空窗不小于该阈值时, 才消耗一次 incomplete retry.
+            设为 0 可恢复“未完成即重试”.
         device_mode: ``normal`` / ``pool``; ``pool`` 时在 initial prompt 中写入
             固定 ``pool_device_id`` (与 ``device_id`` 一致) 的设备独占约束.
 
@@ -774,13 +803,28 @@ def run_pypto_workflow(
             message="opencode 可执行未找到; 请安装或在 YAML config 中指定 pypto.opencode_bin.",
         )
 
-    spec_path = op_dir / "SPEC.md"
-    if not spec_path.exists():
+    require_path = op_dir / "REQUIRE.md"
+    if not require_path.exists():
         return PyptoRunResult(
             op_name=op_name,
             status=PyptoRunStatus.ARTIFACT_MISSING,
             workdir=op_dir,
-            message=f"SPEC.md 不存在: {spec_path} (应由 case_loader 预先写入).",
+            message=f"REQUIRE.md 不存在: {require_path} (应由 case_loader 预先写入).",
+        )
+
+    spec_path = op_dir / "SPEC.md"
+    state_before_run = _read_orchestrator_state(op_dir)
+    if state_before_run is None and spec_path.exists():
+        return PyptoRunResult(
+            op_name=op_name,
+            status=PyptoRunStatus.ARTIFACT_MISSING,
+            workdir=op_dir,
+            artifacts=artifacts,
+            message=(
+                f"检测到无状态工作目录中已存在 SPEC.md: {spec_path}; "
+                "新协议下 SPEC.md 必须由 PyPTO Stage 1 基于 REQUIRE.md 生成, "
+                "请清理该算子工作目录后重跑."
+            ),
         )
 
     pool_id_for_prompt: Optional[int] = None
@@ -1017,9 +1061,8 @@ def run_pypto_workflow(
         )
         retry_result.message = (
             f"第{_attempt_index}次 {retry_reason}, "
-            f"session tree last update 到 finished 空窗 "
-            f"{incomplete_retry_attempts[-1].get('gap_sec')}s >= "
-            f"{retry_threshold_sec}s, 已自动重试; "
+            f"{_format_incomplete_retry_detail(incomplete_retry_attempts[-1])}, "
+            f"已自动重试; "
             f"{retry_result.message}"
         )
         return retry_result
@@ -1173,7 +1216,7 @@ def _main_cli() -> int:
     parser.add_argument("--incomplete-workflow-retry", type=int, default=None,
                         help="PyPTO 状态机未完成且无失败阶段时自动重试次数; 缺省读取 configs/__default__.yaml")
     parser.add_argument("--incomplete-workflow-retry-min-gap-sec", type=int, default=None,
-                        help="状态机未完成时, 仅当 session tree last update 到 finished 的空窗达到该秒数才重试; 缺省读取 configs/__default__.yaml")
+                        help="状态机未完成时, OpenCode 非 timeout 异常退出直接重试; 其他情况仅当 session tree last update 到 finished 的空窗达到该秒数才重试; 缺省读取 configs/__default__.yaml")
     args = parser.parse_args()
 
     using_default_repo_root = args.repo_root is None
