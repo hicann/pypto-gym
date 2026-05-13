@@ -69,7 +69,7 @@ def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
         "cube_nbuffer_setting": {0: 4},
     },
     debug_options={
-        "runtime_debug_mode": 1,
+        "runtime_debug_mode": 0,
     }
 )
 def flash_attention_score_grad_kernel_profile(

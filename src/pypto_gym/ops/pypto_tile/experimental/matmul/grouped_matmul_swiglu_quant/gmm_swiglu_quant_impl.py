@@ -58,7 +58,7 @@ class ShapeConfig:
 
 
 @pypto.frontend.jit(
-    debug_options={"runtime_debug_mode": 1, "compile_debug_mode": 1},
+    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0},
     runtime_options={"device_sched_mode": 3},
 )
 def scaled_matmul_kernel(

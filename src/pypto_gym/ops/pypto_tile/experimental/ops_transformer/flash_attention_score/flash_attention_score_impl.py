@@ -51,7 +51,7 @@ BLOCK_SIZE_Q = 32
         "device_sched_mode": 1,
     },
     debug_options={
-        "runtime_debug_mode": 1,
+        "runtime_debug_mode": 0,
     }
 )
 def flash_attention_score_kernel_with_mask_origin(

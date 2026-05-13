@@ -82,7 +82,7 @@ def select_bn_reduce_tiles(shape: tuple[int, int, int, int]) -> BnReduceConfig:
         "run_mode": pypto.RunMode.NPU,
         "stitch_function_max_num": 128,
     },
-    debug_options=dict(compile_debug_mode=1, runtime_debug_mode=1),
+    debug_options=dict(compile_debug_mode=0, runtime_debug_mode=0),
 )
 def bn_reduce_kernel(
     x: pypto.Tensor([], pypto.DT_FP32),

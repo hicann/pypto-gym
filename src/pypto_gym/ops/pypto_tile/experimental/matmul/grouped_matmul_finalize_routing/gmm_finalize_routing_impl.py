@@ -98,7 +98,7 @@ class FinalizeRoutingInputs:
 
 
 @pypto.frontend.jit(
-    debug_options={"runtime_debug_mode": 1},
+    debug_options={"runtime_debug_mode": 0},
     pass_options={
         "cube_nbuffer_setting": {-1: 4},
         "vec_nbuffer_setting": {-2: 1, -1: 4},

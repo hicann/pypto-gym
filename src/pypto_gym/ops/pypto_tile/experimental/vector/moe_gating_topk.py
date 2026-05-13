@@ -178,7 +178,7 @@ def moe_gating_topk(
         runtime_options={"run_mode": mode,
         "stitch_function_max_num": 128,
         "device_sched_mode": 1},
-        debug_options={"runtime_debug_mode": 1})
+        debug_options={"runtime_debug_mode": 0})
     def moe_gating_topk_kernel(
         x: pypto.Tensor(x_shape, pypto.DT_FP32),
         bias: pypto.Tensor(bias_shape, pypto.DT_FP32),

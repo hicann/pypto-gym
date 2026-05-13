@@ -155,7 +155,7 @@ def get_common_config():
     pass_options={
     "cube_l1_reuse_setting": {0: 4}},
     host_options={"compile_monitor_enable": True},
-    debug_options={"runtime_debug_mode": 1, "compile_debug_mode": 0}
+    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0}
 )
 def ifa_func_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
@@ -306,7 +306,7 @@ def ifa_func_kernel(
     "cube_nbuffer_setting": {-1: 4}
     },
     host_options={"compile_monitor_enable": True},
-    debug_options={"runtime_debug_mode": 1, "compile_debug_mode": 0}
+    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0}
 )
 def ifa_func_kernel_for_950(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

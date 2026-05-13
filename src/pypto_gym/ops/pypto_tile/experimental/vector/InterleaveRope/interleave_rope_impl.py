@@ -44,7 +44,7 @@ HALF       = 32
 # 1. Kernels (N=128 path)
 # ---------------------------------------------------------------------------
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 1})
+                    debug_options={"runtime_debug_mode": 0})
 def interleave_rope_kernel_n128_bf16(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
     cos: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_BF16),
@@ -92,7 +92,7 @@ def interleave_rope_kernel_n128_bf16(
 
 
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 1})
+                    debug_options={"runtime_debug_mode": 0})
 def interleave_rope_kernel_n128_fp16(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_FP16),
     cos: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_FP16),
@@ -143,7 +143,7 @@ def interleave_rope_kernel_n128_fp16(
 # 2. Kernels (N=1 path)
 # ---------------------------------------------------------------------------
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 1})
+                    debug_options={"runtime_debug_mode": 0})
 def interleave_rope_kernel_n1_bf16(
     x:   pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
@@ -185,7 +185,7 @@ def interleave_rope_kernel_n1_bf16(
 
 
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 1})
+                    debug_options={"runtime_debug_mode": 0})
 def interleave_rope_kernel_n1_fp16(
     x:   pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_FP16),
     cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_FP16),

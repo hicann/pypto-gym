@@ -185,7 +185,7 @@ def avg_pool_2d(config: AvgPool2DConfig):
 
     @pypto.frontend.jit(pass_options={"vec_nbuffer_setting": {-1: 2, 0: 8}},
                         runtime_options={"run_mode": mode, "stitch_function_max_num": 128},
-                        debug_options=dict(runtime_debug_mode=1, compile_debug_mode=1))
+                        debug_options=dict(runtime_debug_mode=0, compile_debug_mode=0))
     def avg_pool_2d_kernel(
         input_tensor: pypto.Tensor((batch_size, channels, in_h, in_w), pypto.DT_FP32),
         output_result: pypto.Tensor((batch_size, channels, out_h, out_w), pypto.DT_FP32),

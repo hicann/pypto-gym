@@ -62,7 +62,7 @@ class MLAPrologParams:
     epsilon_ckv: float = 1e-5
 
 
-@pypto.frontend.jit(debug_options={"runtime_debug_mode": 1})
+@pypto.frontend.jit(debug_options={"runtime_debug_mode": 0})
 def mla_prolog_kernel(
     token_x: pypto.Tensor([T, HE], pypto.DT_BF16),
     weight_dq: pypto.Tensor([HE, HCQ], pypto.DT_BF16),
