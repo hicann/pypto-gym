@@ -372,46 +372,44 @@ def pre_compute_2d(
     qkv_pre_res = []
 
     pypto.set_semantic_label("pre_reshape")
-    mv = tile_config.mv_tile
+    mv = tile_config.mv_tile if bs <=16 else 4
 
-    # MXFP quant_a: Process input dimension k in two halves for memory optimization
-    # Each half uses separate view operations and scaled_mm for quantized matmul
     if is_quant_a:
-        for i in range(2):  # Split k dimension into two halves
-            pypto.set_vec_tile_shapes(8, k//2)
-            token_x_view = pypto.view(token_x, [bs, k // 2], [0, i * (k // 2)])
-            w_dq_view = pypto.view(w_dq, [k // 2, q_lora_rank], [i * (k // 2), 0])
-            # Block-wise scale views: scale block size is 128 for weights, 64 for input
-            pypto.set_vec_tile_shapes(8, 256, 8)
-            dequant_scale_w_dq_view = pypto.view(dequant_scale_w_dq, [k // 128, q_lora_rank, 2], [i * (k // 128), 0, 0])
-            x_scale_view = pypto.view(x_scale, [bs, k // 128, 2], [0, i * (k // 128), 0])
-            dequant_scale_w_dkv_kr_view = pypto.view(dequant_scale_w_dkv_kr, [k // 128, q_head_dim, 2], [i * (k // 128), 0, 0])
-            w_dkv_kr_view = pypto.view(w_dkv_kr, [k // 2, q_head_dim], [i * (k // 2), 0])
-            if i==0 :  # First half: initialize results
-                pypto.set_semantic_label("QuantMatmul_qa")
-                pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                    [64, 256], [128, 128])
-                # scaled_mm: FP8E4M3 input/weight @ FP8E4M3 weight -> FP32 output
-                q_a_proj = pypto.scaled_mm(token_x_view, w_dq_view, pypto.DT_FP32, x_scale_view, dequant_scale_w_dq_view)
+        pypto.set_vec_tile_shapes(8, k//2)
+        token_x_view0 = pypto.view(token_x, [bs, k // 2], [0, 0])
+        w_dq_view0 = pypto.view(w_dq, [k // 2, q_lora_rank], [0, 0])
+        token_x_view1 = pypto.view(token_x, [bs, k // 2], [0, (k // 2)])
+        w_dq_view1 = pypto.view(w_dq, [k // 2, q_lora_rank], [(k // 2), 0])
+        pypto.set_vec_tile_shapes(8, 256, 8)
+        dequant_scale_w_dq_view0 = pypto.view(dequant_scale_w_dq, [k // 128, q_lora_rank, 2], [0, 0, 0])
+        x_scale_view0 = pypto.view(x_scale, [bs, k // 128, 2], [0, 0, 0])
+        dequant_scale_w_dkv_kr_view0 = pypto.view(dequant_scale_w_dkv_kr, [k // 128, q_head_dim, 2], [0, 0, 0])
+        w_dkv_kr_view0 = pypto.view(w_dkv_kr, [k // 2, q_head_dim], [0, 0])
+        dequant_scale_w_dq_view1 = pypto.view(dequant_scale_w_dq, [k // 128, q_lora_rank, 2], [(k // 128), 0, 0])
+        x_scale_view1 = pypto.view(x_scale, [bs, k // 128, 2], [0, (k // 128), 0])
+        dequant_scale_w_dkv_kr_view1 = pypto.view(dequant_scale_w_dkv_kr, [k // 128, q_head_dim, 2], [(k // 128), 0, 0])
+        w_dkv_kr_view1 = pypto.view(w_dkv_kr, [k // 2, q_head_dim], [(k // 2), 0])
 
-                pypto.set_semantic_label("QuantMatmul_kva")
-                pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                    [64, 256], [192, 192])
-                compressed_kv_tmp = pypto.scaled_mm(token_x_view, w_dkv_kr_view, pypto.DT_FP32, \
-                                                    x_scale_view, dequant_scale_w_dkv_kr_view)
-            else:  # Second half: accumulate results
-                pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                    [64, 256], [128, 128])
-                pypto.set_semantic_label("QuantMatmul_qa")
-                q_a_proj += pypto.scaled_mm(token_x_view, w_dq_view, pypto.DT_FP32, x_scale_view, \
-                                            dequant_scale_w_dq_view)
+        pypto.set_semantic_label("QuantMatmul_qa")
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                            [256, 256], [128, 128])
+        q_a_proj0 = pypto.scaled_mm(token_x_view0, w_dq_view0, pypto.DT_FP32, x_scale_view0, dequant_scale_w_dq_view0)
 
-                pypto.set_semantic_label("QuantMatmul_kva")
-                pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                    [64, 256], [192, 192])
-                compressed_kv_tmp += pypto.scaled_mm(token_x_view, w_dkv_kr_view, pypto.DT_FP32, x_scale_view, \
-                                                    dequant_scale_w_dkv_kr_view)
-        compressed_kv = pypto.cast(compressed_kv_tmp, dtype)  # FP32 -> BF16
+        pypto.set_semantic_label("QuantMatmul_kva")
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                            [256, 256], [256, 256])
+        compressed_kv_tmp0 = pypto.scaled_mm(token_x_view0, w_dkv_kr_view0, pypto.DT_FP32, x_scale_view0, dequant_scale_w_dkv_kr_view0)
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                            [256, 256], [128, 128])
+        pypto.set_semantic_label("QuantMatmul_qa")
+        q_a_proj1 = pypto.scaled_mm(token_x_view1, w_dq_view1, pypto.DT_FP32, x_scale_view1, dequant_scale_w_dq_view1)
+
+        pypto.set_semantic_label("QuantMatmul_kva")
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                            [256, 256], [256, 256])
+        compressed_kv_tmp1 = pypto.scaled_mm(token_x_view1, w_dkv_kr_view1, pypto.DT_FP32, x_scale_view1, dequant_scale_w_dkv_kr_view1)
+        compressed_kv_tmp = compressed_kv_tmp0 + compressed_kv_tmp1
+        compressed_kv = pypto.cast(compressed_kv_tmp, dtype)
     else:
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                                    [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
@@ -428,26 +426,22 @@ def pre_compute_2d(
 
     pypto.set_vec_tile_shapes(mv, q_lora_rank)
     pypto.set_semantic_label("RmsNorm_qa")
+    q_a_proj = q_a_proj0 + q_a_proj1
     norm_res = rms_norm(q_a_proj, gamma_cq, epsilon_cq)
-
-    # MXFP quant_b: Quantize RmsNorm output to FP8E4M3 and perform scaled_mm with w_uq_qr
     if is_quant_b:
         pypto.set_vec_tile_shapes(mv, q_lora_rank)
         pypto.set_semantic_label("Quant_qMnRes")
-        # quant_mx: BF16 -> FP8E4M3 with per-block scale (FP8E8M0), block size aligned
         quant_view, scale_view = pypto.quant_mx(
             norm_res,
-            pypto.DT_FP8E4M3,  # Target dtype for quantized data
-            pypto.ROUND_DOWN,   # Rounding mode
-            -1,                 # Quantize along last dimension
-            True,               # Block-aligned quantization
+            pypto.DT_FP8E4M3,
+            pypto.ROUND_DOWN,
+            -1,
+            True,
         )
         pypto.set_semantic_label("QuantMatmul_qb")
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                   [64, 256], [256, 256])
-        # scaled_mm: FP8E4M3 @ FP8E4M3 with scales -> BF16 output (dequantized)
+                                    [128, 256], [256, 256])
         q_b_proj = pypto.scaled_mm(quant_view, w_uq_qr, pypto.DT_BF16, scale_view, dequant_scale_w_uq_qr)
-        pypto.set_semantic_label("Dequant_qb")
     else:
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                                    [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
@@ -609,7 +603,6 @@ def mla_prolog_quant_compute(
         k_rope_2d = rope_v2(k_pe_view, cos_2d_view, sin_2d_view, rope_cfg)
 
         ############### kNope ##############
-        # Key nope processing: Apply RmsNorm (no quantization in MXFP V3)
         compressed_kv1 = pypto.view(kv_tmp, [tile_bs, kv_lora_rank], [0, 0])
         pypto.set_semantic_label("RmsNorm_compressedkv")
         pypto.set_vec_tile_shapes(tile_config.k_vec_tile0, tile_config.k_vec_tile1)

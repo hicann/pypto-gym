@@ -696,18 +696,18 @@ def test_b64_s64k2_pa_nd_bf16_quant():
     is_quant_a, is_quant_b, is_nz = True, True, False
     cache_mode = "PA_BSND"
     tile_config = MlaTileConfig()
-    tile_config.tile_bs = 8
+    tile_config.tile_bs = 128
 
     c0 = 16
-    m_tile_value = (min(32, tile_config.tile_bs) + c0 - 1) // c0 * c0
+    m_tile_value = (min(128, tile_config.tile_bs) + c0 - 1) // c0 * c0
     mv_tile_value = min(8, tile_config.tile_bs)
     tile_config.m_tile = m_tile_value
 
     tile_config.pre_quant_cube_tile = [m_tile_value, m_tile_value, 256, 256, 128, 128]
     tile_config.mv_tile = mv_tile_value
-    tile_config.q_vec_tile0 = 1
-    tile_config.q_vec_tile1 = 32
-    tile_config.k_vec_tile0 = 2
+    tile_config.q_vec_tile0 = 32
+    tile_config.q_vec_tile1 = 128
+    tile_config.k_vec_tile0 = 32
     tile_config.k_vec_tile1 = 512
     tile_config.unroll_list = [128, 64, 8, 4, 2, 1]
 
