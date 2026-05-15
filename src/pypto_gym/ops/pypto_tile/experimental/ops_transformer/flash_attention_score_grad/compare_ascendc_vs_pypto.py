@@ -32,7 +32,7 @@ from flash_attention_score_grad_golden import (
     generate_forward_data, ForwardDataConfig,
 )
 from flash_attention_score_grad_impl import (
-    flash_attention_score_grad_wrapper, NUM_HEADS, HEAD_DIM,
+    flash_attention_score_grad_wrapper,
 )
 
 
@@ -170,7 +170,7 @@ def main():
     torch.npu.set_device(device_id)
     device = f"npu:{device_id}"
 
-    n_heads, head_dim = NUM_HEADS, HEAD_DIM
+    n_heads, head_dim = 8, 64
 
     configs = [
         ("B=2,S=128", 2, 128),

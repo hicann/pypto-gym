@@ -25,8 +25,6 @@ import torch
 # ============================================================
 # 模块级常量
 # ============================================================
-NUM_HEADS = 8
-HEAD_DIM = 64
 S_TILE = 128  # 优化: 64 → 128
 
 
@@ -85,11 +83,13 @@ def flash_attention_score_grad_kernel_profile(
     dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     batch_size: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     scale_value: float,
+    num_heads: int,
 ):
     """Profile 版本 kernel，带有 debug_options 用于生成泳道图数据。"""
     b = batch_size.shape[0]
     total = q.shape[0]
-    s = total // b // NUM_HEADS
+    head_dim = q.shape[1]
+    s = total // b // num_heads
 
     q_2d = q
     k_2d = k
@@ -104,13 +104,13 @@ def flash_attention_score_grad_kernel_profile(
 
     s_loop = s // S_TILE
 
-    c_tile = [[S_TILE, S_TILE], [HEAD_DIM, 256], [S_TILE, S_TILE]]
+    c_tile = [[S_TILE, S_TILE], [head_dim, 256], [S_TILE, S_TILE]]
     v_tile_s = [S_TILE, S_TILE]
-    v_tile_d = [S_TILE, HEAD_DIM]
+    v_tile_d = [S_TILE, head_dim]
 
     for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx"):
-        for n_idx in pypto.loop(NUM_HEADS, name="LOOP_n", idx_name="n_idx"):
-            bn_base = (b_idx * NUM_HEADS + n_idx) * s
+        for n_idx in pypto.loop(num_heads, name="LOOP_n", idx_name="n_idx"):
+            bn_base = (b_idx * num_heads + n_idx) * s
 
             # ===== 趟1: 计算 dQ =====
             for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dq", idx_name="s1_idx"):
@@ -118,9 +118,9 @@ def flash_attention_score_grad_kernel_profile(
                 actual_s1 = (s - s1_idx * S_TILE).min(S_TILE)
 
                 pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                q_i = pypto.view(q_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                dy_i = pypto.view(dy_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                ao_i = pypto.view(ao_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
+                q_i = pypto.view(q_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                dy_i = pypto.view(dy_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                ao_i = pypto.view(ao_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
 
                 sm_i_8 = pypto.view(sm_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
                 ss_i_8 = pypto.view(ss_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
@@ -132,7 +132,7 @@ def flash_attention_score_grad_kernel_profile(
                 dy_ao_fp32 = pypto.cast(pypto.mul(dy_i, ao_i), pypto.DT_FP32)
                 d_i = pypto.sum(dy_ao_fp32, -1, keepdim=True)
 
-                dq_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dq_acc")
+                dq_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dq_acc")
 
                 for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dq", idx_name="s2_idx",
                                          unroll_list=[8, 4, 2, 1]):
@@ -140,8 +140,8 @@ def flash_attention_score_grad_kernel_profile(
                     actual_s2 = (s - s2_idx * S_TILE).min(S_TILE)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                    k_j = pypto.view(k_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
-                    v_j = pypto.view(v_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
+                    k_j = pypto.view(k_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
+                    v_j = pypto.view(v_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
 
                     _, ds_ij = compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
                                             actual_s1, actual_s2, scale_value,
@@ -169,11 +169,11 @@ def flash_attention_score_grad_kernel_profile(
                 actual_s2 = (s - s2_idx * S_TILE).min(S_TILE)
 
                 pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                k_j = pypto.view(k_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
-                v_j = pypto.view(v_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
+                k_j = pypto.view(k_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
+                v_j = pypto.view(v_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
 
-                dk_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dk_acc")
-                dv_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dv_acc")
+                dk_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dk_acc")
+                dv_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dv_acc")
 
                 for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dkv", idx_name="s1_idx",
                                          unroll_list=[8, 4, 2, 1]):
@@ -181,9 +181,9 @@ def flash_attention_score_grad_kernel_profile(
                     actual_s1 = (s - s1_idx * S_TILE).min(S_TILE)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                    q_i = pypto.view(q_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                    dy_i = pypto.view(dy_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                    ao_i = pypto.view(ao_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
+                    q_i = pypto.view(q_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                    dy_i = pypto.view(dy_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                    ao_i = pypto.view(ao_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
 
                     sm_i_8 = pypto.view(sm_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
                     ss_i_8 = pypto.view(ss_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
@@ -245,10 +245,12 @@ def flash_attention_score_grad_kernel(
     dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     batch_size: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     scale_value: float,
+    num_heads: int,
 ):
     b = batch_size.shape[0]
     total = q.shape[0]
-    s = total // b // NUM_HEADS
+    head_dim = q.shape[1]
+    s = total // b // num_heads
 
     q_2d = q
     k_2d = k
@@ -263,13 +265,13 @@ def flash_attention_score_grad_kernel(
 
     s_loop = s // S_TILE
 
-    c_tile = [[S_TILE, S_TILE], [HEAD_DIM, 256], [S_TILE, S_TILE]]
+    c_tile = [[S_TILE, S_TILE], [head_dim, 256], [S_TILE, S_TILE]]
     v_tile_s = [S_TILE, S_TILE]
-    v_tile_d = [S_TILE, HEAD_DIM]
+    v_tile_d = [S_TILE, head_dim]
 
     for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx"):
-        for n_idx in pypto.loop(NUM_HEADS, name="LOOP_n", idx_name="n_idx"):
-            bn_base = (b_idx * NUM_HEADS + n_idx) * s
+        for n_idx in pypto.loop(num_heads, name="LOOP_n", idx_name="n_idx"):
+            bn_base = (b_idx * num_heads + n_idx) * s
 
             # ===== 趟1: 计算 dQ =====
             for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dq", idx_name="s1_idx"):
@@ -277,9 +279,9 @@ def flash_attention_score_grad_kernel(
                 actual_s1 = (s - s1_idx * S_TILE).min(S_TILE)
 
                 pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                q_i = pypto.view(q_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                dy_i = pypto.view(dy_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                ao_i = pypto.view(ao_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
+                q_i = pypto.view(q_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                dy_i = pypto.view(dy_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                ao_i = pypto.view(ao_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
 
                 sm_i_8 = pypto.view(sm_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
                 ss_i_8 = pypto.view(ss_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
@@ -291,7 +293,7 @@ def flash_attention_score_grad_kernel(
                 dy_ao_fp32 = pypto.cast(pypto.mul(dy_i, ao_i), pypto.DT_FP32)
                 d_i = pypto.sum(dy_ao_fp32, -1, keepdim=True)
 
-                dq_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dq_acc")
+                dq_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dq_acc")
 
                 for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dq", idx_name="s2_idx",
                                          unroll_list=[8, 4, 2, 1]):
@@ -299,8 +301,8 @@ def flash_attention_score_grad_kernel(
                     actual_s2 = (s - s2_idx * S_TILE).min(S_TILE)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                    k_j = pypto.view(k_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
-                    v_j = pypto.view(v_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
+                    k_j = pypto.view(k_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
+                    v_j = pypto.view(v_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
 
                     _, ds_ij = compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
                                             actual_s1, actual_s2, scale_value,
@@ -328,11 +330,11 @@ def flash_attention_score_grad_kernel(
                 actual_s2 = (s - s2_idx * S_TILE).min(S_TILE)
 
                 pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                k_j = pypto.view(k_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
-                v_j = pypto.view(v_2d, [S_TILE, HEAD_DIM], [s2_off, 0], valid_shape=[actual_s2, HEAD_DIM])
+                k_j = pypto.view(k_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
+                v_j = pypto.view(v_2d, [S_TILE, head_dim], [s2_off, 0], valid_shape=[actual_s2, head_dim])
 
-                dk_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dk_acc")
-                dv_acc = pypto.tensor([S_TILE, HEAD_DIM], pypto.DT_FP32, "dv_acc")
+                dk_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dk_acc")
+                dv_acc = pypto.tensor([S_TILE, head_dim], pypto.DT_FP32, "dv_acc")
 
                 for s1_idx in pypto.loop(s_loop, name="LOOP_s1_dkv", idx_name="s1_idx",
                                          unroll_list=[8, 4, 2, 1]):
@@ -340,9 +342,9 @@ def flash_attention_score_grad_kernel(
                     actual_s1 = (s - s1_idx * S_TILE).min(S_TILE)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                    q_i = pypto.view(q_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                    dy_i = pypto.view(dy_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
-                    ao_i = pypto.view(ao_2d, [S_TILE, HEAD_DIM], [s1_off, 0], valid_shape=[actual_s1, HEAD_DIM])
+                    q_i = pypto.view(q_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                    dy_i = pypto.view(dy_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
+                    ao_i = pypto.view(ao_2d, [S_TILE, head_dim], [s1_off, 0], valid_shape=[actual_s1, head_dim])
 
                     sm_i_8 = pypto.view(sm_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
                     ss_i_8 = pypto.view(ss_2d, [S_TILE, 8], [s1_off, 0], valid_shape=[actual_s1, 8])
@@ -390,8 +392,8 @@ def flash_attention_score_grad_wrapper(
     softmax_sum: torch.Tensor,
     attention_out: torch.Tensor,
     scale_value: float,
-    num_heads: int = NUM_HEADS,
-    head_dim: int = HEAD_DIM,
+    num_heads: int,
+    head_dim: int,
 ):
     """算子 wrapper，供测试调用。"""
     batch_size, num_heads_out, seq_len, head_dim_out = query.shape
@@ -423,6 +425,7 @@ def flash_attention_score_grad_wrapper(
         dq_flat, dk_flat, dv_flat,
         batch_tensor,
         scale_value,
+        num_heads,
     )
 
     return (dq_flat.reshape(batch_size, num_heads, seq_len, head_dim),

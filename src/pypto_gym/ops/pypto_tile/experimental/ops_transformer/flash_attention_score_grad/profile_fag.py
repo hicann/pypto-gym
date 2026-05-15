@@ -21,7 +21,7 @@ from flash_attention_score_grad_golden import (
     ForwardDataConfig, generate_forward_data,
 )
 from flash_attention_score_grad_impl import (
-    NUM_HEADS, HEAD_DIM, S_TILE,
+    S_TILE,
     flash_attention_score_grad_kernel_profile,
 )
 
@@ -66,6 +66,6 @@ if __name__ == "__main__":
         q_flat, k_flat, v_flat, dy_flat,
         sm_flat, ss_flat, ao_flat,
         dq_flat, dk_flat, dv_flat,
-        batch_tensor, scale,
+        batch_tensor, scale, num_heads,
     )
     logger.info("Done. Check output/ for swimlane data.")
