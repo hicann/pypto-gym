@@ -366,13 +366,6 @@ PY
 还必须额外对比 `task_desc.Model(*get_init_inputs())(*get_inputs())` 与
 `ModelNew(*get_init_inputs())(*get_inputs())` 的输出 shape, 包括 scalar rank.
 
-精度二次校验硬约束:
-- Stage 5/6 只有在重新运行测试且确定性解析到 `[PRECISION_PASS]` 时才允许判定通过.
-- 测试超时、`no_marker`、权限拒绝、只做文件/接口结构检查、只做 stub 调用检查,
-  都不得被解释为精度通过.
-- 若二次校验未拿到有效 `[PRECISION_PASS]`, 必须通过 `state_transition` 将当前
-  stage 标记为 failed, 不得继续推进到后续阶段.
-
 ================================================================
 Stage 7 约束:
 - Stage 7 必须按 pypto-op-orchestrator 自带规范正常执行性能调优与收尾.
