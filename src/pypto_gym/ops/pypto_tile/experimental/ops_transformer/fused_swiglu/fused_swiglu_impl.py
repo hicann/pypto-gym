@@ -20,26 +20,16 @@ import os
 import pypto
 
 
-def get_run_mode():
-    """Get run mode from environment."""
-    if 'TILE_FWK_DEVICE_ID' in os.environ:
-        return pypto.RunMode.NPU
-    return pypto.RunMode.SIM
-
-global_run_mode = get_run_mode()
-
-
 @pypto.frontend.jit(
     pass_options={
         "vec_nbuffer_setting": {-1: 2, 0: 4},
         "cube_l1_reuse_setting": {-1: 2}
     },
     runtime_options={
-        "run_mode": global_run_mode,
         "stitch_function_max_num": 128,
         "device_sched_mode": 3
     }
-    )
+)
 def fused_swiglu_fwd_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     w_g: pypto.Tensor([], pypto.DT_BF16),
