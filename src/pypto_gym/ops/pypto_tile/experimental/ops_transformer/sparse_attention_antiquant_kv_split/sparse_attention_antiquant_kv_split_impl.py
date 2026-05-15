@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch_npu  # noqa: F401
 import pypto
-from pypto.experimental import gather_in_ub
+from pypto.experimental import gather_in_ub, gather_in_l1
 
 
 @dataclass
@@ -105,6 +105,8 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,
     s1_sym = s1_n2_gsym // nq
 
     g_loop_sym = group // group_tile
+    
+    pypto.experimental.set_operation_options(combine_axis=True)
 
     for batch_idx in pypto.loop(0, batch_size_sym, 1, name="LOOP_L0_idx", idx_name="bIdx"):
         cur_act_seq = kv_act_seqs[batch_idx]
@@ -151,7 +153,10 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,
 
                         kr_view = pypto.view(kr, [kr.shape[0], dr],
                                                             [0, 0], valid_shape=[kr.shape[0], dr])
-                        kr_slc = gather_in_ub(kr_view, cur_topk_indices, cur_block_table, block_size, -2)
+                        pypto.set_cube_tile_shapes([c1_tile[0],
+                            c1_tile[1]], [c1_tile[2], c1_tile[3]], [c1_tile[4], c1_tile[5]])
+                        kr_slc = gather_in_l1(kr_view, cur_topk_indices, cur_block_table, block_size, dr,
+                                          is_b_matrix=True, is_trans=True)
 
                         kn_quant_fp32_reshape = pypto.reshape(kn_quant_fp32, [kn_quant_fp32.shape[0] * 4, 128])
                         kn_scales_reshape = pypto.reshape(kn_scales_slc, [kn_scales_slc.shape[0] * 4, 1])
