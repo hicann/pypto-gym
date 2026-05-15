@@ -37,7 +37,7 @@ from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 
-from page_attention_quant_fp8_impl import set_qwen_common_config, get_common_config, ifa_func_kernel_v2_bound
+from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import set_qwen_common_config, get_common_config, ifa_func_kernel_v2_bound
 import pypto
 
 np.random.seed(0)
