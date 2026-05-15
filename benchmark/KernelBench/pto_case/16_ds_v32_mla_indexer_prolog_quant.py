@@ -8,7 +8,7 @@ import torch.nn as nn
 
 FORMULA = (
     "[MLA]: q_norm,q_nope,q_rope = MLA_Proj(x, w_dq, w_uq_qr, w_uk, w_dkv_kr); "
-    "[IP]:  q_idx = Hadamard(RoPE(DeQuant(q_norm @ w_qb))); "
+    "[IP]:  q_idx = Hadamard(RoPE(DeQuant(q_norm @ w_qb, q_norm_scale, w_qb_scale))); "
     "k_idx = Hadamard(RoPE(LayerNorm(x @ wk))); "
     "weights = (x @ w_proj) * (n*d)^-0.5"
 )
@@ -57,7 +57,11 @@ class Model(nn.Module):
         self.gamma_ckv = nn.Parameter(torch.randn(kv_lora_rank, dtype=torch.float32))
 
         nph = idx_n_heads * idx_head_dim
-        self.w_qb = nn.Parameter(torch.randn(q_lora_rank, nph, dtype=torch.float32) * scale / math.sqrt(q_lora_rank))
+        _w_qb_raw = torch.randint(-128, 128, (q_lora_rank, nph), dtype=torch.int32).to(torch.int8)
+        self.register_buffer('w_qb', _w_qb_raw)
+        self.w_qb_scale = nn.Parameter(
+            torch.empty(nph, dtype=torch.float32).uniform_(-1, 1)
+        )
         self.wk = nn.Parameter(torch.randn(h, idx_head_dim, dtype=torch.float32) * scale / math.sqrt(h))
         self.w_proj = nn.Parameter(torch.randn(h, idx_n_heads, dtype=torch.float32) * scale / math.sqrt(h))
         self.ln_gamma = nn.Parameter(torch.ones(idx_head_dim, dtype=torch.float32))
@@ -125,6 +129,7 @@ class Model(nn.Module):
         q_norm_q, q_norm_scale = self._per_token_quantize(q_a_norm)
         q_idx_i32 = q_norm_q.float() @ self.w_qb.float()
         q_idx = q_idx_i32.float() * q_norm_scale.float()
+        q_idx = q_idx * self.w_qb_scale.float().unsqueeze(0)
         q_idx_3d = q_idx.reshape(t, self.idx_n_heads, self.idx_head_dim).to(x_dtype)
 
         q_r, q_np = torch.split(q_idx_3d, [self.rope_head_dim, self.idx_head_dim - self.rope_head_dim], dim=-1)

@@ -67,18 +67,46 @@ class Model(nn.Module):
         o2 = x2 * cos + x1 * sin
         return torch.cat([torch.cat([o1, o2], dim=-1), x[..., self.rotary_dim:]], dim=-1)
 
+    def _gather_kv(self, key_cache, value_cache, block_tables, b_idx, seq_len):
+        device = key_cache.device
+        dtype = key_cache.dtype
+        d = self.head_size
+        nkv = self.kv_num_heads
+        block_size = self.block_size
+        kv_max = (seq_len + block_size - 1) // block_size * block_size
+
+        k_out = torch.zeros(kv_max, nkv * d, dtype=dtype, device=device)
+        v_out = torch.zeros(kv_max, nkv * d, dtype=dtype, device=device)
+
+        block_list = block_tables[b_idx]
+        s_idx = 0
+        for _, block_idx in enumerate(block_list):
+            if block_idx == -1:
+                break
+            start_idx = s_idx * block_size
+            end_idx = min((s_idx + 1) * block_size, kv_max)
+            valid = min(block_size, kv_max - start_idx)
+
+            k_out[start_idx:end_idx, :] = key_cache[block_idx, :valid, :, :].view(valid, nkv * d)
+            v_out[start_idx:end_idx, :] = value_cache[block_idx, :valid, :, :].view(valid, nkv * d)
+            s_idx += 1
+            if end_idx >= kv_max:
+                break
+
+        k_out = k_out[:seq_len, :]
+        v_out = v_out[:seq_len, :]
+        return k_out, v_out
+
     def forward(self, hidden_states: torch.Tensor, residual: torch.Tensor,
                 cos: torch.Tensor, sin: torch.Tensor,
                 key_cache: torch.Tensor, value_cache: torch.Tensor,
                 block_tables: torch.Tensor, actual_seqs: torch.Tensor,
-                num_decode_tokens: int = 1
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         bs = hidden_states.shape[0]
         input_dtype = hidden_states.dtype
         d = self.head_size
         nq = self.num_heads
         nkv = self.kv_num_heads
-        group = nq // nkv
 
         residual_out = hidden_states + residual
         x_norm = self._rms_norm(residual_out, self.input_layernorm_weight, self.input_layernorm_bias)
@@ -92,11 +120,11 @@ class Model(nn.Module):
         qkv = qkv.to(input_dtype)
 
         q_raw = qkv[:, :self.q_size]
-        k = qkv[:, self.q_size:self.q_size + self.kv_size]
-        v = qkv[:, self.q_size + self.kv_size:self.q_size + self.kv_size * 2]
+        k_raw = qkv[:, self.q_size:self.q_size + self.kv_size]
+        v_raw = qkv[:, self.q_size + self.kv_size:self.q_size + self.kv_size * 2]
 
         q_by_head = q_raw.view(bs, nq, d)
-        k_by_head = k.view(bs, nkv, d)
+        k_by_head = k_raw.view(bs, nkv, d)
 
         q_norm = self._rms_norm(q_by_head, self.q_norm_weight, self.q_norm_bias)
         k_norm = self._rms_norm(k_by_head, self.k_norm_weight, self.k_norm_bias)
@@ -107,34 +135,35 @@ class Model(nn.Module):
         q_rope = self._apply_rope(q_norm, cos_s, sin_s)
         k_rope = self._apply_rope(k_norm, cos_s, sin_s)
 
-        k_nope_tbl = key_cache.view(-1, nkv * d)
-        v_nope_tbl = value_cache.view(-1, nkv * d)
+        k_final = k_rope.view(bs, nkv * d)
+        v_final = v_raw.view(bs, nkv * d)
 
-        attn_out = torch.zeros(bs, nq, d, dtype=input_dtype)
+        key_cache_flat = key_cache.view(-1, nkv * d)
+        key_cache_flat[actual_seqs.new_zeros(bs, dtype=torch.int64)] = k_final
+        value_cache_flat = value_cache.view(-1, nkv * d)
+        value_cache_flat[actual_seqs.new_zeros(bs, dtype=torch.int64)] = v_final
+
+        actual_on_cpu = actual_seqs.cpu()
+        block_tables_cpu = block_tables.cpu()
+
+        attention_output = torch.zeros(bs, nq, d, dtype=input_dtype)
 
         for b_idx in range(bs):
-            cur_seq = actual_seqs[b_idx].item()
-            for n2_idx in range(nkv):
-                q_group = q_rope[b_idx, n2_idx * group:(n2_idx + 1) * group]
-                k_list, v_list = [], []
-                for blk_i in range(block_tables.shape[1]):
-                    blk = block_tables[b_idx, blk_i].item()
-                    if blk < 0:
-                        break
-                    k_list.append(k_nope_tbl[blk * self.block_size:(blk + 1) * self.block_size,
-                                            n2_idx * d:(n2_idx + 1) * d])
-                    v_list.append(v_nope_tbl[blk * self.block_size:(blk + 1) * self.block_size,
-                                            n2_idx * d:(n2_idx + 1) * d])
-                if not k_list:
-                    continue
-                k_seq = torch.cat(k_list, dim=0)[:cur_seq]
-                v_seq = torch.cat(v_list, dim=0)[:cur_seq]
-                scores = torch.matmul(q_group.float(), k_seq.float().t()) * self.softmax_scale
-                attn_w = torch.softmax(scores, dim=-1).to(input_dtype)
-                attn_out[b_idx, n2_idx * group:(n2_idx + 1) * group] = (
-                    torch.matmul(attn_w.float(), v_seq.float()).to(input_dtype))
+            seq_len = actual_on_cpu[b_idx].item()
+            for q_idx in range(nq):
+                q_vec = q_rope[b_idx, q_idx].view(1, d)
+                k_seq, v_seq = self._gather_kv(key_cache, value_cache, block_tables_cpu, b_idx, seq_len)
+                k_seq = k_seq.view(-1, d)
+                v_seq = v_seq.view(-1, d)
+                scores = (q_vec.float() @ k_seq.float().t()) * self.softmax_scale
+                scores_fp32 = scores.float()
+                scores_max = scores_fp32.max(dim=-1, keepdim=True).values
+                scores_exp = torch.exp(scores_fp32 - scores_max)
+                attn_weights = scores_exp / scores_exp.sum(dim=-1, keepdim=True)
+                attn_out = (attn_weights.to(v_seq.dtype) @ v_seq)
+                attention_output[b_idx, q_idx] = attn_out
 
-        return attn_out.reshape(bs, -1), residual_out.to(input_dtype)
+        return attention_output.reshape(bs, -1), residual_out.to(input_dtype)
 
 
 def get_inputs():
@@ -162,7 +191,7 @@ def get_inputs():
                 blk_idx += 1
     actual_seqs = torch.full((bs,), s2, dtype=torch.int32)
 
-    return [x, residual, cos, sin, k, v, block_tables, actual_seqs, 1]
+    return [x, residual, cos, sin, k, v, block_tables, actual_seqs]
 
 
 def get_init_inputs():

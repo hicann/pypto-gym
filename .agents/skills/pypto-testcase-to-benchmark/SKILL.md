@@ -36,7 +36,7 @@ test -d benchmark/KernelBench
 
 转换分为 **两个阶段**：
 
-1. **Phase 1 — Benchmark Case 生成**（必选）：分析 testcase、生成 KernelBench 用例（唯一产物：`{N}_{OpName}.py`）
+1. **Phase 1 — Benchmark Case 生成**（必选）：分析 testcase → 生成 KernelBench 用例 → **Golden 功能覆盖验证**（强制，1:1 对比原始 test）→ NPU 预检（唯一产物：`{N}_{OpName}.py`）
 2. **Phase 2 — 回归验证**（可选）：运行 benchmark 测试，确认 case 本身没有问题
 
 **转换开始前，必须先向用户确认**：
@@ -266,6 +266,95 @@ Phase 1 结束前，逐项确认：
 - `FORMULA` 已添加（如 benchmark/docs/add-new-case.md 要求）
 - `DYNAMIC_AXIS` 已添加（如 benchmark/docs/add-new-case.md 要求）
 - **`forward()` 中无 int32/int64 中间 MatMul（aclnn 不支持整数 MatMul，量化 golden 用 float() 代替）**
+
+#### Golden 功能覆盖验证（强制 — 新增）
+
+**检查清单通过后、NPU 预检之前**，必须执行以下 1:1 功能覆盖验证。目标是确保生成的 golden 与原 test 的实现范围完全一致，**不允许私自裁剪计算模块**。
+
+##### 验证步骤：
+
+**1. 提取原始 test 的计算模块清单**
+
+读取原始 test 文件中的 golden 参考函数（通常是 `test_*()` 中的纯 PyTorch 计算链或独立的 `*_compute()` / `golden_*()` 函数），逐行梳理出所有计算步骤和中间变量，列出清单：
+
+| 计算步骤 | 输入变量 | 输出变量 | 操作类型 |
+|---------|---------|---------|---------|
+| x @ w_dq | x, w_dq | q_a | MatMul |
+| RMSNorm(q_a, γ) | q_a, gamma | q_norm | RMSNorm |
+| ... | ... | ... | ... |
+
+**注意**：
+- 量化计算链（quant → matmul → dequant）应作为完整步骤检查，不能只覆盖 matmul 而遗漏 quant/dequant
+- 多输入/多输出的分支路径（如 query path / key path）必须**全部覆盖**，不能只覆盖其中一个分支
+- scatter_update / cache 更新等副作用操作也必须纳入检查，不能因为"非核心计算"而跳过
+
+**2. 逐步骤对比生成的 golden**
+
+将步骤 1 的清单，逐行与生成的 `Model.forward()` 对比：
+
+| 原 test 计算步骤 | Golden 中对应行 | 状态 |
+|-----------------|----------------|------|
+| x @ w_dq | L125-130 | ✅ 已覆盖 |
+| RMSNorm(q_a) | L131 | ✅ 已覆盖 |
+| ... | ... | ... |
+
+**比对标准**：
+- ✅ **已覆盖**：golden 中存在功能等价的纯 PyTorch 实现
+- ⚠️ **简化覆盖**：golden 中路径存在但实现有裁剪（如跳过 quant/dequant、合并步骤）—— 需判断简化是否影响覆盖率
+- ❌ **缺失**：golden 中完全没有对应计算——**必须补充**
+
+**3. 核对输入/输出匹配**
+
+验证 golden 的 `forward()` 输入输出与原始 test 的 golden 函数一致：
+
+| 核对项 | 要求 |
+|-------|------|
+| 输入 Tensor 数量 | `get_inputs()` 返回的 tensor 数量 ≥ 原始 test 传入 golden 的 tensor 数量（排除 `nn.Parameter` 权重） |
+| 输出 Tensor 数量 | `forward()` 返回值元素数量 ≥ 原始 test golden 函数的输出元素数量 |
+| 输出数据类型 | golden 输出的 dtype 与原始 test 一致（如 INT8 输出必须是 INT8，不能降级为 FP32/BF16） |
+| 权重参数 | 原始 test 中用到的所有权重必须在 `Model.__init__()` 中有对应的 `nn.Parameter` 或 `register_buffer` |
+
+**4. 处理覆盖缺口**
+
+验证发现覆盖缺口时，按以下优先级处理：
+
+| 缺口类型 | 处理方式 |
+|---------|---------|
+| 计算步骤缺失 | **自行补充到 golden**，确保 1:1 覆盖 |
+| 简化过度导致功能丢失 | **自行修正**，恢复被裁剪的计算 |
+| 无法在 KernelBench 格式中表达 | **向用户报告**，明确说明："XX 计算无法在 KernelBench Model.forward() 中表达（原因：YY），建议：ZZ"，等待用户决策 |
+| NPU 特有 API 无法等价替换 | **向用户报告**，说明限制和替代方案 |
+
+**禁止行为**：
+- ❌ 私自裁剪原始 test 中的计算模块（如：只生成 query path 而跳过 key path）
+- ❌ 将量化/反量化步骤合并简化为直接 FP 计算而不告知用户
+- ❌ 遇到覆盖缺口时静默跳过，不作为缺口汇报
+- ❌ 以"简化 golden"、"降低复杂度"等理由省略计算步骤
+
+**验证通过条件**：所有计算步骤状态为 ✅，所有输入/输出匹配通过，无简化覆盖（或简化已向用户说明并获得同意）。
+
+##### 验证报告模板
+
+验证完成后，输出以下报告（可作为文字输出，不需要生成文件）：
+
+```
+## Golden 功能覆盖验证报告
+
+### 原始 test golden 范围
+- 文件：tests/ops/xxx/test_xxx.py
+- 函数：xxx_compute()
+- 输入 tensor 数：N
+- 输出 tensor 数：M
+- 计算步骤数：K
+
+### 覆盖结果
+- ✅ 已覆盖：X 步
+- ⚠️ 简化覆盖：Y 步（附说明）
+- ❌ 缺失：Z 步（附详情）
+
+### 结论
+[覆盖完整 / 存在缺口需要处理]
+```
 
 #### Case NPU 预检（强制）
 
