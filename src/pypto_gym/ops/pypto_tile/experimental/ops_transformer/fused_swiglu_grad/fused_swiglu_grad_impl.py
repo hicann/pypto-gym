@@ -86,7 +86,6 @@ def fused_swiglu_bwd_b_kernel(
         "cube_l1_reuse_setting": {-1: 2}
     },
     runtime_options={
-        "run_mode": global_run_mode,
         "stitch_function_max_num": 128,
         "device_sched_mode": 3
     }
@@ -128,7 +127,6 @@ def fused_swiglu_bwd_w_kernel(
         "cube_l1_reuse_setting": {-1: 2}
     },
     runtime_options={
-        "run_mode": global_run_mode,
         "stitch_function_max_num": 128,
         "device_sched_mode": 3
     }
