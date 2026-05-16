@@ -87,19 +87,23 @@ def flash_attention_score_grad_golden(
     """
     FlashAttentionScoreGrad 参考实现 (分块流式 softmax)
 
-    与 PyPTO kernel (S_TILE=128) dtype 一致:
-      - Q/K/V/dY/attention_out: BF16
-      - softmax_max/sum: FP32
-      - compute_tile 中间值 (scores, p, dp, ds): matmul(BF16,BF16)→FP32
-      - 累加前 ds/p 降为 BF16，matmul 用 FP32 累加
+    与 PyPTO kernel (S_TILE=128) 计算流完全一致:
+      - Q/K/V/dY/attention_out: BF16 输入
+      - softmax_max/sum: FP32 输入
+      - d_i: dy_i * ao_i (BF16*BF16→BF16) → cast(FP32) → sum(FP32)
+      - compute_tile:
+        s_ij = matmul(Q_BF16, K_BF16^T, FP32) * scale → FP32
+        p_ij = exp(s_ij - smax_i) / ssum_i → FP32
+        dp_ij = matmul(dY_BF16, V_BF16^T, FP32) → FP32
+        ds_ij = p_ij * (dp_ij - d_i) → FP32
+      - ds/p: cast(BF16) 后再 matmul(FP32 累加输出)
       - 累加器 (dq_acc, dk_acc, dv_acc): FP32
-      - 最终输出: BF16
+      - 最终输出: * scale → cast(BF16), 与 kernel 逐 tile cast 一致
 
-    分块策略:
-      - 趟1: 沿 s2 (KV) tile 累积 dQ
-      - 趟2: 沿 s1 (Q) tile 累积 dK, dV
+    分块策略 (与 kernel 完全一致):
+      - 趟1: 沿 s2 (KV) tile 累积 dQ → dQ = sum(ds @ K) * scale
+      - 趟2: 沿 s1 (Q) tile 累积 dK, dV → dK = sum(ds^T @ Q) * scale, dV = sum(p^T @ dY)
     """
-    orig_dtype = inputs.query.dtype
     q = inputs.query
     k = inputs.key
     v = inputs.value
@@ -112,9 +116,9 @@ def flash_attention_score_grad_golden(
 
     B, N, S, D = q.shape
 
-    dq_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
-    dk_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
-    dv_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=q.device)
+    dq_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
+    dk_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
+    dv_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
 
     for b in range(B):
         for n in range(N):
@@ -163,7 +167,7 @@ def flash_attention_score_grad_golden(
                     else:
                         dq_acc += dq_tile
 
-                dq_out[b, n, s1_start:s1_end] = dq_acc * scale
+                dq_out[b, n, s1_start:s1_end] = (dq_acc * scale).to(torch.bfloat16)
 
             # ===== 趟2: 计算 dK, dV =====
             for s2_start in range(0, S, S_TILE):
@@ -206,10 +210,10 @@ def flash_attention_score_grad_golden(
                         dk_acc += dk_tile
                         dv_acc += dv_tile
 
-                dk_out[b, n, s2_start:s2_end] = dk_acc * scale
-                dv_out[b, n, s2_start:s2_end] = dv_acc
+                dk_out[b, n, s2_start:s2_end] = (dk_acc * scale).to(torch.bfloat16)
+                dv_out[b, n, s2_start:s2_end] = dv_acc.to(torch.bfloat16)
 
-    return dq_out.to(orig_dtype), dk_out.to(orig_dtype), dv_out.to(orig_dtype)
+    return dq_out, dk_out, dv_out
 
 
 def _generate_tensors(cfg: ForwardDataConfig):
@@ -229,17 +233,27 @@ def _generate_tensors(cfg: ForwardDataConfig):
     return q, k, v, dy
 
 
-def _compute_forward_outputs(q, k, v, scale, cfg: ForwardDataConfig):
-    """分块流式 softmax 前向计算，dtype 与 PyPTO kernel 保持一致。
+BLOCK_SIZE_Q = 32
+BLOCK_SIZE_KV = 64
 
-    kernel 输入为 BF16，matmul 输出 FP32，softmax 在 FP32 进行，
-    最终 attention_out 为 BF16，max/sum 为 FP32。
+
+def _compute_forward_outputs(q, k, v, scale, cfg: ForwardDataConfig):
+    """分块流式 softmax 前向计算，计算流与 flash_attention_score_kernel_with_mask_origin 完全一致。
+
+    与 kernel 一致的参数:
+      - BLOCK_SIZE_Q=32, BLOCK_SIZE_KV=64
+      - 输入 BF16, matmul 输出 FP32, softmax 在 FP32 进行
+      - 单趟集成计算: 在线 softmax 合并 Q×K→P×V 在同一 KV 循环中完成
+      - 最终 attention_out 为 BF16, softmax_max/sum 为 FP32 (padding 到 last_dim=8)
     """
     B, N, S, D = cfg.batch_size, cfg.num_heads, cfg.seq_len, cfg.head_dim
 
     softmax_max = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
     softmax_sum = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
-    attention_out = torch.zeros(B, N, S, D, dtype=torch.float32, device=cfg.device)
+    attention_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=cfg.device)
+
+    num_blocks_kv = (S + BLOCK_SIZE_KV - 1) // BLOCK_SIZE_KV
+    num_blocks_q = (S + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b in range(B):
         for n in range(N):
@@ -247,45 +261,51 @@ def _compute_forward_outputs(q, k, v, scale, cfg: ForwardDataConfig):
             k_bn = k[b, n]    # BF16
             v_bn = v[b, n]    # BF16
 
-            for s1_start in range(0, S, S_TILE):
-                s1_end = min(s1_start + S_TILE, S)
-                actual_s1 = s1_end - s1_start
-                q_i = q_bn[s1_start:s1_end]  # BF16
+            for q_block_idx in range(num_blocks_q):
+                q_start = q_block_idx * BLOCK_SIZE_Q
+                cur_q_size = min(BLOCK_SIZE_Q, S - q_start)
 
-                m = torch.full((actual_s1, 1), float('-inf'),
-                               dtype=torch.float32, device=cfg.device)
-                l_sum = torch.zeros(actual_s1, 1, dtype=torch.float32,
-                                    device=cfg.device)
+                q_block_2d = q_bn[q_start:q_start + cur_q_size].reshape(cur_q_size, D)
 
-                for s2_start in range(0, S, S_TILE):
-                    s2_end = min(s2_start + S_TILE, S)
-                    k_j = k_bn[s2_start:s2_end]  # BF16
+                mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=cfg.device)
+                li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=cfg.device)
+                oi_update = torch.zeros(cur_q_size, D, dtype=torch.float32, device=cfg.device)
 
-                    # kernel: matmul(BF16, BF16, FP32) → FP32
-                    scores = (q_i.float() @ k_j.float().T) * scale
-                    m_new = torch.maximum(m, scores.amax(dim=-1, keepdim=True))
-                    l_sum = l_sum * torch.exp(m - m_new) + \
-                        torch.exp(scores - m_new).sum(dim=-1, keepdim=True)
-                    m = m_new
+                for kv_block_idx in range(num_blocks_kv):
+                    kv_start = kv_block_idx * BLOCK_SIZE_KV
+                    cur_block_size = min(BLOCK_SIZE_KV, S - kv_start)
 
-                softmax_max[b, n, s1_start:s1_end, 0] = m.squeeze(-1)
-                softmax_sum[b, n, s1_start:s1_end, 0] = l_sum.squeeze(-1)
+                    k_block_2d = k_bn[kv_start:kv_start + cur_block_size].reshape(cur_block_size, D)
 
-                attn_acc = torch.zeros(actual_s1, D, dtype=torch.float32,
-                                       device=cfg.device)
-                for s2_start in range(0, S, S_TILE):
-                    s2_end = min(s2_start + S_TILE, S)
-                    k_j = k_bn[s2_start:s2_end]  # BF16
-                    v_j = v_bn[s2_start:s2_end]  # BF16
+                    scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
+                    scores_scaled = scores * scale
 
-                    scores = (q_i.float() @ k_j.float().T) * scale
-                    p_ij = torch.exp(scores - m) / l_sum
-                    # kernel: p_ij(FP32) @ v_j(BF16) → FP32 accum
-                    attn_acc += p_ij @ v_j.float()
+                    m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
+                    s_ij_sub_m = scores_scaled - m_ij
+                    p_ij = torch.exp(s_ij_sub_m)
+                    l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
-                attention_out[b, n, s1_start:s1_end] = attn_acc
+                    v_block_2d = v_bn[kv_start:kv_start + cur_block_size].reshape(cur_block_size, D).float()
+                    o_ij = torch.matmul(p_ij, v_block_2d)
 
-    return attention_out.to(cfg.dtype), softmax_max, softmax_sum
+                    if kv_block_idx == 0:
+                        mi_update = m_ij
+                        li_update = l_ij
+                        oi_update = o_ij
+                    else:
+                        mi_new = torch.maximum(mi_update, m_ij)
+                        alpha = torch.exp(mi_update - mi_new)
+                        beta = torch.exp(m_ij - mi_new)
+                        li_update = alpha * li_update + beta * l_ij
+                        oi_update = alpha * oi_update + beta * o_ij
+                        mi_update = mi_new
+
+                o_final = oi_update / li_update
+                attention_out[b, n, q_start:q_start + cur_q_size] = o_final.to(torch.bfloat16)
+                softmax_max[b, n, q_start:q_start + cur_q_size, 0] = mi_update.squeeze(-1)
+                softmax_sum[b, n, q_start:q_start + cur_q_size, 0] = li_update.squeeze(-1)
+
+    return attention_out, softmax_max, softmax_sum
 
 
 def generate_forward_data(

@@ -81,6 +81,10 @@ def check_nan(tensor: torch.Tensor, name: str) -> bool:
     return False
 
 
+BLOCK_SIZE_Q = 32
+BLOCK_SIZE_KV = 64
+
+
 def flash_attention_score_golden_origin(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -91,52 +95,80 @@ def flash_attention_score_golden_origin(
     
     This version only returns output, without softmax_max and softmax_sum.
     Uses fixed scale = 1/sqrt(HEAD_DIM).
+    
+    Computation flow matches the kernel exactly:
+    - Tiling: BLOCK_SIZE_Q=32, BLOCK_SIZE_KV=64
+    - Q*K^T: BF16 matmul -> FP32 output
+    - Mask: 0=valid, 1=masked -> valid_mask = 1-mask, applied after exp
+    - Online softmax: m_ij computed over all scores (incl masked), then p_ij zeroed
     """
     b, n, sq, d = query.shape
     _, _, skv, _ = key.shape
 
     scale = 1.0 / math.sqrt(d)
 
-    query_fp32 = query.float()
-    key_fp32 = key.float()
-    value_fp32 = value.float()
+    if atten_mask is not None:
+        atten_mask_fp32 = atten_mask.float()
+    else:
+        atten_mask_fp32 = None
 
-    output = torch.zeros(b, n, sq, d, dtype=torch.float32, device=query.device)
+    output = torch.zeros(b, n, sq, d, dtype=torch.bfloat16, device=query.device)
+
+    num_blocks_kv = (skv + BLOCK_SIZE_KV - 1) // BLOCK_SIZE_KV
+    num_blocks_q = (sq + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b_idx in range(b):
         for n_idx in range(n):
-            for q_idx in range(sq):
-                q_vec = query_fp32[b_idx, n_idx, q_idx, :]
+            for q_block_idx in range(num_blocks_q):
+                q_start = q_block_idx * BLOCK_SIZE_Q
+                cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
 
-                max_score = float('-inf')
-                sum_exp = 0.0
-                output_vec = torch.zeros(d, dtype=torch.float32, device=query.device)
+                q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
 
-                for kv_idx in range(skv):
-                    if atten_mask is not None and atten_mask[q_idx, kv_idx] == 1:
-                        continue
+                mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=query.device)
+                li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=query.device)
+                oi_update = torch.zeros(cur_q_size, d, dtype=torch.float32, device=query.device)
 
-                    k_vec = key_fp32[b_idx, n_idx, kv_idx, :]
-                    score = torch.dot(q_vec, k_vec) * scale
+                for kv_block_idx in range(num_blocks_kv):
+                    kv_start = kv_block_idx * BLOCK_SIZE_KV
+                    cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
 
-                    new_max = max(max_score, score.item())
+                    k_block_2d = key[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
 
-                    if new_max > max_score:
-                        correction = math.exp(max_score - new_max)
-                        sum_exp = sum_exp * correction
-                        output_vec = output_vec * correction
-                        max_score = new_max
+                    scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
+                    scores_scaled = scores * scale
 
-                    exp_score = math.exp(score - max_score)
-                    sum_exp += exp_score
+                    if atten_mask_fp32 is not None:
+                        mask_block = atten_mask_fp32[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
+                        valid_mask = 1.0 - mask_block
+                    else:
+                        valid_mask = torch.ones(cur_q_size, cur_block_size, dtype=torch.float32, device=query.device)
 
-                    v_vec = value_fp32[b_idx, n_idx, kv_idx, :]
-                    output_vec += exp_score * v_vec
+                    m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
+                    s_ij_sub_m = scores_scaled - m_ij
+                    p_ij = torch.exp(s_ij_sub_m)
+                    p_ij = p_ij * valid_mask
+                    l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
-                if sum_exp > 0:
-                    output[b_idx, n_idx, q_idx, :] = output_vec / sum_exp
+                    v_block_2d = value[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
+                    o_ij = torch.matmul(p_ij, v_block_2d)
 
-    return output.to(torch.bfloat16)
+                    if kv_block_idx == 0:
+                        mi_update = m_ij
+                        li_update = l_ij
+                        oi_update = o_ij
+                    else:
+                        mi_new = torch.maximum(mi_update, m_ij)
+                        alpha = torch.exp(mi_update - mi_new)
+                        beta = torch.exp(m_ij - mi_new)
+                        li_update = alpha * li_update + beta * l_ij
+                        oi_update = alpha * oi_update + beta * o_ij
+                        mi_update = mi_new
+
+                o_final = oi_update / li_update
+                output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
+
+    return output
 
 
 def flash_attention_score_golden(
@@ -150,57 +182,84 @@ def flash_attention_score_golden(
     
     Args:
         scale_value: Scaling factor for attention scores (default: 1/sqrt(HEAD_DIM))
+    
+    Computation flow matches the kernel exactly:
+    - Tiling: BLOCK_SIZE_Q=32, BLOCK_SIZE_KV=64
+    - Q*K^T: BF16 matmul -> FP32 output
+    - Mask: 0=valid, 1=masked -> valid_mask = 1-mask, applied after exp
+    - Online softmax: m_ij computed over all scores (incl masked), then p_ij zeroed
     """
     b, n, sq, d = query.shape
     _, _, skv, _ = key.shape
 
     scale = scale_value if scale_value is not None else 1.0 / math.sqrt(d)
 
-    query_fp32 = query.float()
-    key_fp32 = key.float()
-    value_fp32 = value.float()
+    if atten_mask is not None:
+        atten_mask_fp32 = atten_mask.float()
+    else:
+        atten_mask_fp32 = None
 
-    output = torch.zeros(b, n, sq, d, dtype=torch.float32, device=query.device)
+    output = torch.zeros(b, n, sq, d, dtype=torch.bfloat16, device=query.device)
     softmax_max = torch.zeros(b, n, sq, 1, dtype=torch.float32, device=query.device)
     softmax_sum = torch.zeros(b, n, sq, 1, dtype=torch.float32, device=query.device)
 
+    num_blocks_kv = (skv + BLOCK_SIZE_KV - 1) // BLOCK_SIZE_KV
+    num_blocks_q = (sq + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
+
     for b_idx in range(b):
         for n_idx in range(n):
-            for q_idx in range(sq):
-                q_vec = query_fp32[b_idx, n_idx, q_idx, :]
+            for q_block_idx in range(num_blocks_q):
+                q_start = q_block_idx * BLOCK_SIZE_Q
+                cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
 
-                max_score = float('-inf')
-                sum_exp = 0.0
-                output_vec = torch.zeros(d, dtype=torch.float32, device=query.device)
+                q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
 
-                for kv_idx in range(skv):
-                    if atten_mask is not None and atten_mask[q_idx, kv_idx] == 1:
-                        continue
+                mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=query.device)
+                li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=query.device)
+                oi_update = torch.zeros(cur_q_size, d, dtype=torch.float32, device=query.device)
 
-                    k_vec = key_fp32[b_idx, n_idx, kv_idx, :]
-                    score = torch.dot(q_vec, k_vec) * scale
+                for kv_block_idx in range(num_blocks_kv):
+                    kv_start = kv_block_idx * BLOCK_SIZE_KV
+                    cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
 
-                    new_max = max(max_score, score.item())
+                    k_block_2d = key[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
 
-                    if new_max > max_score:
-                        correction = math.exp(max_score - new_max)
-                        sum_exp = sum_exp * correction
-                        output_vec = output_vec * correction
-                        max_score = new_max
+                    scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
+                    scores_scaled = scores * scale
 
-                    exp_score = math.exp(score - max_score)
-                    sum_exp += exp_score
+                    if atten_mask_fp32 is not None:
+                        mask_block = atten_mask_fp32[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
+                        valid_mask = 1.0 - mask_block
+                    else:
+                        valid_mask = torch.ones(cur_q_size, cur_block_size, dtype=torch.float32, device=query.device)
 
-                    v_vec = value_fp32[b_idx, n_idx, kv_idx, :]
-                    output_vec += exp_score * v_vec
+                    m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
+                    s_ij_sub_m = scores_scaled - m_ij
+                    p_ij = torch.exp(s_ij_sub_m)
+                    p_ij = p_ij * valid_mask
+                    l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
-                if sum_exp > 0:
-                    output[b_idx, n_idx, q_idx, :] = output_vec / sum_exp
-                    
-                softmax_max[b_idx, n_idx, q_idx, 0] = max_score
-                softmax_sum[b_idx, n_idx, q_idx, 0] = sum_exp
+                    v_block_2d = value[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
+                    o_ij = torch.matmul(p_ij, v_block_2d)
 
-    return output.to(torch.bfloat16), softmax_max, softmax_sum
+                    if kv_block_idx == 0:
+                        mi_update = m_ij
+                        li_update = l_ij
+                        oi_update = o_ij
+                    else:
+                        mi_new = torch.maximum(mi_update, m_ij)
+                        alpha = torch.exp(mi_update - mi_new)
+                        beta = torch.exp(m_ij - mi_new)
+                        li_update = alpha * li_update + beta * l_ij
+                        oi_update = alpha * oi_update + beta * o_ij
+                        mi_update = mi_new
+
+                o_final = oi_update / li_update
+                output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
+                softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
+                softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = li_update.reshape(cur_q_size, 1)
+
+    return output, softmax_max, softmax_sum
 
 
 @dataclass
@@ -222,6 +281,14 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
     
     Args:
         inputs: FlashAttentionInputs containing all input tensors and parameters
+    
+    Computation flow matches the kernel exactly:
+    - Tiling: BLOCK_SIZE_Q=32, BLOCK_SIZE_KV=64
+    - Q*K^T: BF16 matmul -> FP32 output
+    - PSE: BF16 -> FP32 cast; pse_type==1: (PSE+QKT)*scale, else: QKT*scale+PSE
+    - Mask: 0=valid, 1=masked -> valid_mask = 1-mask, applied after exp
+    - Dropout: p_ij *= drop_mask, if keep_prob<1: p_ij /= keep_prob
+    - Online softmax: m_ij computed over all scores (incl masked), then p_ij zeroed
     """
     query = inputs.query
     key = inputs.key
@@ -237,61 +304,88 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
 
     scale = scale_value if scale_value is not None else 1.0 / math.sqrt(d)
 
-    query_fp32 = query.float()
-    key_fp32 = key.float()
-    value_fp32 = value.float()
-    pse_fp32 = pse.float()
+    if atten_mask is not None:
+        atten_mask_fp32 = atten_mask.float()
+    else:
+        atten_mask_fp32 = None
 
-    output = torch.zeros(b, n, sq, d, dtype=torch.float32, device=query.device)
+    output = torch.zeros(b, n, sq, d, dtype=torch.bfloat16, device=query.device)
     softmax_max = torch.zeros(b, n, sq, 1, dtype=torch.float32, device=query.device)
     softmax_sum = torch.zeros(b, n, sq, 1, dtype=torch.float32, device=query.device)
 
+    num_blocks_kv = (skv + BLOCK_SIZE_KV - 1) // BLOCK_SIZE_KV
+    num_blocks_q = (sq + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
+
     for b_idx in range(b):
         for n_idx in range(n):
-            for q_idx in range(sq):
-                q_vec = query_fp32[b_idx, n_idx, q_idx, :]
+            for q_block_idx in range(num_blocks_q):
+                q_start = q_block_idx * BLOCK_SIZE_Q
+                cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
 
-                max_score = float('-inf')
-                sum_exp = 0.0
-                output_vec = torch.zeros(d, dtype=torch.float32, device=query.device)
+                q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
 
-                for kv_idx in range(skv):
-                    if atten_mask is not None and atten_mask[q_idx, kv_idx] == 1:
-                        continue
+                mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=query.device)
+                li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=query.device)
+                oi_update = torch.zeros(cur_q_size, d, dtype=torch.float32, device=query.device)
 
-                    k_vec = key_fp32[b_idx, n_idx, kv_idx, :]
-                    
+                for kv_block_idx in range(num_blocks_kv):
+                    kv_start = kv_block_idx * BLOCK_SIZE_KV
+                    cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
+
+                    k_block_2d = key[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
+
+                    scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
+
+                    pse_block_2d = pse[b_idx, n_idx, q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size].reshape(cur_q_size, cur_block_size)
+                    pse_fp32 = pse_block_2d.float()
+
                     if pse_type == 1:
-                        score = (torch.dot(q_vec, k_vec) + pse_fp32[b_idx, n_idx, q_idx, kv_idx]) * scale
+                        scores = scores + pse_fp32
+                        scores_scaled = scores * scale
                     else:
-                        score = torch.dot(q_vec, k_vec) * scale + pse_fp32[b_idx, n_idx, q_idx, kv_idx]
+                        scores_scaled = scores * scale
+                        scores_scaled = scores_scaled + pse_fp32
 
-                    new_max = max(max_score, score.item())
+                    if atten_mask_fp32 is not None:
+                        mask_block = atten_mask_fp32[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
+                        valid_mask = 1.0 - mask_block
+                    else:
+                        valid_mask = torch.ones(cur_q_size, cur_block_size, dtype=torch.float32, device=query.device)
 
-                    if new_max > max_score:
-                        correction = math.exp(max_score - new_max)
-                        sum_exp = sum_exp * correction
-                        output_vec = output_vec * correction
-                        max_score = new_max
+                    m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
+                    s_ij_sub_m = scores_scaled - m_ij
+                    p_ij = torch.exp(s_ij_sub_m)
+                    p_ij = p_ij * valid_mask
 
-                    exp_score = math.exp(score - max_score)
-                    exp_score = exp_score * drop_mask[q_idx, kv_idx]
-                    
+                    drop_mask_block = drop_mask[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
+                    p_ij = p_ij * drop_mask_block
+
                     if keep_prob < 1.0:
-                        exp_score = exp_score / keep_prob
-                    
-                    sum_exp += exp_score
+                        p_ij = p_ij / keep_prob
 
-                    v_vec = value_fp32[b_idx, n_idx, kv_idx, :]
-                    output_vec += exp_score * v_vec
+                    l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
-                if sum_exp > 0:
-                    output[b_idx, n_idx, q_idx, :] = output_vec / sum_exp
-                    
-                softmax_max[b_idx, n_idx, q_idx, 0] = max_score
-                softmax_sum[b_idx, n_idx, q_idx, 0] = sum_exp
+                    v_block_2d = value[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
+                    o_ij = torch.matmul(p_ij, v_block_2d)
 
-    return output.to(torch.bfloat16), softmax_max, softmax_sum
+                    if kv_block_idx == 0:
+                        mi_update = m_ij
+                        li_update = l_ij
+                        oi_update = o_ij
+                    else:
+                        mi_new = torch.maximum(mi_update, m_ij)
+                        alpha = torch.exp(mi_update - mi_new)
+                        beta = torch.exp(m_ij - mi_new)
+                        li_update = alpha * li_update + beta * l_ij
+                        oi_update = alpha * oi_update + beta * o_ij
+                        mi_update = mi_new
+
+                o_final = oi_update / li_update
+                output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
+                softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
+                softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = li_update.reshape(cur_q_size, 1)
+
+    return output, softmax_max, softmax_sum
 
 
 def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_golden: bool = False):
