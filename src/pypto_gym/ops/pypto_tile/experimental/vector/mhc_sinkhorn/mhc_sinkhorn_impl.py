@@ -68,9 +68,8 @@ def mhc_sinkhorn_kernel(
         comb_flag = pypto.transpose(comb_flag, 1, 0)
         pypto.set_vec_tile_shapes(256,16)
         
-        tmp = pypto.Tensor([t,hc*hc], dtype=pypto.DT_FP32)
-        pypto.assemble(comb_flag, [t_idx, 0], tmp)
-        out[:] = pypto.reshape(tmp, [t,hc,hc],inplace=True)
+        comb_flag = pypto.reshape(comb_flag, [tile_t, hc, hc], valid_shape=[t_valid, hc, hc], inplace=True)
+        out[t_idx:, :, :] = comb_flag
 
 
 def mhc_sinkhorn_wrapper(
