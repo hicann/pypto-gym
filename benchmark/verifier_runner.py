@@ -58,6 +58,7 @@ from benchmark.opencode_exporter import (
     append_export_result_to_log,
     export_session_from_log,
     make_session_title,
+    merge_token_usage,
 )
 from benchmark.process_registry import register, terminate_process_group, unregister
 
@@ -96,6 +97,8 @@ class VerifierResult:
     opencode_session_id: Optional[str] = None
     opencode_session_md_file: Optional[Path] = None
     opencode_session_export_message: str = ""
+    opencode_token_usage: Dict[str, Any] = field(default_factory=dict)
+    opencode_token_usage_attempts: List[Dict[str, Any]] = field(default_factory=list)
 
     # 性能字段 (mode=performance/full 才有数值; mode=correctness 全为 None).
     # 来源: KernelVerifier.run_profile() 返回 dict.
@@ -125,6 +128,8 @@ class VerifierResult:
                 if self.opencode_session_md_file else None
             ),
             "opencode_session_export_message": self.opencode_session_export_message,
+            "opencode_token_usage": self.opencode_token_usage,
+            "opencode_token_usage_attempts": self.opencode_token_usage_attempts,
             "extra": self.extra,
             "perf": {
                 "gen_time_us": self.perf_gen_time_us,
@@ -601,6 +606,21 @@ def _attempt_log_file(log_file: Optional[Path], attempt_index: int) -> Optional[
     return log_file.with_name(f"{log_file.stem}.attempt{attempt_index}{log_file.suffix}")
 
 
+def _opencode_token_usage_attempt(
+    *,
+    attempt_index: int,
+    log_file: Optional[Path],
+    result: VerifierResult,
+) -> Dict[str, Any]:
+    return {
+        "attempt": attempt_index,
+        "session_id": result.opencode_session_id,
+        "log_file": str(log_file) if log_file else None,
+        "status": result.status.value,
+        "token_usage": result.opencode_token_usage,
+    }
+
+
 def _is_opencode_retryable(result: VerifierResult) -> bool:
     if result.status != VerifierStatus.ERROR:
         return False
@@ -704,6 +724,11 @@ async def _run_via_opencode_skill(
             output_dir=output_dir,
         )
         total_duration += result.duration_sec
+        token_usage_attempt = _opencode_token_usage_attempt(
+            attempt_index=attempt_index,
+            log_file=attempt_log,
+            result=result,
+        )
         attempts.append({
             "attempt": attempt_index,
             "status": result.status.value,
@@ -711,10 +736,25 @@ async def _run_via_opencode_skill(
             "retryable": _is_opencode_retryable(result),
             "log_file": str(result.log_file) if result.log_file else None,
             "session_id": result.opencode_session_id,
+            "token_usage": result.opencode_token_usage,
             "message": result.message,
         })
         result.extra["opencode_attempts"] = attempts
         result.extra["opencode_retry_count"] = attempt_index - 1
+        result.opencode_token_usage_attempts = [
+            {
+                "attempt": attempt.get("attempt"),
+                "session_id": attempt.get("session_id"),
+                "log_file": attempt.get("log_file"),
+                "status": attempt.get("status"),
+                "token_usage": attempt.get("token_usage"),
+            }
+            for attempt in attempts
+        ]
+        result.opencode_token_usage_attempts[-1] = token_usage_attempt
+        result.opencode_token_usage = merge_token_usage(
+            [attempt.get("token_usage") for attempt in attempts]
+        )
         result.duration_sec = total_duration
 
         if not _is_opencode_retryable(result) or attempt_index >= max_attempts:
@@ -901,6 +941,7 @@ async def _run_via_opencode_skill_once(
     session_id = session_export.session_id
     session_md_file = session_export.markdown_file if session_export.ok else None
     session_export_message = session_export.message
+    token_usage = session_export.token_usage
 
     log_text = log_file.read_text(encoding="utf-8", errors="replace") if log_file else ""
 
@@ -926,6 +967,7 @@ async def _run_via_opencode_skill_once(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=token_usage,
         )
 
     try:
@@ -942,6 +984,7 @@ async def _run_via_opencode_skill_once(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=token_usage,
         )
 
     result = _skill_report_to_result(
@@ -954,6 +997,7 @@ async def _run_via_opencode_skill_once(
     result.opencode_session_id = session_id
     result.opencode_session_md_file = session_md_file
     result.opencode_session_export_message = session_export_message
+    result.opencode_token_usage = token_usage
     return result
 
 

@@ -32,6 +32,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable, List, Optional, Dict, Any
 
+from benchmark.opencode_exporter import merge_token_usage
+
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,8 @@ class CaseRunRecord:
     pypto_session_id: Optional[str] = None
     pypto_session_md_file: Optional[str] = None
     pypto_session_export_message: str = ""
+    pypto_token_usage: Dict[str, Any] = field(default_factory=dict)
+    pypto_token_usage_attempts: List[Dict[str, Any]] = field(default_factory=list)
     pypto_artifacts: Dict[str, str] = field(default_factory=dict)
 
     # verifier 验证阶段
@@ -69,6 +73,8 @@ class CaseRunRecord:
     verifier_session_id: Optional[str] = None
     verifier_session_md_file: Optional[str] = None
     verifier_session_export_message: str = ""
+    verifier_token_usage: Dict[str, Any] = field(default_factory=dict)
+    verifier_token_usage_attempts: List[Dict[str, Any]] = field(default_factory=list)
     correctness: Optional[bool] = None
 
     # 性能字段 (仅 mode=performance/full 有数值; mode=correctness 全为 None).
@@ -80,7 +86,7 @@ class CaseRunRecord:
     perf_message: str = ""                         # perf 阶段独立消息 (如 "skipped: correctness failed")
 
     # 合并视角
-    overall_status: str = ""         # success / pypto_failed / verify_failed / baseline_failed / verify_error
+    overall_status: str = ""         # success / pypto_failed / verify_failed / baseline_failed / verify_error / verifier_skipped
     failure_category: str = ""       # verifier / skill_report; PASS 或未分类为空
     started_at: str = ""
     finished_at: str = ""
@@ -115,6 +121,8 @@ def derive_overall_status(pypto_ok: bool, verifier_status: Optional[str],
     """三个状态合一."""
     if not pypto_ok:
         return "pypto_failed"
+    if verifier_status == "skipped":
+        return "verifier_skipped"
     if verifier_status == "passed" and correctness is True:
         return "success"
     if verifier_status == "baseline_failed":
@@ -145,7 +153,11 @@ def is_profile_only_failure(record: CaseRunRecord) -> bool:
 
 def counts_as_aggregate_success(record: CaseRunRecord) -> bool:
     """批跑收尾/退出码与 summary 成功计数: overall success 或仅 profile 失败."""
-    return record.succeeded or is_profile_only_failure(record)
+    return (
+        record.succeeded
+        or is_profile_only_failure(record)
+        or record.overall_status == "verifier_skipped"
+    )
 
 
 # ────────────────────────────────────────────────────────────
@@ -211,8 +223,11 @@ def _compute_totals(records: List[CaseRunRecord], *, include_by_level: bool = Tr
     correctness_unknown = 0
     by_failure_category: Dict[str, int] = {}
     profile_only_failures = 0
+    aggregate_success = 0
     for r in records:
         eff = r.overall_status
+        if counts_as_aggregate_success(r):
+            aggregate_success += 1
         if is_profile_only_failure(r):
             eff = "success"
             profile_only_failures += 1
@@ -235,7 +250,10 @@ def _compute_totals(records: List[CaseRunRecord], *, include_by_level: bool = Tr
     speedups = [r.perf_speedup for r in records
                 if isinstance(r.perf_speedup, (int, float)) and r.perf_speedup is not None]
 
-    success = overall_buckets.get("success", 0)
+    pypto_token_usage = merge_token_usage([r.pypto_token_usage for r in records])
+    verifier_token_usage = merge_token_usage([r.verifier_token_usage for r in records])
+    token_usage = merge_token_usage([pypto_token_usage, verifier_token_usage])
+    success = aggregate_success
     out: Dict[str, Any] = {
         "total": total,
         "success": success,
@@ -248,6 +266,11 @@ def _compute_totals(records: List[CaseRunRecord], *, include_by_level: bool = Tr
         },
         "by_failure_category": by_failure_category,
         "profile_only_failures": profile_only_failures,
+        "tokens": token_usage,
+        "tokens_by_phase": {
+            "pypto": pypto_token_usage,
+            "verifier": verifier_token_usage,
+        },
         "duration_sec": {
             "pypto_total": round(sum(pypto_durations), 2),
             "pypto_mean": round(statistics.mean(pypto_durations), 2) if pypto_durations else 0.0,
@@ -295,6 +318,7 @@ _STATUS_BADGE = {
     "verify_failed": "FAIL (verify)",
     "baseline_failed": "FAIL (baseline)",
     "verify_error": "ERROR",
+    "verifier_skipped": "SKIP (verify)",
 }
 
 
@@ -359,6 +383,15 @@ def _fmt_perf_num(value: Any, suffix: str = "", spec: str = ".2f") -> str:
     return "—"
 
 
+def _fmt_token_int(value: Any) -> str:
+    if isinstance(value, bool) or value is None:
+        return "0"
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
 def _render_markdown(payload: Dict[str, Any]) -> str:
     meta = payload["meta"]
     totals = payload["totals"]
@@ -415,6 +448,29 @@ def _render_markdown(payload: Dict[str, Any]) -> str:
                 f"max={perf_agg['speedup_max']:.3f}x, "
                 f"mean={perf_agg['speedup_mean']:.3f}x, "
                 f"geomean={perf_agg['speedup_geomean']:.3f}x"
+            )
+
+        token_usage = totals.get("tokens") or {}
+        if token_usage.get("supported"):
+            phase_tokens = totals.get("tokens_by_phase") or {}
+            pypto_tokens = phase_tokens.get("pypto") or {}
+            verifier_tokens = phase_tokens.get("verifier") or {}
+            cache = token_usage.get("cache") or {}
+            lines.append(
+                "- **OpenCode token 用量**: "
+                f"total={_fmt_token_int(token_usage.get('total'))}, "
+                f"input={_fmt_token_int(token_usage.get('input'))}, "
+                f"output={_fmt_token_int(token_usage.get('output'))}, "
+                f"reasoning={_fmt_token_int(token_usage.get('reasoning'))}, "
+                f"cache_read={_fmt_token_int(cache.get('read'))}, "
+                f"cache_write={_fmt_token_int(cache.get('write'))}, "
+                f"cost=${float(token_usage.get('cost') or 0):.6f}, "
+                f"messages={_fmt_token_int(token_usage.get('message_count'))}"
+            )
+            lines.append(
+                "- **OpenCode token 分阶段**: "
+                f"pypto={_fmt_token_int(pypto_tokens.get('total'))}, "
+                f"verifier={_fmt_token_int(verifier_tokens.get('total'))}"
             )
 
         dur = totals.get("duration_sec", {})

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from benchmark import run_kernelbench
 from benchmark.case_loader import CaseSpec
+from benchmark.pypto_runner import PyptoRunResult, PyptoRunStatus
 from benchmark.run_kernelbench import _build_cfg, run_one_case
 from benchmark.verifier_runner import VerifierResult, VerifierStatus
 
@@ -120,3 +121,64 @@ def test_run_one_case_verifier_exception_sets_system_error(monkeypatch, tmp_path
     record = asyncio.run(_run())
     assert record.failure_category == "system_error"
     assert record.verifier_status == VerifierStatus.ERROR.value
+
+
+def test_run_one_case_skip_verifier_does_not_call_run_verifier(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "pypto_repo"
+    repo.mkdir()
+    (repo / ".opencode").mkdir()
+    cfg_dict = {
+        "output": {"root_dir": str(tmp_path / "run_root")},
+        "pypto": {
+            "repo_root": str(repo),
+            "workdir_root": "custom",
+        },
+        "verifier": {
+            "skip": True,
+        },
+    }
+    cfg = _build_cfg(cfg_dict)
+    cfg.arch_by_device = {0: "ascend910b4"}
+
+    case_path = tmp_path / "level1" / "19_ReLU.py"
+    case_path.parent.mkdir(parents=True)
+    case_path.touch()
+
+    fake_case = CaseSpec(
+        op_name="relu",
+        case_id="19_ReLU",
+        source_file=str(case_path),
+        task_desc="# stub",
+        level="level1",
+    )
+
+    def fake_load(p: Path, case_id=None) -> CaseSpec:
+        return fake_case
+
+    def fake_run_pypto_workflow(**kwargs):
+        return PyptoRunResult(
+            op_name="relu",
+            status=PyptoRunStatus.SUCCESS,
+            workdir=kwargs["pypto_repo_root"] / "custom" / "relu",
+            log_file=tmp_path / "pypto_run.log",
+            message="ok",
+        )
+
+    async def fail_run_verifier(**_kwargs):
+        raise AssertionError("run_verifier must not be called when verifier.skip=true")
+
+    monkeypatch.setattr(run_kernelbench.case_loader, "load_case", fake_load)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_require", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench.case_loader, "write_task_desc", lambda *_a, **_k: None)
+    monkeypatch.setattr(run_kernelbench, "run_pypto_workflow", fake_run_pypto_workflow)
+    monkeypatch.setattr(run_kernelbench, "run_verifier", fail_run_verifier)
+
+    async def _run():
+        sem = asyncio.Semaphore(2)
+        return await run_one_case(case_path, 0, cfg, sem)
+
+    record = asyncio.run(_run())
+    assert record.pypto_status == PyptoRunStatus.SUCCESS.value
+    assert record.verifier_status == "skipped"
+    assert record.overall_status == "verifier_skipped"
+    assert record.correctness is None

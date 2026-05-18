@@ -136,6 +136,13 @@ python -m benchmark run --config configs/relu.yaml --foreground
 python -m benchmark run --config configs/relu.yaml --no-auto-monitor
 ```
 
+To run only the PyPTO generation flow and skip KernelVerifier, set:
+
+```yaml
+verifier:
+  skip: true
+```
+
 One-command quick start scripts are also available:
 
 ```bash

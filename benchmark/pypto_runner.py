@@ -52,6 +52,7 @@ from benchmark.opencode_exporter import (
     append_export_result_to_log,
     export_session_from_log,
     make_session_title,
+    merge_token_usage,
 )
 from benchmark.process_registry import register, terminate_process_group, unregister
 
@@ -97,6 +98,8 @@ class PyptoRunResult:
     opencode_session_id: Optional[str] = None
     opencode_session_md_file: Optional[Path] = None
     opencode_session_export_message: str = ""
+    opencode_token_usage: Dict[str, object] = field(default_factory=dict)
+    opencode_token_usage_attempts: List[dict] = field(default_factory=list)
     incomplete_retry_attempts: List[dict] = field(default_factory=list)
 
     @property
@@ -121,6 +124,8 @@ class PyptoRunResult:
                 if self.opencode_session_md_file else None
             ),
             "opencode_session_export_message": self.opencode_session_export_message,
+            "opencode_token_usage": self.opencode_token_usage,
+            "opencode_token_usage_attempts": self.opencode_token_usage_attempts,
             "incomplete_retry_attempts": self.incomplete_retry_attempts,
         }
 
@@ -381,6 +386,7 @@ Stage 7 约束:
 - 走真实 NPU 验证 (有可用 NPU 时), 不要降级到 sim 模式.
 - 完成或阻塞状态只以 `.orchestrator_state.json` 为准: 成功必须是 Stage 1-7
   全部 `completed`; 无法继续时必须把失败 stage 标记为 `failed`.
+- 调用 state_transition 若需要 marker/标记参数, 空标记统一使用 `no_marker`.
 
 请立即开始, 不要再问我问题.
 """
@@ -477,6 +483,21 @@ def _attempt_log_file(log_file: Optional[Path], attempt_index: int) -> Optional[
 
 def _attempt_logs(log_file: Optional[Path]) -> List[Path]:
     return [log_file] if log_file is not None else []
+
+
+def _opencode_token_usage_attempt(
+    *,
+    attempt_index: int,
+    log_file: Optional[Path],
+    session_export: OpencodeExportResult,
+) -> dict:
+    return {
+        "attempt": attempt_index,
+        "session_id": session_export.session_id,
+        "log_file": str(log_file) if log_file else None,
+        "export_status": session_export.status,
+        "token_usage": session_export.token_usage,
+    }
 
 
 def _incomplete_retry_reason(timed_out: bool, returncode: Optional[int]) -> str:
@@ -994,6 +1015,11 @@ def run_pypto_workflow(
     session_id = session_export.session_id
     session_md_file = session_export.markdown_file if session_export.ok else None
     session_export_message = session_export.message
+    token_usage_attempt = _opencode_token_usage_attempt(
+        attempt_index=_attempt_index,
+        log_file=log_file,
+        session_export=session_export,
+    )
     state = _read_orchestrator_state(op_dir)
     missing = all_artifacts_present(artifacts)
 
@@ -1049,6 +1075,15 @@ def run_pypto_workflow(
         retry_result.duration_sec += duration
         retry_result.retry_count += 1
         retry_result.attempt_log_files = _attempt_logs(log_file) + retry_result.attempt_log_files
+        retry_result.opencode_token_usage_attempts = (
+            [token_usage_attempt] + retry_result.opencode_token_usage_attempts
+        )
+        retry_result.opencode_token_usage = merge_token_usage(
+            [
+                attempt.get("token_usage")
+                for attempt in retry_result.opencode_token_usage_attempts
+            ]
+        )
         retry_result.incomplete_retry_attempts = (
             incomplete_retry_attempts + retry_result.incomplete_retry_attempts
         )
@@ -1087,6 +1122,8 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=session_export.token_usage,
+            opencode_token_usage_attempts=[token_usage_attempt],
             incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
@@ -1107,6 +1144,8 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=session_export.token_usage,
+            opencode_token_usage_attempts=[token_usage_attempt],
             incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
@@ -1127,6 +1166,8 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=session_export.token_usage,
+            opencode_token_usage_attempts=[token_usage_attempt],
             incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
@@ -1144,6 +1185,8 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=session_export.token_usage,
+            opencode_token_usage_attempts=[token_usage_attempt],
             incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
@@ -1161,6 +1204,8 @@ def run_pypto_workflow(
             opencode_session_id=session_id,
             opencode_session_md_file=session_md_file,
             opencode_session_export_message=session_export_message,
+            opencode_token_usage=session_export.token_usage,
+            opencode_token_usage_attempts=[token_usage_attempt],
             incomplete_retry_attempts=incomplete_retry_attempts,
         )
 
@@ -1177,6 +1222,8 @@ def run_pypto_workflow(
         opencode_session_id=session_id,
         opencode_session_md_file=session_md_file,
         opencode_session_export_message=session_export_message,
+        opencode_token_usage=session_export.token_usage,
+        opencode_token_usage_attempts=[token_usage_attempt],
         incomplete_retry_attempts=incomplete_retry_attempts,
     )
 

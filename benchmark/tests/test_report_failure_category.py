@@ -12,6 +12,7 @@ from benchmark.report import (
     _compute_totals,
     _failure_category_display,
     _render_markdown,
+    counts_as_aggregate_success,
     is_profile_only_failure,
 )
 
@@ -194,3 +195,91 @@ def test_render_markdown_profile_only_shows_badge_and_count() -> None:
     assert "PASS (prof 失败)" in md
     assert "仅 profile/性能失败" in md
     assert "| `L1` | `p` | `9_p` | PASS (prof 失败) | 性能失败 | ✓ |" in md
+
+
+def test_verifier_skipped_counts_as_aggregate_success_but_keeps_status() -> None:
+    skipped = CaseRunRecord(
+        op_name="p",
+        case_id="9_p",
+        source_file="p.py",
+        level="L1",
+        overall_status="verifier_skipped",
+        correctness=None,
+        pypto_status="success",
+        verifier_status="skipped",
+        pypto_duration_sec=0.1,
+        verifier_duration_sec=0.0,
+        pypto_retry_count=0,
+        pypto_message="",
+        verifier_message="verifier.skip=true",
+        started_at="2026-01-01T00:00:00",
+        finished_at="2026-01-01T00:01:00",
+    )
+
+    assert counts_as_aggregate_success(skipped) is True
+    totals = _compute_totals([skipped], include_by_level=False)
+    assert totals["success"] == 1
+    assert totals["by_status"] == {"verifier_skipped": 1}
+    assert totals["correctness"]["unknown"] == 1
+
+    md = _render_markdown(
+        {
+            "meta": {},
+            "totals": totals,
+            "cases": [asdict(skipped)],
+        }
+    )
+    assert "| `L1` | `p` | `9_p` | SKIP (verify) | — | — |" in md
+
+
+def test_compute_totals_aggregates_opencode_token_usage() -> None:
+    record = CaseRunRecord(
+        op_name="p",
+        case_id="9_p",
+        source_file="p.py",
+        level="L1",
+        overall_status="success",
+        correctness=True,
+        pypto_status="success",
+        verifier_status="passed",
+        pypto_token_usage={
+            "supported": True,
+            "message_count": 1,
+            "session_count": 1,
+            "total": 100,
+            "input": 10,
+            "output": 20,
+            "reasoning": 30,
+            "cache": {"read": 40, "write": 0},
+            "cost": 0.01,
+            "by_model": {},
+        },
+        verifier_token_usage={
+            "supported": True,
+            "message_count": 2,
+            "session_count": 1,
+            "total": 200,
+            "input": 50,
+            "output": 60,
+            "reasoning": 70,
+            "cache": {"read": 20, "write": 0},
+            "cost": 0.02,
+            "by_model": {},
+        },
+    )
+
+    totals = _compute_totals([record], include_by_level=False)
+    assert totals["tokens"]["total"] == 300
+    assert totals["tokens"]["input"] == 60
+    assert totals["tokens"]["output"] == 80
+    assert totals["tokens"]["reasoning"] == 100
+    assert totals["tokens"]["cache"]["read"] == 60
+    assert totals["tokens"]["cost"] == 0.03
+    assert totals["tokens_by_phase"]["pypto"]["total"] == 100
+    assert totals["tokens_by_phase"]["verifier"]["total"] == 200
+
+    md = _render_markdown({"meta": {}, "totals": totals, "cases": [asdict(record)]})
+    assert "OpenCode token 用量" in md
+    assert "total=300" in md
+    assert "pypto=100" in md
+    assert "verifier=200" in md

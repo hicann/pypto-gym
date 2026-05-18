@@ -21,9 +21,20 @@ from benchmark.verifier_runner import (
 
 
 def test_to_dict_includes_failure_category() -> None:
-    r = VerifierResult(op_name="x", status=VerifierStatus.PASSED, failure_category="")
-    assert "failure_category" in r.to_dict()
-    assert r.to_dict()["failure_category"] == ""
+    r = VerifierResult(
+        op_name="x",
+        status=VerifierStatus.PASSED,
+        failure_category="",
+        opencode_token_usage={"supported": True, "total": 10},
+        opencode_token_usage_attempts=[
+            {"attempt": 1, "token_usage": {"supported": True, "total": 10}},
+        ],
+    )
+    data = r.to_dict()
+    assert "failure_category" in data
+    assert data["failure_category"] == ""
+    assert data["opencode_token_usage"]["total"] == 10
+    assert data["opencode_token_usage_attempts"][0]["attempt"] == 1
 
 
 def test_skill_report_explicit_failure_category() -> None:

@@ -31,13 +31,86 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 
 SESSION_ID_RE = re.compile(r"\bses_[A-Za-z0-9]+\b")
 DEFAULT_EXPORT_TIMEOUT_SEC = 120
+_TOKEN_FIELDS = ("total", "input", "output", "reasoning")
+_CACHE_TOKEN_FIELDS = ("read", "write")
+
+
+def empty_token_usage() -> Dict[str, Any]:
+    """Return a stable OpenCode token/cost summary shape."""
+    return {
+        "supported": False,
+        "message_count": 0,
+        "session_count": 0,
+        "total": 0,
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache": {
+            "read": 0,
+            "write": 0,
+        },
+        "cost": 0.0,
+        "by_model": {},
+    }
+
+
+def merge_token_usage(usages: Sequence[Optional[Dict[str, Any]]]) -> Dict[str, Any]:
+    """Merge OpenCode token usage summaries.
+
+    The shape intentionally mirrors :func:`empty_token_usage` so callers can
+    aggregate per-message, per-session, per-attempt, per-case, or full-run
+    values without knowing where the usage came from.
+    """
+    merged = empty_token_usage()
+    by_model: Dict[str, Dict[str, Any]] = {}
+    for usage in usages:
+        if not isinstance(usage, dict):
+            continue
+        if usage.get("supported"):
+            merged["supported"] = True
+        merged["message_count"] += _as_int(usage.get("message_count"))
+        merged["session_count"] += _as_int(usage.get("session_count"))
+        for key in _TOKEN_FIELDS:
+            merged[key] += _as_int(usage.get(key))
+        cache = usage.get("cache") if isinstance(usage.get("cache"), dict) else {}
+        for key in _CACHE_TOKEN_FIELDS:
+            merged["cache"][key] += _as_int(cache.get(key))
+        merged["cost"] += _as_float(usage.get("cost"))
+
+        raw_by_model = usage.get("by_model")
+        if not isinstance(raw_by_model, dict):
+            continue
+        for model_key, model_usage in raw_by_model.items():
+            if not isinstance(model_usage, dict):
+                continue
+            target = by_model.setdefault(str(model_key), empty_token_usage())
+            target["supported"] = True
+            target["message_count"] += _as_int(model_usage.get("message_count"))
+            target["session_count"] += _as_int(model_usage.get("session_count"))
+            for token_key in _TOKEN_FIELDS:
+                target[token_key] += _as_int(model_usage.get(token_key))
+            model_cache = (
+                model_usage.get("cache")
+                if isinstance(model_usage.get("cache"), dict)
+                else {}
+            )
+            for cache_key in _CACHE_TOKEN_FIELDS:
+                target["cache"][cache_key] += _as_int(model_cache.get(cache_key))
+            target["cost"] += _as_float(model_usage.get("cost"))
+
+    merged["cost"] = round(float(merged["cost"]), 12)
+    for model_usage in by_model.values():
+        model_usage["cost"] = round(float(model_usage["cost"]), 12)
+        model_usage["by_model"] = {}
+    merged["by_model"] = dict(sorted(by_model.items()))
+    return merged
 
 
 @dataclass
@@ -55,6 +128,7 @@ class OpencodeExportResult:
     session_updated_at_ms: Optional[int] = None
     tree_updated_at_ms: Optional[int] = None
     node_session_count: int = 0
+    token_usage: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -75,6 +149,7 @@ class OpencodeExportResult:
             "session_updated_at_ms": self.session_updated_at_ms,
             "tree_updated_at_ms": self.tree_updated_at_ms,
             "node_session_count": self.node_session_count,
+            "token_usage": self.token_usage,
         }
 
 
@@ -100,6 +175,27 @@ def find_session_ids(text: str) -> List[str]:
             seen.add(sid)
             out.append(sid)
     return out
+
+
+def summarize_session_token_usage(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate OpenCode token usage from one exported session tree.
+
+    OpenCode stores token/cost data on assistant messages in current sqlite
+    schemas. Some exports also include the same usage on terminal parts; those
+    are used only as a fallback when the message-level fields are absent.
+    """
+    usages: List[Dict[str, Any]] = []
+
+    def visit(node: Dict[str, Any]) -> None:
+        session_usage = _summarize_single_session_token_usage(node)
+        session_usage["session_count"] = 1
+        usages.append(session_usage)
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                visit(child)
+
+    visit(data)
+    return merge_token_usage(usages)
 
 
 def export_session_from_log(
@@ -360,6 +456,7 @@ def _write_session_markdown(
         session_updated_at_ms=_session_updated_at_ms(data),
         tree_updated_at_ms=_tree_updated_at_ms(data),
         node_session_count=_node_session_count(data),
+        token_usage=summarize_session_token_usage(data),
     )
 
 
@@ -405,6 +502,7 @@ def _write_session_directory(
         session_updated_at_ms=_session_updated_at_ms(data),
         tree_updated_at_ms=_tree_updated_at_ms(data),
         node_session_count=len(rows),
+        token_usage=summarize_session_token_usage(data),
     )
 
 
@@ -442,6 +540,7 @@ def _write_session_nodes(
             render_single_session(node, subagent=depth > 0),
             encoding="utf-8",
         )
+        single_usage = _summarize_single_session_token_usage(node_data)
         rows.append(
             {
                 "order": order,
@@ -454,6 +553,13 @@ def _write_session_nodes(
                 "updated": _format_timestamp((info.get("time") or {}).get("updated")),
                 "md_file": str(node_md_file.relative_to(base_dir)),
                 "json_file": str(node_json_file.relative_to(base_dir)),
+                "token_total": single_usage.get("total", 0),
+                "token_input": single_usage.get("input", 0),
+                "token_output": single_usage.get("output", 0),
+                "token_reasoning": single_usage.get("reasoning", 0),
+                "token_cache_read": (single_usage.get("cache") or {}).get("read", 0),
+                "token_cache_write": (single_usage.get("cache") or {}).get("write", 0),
+                "cost": single_usage.get("cost", 0.0),
             }
         )
     return rows
@@ -471,6 +577,13 @@ def _write_session_tree(rows: List[Dict[str, Any]], session_tree_file: Path) -> 
         "updated",
         "md_file",
         "json_file",
+        "token_total",
+        "token_input",
+        "token_output",
+        "token_reasoning",
+        "token_cache_read",
+        "token_cache_write",
+        "cost",
     ]
     with session_tree_file.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
@@ -499,6 +612,96 @@ def _session_without_children(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _node_session_count(data: Dict[str, Any]) -> int:
     return len(_flatten_session_tree(data))
+
+
+def _summarize_single_session_token_usage(data: Dict[str, Any]) -> Dict[str, Any]:
+    usages: List[Dict[str, Any]] = []
+    for msg in data.get("messages") or []:
+        if isinstance(msg, dict):
+            usage = _message_token_usage(msg)
+            if usage.get("supported"):
+                usages.append(usage)
+    return merge_token_usage(usages)
+
+
+def _message_token_usage(msg: Dict[str, Any]) -> Dict[str, Any]:
+    info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
+    parts = msg.get("parts") if isinstance(msg.get("parts"), list) else []
+    tokens = info.get("tokens") if isinstance(info.get("tokens"), dict) else None
+    cost = info.get("cost")
+
+    if tokens is None:
+        part_usages: List[Dict[str, Any]] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            part_tokens = part.get("tokens")
+            if isinstance(part_tokens, dict):
+                part_usages.append(_usage_from_tokens(part_tokens, part.get("cost")))
+        usage = merge_token_usage(part_usages)
+        if not usage.get("supported"):
+            return usage
+    else:
+        usage = _usage_from_tokens(tokens, cost)
+
+    usage["message_count"] = 1
+    model_key = _message_model_key(info)
+    if model_key:
+        model_usage = dict(usage)
+        model_usage["by_model"] = {}
+        usage["by_model"] = {model_key: model_usage}
+    return usage
+
+
+def _usage_from_tokens(tokens: Dict[str, Any], cost: Any = None) -> Dict[str, Any]:
+    usage = empty_token_usage()
+    usage["supported"] = True
+    for key in _TOKEN_FIELDS:
+        usage[key] = _as_int(tokens.get(key))
+    cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+    usage["cache"]["read"] = _as_int(cache.get("read") or tokens.get("cacheRead"))
+    usage["cache"]["write"] = _as_int(cache.get("write") or tokens.get("cacheWrite"))
+    if usage["total"] <= 0:
+        usage["total"] = (
+            usage["input"]
+            + usage["output"]
+            + usage["reasoning"]
+            + usage["cache"]["read"]
+            + usage["cache"]["write"]
+        )
+    usage["cost"] = _as_float(cost)
+    return usage
+
+
+def _message_model_key(info: Dict[str, Any]) -> str:
+    provider = str(info.get("providerID") or "").strip()
+    model = str(info.get("modelID") or "").strip()
+    if not model:
+        model_info = info.get("model")
+        if isinstance(model_info, dict):
+            provider = provider or str(model_info.get("providerID") or "").strip()
+            model = str(model_info.get("modelID") or "").strip()
+    if provider and model:
+        return f"{provider}/{model}"
+    return model or provider
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(value: Any) -> float:
+    if isinstance(value, bool) or value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _session_updated_at_ms(data: Dict[str, Any]) -> Optional[int]:
@@ -646,7 +849,9 @@ def append_export_result_to_log(
             if result.ok:
                 handle.write(
                     f"\n[opencode export:{label}] session_id={result.session_id} "
-                    f"markdown={result.markdown_file}\n"
+                    f"markdown={result.markdown_file} "
+                    f"tokens={result.token_usage.get('total', 0)} "
+                    f"cost={result.token_usage.get('cost', 0.0)}\n"
                 )
             else:
                 handle.write(
@@ -688,6 +893,14 @@ def _write_export_result_sidecar(
                     f"session_tree_file={result.session_tree_file or ''}",
                     f"nodes_dir={result.nodes_dir or ''}",
                     f"node_session_count={result.node_session_count}",
+                    f"token_supported={bool(result.token_usage.get('supported'))}",
+                    f"token_total={result.token_usage.get('total', 0)}",
+                    f"token_input={result.token_usage.get('input', 0)}",
+                    f"token_output={result.token_usage.get('output', 0)}",
+                    f"token_reasoning={result.token_usage.get('reasoning', 0)}",
+                    f"token_cache_read={(result.token_usage.get('cache') or {}).get('read', 0)}",
+                    f"token_cache_write={(result.token_usage.get('cache') or {}).get('write', 0)}",
+                    f"token_cost={result.token_usage.get('cost', 0.0)}",
                     f"message={result.message}",
                     "",
                 ]

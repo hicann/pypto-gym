@@ -89,6 +89,9 @@ pypto:
 
 # --- 验证 ---
 verifier:
+  # 跳过 KernelVerifier 阶段, 只跑 PyPTO 生成流程.
+  # 适合只想批量产出 custom/<op>/ 工件、暂不做正确性/性能验证的场景.
+  skip: false
   # 框架: torch (内置 verifier 仅支持 torch).
   framework: "torch"
   # 后端: ascend / cuda / cpu.

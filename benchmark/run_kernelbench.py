@@ -372,6 +372,7 @@ class _RunCfg:
     artifact_custom_dir: Path  # sibling of report/: PyPTO custom mirror per case
     mode: str                      # correctness / performance / full
     skip_pypto_gen: bool
+    skip_verifier: bool
     force_regen: bool
     use_level_dirs: bool
     extra_verifier_config: Dict[str, Any]
@@ -658,6 +659,8 @@ async def run_one_case(
             if pypto_result.opencode_session_md_file else None
         )
         record.pypto_session_export_message = pypto_result.opencode_session_export_message
+        record.pypto_token_usage = pypto_result.opencode_token_usage
+        record.pypto_token_usage_attempts = pypto_result.opencode_token_usage_attempts
         record.pypto_artifacts = {k: str(v) for k, v in pypto_result.artifacts.items()}
         try:
             copied_custom_dir = _copy_pypto_custom_artifacts(op_dir, case_custom_dir)
@@ -685,6 +688,29 @@ async def run_one_case(
             write_case_result(record, cfg.report_dir)
             logger.warning("[%s] case stop after pypto failure: status=%s",
                            case.case_id, record.pypto_status)
+            return record
+
+        if cfg.skip_verifier:
+            record.verifier_status = "skipped"
+            record.verifier_message = "verifier.skip=true, 跳过 KernelVerifier 阶段."
+            record.verifier_duration_sec = 0.0
+            record.correctness = None
+            record.overall_status = "verifier_skipped"
+            record.finished_at = dt.datetime.now().isoformat(timespec="seconds")
+            _write_case_phase(
+                case_report_dir,
+                op_name=op_name,
+                case_id=case.case_id,
+                phase="done",
+                status=record.overall_status,
+                message=record.verifier_message,
+                pypto_status=pypto_result.status.value,
+                verifier_status=record.verifier_status,
+            )
+            write_case_result(record, cfg.report_dir)
+            logger.info("[%s] case finished: overall=%s pypto=%s verifier=%s",
+                        case.case_id, record.overall_status,
+                        record.pypto_status, record.verifier_status)
             return record
 
         # 3) KernelVerifier (仍占设备号槽位避免冲突)
@@ -759,6 +785,8 @@ async def run_one_case(
         if verifier_result.opencode_session_md_file else None
     )
     record.verifier_session_export_message = verifier_result.opencode_session_export_message
+    record.verifier_token_usage = verifier_result.opencode_token_usage
+    record.verifier_token_usage_attempts = verifier_result.opencode_token_usage_attempts
     record.correctness = verifier_result.correctness
     record.failure_category = verifier_result.failure_category
     record.perf_gen_time_us = verifier_result.perf_gen_time_us
@@ -1018,6 +1046,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         artifact_custom_dir=artifact_root_dir / "custom",
         mode=verifier_yaml.get("mode", "correctness") or "correctness",
         skip_pypto_gen=bool(pypto_yaml.get("skip_pypto_gen", False)),
+        skip_verifier=bool(verifier_yaml.get("skip", False)),
         force_regen=bool(pypto_yaml.get("force_regen", False)),
         use_level_dirs=False,
         extra_verifier_config=extra_verifier_config,
@@ -1394,6 +1423,7 @@ def run_from_config(config_path: Path) -> int:
                     "backend": cfg.backend,
                     "framework": cfg.framework,
                     "mode": cfg.mode,
+                    "verifier_skip": cfg.skip_verifier,
                     "verifier_mode": cfg.verifier_mode,
                     "validator_agent": cfg.validator_agent if cfg.verifier_mode == "opencode" else None,
                     "artifact_root_dir": str(cfg.artifact_root_dir),

@@ -170,9 +170,22 @@ def test_run_pypto_workflow_retries_nontimeout_abnormal_exit(tmp_path, monkeypat
             return self.returncode
 
     def fake_export_session_from_log(*args, **kwargs):
+        attempt = attempts["count"]
         return pypto_runner.OpencodeExportResult(
-            session_id=f"ses_{attempts['count']}",
-            status="skipped",
+            session_id=f"ses_{attempt}",
+            status="exported",
+            token_usage={
+                "supported": True,
+                "message_count": 1,
+                "session_count": 1,
+                "total": attempt * 100,
+                "input": attempt * 10,
+                "output": attempt * 20,
+                "reasoning": attempt * 30,
+                "cache": {"read": attempt * 40, "write": 0},
+                "cost": attempt * 0.01,
+                "by_model": {},
+            },
         )
 
     monkeypatch.setattr(pypto_runner.subprocess, "Popen", FakePopen)
@@ -197,6 +210,14 @@ def test_run_pypto_workflow_retries_nontimeout_abnormal_exit(tmp_path, monkeypat
     assert result.retry_count == 1
     assert result.incomplete_retry_attempts[0]["decision"] == "retry"
     assert result.incomplete_retry_attempts[0]["trigger"] == "opencode_abnormal_exit"
+    assert [a["session_id"] for a in result.opencode_token_usage_attempts] == [
+        "ses_1",
+        "ses_2",
+    ]
+    assert result.opencode_token_usage_attempts[0]["token_usage"]["total"] == 100
+    assert result.opencode_token_usage_attempts[1]["token_usage"]["total"] == 200
+    assert result.opencode_token_usage["total"] == 300
+    assert result.opencode_token_usage["cost"] == 0.03
     assert "opencode 非 timeout 异常退出 code=42" in result.message
 
 
@@ -209,6 +230,8 @@ def test_run_result_serializes_retry_metadata(tmp_path) -> None:
         log_file=log_file,
         attempt_log_files=[tmp_path / "pypto_run.log", log_file],
         retry_count=1,
+        opencode_token_usage={"supported": True, "total": 1},
+        opencode_token_usage_attempts=[{"attempt": 2, "token_usage": {"total": 1}}],
         incomplete_retry_attempts=[{"decision": "retry"}],
     )
     data = result.to_dict()
@@ -218,6 +241,8 @@ def test_run_result_serializes_retry_metadata(tmp_path) -> None:
         str(tmp_path / "pypto_run.log"),
         str(log_file),
     ]
+    assert data["opencode_token_usage"]["total"] == 1
+    assert data["opencode_token_usage_attempts"][0]["attempt"] == 2
 
 
 def test_run_pypto_workflow_rejects_stale_spec_without_state(tmp_path, monkeypatch) -> None:

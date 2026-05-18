@@ -864,7 +864,20 @@ def test_opencode_exporter_includes_sqlite_child_sessions(monkeypatch, tmp_path)
                 "ses_parent",
                 1,
                 1,
-                json.dumps({"role": "assistant", "time": {"created": 1, "completed": 1}}),
+                json.dumps({
+                    "role": "assistant",
+                    "providerID": "p",
+                    "modelID": "m-parent",
+                    "cost": 0.1,
+                    "tokens": {
+                        "total": 10,
+                        "input": 1,
+                        "output": 2,
+                        "reasoning": 3,
+                        "cache": {"read": 4, "write": 0},
+                    },
+                    "time": {"created": 1, "completed": 1},
+                }),
             ),
         )
         conn.execute(
@@ -885,7 +898,20 @@ def test_opencode_exporter_includes_sqlite_child_sessions(monkeypatch, tmp_path)
                 "ses_child",
                 2,
                 3,
-                json.dumps({"role": "assistant", "time": {"created": 2, "completed": 3}}),
+                json.dumps({
+                    "role": "assistant",
+                    "providerID": "p",
+                    "modelID": "m-child",
+                    "cost": 0.2,
+                    "tokens": {
+                        "total": 20,
+                        "input": 5,
+                        "output": 6,
+                        "reasoning": 7,
+                        "cache": {"read": 2, "write": 0},
+                    },
+                    "time": {"created": 2, "completed": 3},
+                }),
             ),
         )
         conn.execute(
@@ -924,6 +950,16 @@ def test_opencode_exporter_includes_sqlite_child_sessions(monkeypatch, tmp_path)
     assert "child raw tool transcript marker" in text
     assert result.session_updated_at_ms == 4
     assert result.tree_updated_at_ms == 9
+    assert result.token_usage["supported"] is True
+    assert result.token_usage["total"] == 30
+    assert result.token_usage["input"] == 6
+    assert result.token_usage["output"] == 8
+    assert result.token_usage["reasoning"] == 10
+    assert result.token_usage["cache"]["read"] == 6
+    assert result.token_usage["message_count"] == 2
+    assert result.token_usage["session_count"] == 4
+    assert result.token_usage["cost"] == 0.3
+    assert result.token_usage["by_model"]["p/m-parent"]["total"] == 10
 
     split_result = export_session_to_markdown(
         session_id="ses_parent",
@@ -939,6 +975,9 @@ def test_opencode_exporter_includes_sqlite_child_sessions(monkeypatch, tmp_path)
     assert split_result.nodes_dir == (tmp_path / "split_export" / "nodes").resolve()
     assert split_result.node_session_count == 4
     assert split_result.session_tree_file.exists()
+    tree_text = split_result.session_tree_file.read_text(encoding="utf-8")
+    assert "token_total" in tree_text
+    assert "\t10\t1\t2\t3\t4\t0\t0.1" in tree_text
     node_files = sorted(split_result.nodes_dir.glob("*.md"))
     assert len(node_files) == 4
     assert any("ses_grandchild_latest" in path.name for path in node_files)

@@ -137,6 +137,13 @@ python -m benchmark run --config configs/relu.yaml --foreground
 python -m benchmark run --config configs/relu.yaml --no-auto-monitor
 ```
 
+如需只跑 PyPTO 生成流程、暂不进入 KernelVerifier，可在配置中设置：
+
+```yaml
+verifier:
+  skip: true
+```
+
 仓库根目录也提供一键启动脚本：
 
 ```bash
