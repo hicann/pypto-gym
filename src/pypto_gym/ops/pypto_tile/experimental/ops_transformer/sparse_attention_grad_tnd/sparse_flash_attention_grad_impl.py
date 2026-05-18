@@ -256,7 +256,8 @@ def sparse_flash_attention_grad_compute(
                 dk_nope_part = pypto.view(dk_scaled, [k, d], [0, 0], valid_shape=[cur_kv_valid, d])     # (k, d) FP32
                 dk_v = pypto.add(dk_nope_part, dv_local_valid)
                 dk_pe_part = pypto.view(dk_scaled, [k, dr], [0, d], valid_shape=[cur_kv_valid, dr])       # (k, dr) FP32
-                dk_all = pypto.concat([dk_v, dk_pe_part], dim=-1)
+                dk_all_tmp = pypto.concat([dk_v, dk_pe_part], dim=-1)
+                dk_all = pypto.view(dk_all_tmp, [k, d + dr], [0, 0], valid_shape=[cur_kv_valid, d + dr])
 
                 pypto.set_vec_tile_shapes(16, d_full)
                 dk_2d_view = pypto.view(dk_2d, [MAX_TOTAL_KV, d + dr], [0, 0], valid_shape=[t2_sym, d + dr])
