@@ -41,11 +41,11 @@ def golden_fused_swiglu_bwd(dy, g, fc, w_g, w_fc, x):
     silu_g = g * sigmoid_g
     dg = dy.float() * fc * sigmoid_g * (1 + g * (1 - sigmoid_g))
     dfc = dy.float() * silu_g
-    db_g = (dg.sum(dim=0, keepdim=True)).to(torch.bfloat16)
-    db_fc = (dfc.sum(dim=0, keepdim=True)).to(torch.bfloat16)
-    dw_g = (x.float().T @ dg).to(torch.bfloat16)
-    dw_fc = (x.float().T @ dfc).to(torch.bfloat16)
-    dx = (dg @ w_g.float().T + dfc @ w_fc.float().T).to(torch.bfloat16)
+    db_g = (dg.sum(dim=0, keepdim=True)).to(dy.dtype)
+    db_fc = (dfc.sum(dim=0, keepdim=True)).to(dy.dtype)
+    dw_g = (x.float().T @ dg).to(dy.dtype)
+    dw_fc = (x.float().T @ dfc).to(dy.dtype)
+    dx = (dg @ w_g.float().T + dfc @ w_fc.float().T).to(dy.dtype)
     return dx, dw_g, dw_fc, db_g, db_fc
 
 

@@ -40,7 +40,7 @@ def golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc):
     gate = x.float() @ w_g.float() + b_g
     fc = x.float() @ w_fc.float() + b_fc
     gate_silu = gate * torch.sigmoid(gate)
-    y = (gate_silu * fc).to(torch.bfloat16)
+    y = (gate_silu * fc).to(x.dtype)
     return y
 
 
