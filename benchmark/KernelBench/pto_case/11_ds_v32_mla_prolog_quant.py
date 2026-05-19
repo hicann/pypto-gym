@@ -13,7 +13,7 @@ FORMULA = (
     "q_nope = (q_proj[:,:knh]) · w_uk → KV-lora; "
     "q_rope = RoPE(q_proj[:,knh:], cos, sin); "
     "kv = x @ w_dkv_kr; "
-    "k_nope = PerChannelQuant(RMSNorm(kv[:,:kvl], gamma_ckv)); "
+    "k_nope = PerTokenQuant(RMSNorm(kv[:,:kvl], gamma_ckv).split(g=4)); "
     "k_rope = RoPE(kv[:,kvl:], cos, sin)"
 )
 DYNAMIC_AXIS = ["M"]
@@ -63,49 +63,71 @@ class Model(nn.Module):
 
     @staticmethod
     def _per_channel_quantize(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        max_val = x.abs().max(dim=0, keepdim=True)[0].clamp(min=1e-8)
-        scale = 127.0 / max_val
-        q = (x * scale).round().clamp(-128, 127).to(torch.int8)
-        deq_scale = 1.0 / scale
-        return q, deq_scale
+        x_f32 = x.float()
+        abs_res = torch.abs(x_f32)
+        max_value = torch.max(abs_res, dim=-2, keepdim=True)[0]
+        scale_quant = 127.0 / max_value
+        out_fp32 = x_f32 * scale_quant
+        out_int32 = torch.round(out_fp32).to(torch.int32)
+        out_fp16 = out_int32.to(torch.float16)
+        out_int8 = torch.trunc(out_fp16).to(torch.int8)
+        scale_dequant = 1.0 / scale_quant
+        return out_int8, scale_dequant
 
     @staticmethod
     def _per_token_quantize(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        max_val = x.float().abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-8)
-        scale = 127.0 / max_val
-        q = (x.float() * scale).round().clamp(-128, 127).to(torch.int8)
-        deq_scale = 1.0 / scale
-        return q, deq_scale
+        x_f32 = x.float()
+        abs_res = torch.abs(x_f32)
+        max_value = torch.max(abs_res, dim=-1, keepdim=True)[0]
+        scale_quant = 127.0 / max_value
+        out_fp32 = x_f32 * scale_quant
+        out_int32 = torch.round(out_fp32).to(torch.int32)
+        out_fp16 = out_int32.to(torch.float16)
+        out_int8 = torch.trunc(out_fp16).to(torch.int8)
+        scale_dequant = 1.0 / scale_quant
+        return out_int8, scale_dequant
 
     @staticmethod
     def _rms_norm(x: torch.Tensor, gamma: torch.Tensor) -> torch.Tensor:
         x_dtype = x.dtype
+        mean_coff = 1.0 / x.shape[-1]
         x_f32 = x.float()
-        rms = torch.sqrt((x_f32 * x_f32).mean(dim=-1, keepdim=True) + 1e-5)
-        return ((x_f32 / rms) * gamma.float()).to(x_dtype)
+        square = x_f32 * x_f32
+        mean_res = square * mean_coff
+        reduce_sum = torch.sum(mean_res, dim=-1, keepdim=True)
+        reduce_sqrt = torch.sqrt(reduce_sum)
+        res_div = x_f32 / reduce_sqrt
+        res = res_div * gamma.float()
+        if x_dtype != torch.float32:
+            res = res.to(x_dtype)
+        return res
 
     @staticmethod
     def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-        x1, x2 = x.chunk(2, dim=-1)
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
         return torch.cat((-x2, x1), dim=-1)
 
     @staticmethod
     def _rope_3d(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        # x: (t, heads, rope_dim), cos/sin: (t, rope_dim)
         x_dtype = x.dtype
         x_f32 = x.float()
-        cos_f32 = cos.float().unsqueeze(1)  # (t, 1, rope_dim)
+        t, h, d = x_f32.shape
+        x_interleaved = x_f32.reshape(t, h, d // 2, 2).permute(0, 1, 3, 2).reshape(t, h, d)
+        cos_f32 = cos.float().unsqueeze(1)
         sin_f32 = sin.float().unsqueeze(1)
-        x_embed = x_f32 * cos_f32 + Model._rotate_half(x_f32) * sin_f32
+        x_embed = x_interleaved * cos_f32 + Model._rotate_half(x_interleaved) * sin_f32
         return x_embed.to(x_dtype)
 
     @staticmethod
     def _rope_2d(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         x_dtype = x.dtype
         x_f32 = x.float()
+        t, d = x_f32.shape
+        x_interleaved = x_f32.reshape(t, d // 2, 2).permute(0, 2, 1).reshape(t, d)
         cos_f32 = cos.float()
         sin_f32 = sin.float()
-        x_embed = x_f32 * cos_f32 + Model._rotate_half(x_f32) * sin_f32
+        x_embed = x_interleaved * cos_f32 + Model._rotate_half(x_interleaved) * sin_f32
         return x_embed.to(x_dtype)
 
     def forward(
@@ -162,9 +184,11 @@ class Model(nn.Module):
         compressed_kv = kv[:, :self.kv_lora_rank]    # (t, kv_lora_rank)
         k_rope_raw = kv[:, self.kv_lora_rank:]        # (t, qk_rope_head_dim)
 
-        # RMSNorm → PerChannelQuant on compressed_kv
+        # RMSNorm → split into 4 groups → PerTokenQuant on each group
         kv_norm = self._rms_norm(compressed_kv, self.gamma_ckv)  # (t, kv_lora_rank)
-        k_nope_quant, _k_nope_deq_scale = self._per_channel_quantize(kv_norm)  # (t, kv_lora_rank) INT8
+        kv_norm_split = kv_norm.reshape(t, 4, self.kv_lora_rank // 4)
+        k_nope_quant, _k_nope_deq_scale = self._per_token_quantize(kv_norm_split)
+        k_nope_quant = k_nope_quant.reshape(t, self.kv_lora_rank)  # (t, kv_lora_rank) INT8
 
         # RoPE on k_rope
         k_rope = self._rope_2d(k_rope_raw, cos, sin)  # (t, qk_rope_head_dim)

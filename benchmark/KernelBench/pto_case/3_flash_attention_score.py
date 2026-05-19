@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 
-FORMULA = "out[b, h, sq, d] = Softmax((Q[b, h, sq, d] @ K[b, h, skv, d]^T / sqrt(d)) * mask[sq, skv]) @ V[b, h, skv, d]"
+FORMULA = "out[b, h, sq, d] = OnlineSoftmax(Q[b, h, sq, d] @ K[b, h, skv, d]^T / sqrt(d), mask[sq, skv]) @ V[b, h, skv, d]"
 DYNAMIC_AXIS = ["B", "SQ", "SKV"]
 
 
@@ -19,10 +19,48 @@ class Model(nn.Module):
         self.scale = 1.0 / math.sqrt(head_dim)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, atten_mask: torch.Tensor) -> torch.Tensor:
-        scores = torch.matmul(query.float(), key.float().transpose(-2, -1)) * self.scale
-        scores = scores.masked_fill(atten_mask.unsqueeze(0).unsqueeze(0) == 1, float('-inf'))
-        attn_weights = torch.softmax(scores, dim=-1)
-        output = torch.matmul(attn_weights, value.float())
+        b, n, sq, d = query.shape
+        _, _, skv, _ = key.shape
+
+        query_fp32 = query.float()
+        key_fp32 = key.float()
+        value_fp32 = value.float()
+
+        output = torch.zeros(b, n, sq, d, dtype=torch.float32, device=query.device)
+
+        for b_idx in range(b):
+            for n_idx in range(n):
+                for q_idx in range(sq):
+                    q_vec = query_fp32[b_idx, n_idx, q_idx, :]
+
+                    max_score = float('-inf')
+                    sum_exp = 0.0
+                    output_vec = torch.zeros(d, dtype=torch.float32, device=query.device)
+
+                    for kv_idx in range(skv):
+                        if atten_mask[q_idx, kv_idx] == 1:
+                            continue
+
+                        k_vec = key_fp32[b_idx, n_idx, kv_idx, :]
+                        score = torch.dot(q_vec, k_vec) * self.scale
+
+                        new_max = max(max_score, score.item())
+
+                        if new_max > max_score:
+                            correction = math.exp(max_score - new_max)
+                            sum_exp = sum_exp * correction
+                            output_vec = output_vec * correction
+                            max_score = new_max
+
+                        exp_score = math.exp(score - max_score)
+                        sum_exp += exp_score
+
+                        v_vec = value_fp32[b_idx, n_idx, kv_idx, :]
+                        output_vec += exp_score * v_vec
+
+                    if sum_exp > 0:
+                        output[b_idx, n_idx, q_idx, :] = output_vec / sum_exp
+
         return output.to(torch.bfloat16)
 
 

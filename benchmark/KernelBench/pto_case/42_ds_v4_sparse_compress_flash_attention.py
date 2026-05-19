@@ -5,82 +5,198 @@ import math
 import torch
 import torch.nn as nn
 
-FORMULA = "out[t,n,d] = sparse_compress_fa(q[t,n,d], kv_cache, compress_kv, block_table, sparse_indices, sinks)"
+FORMULA = ("out[t,n,d] = scfa(q, compress_kv, origin_kv, topk_indices, block_table, actual_seq_q,\n"
+           "  cmp_actual_seq, origin_block_table, origin_actual_seq, atten_sink)\n"
+           "  = flash_attn( Q @ [win_KV; compress_sparse_KV]^T / sqrt(d) + sinks ) @ [win_KV; compress_sparse_KV]")
 DYNAMIC_AXIS = ["T", "S"]
 
 
+def _gen_uniform_data(data_shape, min_value, max_value, dtype):
+    if min_value == 0 and max_value == 0:
+        return torch.zeros(data_shape, dtype=dtype)
+    if dtype == torch.bool:
+        return torch.randint(0, 2, data_shape, dtype=dtype)
+    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
+        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
+    else:
+        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
+
+
+def _gen_block_table(act_seq, block_size):
+    block_num = 0
+    block_num_each = []
+    b = act_seq.shape[0]
+    max_kv = max(act_seq).item() if isinstance(act_seq, torch.Tensor) else max(act_seq)
+    for cur_s in act_seq:
+        s_val = cur_s.item() if isinstance(cur_s, torch.Tensor) else cur_s
+        cur_block_num = math.ceil(s_val / block_size)
+        block_num_each.append(cur_block_num)
+        block_num += cur_block_num
+    max_blocks = max(math.ceil(max_kv / block_size), 1)
+    block_table_shape = (b, max_blocks)
+    block_idx_list = torch.arange(0, max(block_num, 1), dtype=torch.int32)
+    if block_num > 0:
+        block_idx_list = block_idx_list[torch.randperm(block_idx_list.size(0))]
+    block_table = -torch.ones(block_table_shape, dtype=torch.int32)
+    bi = 0
+    btb = 0
+    for cur_block in block_num_each:
+        for j in range(cur_block):
+            block_table[btb, j] = block_idx_list[bi]
+            bi += 1
+        btb += 1
+    return block_num, block_table
+
+
+def _gen_topk_indices(actual_seq, actual_seq_q, topk, n_kv):
+    t_q = actual_seq_q[-1]
+    b = len(actual_seq)
+    topk_indices = torch.zeros(t_q, n_kv * topk, dtype=torch.int32)
+    slc_actual_seq = [min(actual_seq[i], topk) for i in range(b)]
+    for b_i in range(b):
+        s_q = actual_seq_q[b_i + 1] - actual_seq_q[b_i]
+        for s_q_i in range(s_q):
+            t_idx = actual_seq_q[b_i] + s_q_i
+            if slc_actual_seq[b_i] < topk:
+                topk_indices[t_idx, :slc_actual_seq[b_i]] = torch.arange(0, slc_actual_seq[b_i])
+            else:
+                perm = torch.randperm(slc_actual_seq[b_i])
+                topk_indices[t_idx, :] = perm[:topk]
+    return topk_indices
+
+
 class Model(nn.Module):
-    def __init__(self, n_q: int = 64, d: int = 512, block_size: int = 128, cmp_ratio: int = 128):
+    def __init__(self, n_q=64, d=512, n_kv=1, block_size=128, cmp_ratio=4, win_size=128, topk=512):
         super().__init__()
         self.n_q = n_q
         self.d = d
+        self.n_kv = n_kv
         self.block_size = block_size
         self.cmp_ratio = cmp_ratio
+        self.win_size = win_size
+        self.topk = topk
 
-    def forward(
-        self, q: torch.Tensor, kv_cache: torch.Tensor, compress_kv: torch.Tensor,
-        block_table: torch.Tensor, cmp_block_table: torch.Tensor,
-        seqused_kv: torch.Tensor, sparse_indices: torch.Tensor, sinks: torch.Tensor
-    ) -> torch.Tensor:
-        t = q.shape[0]
-        b = block_table.shape[0]
+    def forward(self, q, compress_kv, origin_kv, topk_indices, block_table, actual_seq_q,
+                cmp_actual_seq, origin_block_table, origin_actual_seq, atten_sink):
         scalar = self.d ** -0.5
-        atten_out = torch.zeros(t, self.n_q, self.d, dtype=torch.bfloat16, device=q.device)
-        n1 = self.n_q
+        s2_tile = 512
+
+        t, n1, d = q.shape
+        t = int(actual_seq_q[-1].item())
+        b = len(cmp_actual_seq)
+
+        if topk_indices.ndim > 2:
+            topk_indices = topk_indices.reshape(t, self.topk)
+
+        input_dtype = q.dtype
+        kv_dtype = compress_kv.dtype
+        attention_output = torch.zeros(t, n1, d, dtype=input_dtype)
+        atten_sink_2d = atten_sink.unsqueeze(-1)
 
         for b_idx in range(b):
-            actual_seq = seqused_kv[b_idx].item()
-            cur_s_q = t // b if b > 0 else t
+            cur_k_seq = int(cmp_actual_seq[b_idx].item())
+            origin_cur_k_seq = int(origin_actual_seq[b_idx].item())
+            s1 = int(actual_seq_q[b_idx + 1].item()) - int(actual_seq_q[b_idx].item())
 
-            for s1_idx in range(min(cur_s_q, t - b_idx * cur_s_q)):
-                t_idx = b_idx * cur_s_q + s1_idx
-                if t_idx >= t:
-                    break
+            for s1_idx in range(s1):
+                t_idx = int(actual_seq_q[b_idx].item()) + s1_idx
 
-                qi = q[t_idx, :, :]
+                cur_len = max(origin_cur_k_seq - s1 + 1 + s1_idx, 0)
+                origin_cur_win_size = min(cur_len, self.win_size)
+                valid_start_pos = cur_len - origin_cur_win_size
+                valid_end_pos = cur_len - 1
+                start_block = valid_start_pos // self.block_size
+                start_offset = valid_start_pos % self.block_size
+                end_block = valid_end_pos // self.block_size
 
-                win_size = min(actual_seq, self.block_size)
-                win_start = max(0, actual_seq - cur_s_q + s1_idx + 1 - win_size)
+                cur_seq = min(max(cur_k_seq - s1 + 1 + s1_idx, 0), self.topk)
 
-                kv_list = []
-                for pos in range(win_start, actual_seq - cur_s_q + s1_idx + 1):
-                    blk = pos // self.block_size
-                    off = pos % self.block_size
-                    pid = block_table[b_idx, blk].item()
-                    if pid >= 0:
-                        kv_list.append(kv_cache[pid * self.block_size + off, :self.d])
+                bn_per_batch = math.ceil(cur_seq / s2_tile)
+                for s2_idx in range(bn_per_batch):
+                    s2_tile_cur = min(s2_tile, cur_seq - s2_idx * s2_tile)
+                    s2_start = s2_tile * s2_idx
+                    s2_end = s2_start + s2_tile_cur
 
-                if not kv_list:
-                    continue
+                    topk_indices_tmp = topk_indices[t_idx, s2_start:s2_end]
+                    slc_compress_kv = torch.zeros(s2_tile_cur, self.d, dtype=kv_dtype)
+                    offset = torch.zeros(s2_tile_cur, dtype=torch.int32)
+                    for cur_s2_idx in range(s2_tile_cur):
+                        topk_index = int(topk_indices_tmp[cur_s2_idx].item())
+                        block_idx_in_batch = topk_index // self.block_size
+                        slc_block_idx = int(block_table[b_idx, block_idx_in_batch].item())
+                        tail = topk_index % self.block_size
+                        offset[cur_s2_idx] = slc_block_idx * self.block_size + tail
+                    for cur_s2_idx in range(s2_tile_cur):
+                        slc_idx = int(offset[cur_s2_idx].item())
+                        slc_compress_kv[cur_s2_idx, :] = compress_kv[slc_idx, :]
 
-                kj = torch.stack(kv_list, dim=0)
-                acc_s = torch.matmul(qi.to(torch.float32), kj.T.to(torch.float32)) * scalar
-                scores_max = acc_s.max(dim=-1, keepdim=True)[0]
-                acc_s_exp = torch.exp(acc_s - scores_max)
-                sum_exp = acc_s_exp.sum(-1, keepdim=True)
-                sum_exp += torch.exp(sinks.reshape(n1, 1) - scores_max)
-                atten_out[t_idx, :, :] = torch.matmul(acc_s_exp / sum_exp, kj.to(torch.float32)).to(torch.bfloat16)
+                    kv_list = []
+                    for block_idx in range(start_block, end_block + 1):
+                        physical_block_id = int(origin_block_table[b_idx, block_idx].item())
+                        kv_block = origin_kv[physical_block_id * self.block_size:
+                                             (physical_block_id + 1) * self.block_size, :]
+                        kv_list.append(kv_block)
+                    kv_cur = torch.cat(kv_list, dim=0)
+                    win_kv_cache = kv_cur[start_offset:start_offset + origin_cur_win_size, :]
 
-        return atten_out
+                    kj = torch.zeros(origin_cur_win_size + s2_tile_cur, self.d, dtype=kv_dtype)
+                    kj[0:origin_cur_win_size, :] = win_kv_cache
+                    kj[origin_cur_win_size:origin_cur_win_size + s2_tile_cur, :] = slc_compress_kv
+
+                    qi = q[t_idx, :, :].reshape(n1, self.d)
+                    sij = torch.matmul(qi.to(torch.float32), kj.transpose(1, 0).to(torch.float32))
+                    sij_scale = sij * scalar
+                    tilda_mij = sij_scale.amax(dim=-1, keepdim=True)
+                    t_sub = sij_scale - tilda_mij
+                    tilda_pij = torch.exp(t_sub)
+                    tilda_lij = tilda_pij.sum(dim=-1, keepdim=True)
+
+                    sink_t_sub = atten_sink_2d - tilda_mij
+                    sink_tilda_pij = torch.exp(sink_t_sub)
+                    tilda_lij = tilda_lij + sink_tilda_pij
+
+                    tmp_softmax = (tilda_pij / tilda_lij).to(input_dtype)
+                    atten_out_part = torch.matmul(tmp_softmax.to(torch.float32),
+                                                  kj.to(torch.float32)).to(torch.float32)
+
+                attention_output[t_idx, :, :] = atten_out_part.to(input_dtype)
+
+        return attention_output
 
 
 def get_inputs():
-    b, s, n_q, d, block_size = 1, 1024, 64, 512, 128
-    t = 2
-    kv_blocks = (s + block_size - 1) // block_size
-    cmp_blocks = (s // 128 + block_size - 1) // block_size
+    b, n_q, n_kv, s_per_batch = 2, 4, 1, 4
+    kv_lora_rank = 64
+    topk = 32
+    win_size = 64
+    block_size = 32
+    cmp_ratio = 32
 
-    q = torch.randn(t, n_q, d, dtype=torch.bfloat16)
-    kv_cache = torch.randn(kv_blocks * block_size, d, dtype=torch.bfloat16)
-    compress_kv = torch.randn(cmp_blocks * block_size, d, dtype=torch.bfloat16)
-    block_table = torch.arange(kv_blocks, dtype=torch.int32).reshape(b, kv_blocks)
-    cmp_block_table = torch.arange(cmp_blocks, dtype=torch.int32).reshape(b, cmp_blocks)
-    seqused_kv = torch.tensor([s], dtype=torch.int32)
-    sparse_indices = torch.zeros(t, 128, dtype=torch.int32)
-    sinks = torch.randn(n_q, dtype=torch.float32)
+    torch.manual_seed(42)
+    t = b * s_per_batch
+    origin_actual_seq = [128, 256]
+    cmp_actual_seq = [i // cmp_ratio for i in origin_actual_seq]
+    actual_seq_q = [i * s_per_batch for i in range(b + 1)]
 
-    return [q, kv_cache, compress_kv, block_table, cmp_block_table, seqused_kv, sparse_indices, sinks]
+    _, block_table = _gen_block_table(torch.tensor(cmp_actual_seq), block_size)
+    _, origin_block_table = _gen_block_table(torch.tensor(origin_actual_seq), block_size)
+
+    topk_indices = _gen_topk_indices(cmp_actual_seq, actual_seq_q, topk, n_kv)
+
+    q = _gen_uniform_data((t, n_q, kv_lora_rank), -1, 1, torch.bfloat16)
+    compress_kv_shape = block_table.max().item() + 1
+    origin_kv_shape = origin_block_table.max().item() + 1
+    compress_kv = _gen_uniform_data((compress_kv_shape * block_size, kv_lora_rank), -1, 1, torch.bfloat16)
+    origin_kv = _gen_uniform_data((origin_kv_shape * block_size, kv_lora_rank), -1, 1, torch.bfloat16)
+    atten_sink = _gen_uniform_data((n_q,), -1, 1, torch.float32)
+
+    return [q, compress_kv, origin_kv, topk_indices, block_table,
+            torch.tensor(actual_seq_q, dtype=torch.int32),
+            torch.tensor(cmp_actual_seq, dtype=torch.int32),
+            origin_block_table,
+            torch.tensor(origin_actual_seq, dtype=torch.int32),
+            atten_sink]
 
 
 def get_init_inputs():
-    return [64, 512, 128, 128]
+    return [4, 64, 1, 32, 32, 64, 32]

@@ -50,8 +50,10 @@ class Model(nn.Module):
         q_scale_out = q_scale_out.to(torch.float16).reshape(t, self.idx_nq)
 
         weights = torch.matmul(
-            x.to(torch.float32), self.weights_proj.to(torch.float32).unsqueeze(0)
-        ).to(torch.float16).squeeze(1)
+            x.to(torch.float32), self.weights_proj.to(torch.float32)
+        ).to(calc_dtype).to(torch.float32)
+        weights = weights * (self.idx_nq ** -0.5) * (self.head_dim ** -0.5)
+        weights = weights.to(torch.float16)
 
         return q_int8.reshape(t, self.idx_nq * self.head_dim), weights, q_scale_out
 

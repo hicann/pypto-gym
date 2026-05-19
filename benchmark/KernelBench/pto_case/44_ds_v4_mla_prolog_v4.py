@@ -49,29 +49,59 @@ class Model(nn.Module):
         return q_out, kv_out
 
     def _rms_norm(self, x, gamma, eps=1e-6):
-        x_f = x.to(torch.float32)
-        g_f = gamma.to(torch.float32)
-        ms = (x_f * x_f).mean(-1, keepdim=True)
-        return (x_f * torch.rsqrt(ms + eps)) * g_f
+        x_dtype = x.dtype
+        mean_coff = 1.0 / x.shape[-1]
+        gf = gamma.to(torch.float32)
+        xf = x.to(torch.float32)
+        square = xf * xf
+        mean_res = square * mean_coff
+        reduce_sum = torch.sum(mean_res, dim=-1, keepdims=True) + eps
+        reduce_sqrt = torch.sqrt(reduce_sum)
+        res_div = xf / reduce_sqrt
+        res = res_div * gf
+        if x_dtype != torch.float32:
+            res = res.to(x_dtype)
+        return res
 
     def _rms_norm_new(self, x, eps=1e-6):
-        x_f = x.to(torch.float32)
-        ms = (x_f * x_f).mean(-1, keepdim=True)
-        return x_f * torch.rsqrt(ms + eps)
+        x_dtype = x.dtype
+        mean_coff = 1.0 / x.shape[-1]
+        xf = x.to(torch.float32)
+        square = xf * xf
+        mean_res = square * mean_coff
+        reduce_sum = torch.sum(mean_res, dim=-1, keepdims=True) + eps
+        reduce_sqrt = torch.sqrt(reduce_sum)
+        res = xf / reduce_sqrt
+        if x_dtype != torch.float32:
+            res = res.to(x_dtype)
+        return res
 
-    def _rope(self, q, k, cos, sin):
-        qf = q.to(torch.float32)
-        kf = k.to(torch.float32)
-        cf = cos.to(torch.float32).unsqueeze(1)
-        sf = sin.to(torch.float32).unsqueeze(1)
-        d = qf.shape[-1]
-        qc = qf.reshape(-1, qf.shape[1], d//2, 2).permute(0, 1, 3, 2).reshape_as(qf)
-        kc = kf.reshape(-1, kf.shape[1], d//2, 2).permute(0, 1, 3, 2).reshape_as(kf)
-        q1, q2 = qc.chunk(2, dim=-1)
-        k1, k2 = kc.chunk(2, dim=-1)
-        qr = qf * cf + torch.cat((-q2, q1), -1) * sf
-        kr = kf * cf + torch.cat((-k2, k1), -1) * sf
-        return qr.to(torch.bfloat16), kr.to(torch.bfloat16)
+    def _rotate_half(self, x):
+        x1 = x[..., :x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+        return torch.cat((-x2, x1), dim=-1)
+
+    def _rope(self, q, k, cos, sin, unsqueeze_dim=1):
+        input_dtype = q.dtype
+        q_clone = q.clone()
+        k_clone = k.clone()
+        t, nq, d = q.shape
+        t_, nk, d_ = k.shape
+        q = q.reshape(t, nq, d//2, 2).permute(0, 1, 3, 2).reshape(t, nq, d)
+        k = k.reshape(t_, nk, d_//2, 2).permute(0, 1, 3, 2).reshape(t_, nk, d)
+        qt = self._rotate_half(q)
+        kt = self._rotate_half(k)
+        qn = qt.reshape(t, nq, 2, d//2).permute(0, 1, 3, 2).reshape(t, nq, d)
+        kn = kt.reshape(t_, nk, 2, d_//2).permute(0, 1, 3, 2).reshape(t_, nk, d)
+        qn = qn.to(torch.float32)
+        kn = kn.to(torch.float32)
+        cos_f32 = torch.unsqueeze(cos, dim=unsqueeze_dim).to(torch.float32)
+        sin_f32 = torch.unsqueeze(sin, dim=unsqueeze_dim).to(torch.float32)
+        qe = q_clone * cos_f32 + qn * sin_f32
+        ke = k_clone * cos_f32 + kn * sin_f32
+        if input_dtype != torch.float32:
+            qe, ke = qe.to(input_dtype), ke.to(input_dtype)
+        return qe, ke
 
 
 def get_inputs():

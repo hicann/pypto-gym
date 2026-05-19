@@ -52,6 +52,7 @@ class Model(nn.Module):
             t_pad = b_pad = l_pad = r_pad = 0
             x_padded = x
             out_h = (H - kh) // sh + 1
+            out_w = (W - kw) // sw + 1
         else:
             raise ValueError(
                 f"Invalid padding_mode: {self.padding_mode}"

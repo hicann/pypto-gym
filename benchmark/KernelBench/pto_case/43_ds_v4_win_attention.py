@@ -36,26 +36,32 @@ class Model(nn.Module):
                 cur_loc = actual_seq - cur_s_q + s1_idx + 1
                 valid_len = min(cur_loc, self.win_size)
                 cur_start = cur_loc - valid_len
+                end_pos = cur_loc
+
+                start_block = cur_start // self.block_size
+                start_offset = cur_start % self.block_size
+                end_block = (end_pos - 1) // self.block_size
 
                 kv_list = []
-                for pos in range(cur_start, cur_loc):
-                    blk = pos // self.block_size
-                    off = pos % self.block_size
-                    pid = block_table[b_idx, blk].item()
-                    if pid >= 0:
-                        kv_list.append(kv_cache[pid * self.block_size + off, :self.d])
+                for blk_idx in range(start_block, end_block + 1):
+                    physical_block_id = block_table[b_idx, blk_idx].item()
+                    if physical_block_id >= 0:
+                        kv_block = kv_cache[physical_block_id * self.block_size:(physical_block_id + 1) * self.block_size, :self.d]
+                        kv_list.append(kv_block)
 
                 if not kv_list:
                     continue
 
-                kj = torch.stack(kv_list, dim=0)
-                acc_s = torch.matmul(qi.to(torch.float32), kj.T.to(torch.float32)) * scalar
+                kv_cur = torch.cat(kv_list, dim=0)
+                kv_cur = kv_cur[start_offset:start_offset + valid_len, :]
+
+                acc_s = torch.matmul(qi.to(torch.float32), kv_cur.to(torch.float32).T) * scalar
                 scores_max = acc_s.max(dim=-1, keepdim=True)[0]
                 acc_s_exp = torch.exp(acc_s - scores_max)
                 sum_exp = acc_s_exp.sum(dim=-1, keepdim=True)
                 sum_exp += torch.exp(sinks.reshape(self.n_q, 1) - scores_max)
-                attn_w = acc_s_exp / sum_exp
-                atten_out[t_idx, :, :] = torch.matmul(attn_w, kj.to(torch.float32)).to(torch.bfloat16)
+                attn_w = (acc_s_exp / sum_exp).to(torch.bfloat16)
+                atten_out[t_idx, :, :] = torch.matmul(attn_w, kv_cur)
 
         return atten_out
 

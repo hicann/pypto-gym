@@ -6,6 +6,10 @@ description: >
   pypto-gym/benchmark 测试框架中以便统一验证 correctness + performance 的场景。
   触发场景：(1) "把这个 testcase 转成 benchmark case" (2) "已有 kernel 怎么接入 benchmark"
   (3) "生成 benchmark 用例" (4) 任何提到 testcase + benchmark 转换的需求。
+  也适用于批量验证已有 golden case 与原始测试的一致性：生成对比验证脚本、输出结构化分析报告、
+  定位并修复 golden 中的差异（量化路径、RoPE 约定、RMSNorm epsilon、结构简化等）。
+  触发场景：(5) "验证这些 golden case 和原 test 是否等价" (6) "对 golden case 做质量排查"
+  (7) "批量对比 golden 和原始 golden" (8) "生成 golden 验证报告"。
 ---
 
 # PyPTO Testcase 转 Benchmark Skill
@@ -290,7 +294,7 @@ Phase 1 结束前，逐项确认：
 
 **2. 逐步骤对比生成的 golden**
 
-将步骤 1 的清单，逐行与生成的 `Model.forward()` 对比：
+将步骤 1 的清单，逐行与生成的 `Model.forward()` 对比，确认结构覆盖：
 
 | 原 test 计算步骤 | Golden 中对应行 | 状态 |
 |-----------------|----------------|------|
@@ -303,58 +307,131 @@ Phase 1 结束前，逐项确认：
 - ⚠️ **简化覆盖**：golden 中路径存在但实现有裁剪（如跳过 quant/dequant、合并步骤）—— 需判断简化是否影响覆盖率
 - ❌ **缺失**：golden 中完全没有对应计算——**必须补充**
 
-**3. 核对输入/输出匹配**
+**3. 运行时数值对比（强制）**
 
-验证 golden 的 `forward()` 输入输出与原始 test 的 golden 函数一致：
+结构覆盖确认后，必须编写并执行运行时对比脚本，逐一验证 golden benchmark 与原始 test golden 在相同输入下输出一致。对比原则：**纯 PyTorch golden 函数对纯 PyTorch golden 函数，不调用 NPU kernel**。
 
-| 核对项 | 要求 |
-|-------|------|
-| 输入 Tensor 数量 | `get_inputs()` 返回的 tensor 数量 ≥ 原始 test 传入 golden 的 tensor 数量（排除 `nn.Parameter` 权重） |
-| 输出 Tensor 数量 | `forward()` 返回值元素数量 ≥ 原始 test golden 函数的输出元素数量 |
-| 输出数据类型 | golden 输出的 dtype 与原始 test 一致（如 INT8 输出必须是 INT8，不能降级为 FP32/BF16） |
-| 权重参数 | 原始 test 中用到的所有权重必须在 `Model.__init__()` 中有对应的 `nn.Parameter` 或 `register_buffer` |
+##### 对比脚本模板
 
-**4. 处理覆盖缺口**
+对每个 case，编写独立验证脚本并放到 `benchmark/KernelBench/pto_case/verification_reports/case{N}_verify.py`：
 
-验证发现覆盖缺口时，按以下优先级处理：
+```python
+#!/usr/bin/env python3
+"""Case N: 验证 benchmark golden 与原始 test golden 的数值一致性。"""
+import sys, math
+import torch
 
-| 缺口类型 | 处理方式 |
-|---------|---------|
+# 1. 从原始 test 文件提取 golden 参考函数（纯 PyTorch 部分）
+#    如 original_test.py 中的 golden_xxx() 或 xxx_compute()
+def original_golden(inputs, weights):
+    ...  # 逐行复制原始 golden 函数的核心计算
+
+# 2. 从 benchmark golden case 的 Model.forward() 提取等效计算
+#    可使用相同权重跑 benchmark 的 Model。或直接提取 forward() 中的纯计算逻辑
+
+# 3. 用相同随机种子生成 3 组不同尺寸的输入
+configs = [
+    (42, "默认", 原始默认尺寸...),
+    (142, "小规模", 缩小尺寸...),
+    (242, "中等规模", 其他尺寸...),
+]
+
+# 4. 逐组运行两侧 golden，逐位比较输出
+for seed, tag, dims in configs:
+    torch.manual_seed(seed)
+    inputs = generate_inputs(dims)
+    out_bench = run_benchmark_golden(model, inputs)
+    out_orig = original_golden(inputs, model_weights)
+    max_diff = (out_bench.float() - out_orig.float()).abs().max().item()
+    # INT8 输出额外计算精确匹配率
+    match_rate = (out_bench == out_orig).float().mean().item()
+    print(f"[{tag}] max_diff={max_diff:.6e} match={match_rate:.4f} {'PASS' if max_diff<1e-5 else 'FAIL'}")
+```
+
+**脚本编写原则**：
+
+- **3 组配置**：原始默认尺寸 + 小规模（缩小 2-4 倍）+ 中等规模（换一组尺寸），每组不同 seed
+- **仅比 golden**：不调用 NPU kernel，只比较原始 test 的 golden 函数与 benchmark golden 的输出
+- **多输出**：每个输出独立报告 max_diff，量化输出（INT8）用 `==` 或精确匹配率，浮点输出用绝对差
+- **遇到差异**：脚本末尾应打印差异最大的元素及其位置，便于定位根因
+- **可独立运行**：`python3 benchmark/KernelBench/pto_case/verification_reports/case{N}_verify.py`
+
+##### 当原始 test 内嵌在源码中时
+
+部分 case 的 golden 参考函数直接写在源码文件（如 `src/.../gmm_mxfp8.py` 中的 `compute_golden_result()`）而非独立的 test 文件。对比脚本同样提取该函数，按照上述模板进行数值比对。
+
+**4. 处理覆盖缺口与数值差异**
+
+验证发现覆盖缺口或数值不匹配时，按以下优先级处理：
+
+| 缺口/差异类型 | 处理方式 |
+|------------|---------|
 | 计算步骤缺失 | **自行补充到 golden**，确保 1:1 覆盖 |
 | 简化过度导致功能丢失 | **自行修正**，恢复被裁剪的计算 |
-| 无法在 KernelBench 格式中表达 | **向用户报告**，明确说明："XX 计算无法在 KernelBench Model.forward() 中表达（原因：YY），建议：ZZ"，等待用户决策 |
+| 数值差异（max_diff > 1e-3） | **分析根因并修正**，见下方常见差异表 |
+| 无法在 KernelBench 格式中表达 | **向用户报告**，明确说明原因和建议 |
 | NPU 特有 API 无法等价替换 | **向用户报告**，说明限制和替代方案 |
+
+**常见数值差异根因及修复**：
+
+| 差异现象 | 根因 | 修复方法 |
+|---------|------|---------|
+| RMSNorm 输出偏差 | benchmark 添加了 epsilon，原始无 epsilon | 移除 epsilon，使用 `sum(x² * 1/N)` 计算 |
+| INT8 量化输出不匹配 | benchmark 用 `round().clamp().to(int8)`，原始用 `round().to(int32).to(float16).trunc().to(int8)` | 对齐至原始的 int32→float16→trunc 量化路径 |
+| RoPE 输出差异大（MAE > 0.1） | benchmark 用半切模式 `chunk(2)`，原始用交织模式 `reshape→permute→rotate` | 实现原始的交织：`reshape(b,s,h,d//2,2).permute(0,1,2,4,3).reshape(...)` |
+| k_nope 量化不匹配 | benchmark 用 per-channel quant，原始用 4 组 per-token quant | 改为 `reshape(t,4,kvl//4)` → `per_token_quantize` → `reshape(t,kvl)` |
+| softmax 输出 ~1e-4 差异 | benchmark 用 matmul+softmax，原始用 online softmax | 实现原始的分块 online softmax（逐 K 迭代 max/sum/out 校正） |
+| 结构简化（缺失计算分支） | benchmark 只实现了简化版算法 | **补全所有计算分支**，不允许私自裁剪 |
+| 缺少权重缩放因子 | benchmark 遗漏了 `scale = (dim1^-0.5)*(dim2^-0.5)` | 补全原始 golden 中的缩放因子 |
+| BF16 精度级差异（~1e-4） | 内存布局遍历方式（2D vs 4D）导致 BF16 舍入不同 | 对齐遍历方式（如 block-concat-then-slice 替代 per-position stack） |
 
 **禁止行为**：
 - ❌ 私自裁剪原始 test 中的计算模块（如：只生成 query path 而跳过 key path）
 - ❌ 将量化/反量化步骤合并简化为直接 FP 计算而不告知用户
 - ❌ 遇到覆盖缺口时静默跳过，不作为缺口汇报
 - ❌ 以"简化 golden"、"降低复杂度"等理由省略计算步骤
+- ❌ 发现数值差异后标记 PASS 而不修复
+- ❌ 只对齐部分分支而遗漏其他分支
 
-**验证通过条件**：所有计算步骤状态为 ✅，所有输入/输出匹配通过，无简化覆盖（或简化已向用户说明并获得同意）。
+**验证通过条件**：所有计算步骤状态为 ✅，所有 3 组配置数值对比 max_diff=0（或 BF16 精度容差内），所有输入/输出匹配通过。
 
-##### 验证报告模板
+##### 验证报告（须输出为 MD 文件）
 
-验证完成后，输出以下报告（可作为文字输出，不需要生成文件）：
+验证完成后，将报告输出到 `benchmark/KernelBench/pto_case/verification_reports/case{N}_{name}_report.md`：
 
 ```
-## Golden 功能覆盖验证报告
+# Case N：{算子中文名称} — 验证报告
 
-### 原始 test golden 范围
-- 文件：tests/ops/xxx/test_xxx.py
-- 函数：xxx_compute()
-- 输入 tensor 数：N
-- 输出 tensor 数：M
-- 计算步骤数：K
+## 源码映射
+| 项目 | 路径 |
+|------|------|
+| Golden Case | benchmark/KernelBench/pto_case/{N}_{name}.py |
+| 原始测试 | tests/ops/{path}/test_{name}.py |
+| 源码实现 | src/pypto_gym/ops/pypto_tile/{path}/{name}_impl.py |
 
-### 覆盖结果
-- ✅ 已覆盖：X 步
-- ⚠️ 简化覆盖：Y 步（附说明）
-- ❌ 缺失：Z 步（附详情）
+## 公式对比
 
-### 结论
-[覆盖完整 / 存在缺口需要处理]
+两侧 golden 计算的核心公式（文本描述 + 关键代码行引用）。
+
+## 运行时对比结果
+
+| 配置 | 尺寸参数 | max_diff | 精确匹配率 | 状态 |
+|------|---------|----------|-----------|------|
+| 默认 | (m=..., k=..., n=...) | 0.0 | 100% | 通过 |
+| 小规模 | ... | 0.0 | 100% | 通过 |
+| 中等规模 | ... | 0.0 | 100% | 通过 |
+
+## 差异分析与修复
+
+[如有差异，逐项列出根因和修复内容]
+[如无差异，标注"无需修复，两侧 golden 完全一致"]
+
+## 结论
+
+[通过 / 已修复后通过 / 存在差异需用户决策]
 ```
+
+**多 case 场景下，额外生成汇总文件** `benchmark/KernelBench/pto_case/verification_reports/MASTER_SUMMARY.md`，包含逐 case 结果表、修复清单、NPU 验证结果（如有）。
 
 #### Case NPU 预检（强制）
 
@@ -533,6 +610,10 @@ python -m benchmark run --config /tmp/pypto_case_regression.yaml --foreground
 | **控制参数混在 get_inputs 中** | `get_inputs()` 返回 int/bool，case_loader 解析失败         | 控制参数移到 `__init`__，`get_inputs()` 只返回 tensor                 |
 | **多输出未用 tuple**         | `forward()` 返回多个 tensor 但未被正确识别                     | 显式声明返回类型 `-> tuple[torch.Tensor, ...]`                      |
 | **int32/int64 中间 MatMul 导致 aclnn 失败** | `aclnn matmul 不支持 int32 输入`、编译失败 | Golden 中避免 int32/int64 MatMul。量化 MatMul golden 用 `float()` 代替 `.to(torch.int32)`，精度差异在验证容差内 |
+| **golden 简化过度** | 验证阶段发现 benchmark golden 与原始 golden 差异大 | 使用 Golden 功能覆盖验证流程逐步骤对比，补全所有缺失的计算模块 |
+| **RoPE 约定不一致** | q_rope/k_rope 输出 MAE > 0.1 | 检查原始测试的 RoPE 实现（半切 vs 交织），对齐至原始约定 |
+| **量化路径不同** | INT8 输出精确匹配率 < 100% | 对齐量化路径：`round→int32→float16→trunc→int8` |
+| **RMSNorm epsilon 差异** | norm 输出微小差异 | 检查原始实现是否使用 epsilon，对齐即可 |
 
 
 ## 参考文档
