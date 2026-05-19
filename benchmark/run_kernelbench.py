@@ -1017,6 +1017,10 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
     keep_artifacts = bool(verifier_yaml.get("keep_artifacts", False))
     extra_verifier_config["keep_artifacts"] = bool(keep_artifacts)
     device_mode = _parse_device_mode(yaml_cfg)
+    verifier_log_dir = (
+        _optional_path(verifier_yaml.get("log_dir"))
+        or artifact_root_dir / "logs"
+    )
 
     return _RunCfg(
         pypto_repo_root=pypto_repo_root,
@@ -1041,7 +1045,7 @@ def _build_cfg(yaml_cfg: Dict[str, Any]) -> _RunCfg:
         backend=verifier_yaml.get("backend", "ascend") or "ascend",
         framework=verifier_yaml.get("framework", "torch") or "torch",
         verify_timeout=int(verifier_yaml.get("verify_timeout", 900) or 900),
-        log_dir=artifact_root_dir / "logs",
+        log_dir=verifier_log_dir,
         report_dir=artifact_root_dir / "report",
         artifact_custom_dir=artifact_root_dir / "custom",
         mode=verifier_yaml.get("mode", "correctness") or "correctness",

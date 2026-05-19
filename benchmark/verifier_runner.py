@@ -256,6 +256,7 @@ async def run_verifier(
             task_desc=task_desc,
             arch=arch,
             device_id=device_id,
+            log_dir=log_dir,
             verify_timeout=verify_timeout,
             extra_config=extra_config,
             log_file=log_file,
@@ -494,6 +495,7 @@ _VALIDATOR_PROMPT_TEMPLATE = """\
 - mode = {mode}
 - device_id = {device_id}
 - arch = {arch}
+- log_dir = {log_dir}
 - verify_timeout = {verify_timeout}
 - verify_rtol = {verify_rtol}
 - verify_atol = {verify_atol}
@@ -684,6 +686,7 @@ async def _run_via_opencode_skill(
     task_desc: str,
     arch: str,
     device_id: int,
+    log_dir: Optional[Path],
     verify_timeout: int,
     extra_config: Optional[Dict[str, Any]],
     log_file: Optional[Path],
@@ -713,6 +716,7 @@ async def _run_via_opencode_skill(
             task_desc=task_desc,
             arch=arch,
             device_id=device_id,
+            log_dir=log_dir,
             verify_timeout=verify_timeout,
             extra_config=extra_config,
             log_file=attempt_log,
@@ -784,6 +788,7 @@ async def _run_via_opencode_skill_once(
     task_desc: str,
     arch: str,
     device_id: int,
+    log_dir: Optional[Path],
     verify_timeout: int,
     extra_config: Optional[Dict[str, Any]],
     log_file: Optional[Path],
@@ -831,6 +836,7 @@ async def _run_via_opencode_skill_once(
         mode=mode,
         device_id=device_id,
         arch=arch,
+        log_dir=str(log_dir.resolve()) if log_dir is not None else "default",
         verify_timeout=verify_timeout,
         verify_rtol=(
             extra_config.get("verify_rtol")

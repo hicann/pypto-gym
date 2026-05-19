@@ -98,6 +98,9 @@ verifier:
   backend: "ascend"
   # 单次 verify 子进程超时, 秒. 默认 15 分钟.
   verify_timeout: 900
+  # KernelVerifier verify/profile 临时工作目录根.
+  # 留空时使用 <output.root_dir 或 output.base_dir/Task_xxx>/logs.
+  log_dir: ""
   # verify 精度比较容差; 留空则走代码默认值 1e-3 / 1e-3.
   # verify_rtol: 1.0e-3
   # verify_atol: 1.0e-3

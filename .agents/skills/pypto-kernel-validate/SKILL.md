@@ -26,6 +26,7 @@ description: 校验一个声称由 PyPTO 开发的算子产物 — 反作弊 (�
 | `mode` | 否 | `correctness` (默认) / `performance` / `full` |
 | `device_id` | 否 | NPU 卡号, 默认 0 |
 | `arch` | 否 | 默认 `ascend910b4` |
+| `log_dir` | 否 | KernelVerifier verify/profile 临时工作目录根; 缺省使用 verifier 默认值 |
 | `verify_timeout` | 否 | 单次验证子进程超时, 秒, 默认 300 |
 | `verify_rtol` | 否 | verify 精度比较 rtol; 缺省使用 verifier 默认值 |
 | `verify_atol` | 否 | verify 精度比较 atol; 缺省使用 verifier 默认值 |
@@ -116,6 +117,12 @@ python -m benchmark.verifier verify \
   --device-id <device_id> \
   --verify-timeout <verify_timeout> \
   --json-out "<output_dir>/verify_run.json"
+```
+
+若 prompt 中提供了 `log_dir` 且值不是 `default`, 必须继续追加:
+
+```bash
+  --log-dir "<log_dir>" \
 ```
 
 若 prompt 中提供了 `verify_rtol` / `verify_atol` 且值不是 `default`, 必须继续追加:

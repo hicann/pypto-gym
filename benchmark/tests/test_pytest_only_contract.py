@@ -242,6 +242,21 @@ def test_run_cfg_unifies_artifact_dirs_under_configured_root(tmp_path) -> None:
     assert cfg.monitor_state_dir == root_dir / "state"
 
 
+def test_run_cfg_accepts_custom_verifier_log_dir(tmp_path) -> None:
+    root_dir = tmp_path / "run-root"
+    verifier_log_dir = tmp_path / "verifier-work"
+
+    cfg = _build_cfg({
+        "output": {"root_dir": str(root_dir)},
+        "pypto": {"repo_root": str(_stub_pypto_repo_layout(tmp_path))},
+        "verifier": {"log_dir": str(verifier_log_dir)},
+    })
+
+    assert cfg.log_dir == verifier_log_dir
+    assert cfg.report_dir == root_dir / "report"
+    assert cfg.monitor_state_dir == root_dir / "state"
+
+
 def test_copy_pypto_custom_artifacts_excludes_output_paths(tmp_path: Path) -> None:
     op_dir = tmp_path / "repo" / "custom" / "level1" / "Foo"
     op_dir.mkdir(parents=True)

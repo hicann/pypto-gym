@@ -44,6 +44,7 @@ python -m benchmark summary <root_dir>/report
 | `pypto.force_regen` | 是否强制重跑 PyPTO 生成 |
 | `verifier.mode` | 验证范围：`correctness` / `performance` / `full`；`configs/__default__.yaml` 默认为 `performance` |
 | `verifier.verifier_mode` | `opencode` 或 `direct`；`direct` 仅用于离线开发调试 |
+| `verifier.log_dir` | KernelVerifier verify/profile 临时工作目录根；留空时使用 `<root_dir>/logs` |
 | `verifier.verify_rtol` / `verifier.verify_atol` | 精度比较阈值 |
 | `verifier.keep_artifacts` | 是否保留 verifier 临时脚本和源码副本 |
 | `monitor.poll_sec` | `run` 刷新 `state.json` 的间隔 |
@@ -67,7 +68,7 @@ level1=
 
 `run` 使用统一产物根目录。若配置 `output.root_dir`，直接使用该目录；
 否则使用 `<output.base_dir>/Task_<uuid>`。不同用途的产物位于该目录的
-固定子目录中：
+固定子目录中；若设置了 `verifier.log_dir`，verifier 临时工作目录会改写到该路径：
 
 ```text
 <root_dir>/
