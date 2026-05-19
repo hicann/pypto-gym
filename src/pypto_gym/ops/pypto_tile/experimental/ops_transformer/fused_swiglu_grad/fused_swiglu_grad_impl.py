@@ -35,10 +35,8 @@ def fused_swiglu_bwd_b_kernel(
     fc: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     dg: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     dfc: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
-    db_g_tmp: pypto.Tensor([], pypto.DT_FP32),
-    db_fc_tmp: pypto.Tensor([], pypto.DT_FP32),
-    db_g: pypto.Tensor([], pypto.DT_FP32),
-    db_fc: pypto.Tensor([], pypto.DT_FP32)
+    db_g: pypto.Tensor([], pypto.DT_BF16),
+    db_fc: pypto.Tensor([], pypto.DT_BF16)
 ):
     """
     Fused SwiGLU backward kernel - Compute gradients for dg and dfc,
@@ -49,8 +47,6 @@ def fused_swiglu_bwd_b_kernel(
     n = dy.shape[1]
     tile_m = 1024
     loop_count = (m + tile_m - 1) // tile_m
-    pypto.set_vec_tile_shapes(32)
-    index = pypto.zeros((1), dtype=pypto.DT_INT32)
 
     for idx in pypto.loop(loop_count, name="LOOP_BWD_DG", idx_name="idx"):
         tile_offset = idx * tile_m
@@ -72,12 +68,8 @@ def fused_swiglu_bwd_b_kernel(
 
         dg_sum = pypto.sum(dg_tile, dim=0, keepdim=True)
         dfc_sum = pypto.sum(dfc_tile, dim=0, keepdim=True)
-        dg_sum_fp32 = pypto.cast(dg_sum, pypto.DT_FP32)
-        dfc_sum_fp32 = pypto.cast(dfc_sum, pypto.DT_FP32)
-        db_g_view = pypto.view(db_g_tmp, [1, n], [0, 0], valid_shape=[1, n])
-        db_fc_view = pypto.view(db_fc_tmp, [1, n], [0, 0], valid_shape=[1, n])
-        db_g[:] = pypto.index_add_(db_g_view, 0, index, dg_sum_fp32)
-        db_fc[:] = pypto.index_add_(db_fc_view, 0, index, dfc_sum_fp32)
+        db_g[:] = db_g + dg_sum
+        db_fc[:] = db_fc + dfc_sum
 
 
 @pypto.frontend.jit(

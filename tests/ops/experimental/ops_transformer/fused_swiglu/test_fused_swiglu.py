@@ -37,8 +37,8 @@ def get_device_id():
 
 
 def golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc):
-    gate = x.float() @ w_g.float() + b_g
-    fc = x.float() @ w_fc.float() + b_fc
+    gate = x @ w_g + b_g
+    fc = x @ w_fc + b_fc
     gate_silu = gate * torch.sigmoid(gate)
     y = (gate_silu * fc).to(x.dtype)
     return y
