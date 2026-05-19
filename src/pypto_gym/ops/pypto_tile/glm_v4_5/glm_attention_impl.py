@@ -291,7 +291,7 @@ def ifa_func_kernel(
                             pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                             oi_update[:] = oi_update * update_mul + oi_tmp
                         if pypto.is_loop_end(s2_idx):
-                            oi_final = pypto.div(oi_update, sum_update, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                            oi_final = pypto.div(oi_update, sum_update, precision_type=pypto.PrecisionType.INTRINSIC)
                             pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                             oi_final_3d = pypto.cast(
                                 pypto.reshape(oi_final, [1, g_tile, dn]),
@@ -414,7 +414,7 @@ def ifa_func_kernel_for_950(
                             oi_tmp = mm2_res
                             oi_update[:] = pypto.tensor(oi_tmp.shape, pypto.DT_FP32, "oi_update")
                             if pypto.is_loop_end(s2_idx):
-                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.PrecisionType.INTRINSIC)
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update, [1, g_tile, dn]),
                                                         dtype)
@@ -445,7 +445,7 @@ def ifa_func_kernel_for_950(
                             if pypto.is_loop_end(s2_idx):
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_tmp = pypto.div(oi_tmp, sum_update,
-                                                          precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                                          precision_type=pypto.PrecisionType.INTRINSIC)
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update_tmp, [1, g_tile, dn]), dtype)
                                 pypto.assemble(oi_update_3d, oi_ofs, atten_out)
                             else:

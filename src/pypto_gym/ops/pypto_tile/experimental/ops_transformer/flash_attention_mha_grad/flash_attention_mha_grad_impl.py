@@ -225,7 +225,7 @@ def flash_attention_varlen_backward_kernel_small_seq(
                         # 数据类型转换：dtype: FP32 全程
                         pypto.set_pass_options(sg_set_scope=2)
                         p = pypto.div(pypto.exp(pypto.sub(pypto.mul(scores, scale), m_i)),
-                                            l_i, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                            l_i, precision_type=pypto.PrecisionType.INTRINSIC)
                         # 计算公式： dS_tile = P * (dP - head_dim)
                         # 数据类型转换：dtype: FP32
                         ds = pypto.mul(p, pypto.sub(dp, d_tile))
@@ -285,7 +285,7 @@ def compute_p_ds(qi, ki, vi, doi, mi, li, d_i, sq, sk, scale, c_tile, v_tile_s, 
     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
     s_ij = pypto.mul(s_ij, scale)
     p_ij = pypto.exp(pypto.sub(s_ij, mi))
-    p_ij = pypto.div(p_ij, li, precision_type=pypto.DivAlgorithm.INTRINSIC)
+    p_ij = pypto.div(p_ij, li, precision_type=pypto.PrecisionType.INTRINSIC)
 
     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
     pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])

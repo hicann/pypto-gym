@@ -213,7 +213,7 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
                         t_sub = pypto.sub(sij_scale, tilda_mij_reduce)
                         tilda_pij = pypto.exp(t_sub)
                         tilda_lij_reduce = pypto.sum(tilda_pij, dim=-1, keepdim=True)
-                        t_softmax = pypto.div(tilda_pij, tilda_lij_reduce, pypto.DivAlgorithm.INTRINSIC)
+                        t_softmax = pypto.div(tilda_pij, tilda_lij_reduce, pypto.PrecisionType.INTRINSIC)
                         tilda_pij_f16 = pypto.cast(t_softmax, dtype)
 
                         pypto.set_semantic_label("Sa_C2")
@@ -432,7 +432,7 @@ def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_
                             oi_tmp = pypto.add(q3, q2)
                             if pypto.cond(pypto.is_loop_end(s2_idx)):
                                 oi_update[:] = pypto.div(oi_tmp,
-                                    pypto.reshape(li_new, [cur_group_tile, 1]), pypto.DivAlgorithm.INTRINSIC)
+                                    pypto.reshape(li_new, [cur_group_tile, 1]), pypto.PrecisionType.INTRINSIC)
                                 pypto.set_vec_tile_shapes(1, 1, v2_tile[0], v2_tile[1])
                                 oi_update_4_dim = pypto.cast(pypto.reshape(oi_update,
                                     [1, 1, cur_group_tile, dn]), dtype)

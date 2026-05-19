@@ -142,11 +142,11 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
     x_max = pypto.amax(x_abs, -1, True)
     shape_0, shape_1 = x_max.shape[:2]
     x_scale = pypto.div(pypto.full([shape_0, shape_1], fp8_e4m3_max_value, pypto.DT_FP32),
-                        x_max, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                        x_max, precision_type=pypto.PrecisionType.INTRINSIC)
     x_mul = pypto.mul(x_fp32, x_scale)
     x_fp8_e4m3 = pypto.cast(x_mul, pypto.DT_FP8E4M3)
     x_scale_quant = pypto.div(pypto.full([shape_0, shape_1], 1.0, pypto.DT_FP32),
-                              x_scale, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                              x_scale, precision_type=pypto.PrecisionType.INTRINSIC)
     return x_fp8_e4m3, x_scale_quant
 
 
@@ -311,7 +311,7 @@ def ifa_func_kernel_v2_bound(
                             oi_tmp = mm2_res
                             oi_update[:] = pypto.tensor(oi_tmp.shape, pypto.DT_FP32, "oi_update")
                             if pypto.is_loop_end(s2_idx):
-                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.PrecisionType.INTRINSIC)
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update, [1, g_tile, dn]),
                                                         dtype)
@@ -343,7 +343,7 @@ def ifa_func_kernel_v2_bound(
                             if pypto.is_loop_end(s2_idx):
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_tmp = pypto.div(oi_tmp, sum_update,
-                                                          precision_type=pypto.DivAlgorithm.INTRINSIC)
+                                                          precision_type=pypto.PrecisionType.INTRINSIC)
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update_tmp, [1, g_tile, dn]), dtype)
                                 # 11. 将结果搬运到输出tensor上
                                 pypto.assemble(oi_update_3d, oi_ofs, atten_out)

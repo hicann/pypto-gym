@@ -61,7 +61,7 @@ def fused_swiglu_bwd_b_kernel(
 
         pypto.set_vec_tile_shapes(128, 128)
         exp_g = pypto.exp(g_tile)
-        sigmoid_g = pypto.div(exp_g, (1.0 + exp_g), precision_type=pypto.DivAlgorithm.INTRINSIC)
+        sigmoid_g = pypto.div(exp_g, (1.0 + exp_g), precision_type=pypto.PrecisionType.INTRINSIC)
         silu_g = g_tile * sigmoid_g
         dy_mul_fc = dy_tile * fc_tile
         silu_bwd = sigmoid_g * (1.0 + g_tile * (1.0 - sigmoid_g))
