@@ -52,20 +52,46 @@ def get_init_inputs():
 - 输入 tensor 的 shape/dtype 应尽量固定、可复现，便于 loader 生成
   `p0_shapes` 和 `supported_dtypes`。
 
-## 公式和动态轴
+## 公式、动态轴和泛化用例
 
-新增 case 如果能提供数学语义和动态轴，请在文件顶层添加两个大写全局变量：
+新增 case 如果能提供数学语义和动态轴，请在文件顶层添加大写全局变量：
 
 ```python
 FORMULA = "out[b, s, d] = x[b, s, d] + bias[d]"
 DYNAMIC_AXIS = ["B", "S"]
 ```
 
+也可以提供泛化 shape 组合：
+
 - `FORMULA`: 数学公式或简洁计算语义，会写入 `REQUIRE.md` 的
   `### 1.3 数学公式` 小节。
 - `DYNAMIC_AXIS`: 动态轴名称列表，会写入 `REQUIRE.md` front matter 的
   `dynamic_axis` 字段。
-- 两者必须是可被 `ast.literal_eval` 解析的常量表达式。
+- `CASES`: 泛化 shape 组合列表，会写入 `REQUIRE.md` front matter 的
+  `p1_shapes` 字段。其结构与 ``p0_shapes`` 同构——外层是泛化配置的列表，
+  内层每条 case 包含所有输入的 shape 元组；
+  例如对 matmul (2 输入，每个输入 2D)，一条 case 为 ``[[M, K], [K, N]]``，
+  外层再包一层变成三层嵌套 ``[case_0, case_1, ...]``。
+  值**必须是字符串形式**（``CASES = "..."`` 或 ``CASES = """..."""``），
+  否则 ``ast.literal_eval`` 提取阶段会跳过。字符串内容可以是 JSON flow style 或
+  多行块写法（每行一个 JSON case），最终都会被统一序列化为单行 JSON：
+
+  ```python
+  # 风格 1：单行 JSON (三层嵌套，每层含义见注释)
+  CASES = "[[[1024, 1024], [1024, 1024]], [[2048, 2048], [2048, 2048]]]"
+
+  # 风格 2：多行块写法 (每行一个 JSON case，更易读)
+  CASES = """
+  - [[1024, 1024], [1024, 1024]]
+  - [[2048, 2048], [2048, 2048]]
+  - [[4096, 4096], [4096, 4096]]
+  """
+  ```
+
+  解析后的列表会被 ``json.dumps`` 成单行写入 front matter，保证 YAML 合法性。
+  不提供 ``CASES``，或 ``CASES`` 解析后不满足三层嵌套结构 / 输入数量不匹配时，
+  ``p1_shapes`` 不会出现在输出中。
+- 三者必须是可被 `ast.literal_eval` 解析的常量表达式。
 
 ## 推荐模板
 

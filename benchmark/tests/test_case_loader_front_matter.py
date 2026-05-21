@@ -38,6 +38,8 @@ def _parse_front_matter(markdown: str) -> dict:
     out["tolerance"] = json.loads(out["tolerance"])
     if "dynamic_axis" in out:
         out["dynamic_axis"] = json.loads(out["dynamic_axis"])
+    if "p1_shapes" in out:
+        out["p1_shapes"] = json.loads(out["p1_shapes"])
     return out
 
 
@@ -246,6 +248,82 @@ def test_load_case_leaves_outputs_empty_without_idle_chip(tmp_path, monkeypatch)
 
     assert case.inputs[0].shape == [4, 8]
     assert case.outputs == []
+
+
+def test_load_case_parses_cases_global_into_p1_shapes(tmp_path, monkeypatch) -> None:
+    """CASES 全局变量应被解析为列表并以合法单行 JSON 写入 front-matter.
+
+    覆盖: JSON flow / 多行块 / 缺省 / 非法值四种场景.
+    """
+    monkeypatch.setattr(case_loader, "_list_idle_chip_ids", lambda: ["0"])
+    monkeypatch.setattr(
+        case_loader,
+        "_run_probe_subprocess",
+        lambda case_path, timeout_sec, probe_outputs, chip_id=None: (
+            [
+                TensorSpec(name="x0", shape=[2, 3], dtype="float32"),
+                TensorSpec(name="x1", shape=[3], dtype="float32"),
+            ],
+            [TensorSpec(name="y0", shape=[2, 3], dtype="float32")] if probe_outputs else [],
+            "[]",
+        ),
+    )
+
+    model_body = textwrap.dedent(
+        """
+        class Model:
+            def forward(self, x, y): return x
+            def __call__(self, x, y): return self.forward(x, y)
+        def get_inputs(): return [object(), object()]
+        def get_init_inputs(): return []
+        """
+    ).lstrip()
+
+    def _write_case(filename: str, cases_decl: str) -> None:
+        (tmp_path / filename).write_text(cases_decl + model_body, encoding="utf-8")
+
+    def _load_p1_shapes(filename: str):
+        case = load_case(tmp_path / filename, case_id=filename[:-3])
+        markdown = render_require_md(case)
+        front_matter = _parse_front_matter(markdown)
+        return case.p1_shapes, front_matter
+
+    expected = [[[2, 3], [3]], [[4, 5], [5]]]
+
+    # 1) JSON flow style
+    _write_case("200_CasesJson.py", 'CASES = "[[[2, 3], [3]], [[4, 5], [5]]]"\n')
+    p1_shapes, front_matter = _load_p1_shapes("200_CasesJson.py")
+    assert p1_shapes == expected
+    assert front_matter["p1_shapes"] == expected
+
+    # 2) 多行块写法: 每行一个 JSON case
+    _write_case("201_CasesBlock.py", 'CASES = """\n- [[2, 3], [3]]\n- [[4, 5], [5]]\n"""\n')
+    p1_shapes, front_matter = _load_p1_shapes("201_CasesBlock.py")
+    assert p1_shapes == expected
+    assert front_matter["p1_shapes"] == expected
+
+    # 3) 缺省 CASES
+    _write_case("202_NoCases.py", "")
+    p1_shapes, front_matter = _load_p1_shapes("202_NoCases.py")
+    assert p1_shapes is None
+    assert "p1_shapes" not in front_matter
+
+    # 4) 非法 CASES (非列表) — 静默忽略, 不渲染 p1_shapes
+    _write_case("203_BadCases.py", 'CASES = "not a list"\n')
+    p1_shapes, front_matter = _load_p1_shapes("203_BadCases.py")
+    assert p1_shapes is None
+    assert "p1_shapes" not in front_matter
+
+    # 5) 结构非法或输入数量不匹配: 不渲染 p1_shapes
+    for filename, cases_decl in [
+        ("204_BadCasesScalar.py", 'CASES = "[1, 2]"\n'),
+        ("205_BadCasesMissingOuterCase.py", 'CASES = "[[2, 3], [3]]"\n'),
+        ("206_BadCasesWrongArity.py", 'CASES = "[[[2, 3]]]"\n'),
+    ]:
+        _write_case(filename, cases_decl)
+        p1_shapes, front_matter = _load_p1_shapes(filename)
+        assert p1_shapes is None
+        assert "p1_shapes" not in front_matter
 
 
 def test_load_case_retries_other_idle_chips(tmp_path, monkeypatch) -> None:

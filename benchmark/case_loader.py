@@ -83,6 +83,7 @@ class CaseSpec:
     )
     dynamic_axis: Optional[List[str]] = None
     formula: str = ""
+    p1_shapes: Optional[List] = None       # 来自 case 顶层 CASES 全局变量, 解析后的泛化用例列表
 
 
 # ────────────────────────────────────────────────────────────
@@ -142,13 +143,15 @@ def _has_kernelbench_layout(tree: ast.Module) -> List[str]:
     return missing
 
 
-def _extract_new_interface_globals(tree: ast.Module) -> tuple[str, Optional[List[str]]]:
-    """提取新增 KernelBench case 顶层接口: ``FORMULA`` / ``DYNAMIC_AXIS``.
+def _extract_new_interface_globals(tree: ast.Module) -> tuple[str, Optional[List[str]], Optional[List]]:
+    """提取新增 KernelBench case 顶层接口: ``FORMULA`` / ``DYNAMIC_AXIS`` / ``CASES``.
 
-    旧 case 没有这两个全局变量时保持空值, REQUIRE.md 渲染时不会输出对应字段。
+    旧 case 没有这些全局变量时保持空值, REQUIRE.md 渲染时不会输出对应字段。
+    ``CASES`` 的字符串内容会被解析并校验为结构化列表后写入 front-matter 的 ``p1_shapes`` 字段。
     """
     formula = ""
     dynamic_axis: Optional[List[str]] = None
+    cases: Optional[List] = None
     for node in tree.body:
         targets: List[ast.expr]
         value_node: Optional[ast.expr]
@@ -178,7 +181,75 @@ def _extract_new_interface_globals(tree: ast.Module) -> tuple[str, Optional[List
             axis = [str(item) for item in value]
             if axis:
                 dynamic_axis = axis
-    return formula, dynamic_axis
+        if "CASES" in names and isinstance(value, str):
+            parsed = _parse_cases_string(value)
+            if parsed is not None:
+                cases = parsed
+    return formula, dynamic_axis, cases
+
+
+def _parse_cases_string(raw: str) -> Optional[List]:
+    """将 CASES 全局变量的字符串值解析为结构化列表.
+
+    支持两种写法 (零新增依赖, 仅用 ``json.loads``):
+
+    - JSON flow style: ``"[[[2, 3], [3]], [[4, 5], [5]]]"``
+    - 多行块写法 (每行一个 JSON case)::
+
+        CASES = \"\"\"
+        - [[2, 3], [3]]
+        - [[4, 5], [5]]
+        \"\"\"
+
+    多行块会先去掉 ``-`` 前缀再拼成 JSON 数组解析;
+    解析结果不符合 ``[case, ...]`` / ``case=[shape, ...]`` / ``shape=[dim, ...]``
+    结构时返回 ``None``.
+    """
+    text = textwrap.dedent(raw).strip()
+    if not text:
+        return None
+    # 先尝试直接 JSON 解析 (覆盖 flow style)
+    try:
+        result = _validate_cases_structure(json.loads(text))
+        if result is not None:
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    if not re.search(r"^\s*-\s+", text, flags=re.MULTILINE):
+        logger.warning("CASES 字符串无法解析为合法 p1_shapes, 忽略: %.200s", text)
+        return None
+    # 预处理多行块写法: 去掉 "-" 前缀, 补齐成 JSON 数组
+    stripped = re.sub(r"^\s*-\s+", "", text, flags=re.MULTILINE)
+    stripped = re.sub(r"\]\s*\n\s*\[", "], [", stripped)
+    try:
+        result = _validate_cases_structure(json.loads(f"[{stripped}]"))
+        if result is not None:
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    logger.warning("CASES 字符串无法解析为合法 p1_shapes, 忽略: %.200s", text)
+    return None
+
+
+def _validate_cases_structure(
+    cases: object,
+    expected_input_count: Optional[int] = None,
+) -> Optional[List]:
+    """校验 p1_shapes 结构: 外层 case 列表, 每个 case 含每个输入的 shape."""
+    if not isinstance(cases, list) or not cases:
+        return None
+    for case in cases:
+        if not isinstance(case, list) or not case:
+            return None
+        if expected_input_count is not None and len(case) != expected_input_count:
+            return None
+        for shape in case:
+            if not isinstance(shape, list):
+                return None
+            for dim in shape:
+                if not isinstance(dim, int) or isinstance(dim, bool) or dim < 0:
+                    return None
+    return cases
 
 
 # ────────────────────────────────────────────────────────────
@@ -492,7 +563,7 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
     framework = _detect_framework(tree)
     init_src = _extract_model_method_source(tree, source, "__init__")
     forward_src = _extract_model_method_source(tree, source, "__call__", "forward")
-    formula, dynamic_axis = _extract_new_interface_globals(tree)
+    formula, dynamic_axis, p1_shapes = _extract_new_interface_globals(tree)
     inputs, outputs, init_repr = _probe_io_specs(
         case_path,
         timeout_sec=probe_timeout_sec,
@@ -500,6 +571,16 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
         output_probe_device_id=output_probe_device_id,
         allow_find_free=allow_find_free,
     )
+    if p1_shapes is not None and inputs:
+        expected_input_count = len(inputs)
+        validated_p1_shapes = _validate_cases_structure(p1_shapes, expected_input_count)
+        if validated_p1_shapes is None:
+            logger.warning(
+                "CASES 结构与探针输入数量不匹配, 忽略 p1_shapes: expected_inputs=%s, cases=%.200s",
+                expected_input_count,
+                json.dumps(p1_shapes, ensure_ascii=False),
+            )
+        p1_shapes = validated_p1_shapes
     supported_dtypes, p0_shapes, tolerance = _derive_front_matter_fields(inputs)
 
     return CaseSpec(
@@ -519,6 +600,7 @@ def load_case(case_path: Path, op_name: Optional[str] = None,
         tolerance=tolerance,
         dynamic_axis=dynamic_axis,
         formula=formula,
+        p1_shapes=p1_shapes,
     )
 
 
@@ -532,7 +614,7 @@ schema_version: 1
 op_name: {op_name}
 supported_dtypes: {supported_dtypes_json}
 p0_shapes: {p0_shapes_json}
-tolerance: {tolerance_json}
+{p1_shapes_front_matter}tolerance: {tolerance_json}
 {dynamic_axis_front_matter}---
 
 # {op_name} 算子需求规格 (派生自上游 KernelBench)
@@ -680,6 +762,13 @@ def _render_dynamic_axis_front_matter(dynamic_axis: Optional[List[str]]) -> str:
     return f"dynamic_axis: {json.dumps(dynamic_axis, ensure_ascii=False)}\n"
 
 
+def _render_p1_shapes_front_matter(p1_shapes: Optional[List]) -> str:
+    """渲染 p1_shapes front-matter 行; 单行 JSON 序列化以保证 YAML 合法性."""
+    if not p1_shapes:
+        return ""
+    return f"p1_shapes: {json.dumps(p1_shapes, ensure_ascii=False)}\n"
+
+
 def _render_formula_section(formula: str) -> str:
     formula = textwrap.dedent(formula or "").strip()
     if not formula:
@@ -745,6 +834,7 @@ def render_require_md(case: CaseSpec) -> str:
         op_name=case.op_name,
         supported_dtypes_json=json.dumps(supported_dtypes, ensure_ascii=False),
         p0_shapes_json=json.dumps(p0_shapes, ensure_ascii=False),
+        p1_shapes_front_matter=_render_p1_shapes_front_matter(case.p1_shapes),
         tolerance_json=json.dumps(tolerance, ensure_ascii=False),
         dynamic_axis_front_matter=_render_dynamic_axis_front_matter(case.dynamic_axis),
         case_id=case.case_id,
