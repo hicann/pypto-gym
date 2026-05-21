@@ -573,7 +573,7 @@ git commit -m "code deployment: add core/ with fixed imports and auto_map"
 
 #### 步骤 17：算子实现
 
-**目标：** 编写 PyPTO 算子代码。
+**目标：** 编写 PyPTO 算子代码, 若支持aclgraph，算子实现的skill需要支持aclgraph。
 
 **推荐 Skill：** `pypto-op-develop`
 
@@ -590,6 +590,7 @@ git commit -m "code deployment: add core/ with fixed imports and auto_map"
 **关键说明：**
 - 步骤 12 采集的真实用例是必须 pass 的基准
 - 输出无 NaN/Inf，与 Golden 对齐（diff < 2e-3）
+- **必须询问用户是否支持aclgraph**
 
 **推荐 Skill：** `pypto-precision-compare`
 
@@ -695,6 +696,53 @@ def forward(self, hidden_states):
 - ✅ 使用 `--use-pto` → `RMS_PTO_AVAILABLE = True`（PTO生效）
 - ✅ 不使用 → `RMS_PTO_AVAILABLE = False`（torch fallback）
 - ✅ 本地修改算子库后即时生效
+
+---
+
+#### 步骤 22：修改模型调用逻辑 + aclgraph适配 ★
+
+**目标：** 模型调用接口适配aclgraph的调用模式。
+
+**推荐方案：找到网络的入口model类，使用torch.compile 方式将其编译成aclgraph的torch入口*
+
+**原理：** 网络的入口model构造完成时，配置torch compile config及torch compile结构，torch compile编译入口model，原模型的调用执行用torch compile返回的model替换。
+
+**实施步骤：**
+**步骤A：aclgraph模式的使能开关**
+
+```python
+    parser.add_argument("--use-acl-graph", action="store_true", help="启用acl graph模式")
+
+    if args.use-acl-graph:
+        module.USE_ACL_GRAPH = True                   # 4. 启用算子开关
+
+    from transformers import AutoModelForCausalLM   # 之后加载模型
+    ...
+```
+
+**步骤B：aclgraph模式的图编译配置**
+
+```python
+
+        if pto_kernels is not None and pto_kernels.USE_ACL_GRAPH:
+            import torchair as tng
+            import torchair.ge_concrete_graph.ge_converter.experimental.patch_for_hcom_allreduce
+            from torchair.configs.compiler_config import CompilerConfig
+
+            compiler_config = CompilerConfig()
+            compiler_config.experimental_config.frozen_parameter = True
+            compiler_config.experimental_config.tiling_schedule_optimize = True
+            npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
+            self.model = torch.compile(self.model, dynamic=True, fullgraph=True, backend=npu_backend)
+    ...
+```
+
+**关键要点：**
+- 注入位置：transformers 导入前
+- 条件判断：开关启用（双重条件）
+
+**验证检查点：**
+- ✅ 使用 `--use-acl_graph` → `USE_ACL_GRAPH = True`（PTO生效）
 
 ---
 
