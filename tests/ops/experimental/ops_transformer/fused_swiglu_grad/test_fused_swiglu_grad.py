@@ -45,7 +45,7 @@ def golden_fused_swiglu_bwd(dy, g, fc, w_g, w_fc, x):
     db_fc = (dfc.sum(dim=0, keepdim=True)).to(dy.dtype)
     dw_g = (x.T @ dg).to(dy.dtype)
     dw_fc = (x.T @ dfc).to(dy.dtype)
-    dx = (dg @ w_g.T).to(dy.dtype) + (dfc @ w_fc.T).to(dy.dtype)
+    dx = (dg @ w_g.T + dfc @ w_fc.T).to(dy.dtype)
     return dx, dw_g, dw_fc, db_g, db_fc
 
 
@@ -57,12 +57,12 @@ def test_bwd(device_id):
     np.random.seed(0)
     torch.manual_seed(0)
 
-    x = torch.randn(m, k, dtype=torch.bfloat16, device=device) / math.sqrt(m)
-    w_g = torch.randn(k, n, dtype=torch.bfloat16, device=device) / math.sqrt(k)
-    w_fc = torch.randn(k, n, dtype=torch.bfloat16, device=device) / math.sqrt(k)
-    dy = torch.randn(m, n, dtype=torch.bfloat16, device=device) / math.sqrt(m)
-    g = torch.randn(m, n, dtype=torch.bfloat16, device=device) / math.sqrt(m)
-    fc = torch.randn(m, n, dtype=torch.bfloat16, device=device) / math.sqrt(m)
+    x = torch.randn(m, k, dtype=torch.bfloat16, device=device)
+    w_g = torch.randn(k, n, dtype=torch.bfloat16, device=device)
+    w_fc = torch.randn(k, n, dtype=torch.bfloat16, device=device)
+    dy = torch.randn(m, n, dtype=torch.bfloat16, device=device)
+    g = torch.randn(m, n, dtype=torch.bfloat16, device=device)
+    fc = torch.randn(m, n, dtype=torch.bfloat16, device=device)
     dx_golden, dw_g_golden, dw_fc_golden, db_g_golden, db_fc_golden = golden_fused_swiglu_bwd(dy, g, fc, w_g, w_fc, x)
 
     dx_out = torch.empty(m, k, dtype=torch.bfloat16, device=device)
