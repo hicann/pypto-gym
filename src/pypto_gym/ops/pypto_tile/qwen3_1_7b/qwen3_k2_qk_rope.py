@@ -26,8 +26,10 @@ def _make_qk_rope_kernel(N: int):
     """Factory: returns a JIT kernel specialised for N heads."""
 
     @pypto.frontend.jit(
-        runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1},
-        debug_options={"runtime_debug_mode": 0},
+        runtime_options={
+            "stitch_function_max_num": 128, 
+            "device_sched_mode": 1
+        }
     )
     def kernel(
         x:        pypto.Tensor([pypto.DYNAMIC, N, D], pypto.DT_BF16),    # [S, N, 128]

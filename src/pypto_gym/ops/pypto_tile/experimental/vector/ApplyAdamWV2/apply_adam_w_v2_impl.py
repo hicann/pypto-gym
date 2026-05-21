@@ -35,8 +35,11 @@ VEC_TILE_N = 1024
 # ---------------------------------------------------------------------------
 # fp32 path: weight/grad are fp32
 # ---------------------------------------------------------------------------
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 0})
+@pypto.frontend.jit(
+    runtime_options={
+        "run_mode": pypto.RunMode.NPU
+    }
+)
 def apply_adam_w_v2_kernel_fp32(
     weight: pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),
     grad:   pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),
@@ -96,8 +99,7 @@ def apply_adam_w_v2_kernel_fp32(
 # ---------------------------------------------------------------------------
 # bf16 path: weight/grad are bf16; m, v stay fp32; intermediate math fp32.
 # ---------------------------------------------------------------------------
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
-                    debug_options={"runtime_debug_mode": 0})
+@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
 def apply_adam_w_v2_kernel_bf16(
     weight: pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),
     grad:   pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),

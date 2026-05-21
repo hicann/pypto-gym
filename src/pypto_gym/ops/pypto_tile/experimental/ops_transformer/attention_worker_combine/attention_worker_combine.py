@@ -79,7 +79,7 @@ def attention_worker_combine_splitbs_kernel(
         pypto.assemble(y_tile, [bs_offset, 0], y)
 
 
-@pypto.frontend.jit(debug_options={"runtime_debug_mode": 0})
+@pypto.frontend.jit()
 def attention_worker_combine_splith_kernel(
     token_data: pypto.Tensor([pypto.DYNAMIC, k + 1, pypto.STATIC], pypto.DT_BF16),
     expert_scales: pypto.Tensor([pypto.DYNAMIC, k], pypto.DT_FP32),

@@ -163,8 +163,7 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
         "enable_pass_verify": False,
         "pass_verify_save_tensor": False,
     },
-    host_options={"compile_monitor_enable": True},
-    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0}
+    host_options={"compile_monitor_enable": True}
 )
 def ifa_func_kernel_v2_bound(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),

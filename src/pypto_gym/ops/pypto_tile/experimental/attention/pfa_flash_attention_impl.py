@@ -395,8 +395,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
     pass_options={
         "cube_l1_reuse_setting": {-1: 16},
         "vec_nbuffer_setting": {0: 8}
-    },
-    debug_options={"runtime_debug_mode": 0}
+    }
 )
 def pfa_optimized_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

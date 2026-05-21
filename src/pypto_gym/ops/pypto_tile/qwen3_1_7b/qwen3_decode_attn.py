@@ -22,9 +22,13 @@ S2_TILE = 64
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1},
-    pass_options={"cube_l1_reuse_setting": {0: 4}},
-    debug_options={"runtime_debug_mode": 0},
+    runtime_options={
+        "stitch_function_max_num": 128, 
+        "device_sched_mode": 1
+    },
+    pass_options={
+        "cube_l1_reuse_setting": {0: 4}
+    }
 )
 def qwen3_decode_attn(
     q:       pypto.Tensor([Nq, D], pypto.DT_BF16),

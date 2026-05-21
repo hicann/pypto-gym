@@ -244,18 +244,14 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
 
 
 @pypto.frontend.jit(
-    host_options={
-        "compile_monitor_enable": True,
-        "compile_timeout": 10,
-        "compile_timeout_stage": 5,
-        "compile_monitor_print_interval": 2},
     pass_options={
         "vec_nbuffer_setting": {-1: 2, 0: 4},
         "cube_l1_reuse_setting": {-1: 2},
     },
     runtime_options={
         "stitch_function_max_num": 128,
-        "device_sched_mode": 3
+        "device_sched_mode": 3,
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
 def sparse_attention_antiquant_d(
@@ -306,17 +302,13 @@ def sparse_attention_antiquant_d(
 
 
 @pypto.frontend.jit(
-    host_options={
-        "compile_monitor_enable": True,
-        "compile_timeout": 10,
-        "compile_timeout_stage": 5,
-        "compile_monitor_print_interval": 2},
     pass_options={
         "vec_nbuffer_setting": {-1: 4, 0: 4},
         "cube_l1_reuse_setting": {-1: 4},
     },
     runtime_options={
-        "stitch_function_max_num": 128
+        "stitch_function_max_num": 128,
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
 def sparse_attention_antiquant_p(

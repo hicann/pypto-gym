@@ -450,7 +450,8 @@ def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_
     },
     runtime_options={
         "stitch_function_max_num": 128,
-        "device_sched_mode": 3
+        "device_sched_mode": 3,
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
 def sparse_flash_attention_quant_d_950(
@@ -511,7 +512,8 @@ def sparse_flash_attention_quant_d_950(
     },
     runtime_options={
         "stitch_function_max_num": 128,
-        "device_sched_mode": 3
+        "device_sched_mode": 3,
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
 def sparse_flash_attention_quant_d(
@@ -571,7 +573,8 @@ def sparse_flash_attention_quant_d(
         "cube_l1_reuse_setting": {-1: 4},
     },
     runtime_options={
-        "stitch_function_max_num": 128
+        "stitch_function_max_num": 128,
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
 def sparse_flash_attention_quant_p(

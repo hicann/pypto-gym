@@ -70,7 +70,6 @@ def mhc_res_golden(x: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
 
 
 @pypto.jit(
-    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0},
     runtime_options={"device_sched_mode": 3},
 )
 def mhc_res_kernel(x: pypto.Tensor, h: pypto.Tensor, out: pypto.Tensor) -> None:

@@ -36,9 +36,6 @@ SCALE = 1.0 / (HEAD_DIM ** 0.5)
 
 
 @pypto.frontend.jit(
-    debug_options={
-        "runtime_debug_mode": 0,
-    },
     runtime_options={
         "device_sched_mode": 0,
         "stitch_function_max_num": 1024,

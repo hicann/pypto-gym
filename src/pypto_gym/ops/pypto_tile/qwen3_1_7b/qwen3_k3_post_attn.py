@@ -24,8 +24,10 @@ BS_TILE = 8
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1},
-    debug_options={"runtime_debug_mode": 0},
+    runtime_options={
+        "stitch_function_max_num": 128, 
+        "device_sched_mode": 1
+    }
 )
 def qwen3_post_attn_k3(
     attn_in:     pypto.Tensor([pypto.DYNAMIC, H], pypto.DT_BF16),       # [S, 2048] from attention output

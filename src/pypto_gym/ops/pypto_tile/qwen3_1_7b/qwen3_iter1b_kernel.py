@@ -44,8 +44,7 @@ def _rope_half(x_split_fp32_left, x_split_fp32_right, cos_half_fp32, sin_half_fp
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1,
-    },
-    debug_options={"runtime_debug_mode": 0},
+    }
 )
 def qwen3_pre_attn_iter1b(
     x:         pypto.Tensor([pypto.DYNAMIC, H], pypto.DT_BF16),

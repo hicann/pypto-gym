@@ -635,8 +635,7 @@ def mla_prolog_quant_compute(
         "cube_l1_reuse_setting": {0:1, 1: 1, 2:3, 3:4},
         "cube_nbuffer_setting": {0:1, 1:1, 2:1, 3:4},
     },
-    runtime_options = {"device_sched_mode": 2, "stitch_function_max_num": 128},
-    debug_options={"compile_debug_mode":0, "runtime_debug_mode": 0}
+    runtime_options = {"device_sched_mode": 2, "stitch_function_max_num": 128}
 )
 def mla_prolog_quant(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP8E4M3),

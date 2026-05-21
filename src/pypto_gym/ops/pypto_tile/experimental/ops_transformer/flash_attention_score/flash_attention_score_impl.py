@@ -47,9 +47,6 @@ BLOCK_SIZE_Q = 32
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1,
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
     }
 )
 def flash_attention_score_kernel_with_mask_origin(
@@ -187,9 +184,6 @@ def flash_attention_score_kernel_with_mask_origin(
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1,
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
     }
 )
 def flash_attention_score_kernel_with_mask(
@@ -379,9 +373,6 @@ def flash_attention_score_kernel_with_mask(
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1,
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
     }
 )
 def flash_attention_score_kernel_with_pse_and_dropout(

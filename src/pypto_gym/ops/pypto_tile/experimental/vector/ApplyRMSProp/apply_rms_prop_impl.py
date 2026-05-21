@@ -25,8 +25,7 @@ class RMSPropConfig:
     runtime_options={
         "run_mode": pypto.RunMode.NPU,
         "stitch_function_max_num": 128,
-    },
-    debug_options=dict(compile_debug_mode=0, runtime_debug_mode=0),
+    }
 )
 def apply_rms_prop_kernel(
     var: pypto.Tensor([], pypto.DT_FP32),

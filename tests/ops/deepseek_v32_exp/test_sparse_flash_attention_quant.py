@@ -483,7 +483,7 @@ def get_case_config(case_name: str):
         "sfa_bf16_b1_s256_seq64K_int8_p": (
             (1, 128, 1, 256), 1, [65536], 0
         ),
-        "sfa_bf16_b4_s2_seq64K_per_int8_d_950": (
+        "sfa_bf16_b4_s2_seq64K_per_bf16_d_950": (
             (4, 128, 1, 2), 0, [65536] * 4, 1
         ),
     }
@@ -525,11 +525,11 @@ def test_sfa_bf16_b4_s2_seq64k_per_int8_d():
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="perf")
-def test_sfa_bf16_b4_s2_seq64k_per_int8_d_950():
+def test_sfa_bf16_b4_s2_seq64k_per_bf16_d_950():
     '''
-    sfa decode测试函数
+    sfa decode非量化950 mix切分测试用例
     '''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_int8_d_950", is_p=False, is_soc_950=True)
+    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_bf16_d_950", is_p=False, is_soc_950=True)
 
 
 @pytest.mark.skip(reason="bf16 perf")
@@ -556,4 +556,4 @@ if __name__ == "__main__":
     test_sfa_bf16_b4_s2_seq64k_total_int8_d()
     test_sfa_bf16_b4_s2_seq64k_per_int8_d()
     test_sfa_bf16_b1_s256_seq64k_int8_p()
-    test_sfa_bf16_b4_s2_seq64k_per_int8_d_950()
+    test_sfa_bf16_b4_s2_seq64k_per_bf16_d_950()

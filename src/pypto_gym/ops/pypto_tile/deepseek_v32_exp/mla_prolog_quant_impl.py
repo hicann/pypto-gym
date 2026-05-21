@@ -61,6 +61,8 @@ class MlaTileConfig:
         self.m_tile = 16
         self.mv_tile = 16
         self.pre_quant_cube_tile = [16, 16, 256, 256, 128, 128]
+        self.cube_qb_tile = [16, 16, 256, 256, 128, 128]
+        self.cube_wuk_tile = [32, 32, 256, 256, 256, 256]
         self.unroll_list = [32, 16, 8, 4, 2, 1]
         self.q_vec_tile0 = 16
         self.q_vec_tile1 = 16
@@ -205,7 +207,7 @@ def quant(
     else:
         max_value = pypto.amax(input_fp32, -1, keepdim=True)
         min_value = pypto.amin(input_fp32, -1, keepdim=True)
-        scale_de_quant = pypto.max(pypto.div(pypto.sub(max_value, min_value), 255.0), 1e-12)
+        scale_de_quant = max(pypto.div(pypto.sub(max_value, min_value), 255.0), 1e-12)
         offset = pypto.sub(127.0, pypto.div(max_value, scale_de_quant))
         scale_quant = scalar_div(max_value, 1.0, True)
         out_fp32 = pypto.mul(input_fp32, scale_quant)
@@ -466,15 +468,16 @@ def pre_compute_2d(
         norm_quant = quant_res[0]
         norm_quant_scale = quant_res[1]
         pypto.set_semantic_label("QuantMatmul_qb")
-        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                   [256, 256], [256, 256])
+        pypto.set_cube_tile_shapes([tile_config.cube_qb_tile[0], tile_config.cube_qb_tile[1]],
+                                   [tile_config.cube_qb_tile[2], tile_config.cube_qb_tile[3]],
+                                   [tile_config.cube_qb_tile[4], tile_config.cube_qb_tile[5]])
         q_b_proj_tmp = pypto.matmul(norm_quant, w_uq_qr, dtype_quant_b_out)
         pypto.set_semantic_label("Dequant_qb")
         q_b_proj = dequant(dtype, q_b_proj_tmp, norm_quant_scale, dequant_scale_w_uq_qr)
     else:
-        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
-                                   [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
-                                   [256, 256])
+        pypto.set_cube_tile_shapes([tile_config.cube_qb_tile[0], tile_config.cube_qb_tile[1]],
+                                   [tile_config.cube_qb_tile[2], tile_config.cube_qb_tile[3]],
+                                   [tile_config.cube_qb_tile[4], tile_config.cube_qb_tile[5]])
         pypto.set_semantic_label("Matmul_qb")
         q_b_proj = pypto.matmul(norm_res, w_uq_qr, dtype)
 
@@ -639,7 +642,9 @@ def mla_prolog_quant_compute(
         q_nope = pypto.view(q_tmp, [tile_bs, n1, qk_nope_head_dim], [0, 0, 0])
         m = tile_config.m_tile
         pypto.set_semantic_label("Matmul_qNope_wUk")
-        pypto.set_cube_tile_shapes([m, m], [128, 128], [128, 128])
+        pypto.set_cube_tile_shapes([m, m],
+                                   [tile_config.cube_wuk_tile[2], tile_config.cube_wuk_tile[3]],
+                                   [tile_config.cube_wuk_tile[4], tile_config.cube_wuk_tile[5]])
         q_nope_new_trans = pypto.experimental.transposed_batchmatmul(q_nope, w_uk, dtype)
 
         pypto.set_semantic_label("Assemble_queryOut")
@@ -716,10 +721,14 @@ def options_list():
     else:
         return {
             "pass_options": {
-                "cube_l1_reuse_setting": {-1: 4, 0: 1, 1: 1},
+                "cube_l1_reuse_setting": {-1: 8, 0: 1, 1: 1},
                 "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1},
+                "vec_nbuffer_setting": {-2: 1, -1: 4},
             },
-            "runtime_options": {"device_sched_mode": 1},
+            "runtime_options": {
+                "device_sched_mode": 2, 
+                "stitch_function_max_num": 128
+            },
         }
 
 

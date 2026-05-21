@@ -45,9 +45,6 @@ S2_TILE = 320
     runtime_options={
         "stitch_function_max_num": 256,
         "device_sched_mode": 0,
-    },
-    debug_options={
-        "runtime_debug_mode": 0
     }
 )
 def flash_attention_varlen_backward_kernel_small_seq(
@@ -307,10 +304,7 @@ def compute_p_ds(qi, ki, vi, doi, mi, li, d_i, sq, sk, scale, c_tile, v_tile_s, 
         "cube_nbuffer_setting": {0: 8},
         "vec_nbuffer_setting": {0: 8},
         "cube_l1_reuse_setting": {0: 8},
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
-    },
+    }
 )
 def flash_attention_mha_grad_kernel_long_seq(
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
