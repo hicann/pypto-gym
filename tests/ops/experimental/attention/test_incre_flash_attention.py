@@ -234,11 +234,12 @@ def get_device(device_id: int = None, run_mode: str = "npu"):
         str: Device string (e.g., "npu:0" or "cpu")
     """
     if device_id is not None:
-        cue_device_id = device_id
+        cur_device_id = device_id
     else:
-        cue_device_id = get_env_device_id()
+        cur_device_id = get_env_device_id()
 
-    device = f"npu:{cue_device_id}" if (run_mode == "npu" and cue_device_id is not None) else "cpu"
+    torch.npu.set_device(int(cur_device_id))
+    device = f"npu:{cur_device_id}" if (run_mode == "npu" and cur_device_id is not None) else "cpu"
     return device
 
 

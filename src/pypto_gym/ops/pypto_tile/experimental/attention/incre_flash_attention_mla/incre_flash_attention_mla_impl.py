@@ -494,10 +494,15 @@ def compute_loop_b(ctx):
 
 
 @pypto.frontend.jit(
-    pass_options={"vec_nbuffer_setting": {-1: 2, 0: 8}, "cube_l1_reuse_setting": {-1: 2},
-                  "cube_nbuffer_setting": {-1: 2}},
-    runtime_options={"stitch_function_max_num": 256, "device_sched_mode": 3},
-    debug_options={"runtime_debug_mode": 1}
+    pass_options={
+        "vec_nbuffer_setting": {-1: 2, 0: 8}, 
+        "cube_l1_reuse_setting": {-1: 2},
+        "cube_nbuffer_setting": {-1: 2}
+    },
+    runtime_options={
+        "stitch_function_max_num": 256, 
+        "device_sched_mode": 3
+    }
 )
 def incre_flash_attention_mla_kernel(
     query: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
