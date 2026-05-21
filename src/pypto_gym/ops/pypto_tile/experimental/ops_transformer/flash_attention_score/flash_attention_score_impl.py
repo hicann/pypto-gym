@@ -65,9 +65,11 @@ def flash_attention_score_kernel_with_mask_origin(
     """
     batch_size = query.shape[0]
     num_heads = query.shape[1]
+    num_heads_kv = key.shape[1]
     seq_len_q = query.shape[2]
     head_dim = query.shape[3]
     seq_len_kv = key.shape[2]
+    group = num_heads // num_heads_kv
 
     scale = 1.0 / math.sqrt(head_dim)
 
@@ -78,100 +80,102 @@ def flash_attention_score_kernel_with_mask_origin(
     num_blocks_q = (seq_len_q + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b_idx in pypto.loop(0, batch_size, 1, name="LOOP_B", idx_name="b_idx"):
-        for n_idx in pypto.loop(0, num_heads, 1, name="LOOP_N", idx_name="n_idx"):
-            for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
-                q_start = q_block_idx * BLOCK_SIZE_Q
-                cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
+        for kv_head_idx in pypto.loop(0, num_heads_kv, 1, name="LOOP_KV_HEAD", idx_name="kv_head_idx"):
+            for group_idx in pypto.loop(0, group, 1, name="LOOP_GROUP", idx_name="group_idx"):
+                n_idx = kv_head_idx * group + group_idx
+                for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
+                    q_start = q_block_idx * BLOCK_SIZE_Q
+                    cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
 
-                oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
-                li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
-                mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
+                    oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
+                    li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
+                    mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
 
-                q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
-                                    [b_idx, n_idx, q_start, 0],
-                                    valid_shape=[1, 1, cur_q_size, head_dim])
-                q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
-                q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
-                                              [0, 0],
-                                              valid_shape=[cur_q_size, head_dim])
-
-                for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
-                                                         name="LOOP_KV_BLOCK",
-                                                         idx_name="kv_block_idx",
-                                                         unroll_list=[4, 2, 1]):
-                    kv_start = kv_block_idx * BLOCK_SIZE_KV
-                    cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
-
-                    k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
-                    k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                    q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
+                                        [b_idx, n_idx, q_start, 0],
+                                        valid_shape=[1, 1, cur_q_size, head_dim])
+                    q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
+                    q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
                                                   [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
+                                                  valid_shape=[cur_q_size, head_dim])
 
-                    scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
-                                         a_trans=False, b_trans=True)
-                    scores_scaled = pypto.mul(scores, scale)
+                    for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
+                                                             name="LOOP_KV_BLOCK",
+                                                             idx_name="kv_block_idx",
+                                                             unroll_list=[1]):
+                        kv_start = kv_block_idx * BLOCK_SIZE_KV
+                        cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
 
-                    mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                           [q_start, kv_start],
-                                           valid_shape=[cur_q_size, cur_block_size])
-                    valid_mask = pypto.add(mask_block, -1.0)
-                    valid_mask = pypto.mul(valid_mask, -1.0)
+                        k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
+                        k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
 
-                    m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                                             a_trans=False, b_trans=True)
+                        scores_scaled = pypto.mul(scores, scale)
 
-                    s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
-                    p_ij = pypto.exp(s_ij_sub_m)
-                    p_ij = pypto.mul(p_ij, valid_mask)
-                    l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
+                        mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                               [q_start, kv_start],
+                                               valid_shape=[cur_q_size, cur_block_size])
+                        valid_mask = pypto.add(mask_block, -1.0)
+                        valid_mask = pypto.mul(valid_mask, -1.0)
 
-                    v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
-                    v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
-                                                  [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
-                    v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
+                        m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
 
-                    o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
+                        s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
+                        p_ij = pypto.exp(s_ij_sub_m)
+                        p_ij = pypto.mul(p_ij, valid_mask)
+                        l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
 
-                    if pypto.is_loop_begin(kv_block_idx):
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(o_ij, l_ij)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
+                        v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
+                        v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
+                        v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
+
+                        o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
+
+                        if pypto.is_loop_begin(kv_block_idx):
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(o_ij, l_ij)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
+                            else:
+                                oi_update[:] = o_ij
+                            li_update[:] = l_ij
+                            mi_update[:] = m_ij
                         else:
-                            oi_update[:] = o_ij
-                        li_update[:] = l_ij
-                        mi_update[:] = m_ij
-                    else:
-                        mi_new = pypto.maximum(mi_update, m_ij)
+                            mi_new = pypto.maximum(mi_update, m_ij)
 
-                        alpha = pypto.exp(pypto.sub(mi_update, mi_new))
-                        beta = pypto.exp(pypto.sub(m_ij, mi_new))
+                            alpha = pypto.exp(pypto.sub(mi_update, mi_new))
+                            beta = pypto.exp(pypto.sub(m_ij, mi_new))
 
-                        li_new = pypto.add(
-                            pypto.mul(alpha, li_update),
-                            pypto.mul(beta, l_ij)
-                        )
+                            li_new = pypto.add(
+                                pypto.mul(alpha, li_update),
+                                pypto.mul(beta, l_ij)
+                            )
 
-                        oi_scaled = pypto.mul(oi_update, alpha)
-                        o_ij_scaled = pypto.mul(o_ij, beta)
-                        oi_new = pypto.add(oi_scaled, o_ij_scaled)
+                            oi_scaled = pypto.mul(oi_update, alpha)
+                            o_ij_scaled = pypto.mul(o_ij, beta)
+                            oi_new = pypto.add(oi_scaled, o_ij_scaled)
 
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(oi_new, li_new)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
-                        else:
-                            oi_update[:] = oi_new
-                        li_update[:] = li_new
-                        mi_update[:] = mi_new
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(oi_new, li_new)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
+                            else:
+                                oi_update[:] = oi_new
+                            li_update[:] = li_new
+                            mi_update[:] = mi_new
 
 
 @pypto.frontend.jit(
@@ -211,9 +215,11 @@ def flash_attention_score_kernel_with_mask(
     """
     batch_size = query.shape[0]
     num_heads = query.shape[1]
+    num_heads_kv = key.shape[1]
     seq_len_q = query.shape[2]
     head_dim = query.shape[3]
     seq_len_kv = key.shape[2]
+    group = num_heads // num_heads_kv
 
     scale = scale_value
 
@@ -224,142 +230,144 @@ def flash_attention_score_kernel_with_mask(
     num_blocks_q = (seq_len_q + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b_idx in pypto.loop(0, batch_size, 1, name="LOOP_B", idx_name="b_idx"):
-        for n_idx in pypto.loop(0, num_heads, 1, name="LOOP_N", idx_name="n_idx"):
-            for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
-                q_start = q_block_idx * BLOCK_SIZE_Q
-                cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
+        for kv_head_idx in pypto.loop(0, num_heads_kv, 1, name="LOOP_KV_HEAD", idx_name="kv_head_idx"):
+            for group_idx in pypto.loop(0, group, 1, name="LOOP_GROUP", idx_name="group_idx"):
+                n_idx = kv_head_idx * group + group_idx
+                for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
+                    q_start = q_block_idx * BLOCK_SIZE_Q
+                    cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
 
-                oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
-                li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
-                mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
+                    oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
+                    li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
+                    mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
 
-                q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
-                                    [b_idx, n_idx, q_start, 0],
-                                    valid_shape=[1, 1, cur_q_size, head_dim])
-                q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
-                q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
-                                              [0, 0],
-                                              valid_shape=[cur_q_size, head_dim])
-
-                for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
-                                                         name="LOOP_KV_BLOCK",
-                                                         idx_name="kv_block_idx",
-                                                         unroll_list=[4, 2, 1]):
-                    kv_start = kv_block_idx * BLOCK_SIZE_KV
-                    cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
-
-                    k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
-                    k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                    q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
+                                        [b_idx, n_idx, q_start, 0],
+                                        valid_shape=[1, 1, cur_q_size, head_dim])
+                    q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
+                    q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
                                                   [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
+                                                  valid_shape=[cur_q_size, head_dim])
 
-                    scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
-                                         a_trans=False, b_trans=True)
-                    scores_scaled = pypto.mul(scores, scale)
+                    for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
+                                                             name="LOOP_KV_BLOCK",
+                                                             idx_name="kv_block_idx",
+                                                             unroll_list=[1]):
+                        kv_start = kv_block_idx * BLOCK_SIZE_KV
+                        cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
 
-                    mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                           [q_start, kv_start],
-                                           valid_shape=[cur_q_size, cur_block_size])
-                    valid_mask = pypto.add(mask_block, -1.0)
-                    valid_mask = pypto.mul(valid_mask, -1.0)
+                        k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
+                        k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
 
-                    m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                                             a_trans=False, b_trans=True)
+                        scores_scaled = pypto.mul(scores, scale)
 
-                    s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
-                    p_ij = pypto.exp(s_ij_sub_m)
-                    p_ij = pypto.mul(p_ij, valid_mask)
-                    l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
+                        mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                               [q_start, kv_start],
+                                               valid_shape=[cur_q_size, cur_block_size])
+                        valid_mask = pypto.add(mask_block, -1.0)
+                        valid_mask = pypto.mul(valid_mask, -1.0)
 
-                    v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
-                    v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
-                                                  [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
-                    v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
+                        m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
 
-                    o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
+                        s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
+                        p_ij = pypto.exp(s_ij_sub_m)
+                        p_ij = pypto.mul(p_ij, valid_mask)
+                        l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
 
-                    if pypto.is_loop_begin(kv_block_idx):
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(o_ij, l_ij)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = o_final_4d
+                        v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
+                        v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
+                        v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
 
-                            m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_max[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = m_final_4d
+                        o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
 
-                            l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_sum[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = l_final_4d
+                        if pypto.is_loop_begin(kv_block_idx):
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(o_ij, l_ij)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = o_final_4d
+
+                                m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_max[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = m_final_4d
+
+                                l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_sum[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = l_final_4d
+                            else:
+                                oi_update[:] = o_ij
+                            li_update[:] = l_ij
+                            mi_update[:] = m_ij
                         else:
-                            oi_update[:] = o_ij
-                        li_update[:] = l_ij
-                        mi_update[:] = m_ij
-                    else:
-                        mi_new = pypto.maximum(mi_update, m_ij)
+                            mi_new = pypto.maximum(mi_update, m_ij)
 
-                        alpha = pypto.exp(pypto.sub(mi_update, mi_new))
-                        beta = pypto.exp(pypto.sub(m_ij, mi_new))
+                            alpha = pypto.exp(pypto.sub(mi_update, mi_new))
+                            beta = pypto.exp(pypto.sub(m_ij, mi_new))
 
-                        li_new = pypto.add(
-                            pypto.mul(alpha, li_update),
-                            pypto.mul(beta, l_ij)
-                        )
+                            li_new = pypto.add(
+                                pypto.mul(alpha, li_update),
+                                pypto.mul(beta, l_ij)
+                            )
 
-                        oi_scaled = pypto.mul(oi_update, alpha)
-                        o_ij_scaled = pypto.mul(o_ij, beta)
-                        oi_new = pypto.add(oi_scaled, o_ij_scaled)
+                            oi_scaled = pypto.mul(oi_update, alpha)
+                            o_ij_scaled = pypto.mul(o_ij, beta)
+                            oi_new = pypto.add(oi_scaled, o_ij_scaled)
 
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(oi_new, li_new)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = o_final_4d
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(oi_new, li_new)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = o_final_4d
 
-                            m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_max[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = m_final_4d
+                                m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_max[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = m_final_4d
 
-                            l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_sum[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = l_final_4d
-                        else:
-                            oi_update[:] = oi_new
-                        li_update[:] = li_new
-                        mi_update[:] = mi_new
+                                l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_sum[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = l_final_4d
+                            else:
+                                oi_update[:] = oi_new
+                            li_update[:] = li_new
+                            mi_update[:] = mi_new
 
 
 @pypto.frontend.jit(
@@ -415,9 +423,11 @@ def flash_attention_score_kernel_with_pse_and_dropout(
     """
     batch_size = query.shape[0]
     num_heads = query.shape[1]
+    num_heads_kv = key.shape[1]
     seq_len_q = query.shape[2]
     head_dim = query.shape[3]
     seq_len_kv = key.shape[2]
+    group = num_heads // num_heads_kv
 
     scale = scale_value
 
@@ -428,164 +438,166 @@ def flash_attention_score_kernel_with_pse_and_dropout(
     num_blocks_q = (seq_len_q + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b_idx in pypto.loop(0, batch_size, 1, name="LOOP_B", idx_name="b_idx"):
-        for n_idx in pypto.loop(0, num_heads, 1, name="LOOP_N", idx_name="n_idx"):
-            for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
-                q_start = q_block_idx * BLOCK_SIZE_Q
-                cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
+        for kv_head_idx in pypto.loop(0, num_heads_kv, 1, name="LOOP_KV_HEAD", idx_name="kv_head_idx"):
+            for group_idx in pypto.loop(0, group, 1, name="LOOP_GROUP", idx_name="group_idx"):
+                n_idx = kv_head_idx * group + group_idx
+                for q_block_idx in pypto.loop(0, num_blocks_q, 1, name="LOOP_Q_BLOCK", idx_name="q_block_idx"):
+                    q_start = q_block_idx * BLOCK_SIZE_Q
+                    cur_q_size = min(BLOCK_SIZE_Q, seq_len_q - q_start)
 
-                oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
-                li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
-                mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
+                    oi_update = pypto.tensor([BLOCK_SIZE_Q, head_dim], pypto.DT_FP32, "oi_update")
+                    li_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "li_update")
+                    mi_update = pypto.tensor([BLOCK_SIZE_Q, 1], pypto.DT_FP32, "mi_update")
 
-                q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
-                                    [b_idx, n_idx, q_start, 0],
-                                    valid_shape=[1, 1, cur_q_size, head_dim])
-                q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
-                q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
-                                              [0, 0],
-                                              valid_shape=[cur_q_size, head_dim])
-
-                for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
-                                                         name="LOOP_KV_BLOCK",
-                                                         idx_name="kv_block_idx",
-                                                         unroll_list=[4, 2, 1]):
-                    kv_start = kv_block_idx * BLOCK_SIZE_KV
-                    cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
-
-                    k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
-                    k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                    q_block = pypto.view(query, [1, 1, BLOCK_SIZE_Q, head_dim],
+                                        [b_idx, n_idx, q_start, 0],
+                                        valid_shape=[1, 1, cur_q_size, head_dim])
+                    q_block_2d = pypto.reshape(q_block, [BLOCK_SIZE_Q, head_dim])
+                    q_block_2d_valid = pypto.view(q_block_2d, [BLOCK_SIZE_Q, head_dim],
                                                   [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
+                                                  valid_shape=[cur_q_size, head_dim])
 
-                    scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
-                                         a_trans=False, b_trans=True)
+                    for kv_block_idx, _ in pypto.loop_unroll(0, num_blocks_kv, 1,
+                                                             name="LOOP_KV_BLOCK",
+                                                             idx_name="kv_block_idx",
+                                                             unroll_list=[1]):
+                        kv_start = kv_block_idx * BLOCK_SIZE_KV
+                        cur_block_size = min(BLOCK_SIZE_KV, seq_len_kv - kv_start)
 
-                    pse_block = pypto.view(pse, [1, 1, BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                          [b_idx, n_idx, q_start, kv_start],
-                                          valid_shape=[1, 1, cur_q_size, cur_block_size])
-                    pse_block_2d = pypto.reshape(pse_block, [BLOCK_SIZE_Q, BLOCK_SIZE_KV])
-                    pse_block_2d_valid = pypto.view(pse_block_2d, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                                    [0, 0],
+                        k_block = pypto.view(key, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        k_block_2d = pypto.reshape(k_block, [BLOCK_SIZE_KV, head_dim])
+                        k_block_2d_valid = pypto.view(k_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
+
+                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                                             a_trans=False, b_trans=True)
+
+                        pse_block = pypto.view(pse, [1, 1, BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                              [b_idx, kv_head_idx, q_start, kv_start],
+                                              valid_shape=[1, 1, cur_q_size, cur_block_size])
+                        pse_block_2d = pypto.reshape(pse_block, [BLOCK_SIZE_Q, BLOCK_SIZE_KV])
+                        pse_block_2d_valid = pypto.view(pse_block_2d, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                                        [0, 0],
+                                                        valid_shape=[cur_q_size, cur_block_size])
+                        pse_fp32 = pypto.cast(pse_block_2d_valid, pypto.DT_FP32)
+
+                        if pse_type == 1:
+                            scores = pypto.add(pse_fp32, scores)
+                            scores_scaled = pypto.mul(scores, scale)
+                        else:
+                            scores_scaled = pypto.mul(scores, scale)
+                            scores_scaled = pypto.add(scores_scaled, pse_fp32)
+
+                        mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                               [q_start, kv_start],
+                                               valid_shape=[cur_q_size, cur_block_size])
+                        valid_mask = pypto.add(mask_block, -1.0)
+                        valid_mask = pypto.mul(valid_mask, -1.0)
+
+                        m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+
+                        s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
+                        p_ij = pypto.exp(s_ij_sub_m)
+                        p_ij = pypto.mul(p_ij, valid_mask)
+
+                        drop_mask_block = pypto.view(drop_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
+                                                    [q_start, kv_start],
                                                     valid_shape=[cur_q_size, cur_block_size])
-                    pse_fp32 = pypto.cast(pse_block_2d_valid, pypto.DT_FP32)
+                        p_ij = pypto.mul(p_ij, drop_mask_block)
 
-                    if pse_type == 1:
-                        scores = pypto.add(pse_fp32, scores)
-                        scores_scaled = pypto.mul(scores, scale)
-                    else:
-                        scores_scaled = pypto.mul(scores, scale)
-                        scores_scaled = pypto.add(scores_scaled, pse_fp32)
+                        if keep_prob < 1.0:
+                            scale_dropout = 1.0 / keep_prob
+                            p_ij = pypto.mul(p_ij, scale_dropout)
 
-                    mask_block = pypto.view(atten_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                           [q_start, kv_start],
-                                           valid_shape=[cur_q_size, cur_block_size])
-                    valid_mask = pypto.add(mask_block, -1.0)
-                    valid_mask = pypto.mul(valid_mask, -1.0)
+                        l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
 
-                    m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                        v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
+                                            [b_idx, kv_head_idx, kv_start, 0],
+                                            valid_shape=[1, 1, cur_block_size, head_dim])
+                        v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
+                        v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
+                                                      [0, 0],
+                                                      valid_shape=[cur_block_size, head_dim])
+                        v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
 
-                    s_ij_sub_m = pypto.sub(scores_scaled, m_ij)
-                    p_ij = pypto.exp(s_ij_sub_m)
-                    p_ij = pypto.mul(p_ij, valid_mask)
+                        o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
 
-                    drop_mask_block = pypto.view(drop_mask, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                                [q_start, kv_start],
-                                                valid_shape=[cur_q_size, cur_block_size])
-                    p_ij = pypto.mul(p_ij, drop_mask_block)
+                        if pypto.is_loop_begin(kv_block_idx):
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(o_ij, l_ij)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = o_final_4d
 
-                    if keep_prob < 1.0:
-                        scale_dropout = 1.0 / keep_prob
-                        p_ij = pypto.mul(p_ij, scale_dropout)
+                                m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_max[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = m_final_4d
 
-                    l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
-
-                    v_block = pypto.view(value, [1, 1, BLOCK_SIZE_KV, head_dim],
-                                        [b_idx, n_idx, kv_start, 0],
-                                        valid_shape=[1, 1, cur_block_size, head_dim])
-                    v_block_2d = pypto.reshape(v_block, [BLOCK_SIZE_KV, head_dim])
-                    v_block_2d_valid = pypto.view(v_block_2d, [BLOCK_SIZE_KV, head_dim],
-                                                  [0, 0],
-                                                  valid_shape=[cur_block_size, head_dim])
-                    v_block_fp32 = pypto.cast(v_block_2d_valid, pypto.DT_FP32)
-
-                    o_ij = pypto.matmul(p_ij, v_block_fp32, pypto.DT_FP32)
-
-                    if pypto.is_loop_begin(kv_block_idx):
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(o_ij, l_ij)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = o_final_4d
-
-                            m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_max[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = m_final_4d
-
-                            l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_sum[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = l_final_4d
+                                l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_sum[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = l_final_4d
+                            else:
+                                oi_update[:] = o_ij
+                            li_update[:] = l_ij
+                            mi_update[:] = m_ij
                         else:
-                            oi_update[:] = o_ij
-                        li_update[:] = l_ij
-                        mi_update[:] = m_ij
-                    else:
-                        mi_new = pypto.maximum(mi_update, m_ij)
+                            mi_new = pypto.maximum(mi_update, m_ij)
 
-                        alpha = pypto.exp(pypto.sub(mi_update, mi_new))
-                        beta = pypto.exp(pypto.sub(m_ij, mi_new))
+                            alpha = pypto.exp(pypto.sub(mi_update, mi_new))
+                            beta = pypto.exp(pypto.sub(m_ij, mi_new))
 
-                        li_new = pypto.add(
-                            pypto.mul(alpha, li_update),
-                            pypto.mul(beta, l_ij)
-                        )
+                            li_new = pypto.add(
+                                pypto.mul(alpha, li_update),
+                                pypto.mul(beta, l_ij)
+                            )
 
-                        oi_scaled = pypto.mul(oi_update, alpha)
-                        o_ij_scaled = pypto.mul(o_ij, beta)
-                        oi_new = pypto.add(oi_scaled, o_ij_scaled)
+                            oi_scaled = pypto.mul(oi_update, alpha)
+                            o_ij_scaled = pypto.mul(o_ij, beta)
+                            oi_new = pypto.add(oi_scaled, o_ij_scaled)
 
-                        if pypto.is_loop_end(kv_block_idx):
-                            o_final = pypto.div(oi_new, li_new)
-                            o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                            o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
-                            output[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = o_final_4d
+                            if pypto.is_loop_end(kv_block_idx):
+                                o_final = pypto.div(oi_new, li_new)
+                                o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                output[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = o_final_4d
 
-                            m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_max[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = m_final_4d
+                                m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_max[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = m_final_4d
 
-                            l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
-                            softmax_sum[
-                                b_idx: b_idx + 1,
-                                n_idx: n_idx + 1,
-                                q_start: q_start + BLOCK_SIZE_Q,
-                                :
-                            ] = l_final_4d
-                        else:
-                            oi_update[:] = oi_new
-                        li_update[:] = li_new
-                        mi_update[:] = mi_new
+                                l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                softmax_sum[
+                                    b_idx: b_idx + 1,
+                                    n_idx: n_idx + 1,
+                                    q_start: q_start + BLOCK_SIZE_Q,
+                                    :
+                                ] = l_final_4d
+                            else:
+                                oi_update[:] = oi_new
+                            li_update[:] = li_new
+                            mi_update[:] = mi_new

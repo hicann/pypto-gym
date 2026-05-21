@@ -388,15 +388,16 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
     return output, softmax_max, softmax_sum
 
 
-def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_golden: bool = False):
-    """Test flash_attention_score_kernel_with_mask_origin.
-    
-    This kernel only outputs attention_out, without softmax_max and softmax_sum.
-    Uses fixed scale = 1/sqrt(HEAD_DIM), BF16 only.
-    
-    Args:
-        skip_golden: Skip golden comparison (faster for large shapes)
-    """
+def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_golden: bool = False,
+                                  batch_size=None, num_heads=None, seq_len_q=None,
+                                  seq_len_kv=None, head_dim=None):
+    """Test flash_attention_score_kernel_with_mask_origin."""
+    bs = batch_size if batch_size is not None else BATCH_SIZE
+    nh = num_heads if num_heads is not None else NUM_HEADS
+    sq = seq_len_q if seq_len_q is not None else SEQ_LEN_Q
+    skv = seq_len_kv if seq_len_kv is not None else SEQ_LEN_KV
+    hd = head_dim if head_dim is not None else HEAD_DIM
+
     logging.info("=" * 70)
     logging.info("Test: flash_attention_score_kernel_with_mask_origin (BF16)")
     logging.info("=" * 70)
@@ -406,18 +407,14 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
 
     device = f'npu:{device_id}' if (run_mode == "npu" and device_id is not None) else 'cpu'
 
-    query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                        dtype=torch.bfloat16, device=device)
-    key = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                      dtype=torch.bfloat16, device=device)
-    value = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                        dtype=torch.bfloat16, device=device)
+    query = torch.randn(bs, nh, sq, hd, dtype=torch.bfloat16, device=device)
+    key = torch.randn(bs, nh, skv, hd, dtype=torch.bfloat16, device=device)
+    value = torch.randn(bs, nh, skv, hd, dtype=torch.bfloat16, device=device)
 
-    atten_mask = torch.zeros(SEQ_LEN_Q, SEQ_LEN_KV, dtype=torch.uint8, device=device)
-    atten_mask[:, SEQ_LEN_KV // 2:] = 1
+    atten_mask = torch.zeros(sq, skv, dtype=torch.uint8, device=device)
+    atten_mask[:, skv // 2:] = 1
 
-    output = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                         dtype=torch.bfloat16, device=device)
+    output = torch.empty(bs, nh, sq, hd, dtype=torch.bfloat16, device=device)
 
     atten_mask_fp32 = atten_mask.float()
 
@@ -427,10 +424,10 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
     logging.info(f"Output shape: {output.shape}")
 
     has_nan_output = check_nan(output, "output")
-    
+
     if has_nan_output:
         raise RuntimeError("Kernel with_mask_origin test failed due to NaN values")
-    
+
     logging.info("  No NaN values detected in output")
 
     if skip_golden:
@@ -450,7 +447,7 @@ def test_kernel_with_mask_origin(device_id=None, run_mode: str = "npu", skip_gol
             rtol=0.0078125,
             atol=0.0001
         )
-        
+
         logging.info("  Kernel with_mask_origin test passed!")
 
 
@@ -458,14 +455,17 @@ def test_kernel_with_mask(
     device_id=None,
     run_mode: str = "npu",
     scale_value: Optional[float] = None,
-    skip_golden: bool = False
+    skip_golden: bool = False,
+    batch_size=None, num_heads=None, seq_len_q=None,
+    seq_len_kv=None, head_dim=None,
 ):
-    """Test flash_attention_score_kernel_with_mask.
-    
-    Args:
-        scale_value: Custom scale value (default: 1/sqrt(HEAD_DIM))
-        skip_golden: Skip golden comparison (faster for large shapes)
-    """
+    """Test flash_attention_score_kernel_with_mask."""
+    bs = batch_size if batch_size is not None else BATCH_SIZE
+    nh = num_heads if num_heads is not None else NUM_HEADS
+    sq = seq_len_q if seq_len_q is not None else SEQ_LEN_Q
+    skv = seq_len_kv if seq_len_kv is not None else SEQ_LEN_KV
+    hd = head_dim if head_dim is not None else HEAD_DIM
+
     logging.info("=" * 70)
     logging.info("Test: flash_attention_score_kernel_with_mask (BF16)")
     logging.info("=" * 70)
@@ -477,26 +477,20 @@ def test_kernel_with_mask(
     
     torch_dtype = torch.bfloat16
     
-    query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                        dtype=torch_dtype, device=device)
-    key = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                      dtype=torch_dtype, device=device)
-    value = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                        dtype=torch_dtype, device=device)
+    query = torch.randn(bs, nh, sq, hd, dtype=torch_dtype, device=device)
+    key = torch.randn(bs, nh, skv, hd, dtype=torch_dtype, device=device)
+    value = torch.randn(bs, nh, skv, hd, dtype=torch_dtype, device=device)
 
-    atten_mask = torch.zeros(SEQ_LEN_Q, SEQ_LEN_KV, dtype=torch.uint8, device=device)
-    atten_mask[:, SEQ_LEN_KV // 2:] = 1
+    atten_mask = torch.zeros(sq, skv, dtype=torch.uint8, device=device)
+    atten_mask[:, skv // 2:] = 1
 
-    output = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                         dtype=torch_dtype, device=device)
-    softmax_max = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, 1,
-                              dtype=torch.float32, device=device)
-    softmax_sum = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, 1,
-                              dtype=torch.float32, device=device)
+    output = torch.empty(bs, nh, sq, hd, dtype=torch_dtype, device=device)
+    softmax_max = torch.empty(bs, nh, sq, 1, dtype=torch.float32, device=device)
+    softmax_sum = torch.empty(bs, nh, sq, 1, dtype=torch.float32, device=device)
 
     atten_mask_fp32 = atten_mask.float()
     
-    default_scale = 1.0 / math.sqrt(HEAD_DIM)
+    default_scale = 1.0 / math.sqrt(hd)
     test_scale = scale_value if scale_value is not None else default_scale
     
     logging.info(f"Scale value: {test_scale}")
@@ -545,14 +539,17 @@ def test_kernel_with_pse_and_dropout(
     device_id=None,
     run_mode: str = "npu",
     scale_value: Optional[float] = None,
-    skip_golden: bool = False
+    skip_golden: bool = False,
+    batch_size=None, num_heads=None, seq_len_q=None,
+    seq_len_kv=None, head_dim=None,
 ):
-    """Test flash_attention_score_kernel_with_pse_and_dropout.
-    
-    Args:
-        scale_value: Custom scale value (default: 1/sqrt(HEAD_DIM))
-        skip_golden: Skip golden comparison (faster for large shapes)
-    """
+    """Test flash_attention_score_kernel_with_pse_and_dropout."""
+    bs = batch_size if batch_size is not None else BATCH_SIZE
+    nh = num_heads if num_heads is not None else NUM_HEADS
+    sq = seq_len_q if seq_len_q is not None else SEQ_LEN_Q
+    skv = seq_len_kv if seq_len_kv is not None else SEQ_LEN_KV
+    hd = head_dim if head_dim is not None else HEAD_DIM
+
     logging.info("\n" + "=" * 70)
     logging.info("Test: flash_attention_score_kernel_with_pse_and_dropout (BF16)")
     logging.info("=" * 70)
@@ -564,35 +561,28 @@ def test_kernel_with_pse_and_dropout(
     
     torch_dtype = torch.bfloat16
 
-    query = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                        dtype=torch_dtype, device=device)
-    key = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                      dtype=torch_dtype, device=device)
-    value = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_KV, HEAD_DIM,
-                        dtype=torch_dtype, device=device)
+    query = torch.randn(bs, nh, sq, hd, dtype=torch_dtype, device=device)
+    key = torch.randn(bs, nh, skv, hd, dtype=torch_dtype, device=device)
+    value = torch.randn(bs, nh, skv, hd, dtype=torch_dtype, device=device)
 
-    atten_mask = torch.zeros(SEQ_LEN_Q, SEQ_LEN_KV, dtype=torch.uint8, device=device)
-    atten_mask[:, SEQ_LEN_KV // 4:] = 1
+    atten_mask = torch.zeros(sq, skv, dtype=torch.uint8, device=device)
+    atten_mask[:, skv // 4:] = 1
 
-    pse = torch.randn(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, SEQ_LEN_KV,
-                     dtype=torch_dtype, device=device)
+    pse = torch.randn(bs, nh, sq, skv, dtype=torch_dtype, device=device)
 
-    drop_mask = torch.ones(SEQ_LEN_Q, SEQ_LEN_KV, dtype=torch.float32, device=device)
+    drop_mask = torch.ones(sq, skv, dtype=torch.float32, device=device)
     keep_prob = 0.8
 
-    output = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, HEAD_DIM,
-                         dtype=torch_dtype, device=device)
-    softmax_max = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, 1,
-                              dtype=torch.float32, device=device)
-    softmax_sum = torch.empty(BATCH_SIZE, NUM_HEADS, SEQ_LEN_Q, 1,
-                              dtype=torch.float32, device=device)
+    output = torch.empty(bs, nh, sq, hd, dtype=torch_dtype, device=device)
+    softmax_max = torch.empty(bs, nh, sq, 1, dtype=torch.float32, device=device)
+    softmax_sum = torch.empty(bs, nh, sq, 1, dtype=torch.float32, device=device)
 
     atten_mask_fp32 = atten_mask.float()
 
     logging.info(f"Input shape: query={query.shape}, key={key.shape}, value={value.shape}")
     logging.info(f"PSE shape: {pse.shape}, drop_mask shape: {drop_mask.shape}")
     
-    default_scale = 1.0 / math.sqrt(HEAD_DIM)
+    default_scale = 1.0 / math.sqrt(hd)
     test_scale = scale_value if scale_value is not None else default_scale
     
     logging.info(f"Scale value: {test_scale}")
