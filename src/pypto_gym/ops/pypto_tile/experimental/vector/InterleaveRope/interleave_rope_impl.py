@@ -35,9 +35,9 @@ import torch
 
 N_TILE_128 = 32
 S_TILE_128 = 16
-S_TILE_1   = 64
-D          = 64
-HALF       = 32  
+S_TILE_1 = 64
+D = 64
+HALF = 32  
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +50,8 @@ HALF       = 32
 )
 def interleave_rope_kernel_n128_bf16(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
-    cos: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_BF16),
-    sin: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
 ):
     pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
@@ -66,7 +66,7 @@ def interleave_rope_kernel_n128_bf16(
                 valid_s = (S - s_off).min(S_TILE_128)
                 vshape_x = [1, N_TILE_128, valid_s, D]
                 vshape_cs = [1, 1, valid_s, D]
-                x_t = pypto.view(x,   [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
+                x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
                 c_t = pypto.view(cos, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
                                  valid_shape=vshape_cs)
@@ -89,7 +89,7 @@ def interleave_rope_kernel_n128_bf16(
                 yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
                 ye = pypto.cast(ye_f, pypto.DT_BF16)
                 yo = pypto.cast(yo_f, pypto.DT_BF16)
-                pypto.assemble(ye, [b, n_off, s_off, 0],    out)
+                pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
 
@@ -97,8 +97,8 @@ def interleave_rope_kernel_n128_bf16(
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
 def interleave_rope_kernel_n128_fp16(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_FP16),
-    cos: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_FP16),
-    sin: pypto.Tensor([pypto.DYNAMIC,   1, pypto.DYNAMIC, 64], pypto.DT_FP16),
+    cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_FP16),
+    sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_FP16),
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_FP16),
 ):
     pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
@@ -113,7 +113,7 @@ def interleave_rope_kernel_n128_fp16(
                 valid_s = (S - s_off).min(S_TILE_128)
                 vshape_x = [1, N_TILE_128, valid_s, D]
                 vshape_cs = [1, 1, valid_s, D]
-                x_t = pypto.view(x,   [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
+                x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
                 c_t = pypto.view(cos, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
                                  valid_shape=vshape_cs)
@@ -136,7 +136,7 @@ def interleave_rope_kernel_n128_fp16(
                 yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
                 ye = pypto.cast(ye_f, pypto.DT_FP16)
                 yo = pypto.cast(yo_f, pypto.DT_FP16)
-                pypto.assemble(ye, [b, n_off, s_off, 0],    out)
+                pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
 
@@ -160,7 +160,7 @@ def interleave_rope_kernel_n1_bf16(
             s_off = s_blk * S_TILE_1
             valid_s = (S - s_off).min(S_TILE_1)
             vshape = [1, 1, valid_s, D]
-            x_t = pypto.view(x,   [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
+            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             c_t = pypto.view(cos, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             s_t = pypto.view(sin, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             x_e = pypto.gathermask(x_t, pattern_mode=1)
@@ -180,7 +180,7 @@ def interleave_rope_kernel_n1_bf16(
             yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
             ye = pypto.cast(ye_f, pypto.DT_BF16)
             yo = pypto.cast(yo_f, pypto.DT_BF16)
-            pypto.assemble(ye, [b, 0, s_off, 0],    out)
+            pypto.assemble(ye, [b, 0, s_off, 0], out)
             pypto.assemble(yo, [b, 0, s_off, HALF], out)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, D)
 
@@ -201,7 +201,7 @@ def interleave_rope_kernel_n1_fp16(
             s_off = s_blk * S_TILE_1
             valid_s = (S - s_off).min(S_TILE_1)
             vshape = [1, 1, valid_s, D]
-            x_t = pypto.view(x,   [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
+            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             c_t = pypto.view(cos, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             s_t = pypto.view(sin, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
             x_e = pypto.gathermask(x_t, pattern_mode=1)
@@ -221,7 +221,7 @@ def interleave_rope_kernel_n1_fp16(
             yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
             ye = pypto.cast(ye_f, pypto.DT_FP16)
             yo = pypto.cast(yo_f, pypto.DT_FP16)
-            pypto.assemble(ye, [b, 0, s_off, 0],    out)
+            pypto.assemble(ye, [b, 0, s_off, 0], out)
             pypto.assemble(yo, [b, 0, s_off, HALF], out)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, D)
 
@@ -229,8 +229,8 @@ def interleave_rope_kernel_n1_fp16(
 _KERNELS = {
     (128, torch.bfloat16): interleave_rope_kernel_n128_bf16,
     (128, torch.float16):  interleave_rope_kernel_n128_fp16,
-    (1,   torch.bfloat16): interleave_rope_kernel_n1_bf16,
-    (1,   torch.float16):  interleave_rope_kernel_n1_fp16,
+    (1, torch.bfloat16): interleave_rope_kernel_n1_bf16,
+    (1, torch.float16):  interleave_rope_kernel_n1_fp16,
 }
 
 

@@ -22,12 +22,13 @@ Usage:
 """
 
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
 import sys
 import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 
 def _resolve_bsa_root():
@@ -154,26 +155,34 @@ def do_backward_test(name, B, Hq, Hkv, Sq, Skv, sparsity):
 def test_11_bwd_basic():
     do_backward_test("BWD Basic", B=1, Hq=4, Hkv=2, Sq=256, Skv=256, sparsity=0.5)
 
+
 def test_12_bwd_mha_dense():
     do_backward_test("BWD MHA Dense", B=1, Hq=4, Hkv=4, Sq=256, Skv=256, sparsity=1.0)
+
 
 def test_13_bwd_gqa():
     do_backward_test("BWD GQA", B=1, Hq=8, Hkv=2, Sq=256, Skv=512, sparsity=0.5)
 
+
 def test_14_bwd_long_seq():
     do_backward_test("BWD Long Seq", B=1, Hq=8, Hkv=1, Sq=1024, Skv=1024, sparsity=0.3)
+
 
 def test_15_bwd_non_aligned():
     logger.info("  [SKIP] BWD NonAligned: boundary handling not implemented for non-aligned sequences")
 
+
 def test_16_bwd_mha_03():
     do_backward_test("BWD MHA sparse0.3", B=1, Hq=4, Hkv=4, Sq=256, Skv=256, sparsity=0.3)
+
 
 def test_17_bwd_mha_07():
     do_backward_test("BWD MHA sparse0.7", B=1, Hq=4, Hkv=4, Sq=256, Skv=256, sparsity=0.7)
 
+
 def test_18_bwd_mha_medium():
     do_backward_test("BWD MHA medium", B=1, Hq=4, Hkv=4, Sq=512, Skv=512, sparsity=0.7)
+
 
 def test_19_bwd_mha_medium():
     do_backward_test("BWD MHA long", B=1, Hq=4, Hkv=4, Sq=1024, Skv=1024, sparsity=0.7)
@@ -192,15 +201,15 @@ def main():
     logger.info("=" * 70 + "\n")
 
     all_tests = [
-        ("BWD: Basic",                 test_11_bwd_basic),
-        ("BWD: MHA Dense",             test_12_bwd_mha_dense),
-        ("BWD: GQA",                   test_13_bwd_gqa),
-        ("BWD: Long Seq",              test_14_bwd_long_seq),
-        ("BWD: NonAligned",            test_15_bwd_non_aligned),
-        ("BWD: MHA sparse0.3",         test_16_bwd_mha_03),
-        ("BWD: MHA sparse0.7",         test_17_bwd_mha_07),
-        ("BWD: MHA medium",            test_18_bwd_mha_medium),
-        ("BWD: MHA long",              test_19_bwd_mha_medium),
+        ("BWD: Basic", test_11_bwd_basic),
+        ("BWD: MHA Dense", test_12_bwd_mha_dense),
+        ("BWD: GQA", test_13_bwd_gqa),
+        ("BWD: Long Seq", test_14_bwd_long_seq),
+        ("BWD: NonAligned", test_15_bwd_non_aligned),
+        ("BWD: MHA sparse0.3", test_16_bwd_mha_03),
+        ("BWD: MHA sparse0.7", test_17_bwd_mha_07),
+        ("BWD: MHA medium", test_18_bwd_mha_medium),
+        ("BWD: MHA long", test_19_bwd_mha_medium),
     ]
 
     passed = 0

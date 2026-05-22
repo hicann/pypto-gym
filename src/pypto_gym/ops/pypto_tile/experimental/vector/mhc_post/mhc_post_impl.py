@@ -38,6 +38,7 @@ import pypto
 import torch
 import torch_npu
 
+
 @pypto.frontend.jit(pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
 def mhc_post_kernel_bf16(
     x: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),       # [B*S, N, D] BF16
@@ -103,6 +104,7 @@ def mhc_post_kernel_bf16(
 # ─────────────────────────────────────────────
 # Wrapper 函数（导出接口）
 # ─────────────────────────────────────────────
+
 
 def mhc_post_wrapper(
     x: torch.Tensor,

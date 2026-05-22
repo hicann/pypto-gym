@@ -43,8 +43,8 @@ cfg = DEFAULT_CONFIG
 # Auto environment configuration
 # ===========================================================================
 _DEFAULT_ASCEND_HOME = "/home/developer/Ascend/cann-9.0.0"
-_DEFAULT_PYPTO_PATH  = "/mnt/workspace/gitCode/cann/pypto/python"
-_FORK_PYPTO_PATH     = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
+_DEFAULT_PYPTO_PATH = "/mnt/workspace/gitCode/cann/pypto/python"
+_FORK_PYPTO_PATH = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
 
 
 def _check_env():
@@ -271,12 +271,15 @@ def _print_perf_summary():
     W_UTIL = 10
 
     def _fmt_us(val):
-        if val is None: return "N/A".rjust(W_TASK)
-        if val >= 1000: return f"{val / 1000:.2f} ms".rjust(W_TASK)
+        if val is None:
+            return "N/A".rjust(W_TASK)
+        if val >= 1000:
+            return f"{val / 1000:.2f} ms".rjust(W_TASK)
         return f"{val:.1f} us".rjust(W_TASK)
 
     def _fmt_pct(val):
-        if val is None: return "N/A".rjust(W_UTIL)
+        if val is None:
+            return "N/A".rjust(W_UTIL)
         return f"{val:.1f}%".rjust(W_UTIL)
 
     sep = "+" + "-" * (W_TEST + 2) + "+" + "-" * (W_KERNEL + 2) + \

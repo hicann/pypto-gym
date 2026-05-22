@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 # -----------------------------------------------------------------------------
 # Precision test for interleave_rope (PyPTO).
 #
@@ -19,9 +28,13 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 
 import json
@@ -73,7 +86,7 @@ def _make_inputs(case: dict, device: str):
     torch.manual_seed(seed)
     inp = case["input"]
     dtype = DTYPE_MAP[inp["dtype"]]
-    x_shape   = tuple(inp["shape"])
+    x_shape = tuple(inp["shape"])
     cos_shape = tuple(inp["cos_shape"])
     sin_shape = tuple(inp["sin_shape"])
 
@@ -90,7 +103,7 @@ def _run_case(case: dict, device: str) -> bool:
     atol = case.get("atol", 1e-4)
 
     print("=" * 60)
-    print(f"Test: {case_id} - {case.get('description','')}")
+    print(f"Test: {case_id} - {case.get('description', '')}")
     print("=" * 60)
 
     x, cos, sin = _make_inputs(case, device)
@@ -105,12 +118,12 @@ def _run_case(case: dict, device: str) -> bool:
     torch.npu.synchronize()
 
     # Cast to fp32 numpy arrays for comparison.
-    actual   = y_out.detach().cpu().float().numpy()
+    actual = y_out.detach().cpu().float().numpy()
     expected = y_g.float().numpy()
 
-    diff    = np.abs(actual - expected)
+    diff = np.abs(actual - expected)
     max_abs = float(diff.max())
-    denom   = np.maximum(np.abs(expected), 1e-12)
+    denom = np.maximum(np.abs(expected), 1e-12)
     max_rel = float((diff / denom).max())
     print(f"  [y] shape={tuple(y_out.shape)} dtype={y_out.dtype}")
     print(f"  [y] max_abs_err={max_abs:.6e} max_rel_err={max_rel:.6e}")

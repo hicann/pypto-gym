@@ -352,6 +352,7 @@ def test_run_pypto_workflow_uses_noninteractive_permissions(tmp_path, monkeypatc
             return self.returncode
 
     monkeypatch.setattr(pypto_runner.subprocess, "Popen", FakePopen)
+
     def fake_export_session_from_log(*args, **kwargs):
         seen["export_kwargs"] = kwargs
         return pypto_runner.OpencodeExportResult(status="skipped")

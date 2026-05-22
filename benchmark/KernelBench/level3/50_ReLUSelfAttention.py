@@ -1,3 +1,12 @@
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +16,7 @@ import math
 
 FORMULA = "att[nh, t_q, t_k] = relu(mask((Q[nh, t_q, hs] @ K[nh, t_k, hs]^T) / sqrt(hs))); y[B, T, C] = concat_heads(att @ V[nh, t_k, hs])"
 DYNAMIC_AXIS = ["B", "T"]
+
 
 class NewGELU(nn.Module):
     """
@@ -18,6 +28,7 @@ class NewGELU(nn.Module):
     
     def forward(self, x):
         return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+
 
 class Model(nn.Module):
     """
@@ -43,14 +54,14 @@ class Model(nn.Module):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
         att = F.relu(att)
 
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -63,8 +74,10 @@ max_seqlen = 1024
 n_embd = 768  # Hidden dimension, typical for BERT-base size
 n_head = 12   # Number of attention heads, typical for BERT-base size
 
+
 def get_inputs():
     return [torch.randn(batch_size, max_seqlen, n_embd)]
+
 
 def get_init_inputs():
     return [n_embd, n_head, max_seqlen]

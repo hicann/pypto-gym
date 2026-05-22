@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 """PyPTO interleave_rope golden reference implementation.
 
@@ -24,6 +32,7 @@
 from typing import Tuple
 
 import torch
+
 
 def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     """Interleave-style RoPE 参考实现 (pure torch).
@@ -83,19 +92,19 @@ def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     # x_even[..., i]   = x[..., 2i]
     # x_odd[..., i]    = x[..., 2i+1]
     x_even = x_f[..., 0::2]  # [B, N, S, D/2]
-    x_odd  = x_f[..., 1::2]  # [B, N, S, D/2]
+    x_odd = x_f[..., 1::2]  # [B, N, S, D/2]
 
     # cos/sin 在偶/奇位置直接按位置取（支持两种约定）
     cos_even = cos_f[..., 0::2]  # [B, 1, S_cs, D/2]  对应 cos[..., 2i]
-    cos_odd  = cos_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 cos[..., 2i+1]
+    cos_odd = cos_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 cos[..., 2i+1]
     sin_even = sin_f[..., 0::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i]
-    sin_odd  = sin_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i+1]
+    sin_odd = sin_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i+1]
 
     # ---- 5. 计算 ----
     # y_even = x_even * cos_even - x_odd * sin_even
     # y_odd  = x_even * sin_odd  + x_odd * cos_odd
     y_even = x_even * cos_even - x_odd * sin_even  # [B, N, S, D/2]
-    y_odd  = x_even * sin_odd  + x_odd * cos_odd   # [B, N, S, D/2]
+    y_odd = x_even * sin_odd + x_odd * cos_odd   # [B, N, S, D/2]
 
     # ---- 6. split-half 输出 layout (v2.3) ----
     # 不再做 interleave 重组。约定：
@@ -173,10 +182,10 @@ def _validate():
     print("\n[典型 case 验证]")
     typical_cases = [
         # (name, B, N, S, D, S_cs, dtype, priority)
-        ("功能_P0_min      ", 1, 1,   1024, 64, 1024, torch.bfloat16, "P0"),
+        ("功能_P0_min      ", 1, 1, 1024, 64, 1024, torch.bfloat16, "P0"),
         ("功能_P0_typ      ", 1, 128, 2048, 64, 2048, torch.bfloat16, "P0"),
-        ("功能_P0_Scs1     ", 2, 128, 4096, 64,    1, torch.bfloat16, "P0"),
-        ("功能_P0_typ_fp16 ", 1, 8,   1024, 64, 1024, torch.float16,  "P0"),
+        ("功能_P0_Scs1     ", 2, 128, 4096, 64, 1, torch.bfloat16, "P0"),
+        ("功能_P0_typ_fp16 ", 1, 8, 1024, 64, 1024, torch.float16, "P0"),
         # 性能_P0_max 较大，仍可在 CPU 上跑（fp32 中间约 4*128*8192*64*4B=1GB），酌情仅做 shape 验证
     ]
     for name, B, N, S, D, S_cs, dtype, prio in typical_cases:
@@ -189,11 +198,11 @@ def _validate():
     # ---- 2. 泛化 case 验证 ----
     print("\n[泛化 case 验证]")
     gen_cases = [
-        (1, 1,   1,    64,    1, torch.bfloat16),  # 最小 case
+        (1, 1, 1, 64, 1, torch.bfloat16),  # 最小 case
         (4, 128, 8192, 64, 8192, torch.bfloat16),  # 上限（仅 shape 检查时不实际跑）
-        (2, 1,   512,  64,  512, torch.float16),
-        (1, 128, 1,    64,    1, torch.bfloat16),  # S=1 + S_cs=1
-        (3, 64,  4096, 64,    1, torch.bfloat16),  # 中间 N + S_cs=1
+        (2, 1, 512, 64, 512, torch.float16),
+        (1, 128, 1, 64, 1, torch.bfloat16),  # S=1 + S_cs=1
+        (3, 64, 4096, 64, 1, torch.bfloat16),  # 中间 N + S_cs=1
     ]
     for B, N, S, D, S_cs, dtype in gen_cases:
         # 跳过过大的 case：仅当总元素 <= 64M 时实际计算
@@ -211,8 +220,8 @@ def _validate():
     print("\n[数学正确性检查 vs complex-ref]")
     for B, N, S, S_cs, dtype in [
         (1, 4, 16, 16, torch.bfloat16),
-        (2, 8, 32, 1,  torch.float16),
-        (1, 1, 8,  8,  torch.bfloat16),
+        (2, 8, 32, 1, torch.float16),
+        (1, 1, 8, 8, torch.bfloat16),
     ]:
         x, cos, sin = _make_inputs(B, N, S, 64, S_cs, dtype, seed=7)
         y_a = interleave_rope_golden(x, cos, sin).to(torch.float32)

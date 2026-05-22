@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 """PyPTO inplace_add_rms_norm golden reference implementation.
 
@@ -155,17 +163,17 @@ def _validate():
 
     # -- 1. 典型 case 验证 (SPEC §12 P0 配置) --
     print("\n[典型 case 验证]")
-    _check_case("功能_P0",    B=1,   S=16,   seed=0)
-    _check_case("性能_P0_a",  B=16,  S=128,  seed=42)
-    _check_case("性能_P0_b",  B=8,   S=128,  seed=0)
-    _check_case("性能_P0_c",  B=64,  S=128,  seed=1)
-    _check_case("性能_P0_d",  B=144, S=1,    seed=2)
+    _check_case("功能_P0", B=1, S=16, seed=0)
+    _check_case("性能_P0_a", B=16, S=128, seed=42)
+    _check_case("性能_P0_b", B=8, S=128, seed=0)
+    _check_case("性能_P0_c", B=64, S=128, seed=1)
+    _check_case("性能_P0_d", B=144, S=1, seed=2)
 
     # -- 2. 泛化 case (动态轴边界采样) --
     print("\n[泛化 case 验证]")
-    _check_case("B*S=1024_min", B=1,   S=1024, seed=3)  # B=1 边界
-    _check_case("B*S=8192_max", B=32,  S=256,  seed=4)
-    _check_case("S=1_B=16",     B=16,  S=1,    seed=5)
+    _check_case("B*S=1024_min", B=1, S=1024, seed=3)  # B=1 边界
+    _check_case("B*S=8192_max", B=32, S=256, seed=4)
+    _check_case("S=1_B=16", B=16, S=1, seed=5)
 
     # -- 3. 数值稳定性 --
     print("\n[数值稳定性检查]")

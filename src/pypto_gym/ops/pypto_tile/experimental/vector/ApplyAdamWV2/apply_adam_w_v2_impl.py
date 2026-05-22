@@ -32,6 +32,7 @@ N_TILE = 2048
 VEC_TILE_M = 16
 VEC_TILE_N = 1024
 
+
 # ---------------------------------------------------------------------------
 # fp32 path: weight/grad are fp32
 # ---------------------------------------------------------------------------
@@ -70,9 +71,9 @@ def apply_adam_w_v2_kernel_fp32(
         valid_shape = [M_DIM, valid_k]
 
         w_tile = pypto.view(weight, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        g_tile = pypto.view(grad,   [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        m_tile = pypto.view(m,      [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        v_tile = pypto.view(v,      [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        g_tile = pypto.view(grad, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        m_tile = pypto.view(m, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        v_tile = pypto.view(v, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
 
         beta1_m = pypto.mul(m_tile, beta1)
         one_b1_g = pypto.mul(g_tile, one_m_b1)
@@ -130,9 +131,9 @@ def apply_adam_w_v2_kernel_bf16(
         valid_shape = [M_DIM, valid_k]
 
         w_tile = pypto.view(weight, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        g_tile = pypto.view(grad,   [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        m_tile = pypto.view(m,      [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
-        v_tile = pypto.view(v,      [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        g_tile = pypto.view(grad, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        m_tile = pypto.view(m, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
+        v_tile = pypto.view(v, [M_DIM, N_TILE], [0, k_off], valid_shape=valid_shape)
 
         w_f32 = pypto.cast(w_tile, pypto.DT_FP32)
         g_f32 = pypto.cast(g_tile, pypto.DT_FP32)

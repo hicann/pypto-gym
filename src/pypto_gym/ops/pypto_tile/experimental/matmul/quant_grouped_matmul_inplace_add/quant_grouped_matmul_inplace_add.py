@@ -156,4 +156,4 @@ def scaled_matmul_kernel(
         )
 
     # Batch accumulation: perform inplace add after loop (optimal performance)
-    y[:,:,:] = pypto.add(y, mm_result_tensor)
+    y[:, :, :] = pypto.add(y, mm_result_tensor)

@@ -37,18 +37,22 @@ import torch
 import torch_npu
 
 
+<<<<<<< HEAD
 @pypto.frontend.jit(
     pass_options={
         "vec_nbuffer_setting": {-2: 1, -1: 8}
     }
 )
+=======
+@pypto.frontend.jit(pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}}, debug_options={"runtime_debug_mode": 0})
+>>>>>>> 1.4_静态扫描
 def inplace_add_rms_norm_kernel_bf16(
-    x1: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),  
+    x1: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
     x2: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
-    gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),              
-    y_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),      
-    x_add_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),  
-    rstd_out: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_BF16),              
+    gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16), 
+    y_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
+    x_add_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
+    rstd_out: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_BF16), 
     eps: float,
 ):
    

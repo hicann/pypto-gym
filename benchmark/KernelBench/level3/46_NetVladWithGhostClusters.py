@@ -1,22 +1,11 @@
-# Copyright 2018 Antoine Miech All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS-IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Code modified from here
-https://github.com/albanie/collaborative-experts/blob/master/model/net_vlad.py
-"""
-
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 import math
 import torch
@@ -26,6 +15,7 @@ import torch as th
 
 FORMULA = "a[B, N, K] = softmax(BN(x[B*N, D] @ clusters[D, K+G]))[:,:K]; vlad[B, D*K] = L2Norm(L2Norm((a[B, K, N] @ x[B, N, D])^T - sum(a, dim=1) * clusters2[D, K]))"
 DYNAMIC_AXIS = ["B", "N"]
+
 
 class Model(nn.Module):
     def __init__(self, cluster_size, feature_size, ghost_clusters):
@@ -93,8 +83,10 @@ num_clusters = 32
 feature_size = 512
 ghost_clusters = 16
 
+
 def get_inputs():
   return [torch.randn(batch_size, num_features, feature_size)]
+
 
 def get_init_inputs():
   return [num_clusters, feature_size, ghost_clusters]

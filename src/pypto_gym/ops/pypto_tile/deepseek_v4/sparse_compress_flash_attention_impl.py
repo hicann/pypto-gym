@@ -32,6 +32,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 MAX_S2 = 131072
 
+
 @dataclass
 class SCFATileShapeConfig:
     g_tile: int
@@ -137,6 +138,7 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
             q1 = pypto.matmul(tilda_pij_f16, vj, dtype)
 
             pypto.assemble(q1, [cur_offset, 0], attention_out)
+
 
 @pypto.frontend.jit(
     pass_options={

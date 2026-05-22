@@ -21,9 +21,13 @@ import torch
 import torch_npu
 import pytest
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import numpy as np
 import pypto
@@ -240,6 +244,7 @@ def convert_pypto_to_torch_type(pypto_type):
         return torch.bfloat16
     else:
         raise ValueError(f"Unsupported pypto.DataType: {pypto_type}")
+
 
 class MLA_MODEL(torch.nn.Module):
     def forward(self, token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv):

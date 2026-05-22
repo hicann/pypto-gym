@@ -19,9 +19,13 @@ import torch
 import torch_npu
 import numpy as np
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import pytest
 import pypto
@@ -198,6 +202,7 @@ def quant_mx_golden_bytes(input_tensor: torch.Tensor, is_trans=False):
     else:
         return torch.from_numpy(quant.copy()).view(torch.float8_e4m3fn), \
                 torch.from_numpy(scale.copy()).view(torch.float8_e8m0fnu)
+
 
 def tensor_to_file(t: torch.Tensor, output: Path):
     with open(str(output), "wb") as f:

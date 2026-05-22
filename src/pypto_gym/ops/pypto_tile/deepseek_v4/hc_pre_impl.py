@@ -119,7 +119,7 @@ manager = HCPreKernelManager()
         "stitch_function_max_num": 128,
         "device_sched_mode": 0,
     },
-    infer_controlflow_shape = manager.infer_controlflow_shape,
+    infer_controlflow_shape=manager.infer_controlflow_shape,
 )
 def hc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
@@ -129,7 +129,7 @@ def hc_pre_kernel(
     y: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     post: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
     comb: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
-    hc_mult: int=4, hc_split_sinkhorn_iters: int=20, hc_eps: float=1e-6
+    hc_mult: int = 4, hc_split_sinkhorn_iters: int = 20, hc_eps: float = 1e-6
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
 
@@ -176,14 +176,14 @@ def hc_pre_kernel(
         hc_base = pypto.reshape(hc_base_, [1, mix_hc])
 
         x_view = pypto.view(x_2d, [tile_t, hc*d], [t_idx, 0])
-        pypto.set_pass_options(sg_set_scope = 1)
+        pypto.set_pass_options(sg_set_scope=1)
         x_fp32 = pypto.cast(x_view, pypto.DT_FP32)
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         pypto.set_vec_tile_shapes(tile_shapes_1[0], tile_shapes_1[1])
-        pypto.set_pass_options(sg_set_scope = 2)
+        pypto.set_pass_options(sg_set_scope=2)
         rms_res = rms_norm_denom(x_fp32, hc_eps)    # (t, hc*d) -> (t, 1)
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         pypto.set_vec_tile_shapes(tile_shape_2, 32)
         if (not split_k):
@@ -222,7 +222,7 @@ def hc_pre_kernel(
         pypto.assemble(post_, [t_idx, 0], post)
 
         hc_scale_hc = hc_scale.expand_clone([3, 4*hc])
-        comb_flag = (rms_res[:, 2*hc: ] * (hc_scale_hc[2:3, :]) + hc_base[:, 2*hc: ])
+        comb_flag = (rms_res[:, 2*hc:] * (hc_scale_hc[2:3, :]) + hc_base[:, 2*hc:])
         comb_flag = comb_flag.reshape([tile_t, hc, hc]) # (tile_t, 4, 4)
 
         # (tile_t, hc), (tile_t, hc), (tile_t, hc, hc)
@@ -244,7 +244,7 @@ def hc_pre_kernel_prefill(
     y: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     post: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
     comb: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
-    hc_mult: int=4, hc_split_sinkhorn_iters: int=20, hc_eps: float=1e-6
+    hc_mult: int = 4, hc_split_sinkhorn_iters: int = 20, hc_eps: float = 1e-6
 ):
     t = x.shape[0]
     hc = x.shape[1]
@@ -274,10 +274,10 @@ def hc_pre_kernel_prefill(
         x_view = pypto.view(x_2d, [tile_t, hc*d], [t_idx, 0])
         hc_base = pypto.reshape(hc_base_, [mix_hc, 1])
 
-        pypto.set_pass_options(sg_set_scope = 1)
+        pypto.set_pass_options(sg_set_scope=1)
         x_fp32 = pypto.cast(x_view, pypto.DT_FP32)
         rms_res = rms_norm_denom(x_fp32)    # (t, hc*d) -> (t, 1)
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         pypto.set_vec_tile_shapes(24, 128)
         if (not split_k):
@@ -331,7 +331,7 @@ def hc_pre_kernel_prefill(
 
 
 def check_input_output_shape_dtype(x: torch.Tensor, hc_fn: torch.Tensor, hc_scale: torch.Tensor, \
-                                    hc_base: torch.Tensor, hc_mult: int=4):
+                                    hc_base: torch.Tensor, hc_mult: int = 4):
     mix_hc = (2 + hc_mult) * hc_mult
 
     assert x.dim() == 3 and x.size(1) == hc_mult and x.size(2) == 4096, \
@@ -351,6 +351,7 @@ def check_input_output_shape_dtype(x: torch.Tensor, hc_fn: torch.Tensor, hc_scal
 
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
 pyptolib.define("hc_pre(Tensor x, Tensor hc_fn, Tensor hc_scale, Tensor hc_base, int hc_mult, int hc_split_sinkhorn_iters, float hc_eps) -> (Tensor, Tensor, Tensor)")
+
 
 @torch.library.impl(pyptolib, "hc_pre", "Meta")
 def hc_pre(x, hc_fn, hc_scale, hc_base, hc_mult, hc_sinkhorn_iters, hc_eps):
@@ -377,7 +378,7 @@ def hc_pre_pypto(x, hc_fn, hc_scale, hc_base, hc_mult, hc_sinkhorn_iters, hc_eps
 
 @allow_in_graph
 def npu_hc_pre(x: torch.Tensor, hc_fn: torch.Tensor, hc_scale: torch.Tensor, hc_base: torch.Tensor, \
-                hc_mult: int=4, hc_split_sinkhorn_iters: int=20, hc_eps: float=1e-6)\
+                hc_mult: int = 4, hc_split_sinkhorn_iters: int = 20, hc_eps: float = 1e-6)\
         -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     ### check dtype
     check_input_output_shape_dtype(x, hc_fn, hc_scale, hc_base, hc_mult)

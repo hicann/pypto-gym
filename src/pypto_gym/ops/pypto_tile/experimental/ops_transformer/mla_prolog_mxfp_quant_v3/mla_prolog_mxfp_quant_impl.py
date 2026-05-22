@@ -372,7 +372,7 @@ def pre_compute_2d(
     qkv_pre_res = []
 
     pypto.set_semantic_label("pre_reshape")
-    mv = tile_config.mv_tile if bs <=16 else 4
+    mv = tile_config.mv_tile if bs <= 16 else 4
 
     if is_quant_a:
         pypto.set_vec_tile_shapes(8, k//2)
@@ -631,11 +631,11 @@ def mla_prolog_quant_compute(
 
 
 @pypto.frontend.jit(
-    pass_options = {
-        "cube_l1_reuse_setting": {0:1, 1: 1, 2:3, 3:4},
-        "cube_nbuffer_setting": {0:1, 1:1, 2:1, 3:4},
+    pass_options={
+        "cube_l1_reuse_setting": {0: 1, 1: 1, 2: 3, 3: 4},
+        "cube_nbuffer_setting": {0: 1, 1: 1, 2: 1, 3: 4},
     },
-    runtime_options = {"device_sched_mode": 2, "stitch_function_max_num": 128}
+    runtime_options={"device_sched_mode": 2, "stitch_function_max_num": 128}
 )
 def mla_prolog_quant(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP8E4M3),

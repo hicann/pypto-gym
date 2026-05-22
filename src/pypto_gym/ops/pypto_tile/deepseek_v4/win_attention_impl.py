@@ -52,7 +52,7 @@ def check_args_tnd(
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128,},
+    runtime_options={"stitch_function_max_num": 128, },
     pass_options={"cube_l1_reuse_setting": {0: 4},
                 "cube_nbuffer_setting": {1: 2},
                 "vec_nbuffer_setting": {-1: 4}},

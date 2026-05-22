@@ -19,9 +19,13 @@ import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 from experimental.attention.incre_flash_attention_mla.utils import create_logger, get_device, compare
 from experimental.attention.incre_flash_attention_mla.incre_flash_attention_mla_impl import (
@@ -186,7 +190,7 @@ def ifa_mla_golden(query, key, value, query_rope, key_rope):
 
 
 def get_case_config(case_name):
-    base_params = {"layout": "BNSD", "block_size": 128, "d": 512, "dr": 64, "softmax_scale": 576 ** -0.5 }
+    base_params = {"layout": "BNSD", "block_size": 128, "d": 512, "dr": 64, "softmax_scale": 576 ** -0.5}
     if case_name.startswith("1b4k"):
         params = {"b": 1, "n1": 128, "s1": 1, "s2": 4 * 1024, "n2": 1}
     elif case_name.startswith("8b4k"):

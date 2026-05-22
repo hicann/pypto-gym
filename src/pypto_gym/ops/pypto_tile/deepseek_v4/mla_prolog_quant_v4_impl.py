@@ -78,12 +78,14 @@ VEC_TILE_8 = 8
 VEC_TILE_4 = 4
 VEC_TILE_32 = 32
 
+
 @dataclass
 class MlaTileConfigs:
     two_dim_tile: List
     three_dim_tile: List
     four_dim_tile: List
     vec_tile: List
+
 
 @dataclass
 class MlaPrologV4Output:
@@ -95,6 +97,7 @@ class MlaPrologV4Output:
 @dataclass
 class MlaPrologV4Attrs:
     eps: float
+
 
 @dataclass
 class MlaPrologV4Configs:
@@ -140,13 +143,13 @@ def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin,
 
     assert token_x.dtype == torch.bfloat16, f"token_x.dtype is {token_x.dtype}, expected torch.bfloat16"
     assert wq_a.dtype == torch.bfloat16, f"wq_a.dtype is {wq_a.dtype}, expected torch.bfloat16"
-    assert wq_b.dtype == torch.int8,  f"wq_b.dtype is {wq_b.dtype}, expected torch.int8"
+    assert wq_b.dtype == torch.int8, f"wq_b.dtype is {wq_b.dtype}, expected torch.int8"
     assert wkv.dtype == torch.bfloat16, f"wkv.dtype is {wkv.dtype}, expected torch.bfloat16"
     assert rope_cos.dtype == torch.bfloat16, f"rope_cos.dtype is {rope_cos.dtype}, expected torch.bfloat16"
     assert rope_sin.dtype == torch.bfloat16, f"rope_sin.dtype is {rope_sin.dtype}, expected torch.bfloat16"
     assert gamma_cq.dtype == torch.bfloat16, f"gamma_cq.dtype is {gamma_cq.dtype}, expected torch.bfloat16"
-    assert gamma_ckv.dtype == torch.bfloat16,  f"gamma_ckv.dtype is {gamma_ckv.dtype}, expected torch.bfloat16"
-    assert wq_b_scale.dtype == torch.float32,  \
+    assert gamma_ckv.dtype == torch.bfloat16, f"gamma_ckv.dtype is {gamma_ckv.dtype}, expected torch.bfloat16"
+    assert wq_b_scale.dtype == torch.float32, \
             f"wq_b_scale.dtype is {wq_b.dtype}, expected torch.float32"
     assert output_q_data.dtype == torch.bfloat16, \
             f"output_q_data.dtype is {output_q_data.dtype}, expected torch.bfloat16"
@@ -270,6 +273,7 @@ def rms_norm(input_tensor: pypto.Tensor, epsilon: float) -> pypto.Tensor:
     y = pypto.div(ones_vector, y)
     y = pypto.mul(input_tensor, y)
     return y
+
 
 def rotate_half(input_tensor: pypto.Tensor) -> pypto.Tensor:
     """Rotate half of the tensor dimensions for RoPE computation.
@@ -409,7 +413,7 @@ def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ck
         for i in range(2):
             x_tile1 = pypto.view(x_tile, [t_tile, k_tile], [0, i*k_tile])
             wq_a_tile1 = pypto.view(wq_a, [k_tile, q_lora_rank], [i*k_tile, 0])
-            if i==0:
+            if i == 0:
                 q = pypto.matmul(x_tile1, wq_a_tile1, pypto.DT_FP32)
             else:
                 q = q + pypto.matmul(x_tile1, wq_a_tile1, pypto.DT_FP32)
@@ -459,6 +463,7 @@ def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ck
         kv_norm_rope = rope_2d(kv_norm_rope, cast_cos, cast_sin)
         pypto.assemble(kv_norm_rope, [tIdx, head_dim-rope_dim], kv_out)
 
+
 class MLAKernelMAnager:
     def __init__(self):
         self.vec_all_shape = {}
@@ -487,7 +492,7 @@ class MLAKernelMAnager:
             return [v for v in self.vec_all_shape.values()]
         x_shape = args[0]
         for t in self.t_vec:
-            if x_shape[0]>=t:
+            if x_shape[0] >= t:
                 return self.vec_all_shape[t]
 
 manager = MLAKernelMAnager()
@@ -503,7 +508,7 @@ manager = MLAKernelMAnager()
     infer_controlflow_shape=manager.infer_controlflow_shape,
 )
 def mla_prolog_v4(
-    x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC] , pypto.DT_BF16), 
+    x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
     wq_a: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ), 
     wq_b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ), 
     wkv: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ), 
@@ -512,10 +517,10 @@ def mla_prolog_v4(
     cos: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
     sin: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     wq_b_scale: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
-    q_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC] , pypto.DT_BF16), 
-    kv_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC] , pypto.DT_BF16), 
-    qr_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC] , pypto.DT_INT8),
-    qr_scale_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC] , pypto.DT_FP32),
+    q_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), 
+    kv_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
+    qr_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT8),
+    qr_scale_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
     attrs, configs, tile_configs):
 
     pypto.experimental.set_operation_options(combine_axis=True)
@@ -557,6 +562,7 @@ def mla_prolog_v4_in(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gam
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
 pyptolib.define("mla_prolog_quant(Tensor token_x, Tensor wq_a, Tensor wq_b, Tensor wkv, Tensor rope_cos, Tensor rope_sin, \
     Tensor gamma_cq, Tensor gamma_ckv, Tensor wq_b_scale) -> (Tensor, Tensor, Tensor, Tensor)")
+
 
 @torch.library.impl(pyptolib, "mla_prolog_quant", "Meta")
 def mla_prolog_quant(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv, wq_b_scale):

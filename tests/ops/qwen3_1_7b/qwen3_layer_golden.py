@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """Torch-native golden reference for Qwen3-1.7B DecoderLayer fused op.
 
 Provides two entry points:
@@ -214,7 +223,8 @@ def _sanity_check():
         for i in range(S):
             causal_mask[:, :, i, i+1:] = float('-inf')
         ref = layer(x, position_embeddings=(cos, sin), attention_mask=causal_mask)
-        if isinstance(ref, tuple): ref = ref[0]
+        if isinstance(ref, tuple):
+            ref = ref[0]
         y_gold, k_cache, v_cache = qwen3_decoder_layer_prefill_golden(x, cos, sin, W)
 
     diff = (ref.float() - y_gold.float()).abs()

@@ -112,8 +112,8 @@ def cfa_attention(
 
     # 当子图大小达到上界不允许与其他子图合并
     pass_options={"cube_l1_reuse_setting": {-1: 3},
-                    "cube_nbuffer_setting":{-1:2},
-                    "vec_nbuffer_setting": {-1:4}},
+                    "cube_nbuffer_setting": {-1: 2},
+                    "vec_nbuffer_setting": {-1: 4}},
 )
 def c128_decode_impl(
     q: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
@@ -186,7 +186,7 @@ def c128_decode_impl(
 
         kv_assemble = pypto.tensor([combine_s2_tile, dn], kv_2d.dtype, "kj_assemble")
         kv_assemble[0:blk_size, :] = vld_win_blk
-        for j in range(1,combine_s2_tile//blk_size):
+        for j in range(1, combine_s2_tile//blk_size):
             blk_idx = cmp_blk_tb[b_idx, j-1]
             blk_idx_valid = blk_idx.max(0)
             kv_assemble[j * blk_size:(j+1) * blk_size, :] = pypto.view(kv_2d, [blk_size, dn], [blk_idx_valid * blk_size, 0])

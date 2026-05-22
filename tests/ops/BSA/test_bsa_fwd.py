@@ -22,12 +22,13 @@ Usage:
 """
 
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
 import sys
 import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 
 def _resolve_bsa_root():
@@ -142,29 +143,38 @@ def do_forward_test(name, B, Hq, Hkv, Sq, Skv, sparsity):
 def test_01_basic_sparse():
     do_forward_test("Basic Sparse50", B=1, Hq=4, Hkv=2, Sq=256, Skv=256, sparsity=0.5)
 
+
 def test_02_gqa_group4():
     do_forward_test("GQA group4", B=1, Hq=8, Hkv=2, Sq=256, Skv=512, sparsity=0.4)
+
 
 def test_03_gqa_large():
     do_forward_test("GQA Hq32_Hkv8", B=1, Hq=32, Hkv=8, Sq=256, Skv=256, sparsity=0.5)
 
+
 def test_04_long_seq():
     do_forward_test("Long Seq S1024", B=1, Hq=8, Hkv=1, Sq=1024, Skv=1024, sparsity=0.3)
+
 
 def test_05_sparse30():
     do_forward_test("Sparse30%", B=1, Hq=4, Hkv=4, Sq=512, Skv=512, sparsity=0.3)
 
+
 def test_06_sparse70():
     do_forward_test("Sparse70%", B=1, Hq=4, Hkv=4, Sq=512, Skv=512, sparsity=0.7)
+
 
 def test_07_dense():
     do_forward_test("Dense 100%", B=1, Hq=4, Hkv=4, Sq=256, Skv=256, sparsity=1.0)
 
+
 def test_08_batch2():
     do_forward_test("Batch2", B=2, Hq=4, Hkv=2, Sq=256, Skv=512, sparsity=0.5)
 
+
 def test_09_non_aligned():
     logger.info("  [SKIP] NonAligned: boundary handling not implemented for non-aligned sequences")
+
 
 def test_10_long_seq_2048():
     do_forward_test("Long Seq S2048", B=1, Hq=4, Hkv=2, Sq=2048, Skv=2048, sparsity=0.3)
@@ -183,16 +193,16 @@ def main():
     logger.info("=" * 70 + "\n")
 
     all_tests = [
-        ("FWD: Basic Sparse50",        test_01_basic_sparse),
-        ("FWD: GQA group4",            test_02_gqa_group4),
-        ("FWD: GQA Hq32 Hkv8",         test_03_gqa_large),
-        ("FWD: Long Seq S1024",        test_04_long_seq),
-        ("FWD: Sparse30%",             test_05_sparse30),
-        ("FWD: Sparse70%",             test_06_sparse70),
-        ("FWD: Dense 100%",            test_07_dense),
-        ("FWD: Batch2",                test_08_batch2),
-        ("FWD: NonAligned",            test_09_non_aligned),
-        ("FWD: Long Seq S2048",        test_10_long_seq_2048),
+        ("FWD: Basic Sparse50", test_01_basic_sparse),
+        ("FWD: GQA group4", test_02_gqa_group4),
+        ("FWD: GQA Hq32 Hkv8", test_03_gqa_large),
+        ("FWD: Long Seq S1024", test_04_long_seq),
+        ("FWD: Sparse30%", test_05_sparse30),
+        ("FWD: Sparse70%", test_06_sparse70),
+        ("FWD: Dense 100%", test_07_dense),
+        ("FWD: Batch2", test_08_batch2),
+        ("FWD: NonAligned", test_09_non_aligned),
+        ("FWD: Long Seq S2048", test_10_long_seq_2048),
     ]
 
     passed = 0

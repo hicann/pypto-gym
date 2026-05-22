@@ -181,8 +181,8 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     kv_d = kp.kv_d
     k_rope_d = kp.k_rope_d
 
-    qnope_2d_shape = (b * n1 * s1 , q_d)
-    qrope_2d_shape = (b * n1 * s1 , q_rope_d)
+    qnope_2d_shape = (b * n1 * s1, q_d)
+    qrope_2d_shape = (b * n1 * s1, q_rope_d)
     knope_2d_shape = (block_num * block_size * n2, kv_d)
     krope_2d_shape = (block_num * block_size * n2, k_rope_d)
 

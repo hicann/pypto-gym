@@ -18,9 +18,13 @@ import torch.nn as nn
 import torch_npu
 import pytest
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import numpy as np
 from numpy.testing import assert_allclose
@@ -282,7 +286,7 @@ def compile_model(model):
     return compile_model
 
 
-def test_comp_128(enable_acl_graph = False):
+def test_comp_128(enable_acl_graph=False):
     """Test Compressor"""
     print("=" * 60)
     print("Test: Compressor")
@@ -333,7 +337,7 @@ def test_comp_128(enable_acl_graph = False):
 
 
 @pytest.mark.skip(reason="large test case")
-def test_comp_4(enable_acl_graph = False):
+def test_comp_4(enable_acl_graph=False):
     """Test Compressor"""
     print("Test: Compressor")
     print("=" * 60)
@@ -384,7 +388,7 @@ def test_comp_4(enable_acl_graph = False):
 
 
 @pytest.mark.skip(reason="large test case")
-def test_comp_indexer(enable_acl_graph = False):
+def test_comp_indexer(enable_acl_graph=False):
     """Test Compressor"""
     print("=" * 60)
     print("Test: Compressor")

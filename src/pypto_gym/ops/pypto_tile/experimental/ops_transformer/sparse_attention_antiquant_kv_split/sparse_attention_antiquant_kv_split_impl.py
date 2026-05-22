@@ -25,11 +25,13 @@ Example:
     See deepseekv32_sparse_attention_antiquant.py for usage examples.
 """
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
 
-import os
 import math
 from dataclasses import dataclass
 import numpy as np

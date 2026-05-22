@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """
 GutenOCR-3B 推理脚本
 用法: python3 ask_GutenOCR-3B.py [--prompt "问题"] [--device 卡号] [--model-path 路径]
        [--sentence_file 提示词文件] [--output_length 长度] [--use_pypto]
 """
 
-import argparse, sys, torch, torch_npu
+import argparse
+import sys
+import torch
+import torch_npu
 from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
 from transformers import AutoTokenizer
 

@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 # Fused kernel: RMSNorm + QKV proj + Q/K per-head RMSNorm + RoPE
 # Combines previous K1 + K2 into one JIT kernel.
 #
@@ -45,7 +54,7 @@ def qwen3_pre_attn_fused(
     Wv:        pypto.Tensor([Nkv * D, H], pypto.DT_BF16),
     w_q_norm:  pypto.Tensor([D], pypto.DT_BF16),
     w_k_norm:  pypto.Tensor([D], pypto.DT_BF16),
-    q_out:     pypto.Tensor([pypto.DYNAMIC, Nq, D],  pypto.DT_BF16),          # [S, 16, 128]
+    q_out:     pypto.Tensor([pypto.DYNAMIC, Nq, D], pypto.DT_BF16),          # [S, 16, 128]
     k_out:     pypto.Tensor([pypto.DYNAMIC, Nkv, D], pypto.DT_BF16),
     v_out:     pypto.Tensor([pypto.DYNAMIC, Nkv, D], pypto.DT_BF16),
 ):
@@ -139,7 +148,7 @@ def qwen3_pre_attn_fused(
 
         # Q RoPE
         pypto.set_vec_tile_shapes(BS_TILE, Nq, HALF_D)
-        q_left  = pypto.view(q_normed, [BS_TILE, Nq, HALF_D], [0, 0, 0],
+        q_left = pypto.view(q_normed, [BS_TILE, Nq, HALF_D], [0, 0, 0],
                              valid_shape=[cur_bs, Nq, HALF_D])
         q_right = pypto.view(q_normed, [BS_TILE, Nq, HALF_D], [0, 0, HALF_D],
                              valid_shape=[cur_bs, Nq, HALF_D])
@@ -150,7 +159,7 @@ def qwen3_pre_attn_fused(
 
         # K RoPE
         pypto.set_vec_tile_shapes(BS_TILE, Nkv, HALF_D)
-        k_left  = pypto.view(k_normed, [BS_TILE, Nkv, HALF_D], [0, 0, 0],
+        k_left = pypto.view(k_normed, [BS_TILE, Nkv, HALF_D], [0, 0, 0],
                              valid_shape=[cur_bs, Nkv, HALF_D])
         k_right = pypto.view(k_normed, [BS_TILE, Nkv, HALF_D], [0, 0, HALF_D],
                              valid_shape=[cur_bs, Nkv, HALF_D])

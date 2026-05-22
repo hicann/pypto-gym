@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """PyPTO mhc_sinkhorn operator test.
 
 测试说明：
@@ -11,12 +20,14 @@
 """
 
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
-import os
 import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import argparse
 
 import torch
@@ -36,6 +47,7 @@ ATOL = 0.0001
 # ─────────────────────────────────────────────
 # 1. 环境工具
 # ─────────────────────────────────────────────
+
 
 def get_device_id():
     """从环境变量获取 TILE_FWK_DEVICE_ID。"""
@@ -128,6 +140,7 @@ def run_mhc_sinkhorn_test(bs, N, N_out, seed, eps, num_iters, device_id=None, ru
 
     print("  ✓ Passed\n")
 
+
 def test_mhc_sinkhorn_bs8_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（8）。"""
     run_mhc_sinkhorn_test(
@@ -137,6 +150,7 @@ def test_mhc_sinkhorn_bs8_n4_n4(device_id=None, run_mode="npu"):
         test_name="B*S = 8, N = 4, N_out = 4 (Level 0)",
     )
 
+
 def test_mhc_sinkhorn_bs64_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（64）。"""
     run_mhc_sinkhorn_test(
@@ -145,6 +159,7 @@ def test_mhc_sinkhorn_bs64_n4_n4(device_id=None, run_mode="npu"):
         device_id=device_id, run_mode=run_mode,
         test_name="B*S = 64, N = 4, N_out = 4 (Level 0)",
     )
+
 
 def test_mhc_sinkhorn_bs1024_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（1024）。"""

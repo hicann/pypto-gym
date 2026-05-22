@@ -30,9 +30,13 @@ import torch
 import torch_npu
 import pytest
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import numpy as np
 import pypto
@@ -356,11 +360,11 @@ def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_
                     seq_end = seqused_kv[i] - (s1 - 1 - j)
                     seq_len = seq_end // cmp_ratio
                     q_bs = q[i * s1 + j]
-                    kv_win_view = k_win_bsnd[i, max(seq_end-128,0):seq_end,:,:].reshape(-1,d)
+                    kv_win_view = k_win_bsnd[i, max(seq_end-128, 0):seq_end, :, :].reshape(-1, d)
                     kv_bs = kv_bsnd[i, :seq_len, n2_idx : n2_idx + 1].reshape(
                         seq_len, d
                     )
-                    kv_bs = torch.cat([kv_win_view,kv_bs], dim=0)
+                    kv_bs = torch.cat([kv_win_view, kv_bs], dim=0)
                     q_bs = q_bs.to(fp64)
                     kv_bs_64 = kv_bs.to(fp64)
                     qk_bmm_res = matmul_proxy(q_bs, kv_bs_64.transpose(1, 0))
@@ -446,7 +450,7 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
     compare.compare(output_flash, attention_out, "golden vs npu", rtol=0.0078125, atol=0.0001)
 
 
-def test_c128_decode(enable_flash: bool=False, enable_high_perf: bool=False, enable_graph: bool=False, \
+def test_c128_decode(enable_flash: bool = False, enable_high_perf: bool = False, enable_graph: bool = False, \
                     device_id: int = 0):
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

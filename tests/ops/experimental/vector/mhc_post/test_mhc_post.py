@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """PyPTO mhc_post operator test.
 
 测试说明：
@@ -11,12 +20,14 @@
 """
 
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
-import os
 import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import argparse
 
 import torch
@@ -36,6 +47,7 @@ ATOL = 0.0001
 # ─────────────────────────────────────────────
 # 1. 环境工具
 # ─────────────────────────────────────────────
+
 
 def get_device_id():
     """从环境变量获取 TILE_FWK_DEVICE_ID。"""
@@ -151,11 +163,14 @@ def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
 def test_mhc_post_bs8_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=8, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 8, N = 4, D = 128")
 
+
 def test_mhc_post_bs256_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=256, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 256, N = 4, D = 128")
 
+
 def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=1024, N=4, D=5120, device_id=device_id, run_mode=run_mode, test_name="B*S = 1024, N = 4, D = 5120")
+
 
 def test_mhc_post_bs4096_n4_d2560(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=4096, N=4, D=2560, device_id=device_id, run_mode=run_mode, test_name="B*S = 4096, N = 4, D = 2560")

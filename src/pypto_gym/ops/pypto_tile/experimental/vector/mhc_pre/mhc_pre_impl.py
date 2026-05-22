@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 """PyPTO mhc_pre kernel implementation.
 
@@ -139,24 +147,24 @@ def mhc_pre_kernel(
 
         # Step 1: cast to FP32（用于 RMSNorm 和 MatMul）
         pypto.set_vec_tile_shapes(bs_tile * 8, D_tile)
-        pypto.set_pass_options(sg_set_scope = 1)
+        pypto.set_pass_options(sg_set_scope=1)
         X_flat = pypto.cast(x_slice_flat, pypto.DT_FP32)  # [unroll_length, N*D] FP32
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         # cast 3D tensor (用于 Step 5 加权计算)
         pypto.set_vec_tile_shapes(bs_tile * 2, N, D_tile)  # tileshape=1
-        pypto.set_pass_options(sg_set_scope = 2)
+        pypto.set_pass_options(sg_set_scope=2)
         x_fp32_3d = pypto.cast(x_slice_3d, pypto.DT_FP32)  # [unroll_length, N, D] FP32
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         # ─────────────────────────────────────────
         # Step 2: RMSNorm（Root Mean Square Layer Normalization）
         # ─────────────────────────────────────────
         # 计算 rsqrt = 1 / sqrt(mean(X_flat²) + norm_eps)
         pypto.set_vec_tile_shapes(bs_tile, D_tile)  # tileshape=1
-        pypto.set_pass_options(sg_set_scope = 3)
+        pypto.set_pass_options(sg_set_scope=3)
         rsqrt_val = compute_rmsnorm_rsqrt(X_flat, N_D, norm_eps)  # [unroll_length, 1] FP32
-        pypto.set_pass_options(sg_set_scope = -1)
+        pypto.set_pass_options(sg_set_scope=-1)
 
         # ─────────────────────────────────────────
         # Step 3: MatMul with Normalization

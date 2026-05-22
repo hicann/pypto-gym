@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """
 Qwen3-1.7B 单次问答脚本
 用法: python3 infer.py [--prompt "问题"] [--device 卡号] [--model-path 路径]
 """
 
-import argparse, torch, torch_npu
+import argparse
+import torch
+import torch_npu
 
 parser = argparse.ArgumentParser(description="Qwen3-1.7B 问答脚本")
 parser.add_argument("--prompt", default="你好")

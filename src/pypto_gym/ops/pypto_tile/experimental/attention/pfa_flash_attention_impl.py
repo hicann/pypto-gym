@@ -384,7 +384,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
             compute_other_tile(sij, vj_assemble, dtype, ctx_params)
         
         if pypto.cond(pypto.is_loop_end(s2_idx)):
-                finalize_output(out_ofs, dtype, ctx_params)
+            finalize_output(out_ofs, dtype, ctx_params)
 
 
 @pypto.frontend.jit(

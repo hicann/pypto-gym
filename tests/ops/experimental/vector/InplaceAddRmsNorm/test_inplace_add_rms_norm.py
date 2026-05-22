@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 # -----------------------------------------------------------------------------
 # Precision test for inplace_add_rms_norm (PyPTO).
 #
@@ -21,9 +30,13 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 
 import json
@@ -75,8 +88,8 @@ def _make_inputs(case: dict, device: str):
     torch.manual_seed(seed)
     inp = case["input"]
     dtype = DTYPE_MAP[inp["dtype"]]
-    x1_shape    = tuple(inp["x1_shape"])
-    x2_shape    = tuple(inp["x2_shape"])
+    x1_shape = tuple(inp["x1_shape"])
+    x2_shape = tuple(inp["x2_shape"])
     gamma_shape = tuple(inp["gamma_shape"])
 
     x1 = (torch.randn(x1_shape, dtype=torch.float32) * 0.1).to(dtype).to(device)
@@ -89,10 +102,10 @@ def _run_case(case: dict, device: str) -> bool:
     case_id = case["id"]
     rtol = case.get("rtol", 1e-2)
     atol = case.get("atol", 1e-2)
-    eps  = case.get("eps", 1.0e-6)
+    eps = case.get("eps", 1.0e-6)
 
     print("=" * 60)
-    print(f"Test: {case_id} - {case.get('description','')}")
+    print(f"Test: {case_id} - {case.get('description', '')}")
     print("=" * 60)
 
     x1, x2, gamma = _make_inputs(case, device)
@@ -100,7 +113,7 @@ def _run_case(case: dict, device: str) -> bool:
     # Keep CPU copies for golden (golden is itself inplace, so feed clones).
     x1_g = x1.detach().cpu().clone()
     x2_g = x2.detach().cpu().clone()
-    g_g  = gamma.detach().cpu().clone()
+    g_g = gamma.detach().cpu().clone()
     fy_g, xa_g, rstd_g = inplace_add_rms_norm_golden(x1_g, x2_g, g_g, eps)
 
     # Record buffers / contents prior to NPU call for inplace verification.
@@ -132,15 +145,15 @@ def _run_case(case: dict, device: str) -> bool:
     assert rstd_i.dtype == torch.bfloat16
 
     # Cast to fp32 numpy for comparison.
-    actual_y    = x1.detach().cpu().float().numpy()
+    actual_y = x1.detach().cpu().float().numpy()
     actual_xadd = x2.detach().cpu().float().numpy()
     actual_rstd = rstd_i.detach().cpu().float().numpy()
-    expected_y    = fy_g.float().numpy()
+    expected_y = fy_g.float().numpy()
     expected_xadd = xa_g.float().numpy()
     expected_rstd = rstd_g.float().numpy()
 
     # Content-overwrite check (impl outputs must differ from initial inputs).
-    diff_x1 = float(np.abs(actual_y    - x1_init_cpu.float().numpy()).max())
+    diff_x1 = float(np.abs(actual_y - x1_init_cpu.float().numpy()).max())
     diff_x2 = float(np.abs(actual_xadd - x2_init_cpu.float().numpy()).max())
     assert diff_x1 > 0, "[INPLACE FAIL] x1 content not overwritten"
     assert diff_x2 > 0, "[INPLACE FAIL] x2 content not overwritten"
@@ -152,15 +165,15 @@ def _run_case(case: dict, device: str) -> bool:
         denom = np.maximum(np.abs(e), 1e-12)
         return float(d.max()), float((d / denom).max())
 
-    y_abs,    y_rel    = _err(actual_y,    expected_y)
-    xa_abs,   xa_rel   = _err(actual_xadd, expected_xadd)
+    y_abs, y_rel = _err(actual_y, expected_y)
+    xa_abs, xa_rel = _err(actual_xadd, expected_xadd)
     rstd_abs, rstd_rel = _err(actual_rstd, expected_rstd)
     print(f"  [y]      shape={tuple(x1.shape)}    max_abs={y_abs:.6e} max_rel={y_rel:.6e}")
     print(f"  [x_add]  shape={tuple(x2.shape)}    max_abs={xa_abs:.6e} max_rel={xa_rel:.6e}")
     print(f"  [rstd]   shape={tuple(rstd_i.shape)} max_abs={rstd_abs:.6e} max_rel={rstd_rel:.6e}")
 
     try:
-        assert_allclose(actual_y,    expected_y,    atol=atol, rtol=rtol)
+        assert_allclose(actual_y, expected_y, atol=atol, rtol=rtol)
         assert_allclose(actual_xadd, expected_xadd, atol=atol, rtol=rtol)
         assert_allclose(actual_rstd, expected_rstd, atol=atol, rtol=rtol)
         return True

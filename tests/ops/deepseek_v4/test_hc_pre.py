@@ -15,9 +15,13 @@ import torch
 import torch_npu
 import pytest
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import sys
+import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import pypto
 
@@ -55,7 +59,7 @@ def gen_hc_split_sinkhorn(x, hc_scale, hc_base):
     post = x[:, hc: 2*hc] * hc_scale[1] + hc_base[:, hc: 2*hc]  # (t, 4)
     post = 2.0 * gen_sigmoid(post)  # (t, 4)
 
-    comb_flag = (x[:, 2*hc: ] * hc_scale[2] + hc_base[:, 2*hc: ]).reshape(t, hc, hc)    # (t, 4, 4)
+    comb_flag = (x[:, 2*hc:] * hc_scale[2] + hc_base[:, 2*hc:]).reshape(t, hc, hc)    # (t, 4, 4)
     row_max = comb_flag.amax(-1, keepdim=True)  # (t, 4, 1)
     comb_flag = (comb_flag - row_max).exp() # (t, 4, 4)
 
