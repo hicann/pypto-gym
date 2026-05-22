@@ -23,19 +23,22 @@ dK and dV are accumulated across kv tiles.
 """
 
 
-import sys, os; _p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')): _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src')); sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
+import sys
 import os
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
 import logging
 from dataclasses import dataclass
 
-import torch
-import torch_npu  # noqa: F401  # must come before pypto kernel imports
 import numpy as np
-import pytest
 from numpy.testing import assert_allclose
+import pytest
+import torch
+import torch_npu
 
 from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl \
     import flash_attention_varlen_backward_kernel_small_seq, flash_attention_mha_grad_kernel_long_seq
@@ -68,7 +71,6 @@ def device():
     device_id = get_device_id()
     if device_id is None:
         pytest.skip("TILE_FWK_DEVICE_ID not set")
-    import torch_npu  # noqa: F401
     torch.npu.set_device(device_id)
     return f'npu:{device_id}'
 
@@ -92,55 +94,67 @@ class TileConfig:
     s2_tile: int = S2_TILE
 
 
-def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
+def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
+                  q_seqlens=None, kv_seqlens=None):
     """
-    创建 padded 布局的输入张量。
+    创建 varlen 布局的输入张量。
 
-    布局说明 (Q: s1_size, KV: s2_size):
-      - Q/O/dO/L/M/dQ: 每个 batch 占用 s1_size 行 (Q seqlen)
-      - K/V/dK/dV:      每个 batch 占用 s2_size 行 (KV seqlen)
+    布局说明 (varlen, 通过 cumsum 描述每 batch 的 seq):
+      - Q/O/dO/L/M/dQ: 第 i 个 batch 占用 q_seqlens[i] 行
+      - K/V/dK/dV:      第 i 个 batch 占用 kv_seqlens[i] 行
+      - actual_q[0]=0, actual_q[i+1] = sum(q_seqlens[:i+1])
+      - actual_kv 同理
 
     数据类型严格对应 kernel 签名:
       - q/k/v:       BF16  (kernel: pypto.DT_BF16)
-      - actual_q:    INT32 (kernel: pypto.DT_INT32) — 每个 batch 的 Q seqlen
-      - actual_kv:   INT32 (kernel: pypto.DT_INT32) — 每个 batch 的 KV seqlen
+      - actual_q:    INT32 (kernel: pypto.DT_INT32) — Q seqlen 的前缀累加 (cumsum)
+      - actual_kv:   INT32 (kernel: pypto.DT_INT32) — KV seqlen 的前缀累加 (cumsum)
 
     Args:
         batch_size: 批次数量
-        s1_size:    Q 序列长度 (每个 batch 的 Q seqlen)
-        s2_size:    KV 序列长度 (每个 batch 的 KV seqlen)
+        s1_size:    Q 序列长度 (当 q_seqlens=None 时使用, 每个 batch 等长)
+        s2_size:    KV 序列长度 (当 kv_seqlens=None 时使用)
         num_heads:  注意力头数
         head_dim:   每个头的维度
         device:     计算设备
+        q_seqlens:  可选, 每个 batch 的 Q seqlen 列表, len==batch_size
+                    若为 None 则用 [s1_size]*batch_size
+        kv_seqlens: 可选, 每个 batch 的 KV seqlen 列表, len==batch_size
+                    若为 None 则用 [s2_size]*batch_size
     Returns:
-        q:          shape=[batch_size * s1_size, num_heads, head_dim], dtype=bfloat16
-        k, v:       shape=[batch_size * s2_size, num_heads, head_dim], dtype=bfloat16
-        actual_q:   shape=[batch_size], dtype=int32
-                    actual_q[i]=第 i 个 batch 的 s1_size
-        actual_kv:  shape=[batch_size], dtype=int32
-                    actual_kv[i]=第 i 个 batch 的 s2_size
+        q:          shape=[sum(q_seqlens), num_heads, head_dim], dtype=bfloat16
+        k, v:       shape=[sum(kv_seqlens), num_heads, head_dim], dtype=bfloat16
+        actual_q:   shape=[batch_size + 1], dtype=int32 — Q seqlen 前缀累加
+        actual_kv:  shape=[batch_size + 1], dtype=int32 — KV seqlen 前缀累加
+        q_seqlens:  list[int], 每个 batch 的 Q seqlen
+        kv_seqlens: list[int], 每个 batch 的 KV seqlen
     """
-    total_q = batch_size * s1_size
-    total_kv = batch_size * s2_size
+    if q_seqlens is None:
+        q_seqlens = [s1_size] * batch_size
+    if kv_seqlens is None:
+        kv_seqlens = [s2_size] * batch_size
+    assert len(q_seqlens) == batch_size
+    assert len(kv_seqlens) == batch_size
+
+    total_q = sum(q_seqlens)
+    total_kv = sum(kv_seqlens)
 
     torch.manual_seed(42)
-    # Q 张量: shape=[batch * s1_size, num_heads, head_dim], dtype=BF16
-    # kernel 签名为 [DYNAMIC, N, D], 三维输入
+    # Q 张量: shape=[sum(q_seqlens), num_heads, head_dim], dtype=BF16
     q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
-    # K/V 张量: shape=[batch * s2_size, num_heads, head_dim], dtype=BF16
+    # K/V 张量: shape=[sum(kv_seqlens), num_heads, head_dim], dtype=BF16
     k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
     v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
 
-    # 计算流：actual_q: [s1_size, s1_size, ...] — shape=[batch_size], Q 每个 batch 的 seqlen
-    q_seqlens = [s1_size] * batch_size
-    actual_q = torch.tensor(
-        q_seqlens, dtype=torch.int32, device=device
-    )
-    # 计算流：actual_kv: [s2_size, s2_size, ...] — shape=[batch_size], KV 每个 batch 的 seqlen
-    kv_seqlens = [s2_size] * batch_size
-    actual_kv = torch.tensor(
-        kv_seqlens, dtype=torch.int32, device=device
-    )
+    # 前缀累加构造 actual_q / actual_kv (shape=[batch_size + 1])
+    q_cumsum = [0]
+    for sq in q_seqlens:
+        q_cumsum.append(q_cumsum[-1] + sq)
+    actual_q = torch.tensor(q_cumsum, dtype=torch.int32, device=device)
+    kv_cumsum = [0]
+    for skv in kv_seqlens:
+        kv_cumsum.append(kv_cumsum[-1] + skv)
+    actual_kv = torch.tensor(kv_cumsum, dtype=torch.int32, device=device)
     return q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens
 
 
@@ -214,7 +228,7 @@ def attention_backward_golden(q, k, v, o_input, do_t, scale):
     return dq, dk, dv
 
 
-def compute_l_m_o(q, k, v, scale, head_dim):
+def compute_l_m_o(q, k, v, scale):
     """
     预计算 softmax 中间量 L, M 和前向输出 O。
 
@@ -236,23 +250,23 @@ def compute_l_m_o(q, k, v, scale, head_dim):
         q:        [s1_size, head_dim] — Q 切片
         k, v:     [s2_size, head_dim] — KV 切片
         scale:    attention scale factor
-        head_dim: 每个头的维度 (用于 expand L/M)
     Returns:
-        l: [s1_size, 1], dtype=float32
-        m: [s1_size, 1], dtype=float32
-        o: [s1_size, head_dim], dtype=bfloat16
+        l_val: [s1_size, 1], dtype=float32
+        m:     [s1_size, 1], dtype=float32
+        o:     [s1_size, head_dim], dtype=bfloat16
     """
     scores = torch.matmul(q.float(), k.float().T) * scale
     m = scores.max(dim=-1, keepdim=True)[0]
     p = torch.exp(scores - m)
-    l = p.sum(dim=-1, keepdim=True)
-    o = torch.matmul(p / l, v.float())
+    l_val = p.sum(dim=-1, keepdim=True)
+    o = torch.matmul(p / l_val, v.float())
     # L, M 保持 [sq, 1], 不再 expand
-    return l, m, o.to(torch.bfloat16)
+    return l_val, m, o.to(torch.bfloat16)
 
 
-def run_test(device, batch_size=None, num_heads=None, s1_size=None,
-             s2_size=None, dim=None, tile_config=None):
+def run_test(batch_size=None, num_heads=None, s1_size=None,
+             s2_size=None, dim=None, tile_config=None,
+             q_seqlens=None, kv_seqlens=None):
     """
     运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
 
@@ -267,8 +281,10 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     输入张量布局:
       - Q/O/dO/L/M/dQ: [batch_size * s1_size, hidden_dim]  — Q 侧
       - K/V/dK/dV:      [batch_size * s2_size, hidden_dim]  — KV 侧
-      - actual_q:        [batch_size] — 每个 batch 的 Q seqlen (s1_size)
-      - actual_kv:       [batch_size] — 每个 batch 的 KV seqlen (s2_size)
+      - actual_q:        [batch_size + 1] — Q seqlen 前缀累加,
+                          s1_i = actual_q[i+1] - actual_q[i]
+      - actual_kv:       [batch_size + 1] — KV seqlen 前缀累加,
+                          s2_i = actual_kv[i+1] - actual_kv[i]
 
     数据类型严格对应 kernel 签名:
       ┌────────────┬──────────────────────────────────────────┬─────────────┐
@@ -287,16 +303,24 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
       4. dQ/dK 输出: FP32 → cast → BF16 后 assemble 写回
 
     Args:
-        device:      计算设备
         batch_size:  批次数量 (可选)
         num_heads:   注意力头数 (可选)
         s1_size:     Q 序列长度 (可选)
         s2_size:     KV 序列长度 (可选, 默认 = s1_size)
         dim:         每个头的维度 head_dim (可选)
         tile_config: TileConfig 分块配置 (可选)
+        q_seqlens:   每个 batch 的 Q seqlen 列表 (可选, varlen 场景)
+        kv_seqlens:  每个 batch 的 KV seqlen 列表 (可选, varlen 场景)
     Returns:
         passed: 是否通过精度校验
     """
+    device_id = get_device_id()
+    if device_id is None:
+        return None
+
+    torch.npu.set_device(device_id)
+    device = f'npu:{device_id}'
+
     # ---- 参数默认值，未传则使用全局常量 ----
     if batch_size is None:
         batch_size = 1
@@ -312,25 +336,40 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     if tile_config is None:
         tile_config = TileConfig()
 
+    # varlen: 若显式传入 q_seqlens / kv_seqlens, 则覆盖 batch_size 与 s1_size/s2_size
+    if q_seqlens is not None:
+        batch_size = len(q_seqlens)
+        s1_size = max(q_seqlens)
+    if kv_seqlens is not None:
+        assert len(kv_seqlens) == batch_size, "kv_seqlens must match batch_size"
+        s2_size = max(kv_seqlens)
+
     # 派生常量 (全部从输入参数计算，不直接引用全局变量)
     hidden_dim = num_heads * dim
     scale = 1.0 / (dim ** 0.5)
 
     logging.info("=" * 60)
     logging.info(f"Test Case: batch={batch_size}, heads={num_heads}, "
-          f"Q:s1_size={s1_size}, KV:s2_size={s2_size}, dim={dim}")
+                 f"Q:s1_size={s1_size}, KV:s2_size={s2_size}, dim={dim}")
+    if q_seqlens is not None or kv_seqlens is not None:
+        logging.info(f"  varlen: q_seqlens={q_seqlens}, kv_seqlens={kv_seqlens}")
     logging.info(f"  hidden_dim={hidden_dim}, scale={scale:.6f}, "
-          f"s2_tile={tile_config.s2_tile}")
+                 f"s2_tile={tile_config.s2_tile}")
     logging.info("=" * 60)
 
     # ---- 构造输入张量，dtype 严格匹配 kernel 签名 ----
     # Q: [batch * s1_size, num_heads, dim], KV: [batch * s2_size, num_heads, dim]
     # kernel 签名为三维 [DYNAMIC, N, D]
     q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens = create_inputs(
-        batch_size, s1_size, s2_size, num_heads, dim, device)
+        batch_size, s1_size, s2_size, num_heads, dim, device,
+        q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
-    total_q = batch_size * s1_size
-    total_kv = batch_size * s2_size
+    # 从 actual_q / actual_kv (cumsum) 中派生 host 侧 offset/seqlen
+    # 描述： actual_q / actual_kv shape=[batch_size + 1], offset_i = actual_q[i], seq_i = actual_q[i+1] - actual_q[i]
+    q_cumsum = actual_q.cpu().tolist()
+    kv_cumsum = actual_kv.cpu().tolist()
+    total_q = q_cumsum[-1]
+    total_kv = kv_cumsum[-1]
 
     # 注意: 此处使用与 create_inputs 不同的种子，避免 do_t 与 q 数值完全相同，
     # 否则会掩盖 dQ/dK/dV 计算路径中与 dO 相关的错误。
@@ -346,17 +385,18 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
 
     # 预计算每个 (batch, head) 的 L, M, O
     # 三维张量按 [seq, head, dim] 索引: tensor[q_off:q_off+sq, h, :]
+    # offset/seqlen 从 actual_q / actual_kv (cumsum) 派生, 支持每 batch 不等长
     for b in range(batch_size):
-        sq = q_seqlens[b]    # Q seqlen for this batch
-        skv = kv_seqlens[b]  # KV seqlen for this batch
-        q_off = b * s1_size
-        kv_off = b * s2_size
+        q_off = q_cumsum[b]
+        kv_off = kv_cumsum[b]
+        sq = q_cumsum[b + 1] - q_off      # Q seqlen for this batch
+        skv = kv_cumsum[b + 1] - kv_off   # KV seqlen for this batch
         for h in range(num_heads):
             l_h, m_h, o_h = compute_l_m_o(
                 q[q_off: q_off + sq, h, :],
                 k[kv_off: kv_off + skv, h, :],
                 v[kv_off: kv_off + skv, h, :],
-                scale, dim)
+                scale)
             # l_h, m_h: [sq, 1], o_h: [sq, dim]
             l_out[q_off: q_off + sq, h, :] = l_h
             m_out[q_off: q_off + sq, h, :] = m_h
@@ -375,10 +415,10 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     dv_golden = torch.empty(total_kv, hidden_dim, dtype=torch.bfloat16, device=device)
 
     for b in range(batch_size):
-        sq = q_seqlens[b]
-        skv = kv_seqlens[b]
-        q_off = b * s1_size
-        kv_off = b * s2_size
+        q_off = q_cumsum[b]
+        kv_off = kv_cumsum[b]
+        sq = q_cumsum[b + 1] - q_off
+        skv = kv_cumsum[b + 1] - kv_off
         for h in range(num_heads):
             h_off = h * dim
             dq_g, dk_g, dv_g = attention_backward_golden(
@@ -396,12 +436,9 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
     import time
-    if (s1_size > 320):
-        # warmup
-        flash_attention_mha_grad_kernel_long_seq(
-            q, k, v, o_out, do_t, l_out, m_out,
-            dq_out, dk_out, dv_out,
-            actual_q, actual_kv)
+    # 路由决策基于 max(q_seqlens) (varlen) 或 s1_size (uniform)
+    max_s1 = max(q_seqlens)
+    if max_s1 > 320:
         # perf run
         start_time = time.time()
         flash_attention_mha_grad_kernel_long_seq(
@@ -409,13 +446,8 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
             dq_out, dk_out, dv_out,
             actual_q, actual_kv)
         elapsed = time.time() - start_time
-        logging.info(f"  Kernel time: {elapsed*1000:.2f} ms")
+        logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     else:
-        # warmup
-        flash_attention_varlen_backward_kernel_small_seq(
-            q, k, v, o_out, do_t, l_out, m_out,
-            dq_out, dk_out, dv_out,
-            actual_q, actual_kv)
         # perf run
         start_time = time.time()
         flash_attention_varlen_backward_kernel_small_seq(
@@ -423,7 +455,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
             dq_out, dk_out, dv_out,
             actual_q, actual_kv)
         elapsed = time.time() - start_time
-        logging.info(f"  Kernel time: {elapsed*1000:.2f} ms")
+        logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
     rtol = 0.0078125  # 1/128, 约 BF16 精度
     atol = 0.0001
@@ -460,39 +492,64 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
 ########################################################################
 
 
-def test_01(device):
+@pytest.mark.soc("950")
+def test_01():
     """ 用例规格信息：batch=8, heads=8, s1=320, s2=320, dim=64"""
-    return run_test(device, batch_size=8, num_heads=8, s1_size=320, s2_size=320, dim=64)
+    return run_test(batch_size=8, num_heads=8, s1_size=320, s2_size=320, dim=64)
 
 
 @pytest.mark.skip(reason="large test case")
-def test_02(device):
-    """ 用例规格信息：batch=1, heads=8, s1=4096, s2=4096, dim=64"""
-    return run_test(device, batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=64)
+def test_02():
+    """ 用例规格信息：batch=1, heads=8, s1=4096, s2=4096, dim=128"""
+    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_03(device):
+@pytest.mark.soc("950")
+def test_03():
     """ 用例规格信息：batch=8, heads=16, s1=32, s2=32, dim=32"""
-    return run_test(device, batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
+    return run_test(batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_04(device):
+@pytest.mark.soc("950")
+def test_04():
     """ 用例规格信息：batch=8, heads=16, s1=64, s2=64, dim=32"""
-    return run_test(device, batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
+    return run_test(batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_05(device):
+@pytest.mark.soc("950")
+def test_05():
     """ 用例规格信息：batch=8, heads=8, s1=32, s2=32, dim=64"""
-    return run_test(device, batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
+    return run_test(batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
+
+
+@pytest.mark.skip("950")
+def test_06():
+    """ 用例规格信息：batch=8, heads=4, s1=64, s2=64, dim=128"""
+    return run_test(batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
 
 
 @pytest.mark.skip(reason="large test case")
-def test_06(device):
-    """ 用例规格信息：batch=8, heads=4, s1=64, s2=64, dim=128"""
-    return run_test(device, batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
+def test_07_varlen_small_seq():
+    """ 用例规格信息：batch=4, heads=8, q_seqlens=[64,128,192,256], kv_seqlens=[64,128,192,256], dim=64 """
+    return run_test(num_heads=8, dim=64,
+                    q_seqlens=[64, 128, 192, 256],
+                    kv_seqlens=[64, 128, 192, 256])
+
+
+@pytest.mark.soc("950")
+def test_08_varlen_long_seq():
+    """ 用例规格信息: batch=2, heads=8, q_seqlens=[384,512], kv_seqlens=[384,512], dim=64 """
+    return run_test(num_heads=8, dim=64,
+                    q_seqlens=[384, 512],
+                    kv_seqlens=[384, 512])
+
+
+@pytest.mark.soc("950")
+def test_09_varlen_cross_attn():
+    """ 用例规格信息：batch=3, heads=8, q_seqlens=[128,64,192], kv_seqlens=[96,256,128], dim=64 """
+    return run_test(num_heads=8, dim=64,
+                    q_seqlens=[128, 64, 192],
+                    kv_seqlens=[96, 256, 128])
 
 
 def main():
@@ -502,28 +559,23 @@ def main():
     """
     logging.info("Flash Attention Backward (3-loop, KV tiling)")
 
-    device_id = get_device_id()
-    if device_id is None:
-        return
-
-    import torch_npu
-    torch.npu.set_device(device_id)
-    device = f'npu:{device_id}'
-
     # ---- 选择要运行的测试用例 (注释/取消注释即可) ----
     test_funcs = [
-        test_01,    # batch=8, heads=8, s1=320, s2=320, dim=64
-        test_02,    # batch=8, heads=8, s1=4096, s2=4096, dim=64
-        test_03,    # batch=8, heads=16, s1=32, s2=32, dim=32
-        test_04,    # batch=8, heads=16, s1=64, s2=64, dim=32
-        test_05,    # batch=8, heads=8, s1=32, s2=32, dim=64
-        test_06,    # batch=8, heads=4, s1=64, s2=64, dim=128
+        test_01,                     # batch=8, heads=8, s1=320, s2=320, dim=64
+        test_02,                     # batch=1, heads=8, s1=4096, s2=4096, dim=128
+        test_03,                     # batch=8, heads=16, s1=32, s2=32, dim=32
+        test_04,                     # batch=8, heads=16, s1=64, s2=64, dim=32
+        test_05,                     # batch=8, heads=8, s1=32, s2=32, dim=64
+        test_06,                     # batch=8, heads=4, s1=64, s2=64, dim=128
+        test_07_varlen_small_seq,    # varlen, small_seq: q/kv=[64,128,192,256]
+        test_08_varlen_long_seq,     # varlen, long_seq:  q/kv=[384,512]
+        test_09_varlen_cross_attn,   # varlen cross-attn: q=[128,64,192], kv=[96,256,128]
     ]
 
     results = []
-    for _, fn in enumerate(test_funcs):
+    for fn in test_funcs:
         try:
-            passed = fn(device)
+            passed = fn()
             results.append((fn.__name__, fn.__doc__, passed))
         except Exception as e:
             logging.info(f"  ERROR: {e}")
