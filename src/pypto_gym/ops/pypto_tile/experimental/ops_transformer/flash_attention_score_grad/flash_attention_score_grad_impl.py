@@ -31,12 +31,17 @@ S_TILE = 128  # 优化: 64 → 128
 def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
                  actual_s1, actual_s2, scale_value, c_tile, v_tile_s, v_tile_d, s_tile_size):
     """计算一个 (s1_tile, s2_tile) 块的 P_ij 和 dS_ij。"""
+    q_fp32 = pypto.cast(q_i, pypto.DT_FP32)
+    k_fp32 = pypto.cast(k_j, pypto.DT_FP32)
+    v_fp32 = pypto.cast(v_j, pypto.DT_FP32)
+    dy_fp32 = pypto.cast(dy_i, pypto.DT_FP32)
+
     # 计算公式：S_ij = Q_i @ K_j^T * scale
     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
     pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
-    s_ij = pypto.matmul(q_i, k_j, pypto.DT_FP32, b_trans=True)
+    s_ij = pypto.matmul(q_fp32, k_fp32, pypto.DT_FP32, b_trans=True)
     s_ij = pypto.view(s_ij, [s_tile_size, s_tile_size], [0, 0],
-                      valid_shape=[actual_s1, actual_s2])
+                       valid_shape=[actual_s1, actual_s2])
 
     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
     s_ij = pypto.mul(s_ij, scale_value)
@@ -46,7 +51,7 @@ def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
     # 计算公式：dP_ij = dY_i @ V_j^T
     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
     pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
-    dp_ij = pypto.matmul(dy_i, v_j, pypto.DT_FP32, b_trans=True)
+    dp_ij = pypto.matmul(dy_fp32, v_fp32, pypto.DT_FP32, b_trans=True)
     dp_ij = pypto.view(dp_ij, [s_tile_size, s_tile_size], [0, 0],
                        valid_shape=[actual_s1, actual_s2])
 
@@ -75,9 +80,9 @@ def flash_attention_score_grad_kernel_profile(
     softmax_max: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     softmax_sum: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     attention_out: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dq: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dk: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    dq: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    dk: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     batch_size: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     scale_value: float,
     num_heads: int,
@@ -99,7 +104,7 @@ def flash_attention_score_grad_kernel_profile(
     dk_2d = dk
     dv_2d = dv
 
-    s_loop = s // S_TILE
+    s_loop = (s + S_TILE - 1) // S_TILE
 
     c_tile = [[S_TILE, S_TILE], [head_dim, 256], [S_TILE, S_TILE]]
     v_tile_s = [S_TILE, S_TILE]
@@ -157,8 +162,7 @@ def flash_attention_score_grad_kernel_profile(
 
                     if pypto.is_loop_end(s2_idx):
                         pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                        dq_final = pypto.cast(pypto.mul(dq_acc, scale_value), pypto.DT_BF16)
-                        pypto.assemble(dq_final, [s1_off, 0], dq_2d)
+                        pypto.assemble(dq_acc, [s1_off, 0], dq_2d)
 
             # ===== 趟2: 计算 dK, dV =====
             for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dkv", idx_name="s2_idx"):
@@ -213,10 +217,8 @@ def flash_attention_score_grad_kernel_profile(
 
                     if pypto.is_loop_end(s1_idx):
                         pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                        dk_final = pypto.cast(pypto.mul(dk_acc, scale_value), pypto.DT_BF16)
-                        dv_final = pypto.cast(dv_acc, pypto.DT_BF16)
-                        pypto.assemble(dk_final, [s2_off, 0], dk_2d)
-                        pypto.assemble(dv_final, [s2_off, 0], dv_2d)
+                        pypto.assemble(dk_acc, [s2_off, 0], dk_2d)
+                        pypto.assemble(dv_acc, [s2_off, 0], dv_2d)
 
 
 @pypto.frontend.jit(
@@ -237,9 +239,9 @@ def flash_attention_score_grad_kernel(
     softmax_max: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     softmax_sum: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     attention_out: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dq: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dk: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
-    dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
+    dq: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    dk: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
+    dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     batch_size: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     scale_value: float,
     num_heads: int,
@@ -260,7 +262,7 @@ def flash_attention_score_grad_kernel(
     dk_2d = dk
     dv_2d = dv
 
-    s_loop = s // S_TILE
+    s_loop = (s + S_TILE - 1) // S_TILE
 
     c_tile = [[S_TILE, S_TILE], [head_dim, 256], [S_TILE, S_TILE]]
     v_tile_s = [S_TILE, S_TILE]
@@ -318,8 +320,7 @@ def flash_attention_score_grad_kernel(
 
                     if pypto.is_loop_end(s2_idx):
                         pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                        dq_final = pypto.cast(pypto.mul(dq_acc, scale_value), pypto.DT_BF16)
-                        pypto.assemble(dq_final, [s1_off, 0], dq_2d)
+                        pypto.assemble(dq_acc, [s1_off, 0], dq_2d)
 
             # ===== 趟2: 计算 dK, dV =====
             for s2_idx in pypto.loop(s_loop, name="LOOP_s2_dkv", idx_name="s2_idx"):
@@ -374,10 +375,8 @@ def flash_attention_score_grad_kernel(
 
                     if pypto.is_loop_end(s1_idx):
                         pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                        dk_final = pypto.cast(pypto.mul(dk_acc, scale_value), pypto.DT_BF16)
-                        dv_final = pypto.cast(dv_acc, pypto.DT_BF16)
-                        pypto.assemble(dk_final, [s2_off, 0], dk_2d)
-                        pypto.assemble(dv_final, [s2_off, 0], dv_2d)
+                        pypto.assemble(dk_acc, [s2_off, 0], dk_2d)
+                        pypto.assemble(dv_acc, [s2_off, 0], dv_2d)
 
 
 def flash_attention_score_grad_wrapper(
@@ -393,14 +392,24 @@ def flash_attention_score_grad_wrapper(
     head_dim: int,
 ):
     """算子 wrapper，供测试调用。"""
-    batch_size, num_heads_out, seq_len, head_dim_out = query.shape
+    batch_size, num_heads_out, original_seq_len, head_dim_out = query.shape
     if num_heads_out != num_heads or head_dim_out != head_dim:
         raise ValueError(
             f"Shape mismatch: expected num_heads={num_heads}, head_dim={head_dim}, "
             f"got num_heads={num_heads_out}, head_dim={head_dim_out}"
         )
-    if seq_len % S_TILE != 0:
-        raise ValueError(f"seq_len={seq_len} must be multiple of S_TILE={S_TILE}")
+
+    padded_len = ((original_seq_len + S_TILE - 1) // S_TILE) * S_TILE
+    if original_seq_len != padded_len:
+        pad = padded_len - original_seq_len
+        query = torch.nn.functional.pad(query, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        key = torch.nn.functional.pad(key, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        value = torch.nn.functional.pad(value, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        dy = torch.nn.functional.pad(dy, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        attention_out = torch.nn.functional.pad(attention_out, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        softmax_max = torch.nn.functional.pad(softmax_max, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+        softmax_sum = torch.nn.functional.pad(softmax_sum, (0, 0, 0, pad, 0, 0, 0, 0), value=1.0)
+    seq_len = padded_len
 
     q_flat = query.reshape(-1, head_dim_out).contiguous()
     k_flat = key.reshape(-1, head_dim_out).contiguous()
@@ -410,9 +419,9 @@ def flash_attention_score_grad_wrapper(
     sm_flat = softmax_max.reshape(-1, 8).contiguous()
     ss_flat = softmax_sum.reshape(-1, 8).contiguous()
 
-    dq_flat = torch.empty_like(q_flat)
-    dk_flat = torch.empty_like(k_flat)
-    dv_flat = torch.empty_like(v_flat)
+    dq_flat = torch.empty(q_flat.shape, dtype=torch.float32, device=query.device)
+    dk_flat = torch.empty(k_flat.shape, dtype=torch.float32, device=query.device)
+    dv_flat = torch.empty(v_flat.shape, dtype=torch.float32, device=query.device)
 
     batch_tensor = torch.zeros(batch_size, dtype=torch.int32, device=query.device)
 
@@ -425,6 +434,37 @@ def flash_attention_score_grad_wrapper(
         num_heads,
     )
 
-    return (dq_flat.reshape(batch_size, num_heads, seq_len, head_dim),
-            dk_flat.reshape(batch_size, num_heads, seq_len, head_dim),
-            dv_flat.reshape(batch_size, num_heads, seq_len, head_dim))
+    dq_out = (dq_flat * scale_value).to(torch.bfloat16).reshape(batch_size, num_heads, seq_len, head_dim)
+    dk_out = (dk_flat * scale_value).to(torch.bfloat16).reshape(batch_size, num_heads, seq_len, head_dim)
+    dv_out = dv_flat.to(torch.bfloat16).reshape(batch_size, num_heads, seq_len, head_dim)
+
+    if original_seq_len != padded_len:
+        dq_out = dq_out[:, :, :original_seq_len, :]
+        dk_out = dk_out[:, :, :original_seq_len, :]
+        dv_out = dv_out[:, :, :original_seq_len, :]
+
+    return dq_out, dk_out, dv_out
+
+
+def prepare_inputs(
+    query, key, value, dy, softmax_max, softmax_sum, attention_out
+):
+    """Pad inputs to multiple of S_TILE for golden computation consistency.
+
+    Applies the same padding as flash_attention_score_grad_wrapper so
+    that the golden sees identical input data.
+    """
+    import torch.nn.functional as F
+    original_seq_len = query.shape[2]
+    padded_len = ((original_seq_len + S_TILE - 1) // S_TILE) * S_TILE
+    if original_seq_len == padded_len:
+        return query, key, value, dy, softmax_max, softmax_sum, attention_out, original_seq_len
+    pad = padded_len - original_seq_len
+    query = F.pad(query, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    key = F.pad(key, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    value = F.pad(value, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    dy = F.pad(dy, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    attention_out = F.pad(attention_out, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    softmax_max = F.pad(softmax_max, (0, 0, 0, pad, 0, 0, 0, 0), value=0)
+    softmax_sum = F.pad(softmax_sum, (0, 0, 0, pad, 0, 0, 0, 0), value=1.0)
+    return query, key, value, dy, softmax_max, softmax_sum, attention_out, original_seq_len
