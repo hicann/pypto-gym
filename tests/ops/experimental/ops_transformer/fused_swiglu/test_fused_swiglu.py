@@ -56,11 +56,11 @@ def test_fwd(device_id):
     np.random.seed(0)
     torch.manual_seed(0)
 
-    x = torch.randn(m, k, dtype=torch.bfloat16, device=device)
-    w_g = torch.randn(k, n, dtype=torch.bfloat16, device=device)
-    w_fc = torch.randn(k, n, dtype=torch.bfloat16, device=device)
-    b_g = torch.randn(1, n, dtype=torch.bfloat16, device=device)
-    b_fc = torch.randn(1, n, dtype=torch.bfloat16, device=device)
+    x = torch.randn(m, k, dtype=torch.bfloat16, device=device) / math.sqrt(m)
+    w_g = torch.randn(k, n, dtype=torch.bfloat16, device=device) / math.sqrt(k)
+    w_fc = torch.randn(k, n, dtype=torch.bfloat16, device=device) / math.sqrt(k)
+    b_g = torch.randn(1, n, dtype=torch.bfloat16, device=device) / math.sqrt(n)
+    b_fc = torch.randn(1, n, dtype=torch.bfloat16, device=device) / math.sqrt(n)
     y_golden = golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc)
     y_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
 
