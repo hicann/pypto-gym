@@ -1,0 +1,71 @@
+{
+  "op_name": "RMSNorm",
+  "source": "pypto-op-develop",
+  "description": "PyPTO RMSNorm 算子测试用例。公式: out = x / sqrt(mean(x^2, dim=1) + eps), 输入 [B,64,256,256] FP32",
+  "test_cases": [
+    {
+      "id": "case_001",
+      "description": "P0 性能/功能验证: B=16, eps=1e-5",
+      "seed": 42,
+      "input": {
+        "shape": [16, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [16, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "eps": 1e-5,
+      "rtol": 0.001,
+      "atol": 0.001
+    },
+    {
+      "id": "case_002",
+      "description": "边界 B=1: 单 batch",
+      "seed": 42,
+      "input": {
+        "shape": [1, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [1, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "eps": 1e-5,
+      "rtol": 0.001,
+      "atol": 0.001
+    },
+    {
+      "id": "case_003",
+      "description": "不同 eps=1e-8",
+      "seed": 42,
+      "input": {
+        "shape": [4, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [4, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "eps": 1e-8,
+      "rtol": 0.001,
+      "atol": 0.001
+    },
+    {
+      "id": "case_004",
+      "description": "不同 eps=1e-2",
+      "seed": 42,
+      "input": {
+        "shape": [4, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [4, 64, 256, 256],
+        "dtype": "float32"
+      },
+      "eps": 0.01,
+      "rtol": 0.001,
+      "atol": 0.001
+    }
+  ]
+}
