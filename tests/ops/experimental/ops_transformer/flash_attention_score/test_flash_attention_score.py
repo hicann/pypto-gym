@@ -364,9 +364,6 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
                     drop_mask_block = drop_mask[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
                     p_ij = p_ij * drop_mask_block
 
-                    if keep_prob < 1.0:
-                        p_ij = p_ij / keep_prob
-
                     l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
                     v_block_2d = value[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
@@ -387,7 +384,10 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
                 o_final = oi_update / li_update
                 output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
                 softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
-                softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = li_update.reshape(cur_q_size, 1)
+                if keep_prob < 1.0:
+                    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = (li_update / keep_prob).reshape(cur_q_size, 1)
+                else:
+                    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = li_update.reshape(cur_q_size, 1)
 
     return output, softmax_max, softmax_sum
 

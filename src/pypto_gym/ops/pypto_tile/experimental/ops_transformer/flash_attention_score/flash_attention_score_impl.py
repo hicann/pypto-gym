@@ -111,7 +111,9 @@ def flash_attention_score_kernel_with_mask_origin(
                                                       [0, 0],
                                                       valid_shape=[cur_block_size, head_dim])
 
-                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                        q_block_fp32 = pypto.cast(q_block_2d_valid, pypto.DT_FP32)
+                        k_block_fp32 = pypto.cast(k_block_2d_valid, pypto.DT_FP32)
+                        scores = pypto.matmul(q_block_fp32, k_block_fp32, pypto.DT_FP32,
                                              a_trans=False, b_trans=True)
                         scores_scaled = pypto.mul(scores, scale)
 
@@ -143,7 +145,11 @@ def flash_attention_score_kernel_with_mask_origin(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(o_ij, l_ij)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
                             else:
                                 oi_update[:] = o_ij
@@ -167,7 +173,11 @@ def flash_attention_score_kernel_with_mask_origin(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(oi_new, li_new)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[b_idx: b_idx + 1, n_idx: n_idx + 1, q_start: q_start + BLOCK_SIZE_Q, :] = o_final_4d
                             else:
                                 oi_update[:] = oi_new
@@ -258,7 +268,9 @@ def flash_attention_score_kernel_with_mask(
                                                       [0, 0],
                                                       valid_shape=[cur_block_size, head_dim])
 
-                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                        q_block_fp32 = pypto.cast(q_block_2d_valid, pypto.DT_FP32)
+                        k_block_fp32 = pypto.cast(k_block_2d_valid, pypto.DT_FP32)
+                        scores = pypto.matmul(q_block_fp32, k_block_fp32, pypto.DT_FP32,
                                              a_trans=False, b_trans=True)
                         scores_scaled = pypto.mul(scores, scale)
 
@@ -290,7 +302,11 @@ def flash_attention_score_kernel_with_mask(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(o_ij, l_ij)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -298,7 +314,11 @@ def flash_attention_score_kernel_with_mask(
                                     :
                                 ] = o_final_4d
 
-                                m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                m_final_4d = pypto.reshape(
+                                    m_ij,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_max[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -306,7 +326,11 @@ def flash_attention_score_kernel_with_mask(
                                     :
                                 ] = m_final_4d
 
-                                l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                l_final_4d = pypto.reshape(
+                                    l_ij,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_sum[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -335,7 +359,11 @@ def flash_attention_score_kernel_with_mask(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(oi_new, li_new)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -343,7 +371,11 @@ def flash_attention_score_kernel_with_mask(
                                     :
                                 ] = o_final_4d
 
-                                m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                m_final_4d = pypto.reshape(
+                                    mi_new,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_max[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -351,7 +383,11 @@ def flash_attention_score_kernel_with_mask(
                                     :
                                 ] = m_final_4d
 
-                                l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                l_final_4d = pypto.reshape(
+                                    li_new,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_sum[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -463,11 +499,13 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                                       [0, 0],
                                                       valid_shape=[cur_block_size, head_dim])
 
-                        scores = pypto.matmul(q_block_2d_valid, k_block_2d_valid, pypto.DT_FP32,
+                        q_block_fp32 = pypto.cast(q_block_2d_valid, pypto.DT_FP32)
+                        k_block_fp32 = pypto.cast(k_block_2d_valid, pypto.DT_FP32)
+                        scores = pypto.matmul(q_block_fp32, k_block_fp32, pypto.DT_FP32,
                                              a_trans=False, b_trans=True)
 
                         pse_block = pypto.view(pse, [1, 1, BLOCK_SIZE_Q, BLOCK_SIZE_KV],
-                                              [b_idx, kv_head_idx, q_start, kv_start],
+                                              [b_idx, n_idx, q_start, kv_start],
                                               valid_shape=[1, 1, cur_q_size, cur_block_size])
                         pse_block_2d = pypto.reshape(pse_block, [BLOCK_SIZE_Q, BLOCK_SIZE_KV])
                         pse_block_2d_valid = pypto.view(pse_block_2d, [BLOCK_SIZE_Q, BLOCK_SIZE_KV],
@@ -476,7 +514,7 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                         pse_fp32 = pypto.cast(pse_block_2d_valid, pypto.DT_FP32)
 
                         if pse_type == 1:
-                            scores = pypto.add(pse_fp32, scores)
+                            scores = pypto.add(scores, pse_fp32)
                             scores_scaled = pypto.mul(scores, scale)
                         else:
                             scores_scaled = pypto.mul(scores, scale)
@@ -499,9 +537,9 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                                     valid_shape=[cur_q_size, cur_block_size])
                         p_ij = pypto.mul(p_ij, drop_mask_block)
 
+                        dropout_scale = 1.0
                         if keep_prob < 1.0:
-                            scale_dropout = 1.0 / keep_prob
-                            p_ij = pypto.mul(p_ij, scale_dropout)
+                            dropout_scale = 1.0 / keep_prob
 
                         l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
 
@@ -520,7 +558,11 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(o_ij, l_ij)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -528,7 +570,11 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                     :
                                 ] = o_final_4d
 
-                                m_final_4d = pypto.reshape(m_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                m_final_4d = pypto.reshape(
+                                    m_ij,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_max[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -536,7 +582,15 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                     :
                                 ] = m_final_4d
 
-                                l_final_4d = pypto.reshape(l_ij, [1, 1, BLOCK_SIZE_Q, 1])
+                                l_out = l_ij
+                                if keep_prob < 1.0:
+                                    l_out = pypto.mul(l_ij, dropout_scale)
+
+                                l_final_4d = pypto.reshape(
+                                    l_out,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_sum[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -565,7 +619,11 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                             if pypto.is_loop_end(kv_block_idx):
                                 o_final = pypto.div(oi_new, li_new)
                                 o_final_bf16 = pypto.cast(o_final, pypto.DT_BF16)
-                                o_final_4d = pypto.reshape(o_final_bf16, [1, 1, BLOCK_SIZE_Q, head_dim])
+                                o_final_4d = pypto.reshape(
+                                    o_final_bf16,
+                                    [1, 1, BLOCK_SIZE_Q, head_dim],
+                                    valid_shape=[1, 1, cur_q_size, head_dim],
+                                )
                                 output[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -573,7 +631,11 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                     :
                                 ] = o_final_4d
 
-                                m_final_4d = pypto.reshape(mi_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                m_final_4d = pypto.reshape(
+                                    mi_new,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_max[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
@@ -581,7 +643,15 @@ def flash_attention_score_kernel_with_pse_and_dropout(
                                     :
                                 ] = m_final_4d
 
-                                l_final_4d = pypto.reshape(li_new, [1, 1, BLOCK_SIZE_Q, 1])
+                                l_out = li_new
+                                if keep_prob < 1.0:
+                                    l_out = pypto.mul(li_new, dropout_scale)
+
+                                l_final_4d = pypto.reshape(
+                                    l_out,
+                                    [1, 1, BLOCK_SIZE_Q, 1],
+                                    valid_shape=[1, 1, cur_q_size, 1],
+                                )
                                 softmax_sum[
                                     b_idx: b_idx + 1,
                                     n_idx: n_idx + 1,
