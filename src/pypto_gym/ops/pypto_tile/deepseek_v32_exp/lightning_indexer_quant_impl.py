@@ -242,7 +242,8 @@ def lightning_indexer_decode_compute(
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 128,
-        "device_sched_mode": 1
+        "device_sched_mode": 1,
+        "ready_on_host_tensors": ["act_seq_key", "block_table"]
     }
 )
 def lightning_indexer_decode(
