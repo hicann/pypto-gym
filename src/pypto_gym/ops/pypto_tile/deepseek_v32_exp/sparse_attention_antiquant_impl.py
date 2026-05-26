@@ -113,7 +113,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                     for s2_idx, _ in pypto.loop_unroll(0, bn_per_batch, 1,
                         name="LOOP_L4_s2_SA", idx_name="s2_idx", unroll_list={1}):
                         cur_s2_tile = s2_tile
-
+                        pypto.set_pass_options(sg_set_scope=5001)
                         cur_topk_indices = pypto.view(topk_indices, [1, cur_s2_tile],
                                                   [batch_idx * s1_sym + slc_idx, s2_idx * cur_s2_tile],
                                                   valid_shape=[1, (cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile)])
@@ -200,6 +200,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                         kj = pypto.Tensor([cur_s2_tile, dn + dr], dtype, "kj")
                         pypto.assemble(kn, [0, 0], kj)
                         pypto.assemble(pypto.clone(kr), [0, dn], kj)
+                        pypto.set_pass_options(sg_set_scope=-1)
                         kj_view = pypto.view(kj, [cur_s2_tile, dn + dr], [0, 0],
                                              valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn + dr])
 

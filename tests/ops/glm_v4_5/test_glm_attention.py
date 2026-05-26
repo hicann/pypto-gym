@@ -26,8 +26,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 import pypto
 from glm_v4_5.glm_attention_impl import (
-    attention, attention_for_950, set_qwen_common_config,
-    get_common_config,
+    attention, attention_for_950, IfaTileShapeConfig, IfaConfig
 )
 
 
@@ -69,9 +68,9 @@ def gen_block_table(actual_seq_len, block_size, block_table_shape):
 
 def kv_cache_concat_bsnd(kr_cache_out, kv_cache_out, block_table, atten_config):
     b = atten_config.b
-    n2 = atten_config.n2
-    kv_lora_rank = atten_config.q_d
-    rope_dim = atten_config.kv_d
+    nkv = atten_config.nkv
+    kv_lora_rank = atten_config.qd
+    rope_dim = atten_config.kvd
     block_size = atten_config.block_size
     kv_cache_actual_seq = atten_config.actual_seq
     dtype = kv_cache_out.dtype
@@ -86,13 +85,13 @@ def kv_cache_concat_bsnd(kr_cache_out, kv_cache_out, block_table, atten_config):
         kv_max = (max(kv_cache_actual_seq) + block_size - 1) // block_size * block_size
 
     device = kr_cache_out.device
-    k_cache = torch.zeros([b, kv_max, n2, kv_lora_rank], dtype=dtype, device=device)
-    v_cache = torch.zeros([b, kv_max, n2, rope_dim], dtype=dtype, device=device)
+    k_cache = torch.zeros([b, kv_max, nkv, kv_lora_rank], dtype=dtype, device=device)
+    v_cache = torch.zeros([b, kv_max, nkv, rope_dim], dtype=dtype, device=device)
 
     for b_idx in range(b):
         block_list = block_table[b_idx]
-        kv_nope_temp_tensor = torch.zeros([1, kv_max, n2, kv_lora_rank], dtype=dtype, device=device)
-        kv_rope_temp_tensor = torch.zeros([1, kv_max, n2, rope_dim], dtype=dtype, device=device)
+        kv_nope_temp_tensor = torch.zeros([1, kv_max, nkv, kv_lora_rank], dtype=dtype, device=device)
+        kv_rope_temp_tensor = torch.zeros([1, kv_max, nkv, rope_dim], dtype=dtype, device=device)
         s_idx = 0
 
         for _, block_idx in enumerate(block_list):
@@ -137,16 +136,16 @@ def softmax(x, is_fp16=False):
     return ans, x_max, x_sum
 
 
-def ifa(atten_cfg, case_950=0):
+def ifa(atten_cfg, tile_config, is_950=False):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch_dtype = torch.bfloat16
     torch.npu.set_device(int(device_id))
 
     b = atten_cfg.b
     s1 = atten_cfg.s1
-    d = atten_cfg.q_d
-    nq = atten_cfg.n1
-    nkv = atten_cfg.n2
+    d = atten_cfg.qd
+    nq = atten_cfg.nq
+    nkv = atten_cfg.nkv
 
     block_size = atten_cfg.block_size
     max_num_blocks_per_query = atten_cfg.max_num_blocks_per_query
@@ -196,10 +195,10 @@ def ifa(atten_cfg, case_950=0):
         act_seq_torch,
         out_torch
     ]
-    if case_950 == 1:
-        attention_for_950(*inputs)
+    if is_950:
+        attention_for_950(*inputs, atten_cfg.softmax_scale, tile_config)
     else:
-        attention(*inputs)
+        attention(*inputs, atten_cfg.softmax_scale, tile_config)
 
     assert_allclose(np.array(attention_output.cpu().flatten().tolist()),
                     np.array(out_torch.cpu().flatten().tolist()),
@@ -208,15 +207,15 @@ def ifa(atten_cfg, case_950=0):
 
 @pytest.mark.soc("950")
 def test_ifa_for_950():
-    for case_i in range(4):
-        set_qwen_common_config(case_950=1, b=16, s1=1, s2=8192)
-        if case_i == 1:
-            set_qwen_common_config(case_950=1, b=64, s1=1, s2=8192)
-        if case_i == 2:
-            set_qwen_common_config(case_950=1, b=64, s1=2, s2=8192)
-        if case_i == 3:
-            set_qwen_common_config(case_950=1, b=16, s1=1, s2=16384)
-        atten_cfg, _ = get_common_config()
+    case_names = [
+        "ifa_950_b16_s1_1_s2_8k",
+        "ifa_950_b64_s1_1_s2_8k",
+        "ifa_950_b64_s1_2_s2_8k",
+        "ifa_950_b16_s1_1_s2_16k",
+    ]
+    for case_name in case_names:
+        case_config = get_case_config(case_name)
+        atten_cfg, tile_config = build_ifa_config(case_config)
 
         assert atten_cfg.b == len(
             atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
@@ -227,16 +226,19 @@ def test_ifa_for_950():
             actual_seq_cpu = atten_cfg.actual_seq
 
         assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
-        ifa(atten_cfg, case_950=1)
+        ifa(atten_cfg, tile_config, is_950=True)
 
 
 @pytest.mark.soc("950", "910")
 def test_ifa():
-    for case_i in range(2):
-        set_qwen_common_config(case_950=0, b=8, s1=1, s2=16384)
-        if case_i == 1:
-            set_qwen_common_config(case_950=0, b=16, s1=1, s2=16384)
-        atten_cfg, _ = get_common_config()
+    case_names = [
+        "ifa_b8_s1_1_s2_16k",
+        "ifa_b16_s1_1_s2_16k",
+    ]
+    for case_name in case_names:
+        case_config = get_case_config(case_name)
+        atten_cfg, tile_config = build_ifa_config(case_config)
+
         assert atten_cfg.b == len(
             atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
 
@@ -246,7 +248,106 @@ def test_ifa():
             actual_seq_cpu = atten_cfg.actual_seq
 
         assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
-        ifa(atten_cfg, case_950=0)
+        ifa(atten_cfg, tile_config)
+
+
+def get_case_config(case_name: str):
+    m_tile = 128
+    cube_tile = 128
+    test_case_config = {
+        "ifa_b8_s1_1_s2_16k": {
+            "b": 8, "s1": 1, "s2": 16384, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=512,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 512],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_b16_s1_1_s2_16k": {
+            "b": 16, "s1": 1, "s2": 16384, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=512,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 512],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_950_b16_s1_1_s2_8k": {
+            "b": 16, "s1": 1, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=1024,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 1024],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_950_b64_s1_1_s2_8k": {
+            "b": 64, "s1": 1, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=1024,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 1024],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_950_b64_s1_2_s2_8k": {
+            "b": 64, "s1": 2, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=1024,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 1024],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_950_b16_s1_1_s2_16k": {
+            "b": 16, "s1": 1, "s2": 16384, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12, s2_tile=1024,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 1024],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+    }
+    return test_case_config.get(case_name)
+
+
+def build_ifa_config(case_config):
+    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+    device = f'npu:{device_id}'
+
+    b = case_config["b"]
+    s1 = case_config["s1"]
+    s2 = case_config["s2"]
+    nq = case_config["nq"]
+    nkv = case_config["nkv"]
+    qd = case_config["qd"]
+    block_size = case_config["block_size"]
+    kv_layout = "PA_BSND"
+    softmax_scale = qd ** -0.5
+    block_table_batch = b
+    kv_num_blocks = b * ((s2 + block_size - 1) // block_size)
+
+    actual_seq_values = [s2] * b
+    actual_seq_tensor = torch.tensor(actual_seq_values, dtype=torch.int32, device=device)
+
+    atten_cfg = IfaConfig(
+        b=b, s1=s1, s2=s2, nq=nq, nkv=nkv, qd=qd, kvd=qd,
+        block_size=block_size, softmax_scale=softmax_scale, kv_layout=kv_layout,
+        block_table_batch=block_table_batch, kv_num_blocks=kv_num_blocks,
+        actual_seq=actual_seq_tensor
+    )
+    atten_cfg.max_num_blocks_per_query = (s2 + block_size - 1) // block_size
+
+    return atten_cfg, case_config["tile_config"]
+
 
 if __name__ == "__main__":
     test_ifa()
