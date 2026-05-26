@@ -18,6 +18,8 @@
     - ``get_modelnew_loader``          — 加载 ``{op}_pypto_impl.py`` 中的 ModelNew,
                                          缺类或缺文件时自动从 ``{op}_impl.py`` 的
                                          ``{op}_wrapper`` 包出 ModelNew (wrapper-only fallback).
+    - ``get_swimlane_output_setup``    — 在加载 ModelNew 前准备 swimlane 输出目录,
+                                         兼容模块顶层 JIT warmup.
     - ``get_swimlane_benchmark_body``  — 用 PyPTO swimlane trace 聚合算 generation 时间.
 
 只覆盖 ``backend="ascend"`` + ``framework="torch"`` 一种组合.
@@ -126,6 +128,29 @@ def get_modelnew_loader(op_name: str) -> str:
     )
 
 
+def get_swimlane_output_setup() -> str:
+    """返回 profile generation 输出目录初始化代码.
+
+    必须在加载 ``ModelNew`` 前执行: 部分 PyPTO 实现在模块顶层做 JIT warmup,
+    如果此时还没有设置 ``TILE_FWK_OUTPUT_DIR``, swimlane 会落到默认 ``output/``.
+    """
+    return '''
+# Prepare swimlane output before importing ModelNew. Some impl files run
+# module-level JIT warmup during import, so the output dir must be bound early.
+case_idx = 0  # swimlane 输出目录隔离用; 单 op profile 固定为 0.
+output_dir = os.path.abspath(f"prof_generation_output_case{case_idx}")
+os.environ["TILE_FWK_OUTPUT_DIR"] = output_dir
+os.makedirs(output_dir, exist_ok=True)
+try:
+    if hasattr(pypto, "pypto_impl") and hasattr(pypto.pypto_impl, "ResetLog"):
+        pypto.pypto_impl.ResetLog("")
+except Exception as _e:
+    print(f"[WARN] pypto ResetLog failed before ModelNew import: {_e}")
+_swimlane_output_prepared = True
+print(f"[INFO] PyPTO swimlane output dir: {output_dir}")
+'''
+
+
 def get_swimlane_benchmark_body() -> str:
     """返回 swimlane 计时代码 — 直接 inline 进 profile_<op>_generation.py.
 
@@ -133,6 +158,7 @@ def get_swimlane_benchmark_body() -> str:
         - ``impl_model``  (已 .to('npu:<device_id>'))
         - ``inputs``      (list, 已 .to('npu:<device_id>'))
         - ``case_idx``    (int, 用于隔离 prof_generation_output 子目录)
+        - ``output_dir``  (可选, 建议由 ``get_swimlane_output_setup`` 提前设置)
 
     输出 (写入 stdout, 由 KernelVerifier / skill 解析):
         - ``PROFILE_RESULT_GEN_US: <us>``  正常: 单 kernel swimlane span.
@@ -212,16 +238,19 @@ def _find_kernel_swimlanes(base_dir):
 def pypto_benchmark_fn():
     return impl_model(*inputs)
 
-# persistent 场景下必须每次重置输出目录与日志状态;
-# 否则 pypto 可能复用上一次缓存的 output_* 子目录, 导致二次运行找不到文件.
-output_dir = os.path.abspath(f"prof_generation_output_case{case_idx}")
-os.environ["TILE_FWK_OUTPUT_DIR"] = output_dir
-os.makedirs(output_dir, exist_ok=True)
-try:
-    if hasattr(pypto, "pypto_impl") and hasattr(pypto.pypto_impl, "ResetLog"):
-        pypto.pypto_impl.ResetLog("")
-except Exception as _e:
-    print(f"[WARN] pypto ResetLog failed: {_e}")
+if not globals().get("_swimlane_output_prepared", False):
+    # Backward-compatible path for callers that inline only this body.
+    # Persistent 场景下必须重置输出目录与日志状态.
+    case_idx = globals().get("case_idx", 0)
+    output_dir = os.path.abspath(f"prof_generation_output_case{case_idx}")
+    os.environ["TILE_FWK_OUTPUT_DIR"] = output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    try:
+        if hasattr(pypto, "pypto_impl") and hasattr(pypto.pypto_impl, "ResetLog"):
+            pypto.pypto_impl.ResetLog("")
+    except Exception as _e:
+        print(f"[WARN] pypto ResetLog failed: {_e}")
+    _swimlane_output_prepared = True
 
 # PyPTO profile 不 warmup; jit kernel autotune 已在 forward 内自行收敛.
 pypto_benchmark_fn()

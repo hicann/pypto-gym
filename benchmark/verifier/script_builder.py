@@ -435,6 +435,7 @@ def build_profile_generation_script(
     )
     fw_loader = _framework_loader(op_name, framework_filename)
     modelnew_loader = pypto_adapter.get_modelnew_loader(op_name)
+    swimlane_output_setup = pypto_adapter.get_swimlane_output_setup()
     swimlane_body = pypto_adapter.get_swimlane_benchmark_body()
     npu_setup = _NPU_DEVICE_SETUP.format(device_id=device_id)
 
@@ -452,6 +453,8 @@ os.environ["TILE_FWK_DEVICE_ID"] = "{device_id}"
 {_NPU_SYNC_SAFE}
 {_INPUT_TO_DEVICE}
 
+{swimlane_output_setup}
+
 # === load Model module (only need get_inputs / get_init_inputs, not Model itself) ===
 {fw_loader}
 
@@ -462,8 +465,6 @@ inputs = _to_device(raw_inputs, device)
 # === load PyPTO ModelNew AFTER jit monkey-patch above ===
 {modelnew_loader}
 impl_model = ModelNew(*init_inputs).to(device)
-
-case_idx = 0  # swimlane 输出目录隔离用; 单 op profile 固定为 0.
 
 # === swimlane benchmark (provides execution_time_us + PROFILE_RESULT_GEN_US:) ===
 {swimlane_body}
