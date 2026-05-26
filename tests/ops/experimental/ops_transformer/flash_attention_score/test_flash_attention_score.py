@@ -281,19 +281,7 @@ class FlashAttentionInputs:
 
 
 def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInputs) -> tuple:
-    """Golden reference for flash_attention_score_kernel_with_pse_and_dropout.
-    
-    Args:
-        inputs: FlashAttentionInputs containing all input tensors and parameters
-    
-    Computation flow matches the kernel exactly:
-    - Tiling: BLOCK_SIZE_Q=32, BLOCK_SIZE_KV=64
-    - Q*K^T: BF16 matmul -> FP32 output
-    - PSE: BF16 -> FP32 cast; pse_type==1: (PSE+QKT)*scale, else: QKT*scale+PSE
-    - Mask: 0=valid, 1=masked -> valid_mask = 1-mask, applied after exp
-    - Dropout: p_ij *= drop_mask, if keep_prob<1: p_ij /= keep_prob
-    - Online softmax: m_ij computed over all scores (incl masked), then p_ij zeroed
-    """
+    """Golden reference for flash_attention_score_kernel_with_pse_and_dropout."""
     query = inputs.query
     key = inputs.key
     value = inputs.value
@@ -303,15 +291,14 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
     pse_type = inputs.pse_type
     keep_prob = inputs.keep_prob
     scale_value = inputs.scale_value
+
     b, n, sq, d = query.shape
-    _, _, skv, _ = key.shape
+    _, n_kv, skv, _ = key.shape
 
-    scale = scale_value if scale_value is not None else 1.0 / math.sqrt(d)
+    group = n // n_kv
+    scale = scale_value
 
-    if atten_mask is not None:
-        atten_mask_fp32 = atten_mask.float()
-    else:
-        atten_mask_fp32 = None
+    atten_mask_fp32 = atten_mask.float()
 
     output = torch.zeros(b, n, sq, d, dtype=torch.bfloat16, device=query.device)
     softmax_max = torch.zeros(b, n, sq, 1, dtype=torch.float32, device=query.device)
@@ -321,73 +308,77 @@ def flash_attention_score_golden_with_pse_and_dropout(inputs: FlashAttentionInpu
     num_blocks_q = (sq + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
 
     for b_idx in range(b):
-        for n_idx in range(n):
-            for q_block_idx in range(num_blocks_q):
-                q_start = q_block_idx * BLOCK_SIZE_Q
-                cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
+        for kv_head_idx in range(n_kv):
+            for group_idx in range(group):
+                n_idx = kv_head_idx * group + group_idx
 
-                q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
+                for q_block_idx in range(num_blocks_q):
+                    q_start = q_block_idx * BLOCK_SIZE_Q
+                    cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
 
-                mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=query.device)
-                li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=query.device)
-                oi_update = torch.zeros(cur_q_size, d, dtype=torch.float32, device=query.device)
+                    q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
 
-                for kv_block_idx in range(num_blocks_kv):
-                    kv_start = kv_block_idx * BLOCK_SIZE_KV
-                    cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
+                    mi_update = torch.full((cur_q_size, 1), float('-inf'), dtype=torch.float32, device=query.device)
+                    li_update = torch.zeros(cur_q_size, 1, dtype=torch.float32, device=query.device)
+                    oi_update = torch.zeros(cur_q_size, d, dtype=torch.float32, device=query.device)
 
-                    k_block_2d = key[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
+                    for kv_block_idx in range(num_blocks_kv):
+                        kv_start = kv_block_idx * BLOCK_SIZE_KV
+                        cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
 
-                    scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
+                        k_block_2d = key[b_idx, kv_head_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
 
-                    pse_block_2d = pse[b_idx, n_idx, q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size].reshape(cur_q_size, cur_block_size)
-                    pse_fp32 = pse_block_2d.float()
+                        scores = torch.matmul(q_block_2d.float(), k_block_2d.float().T)
 
-                    if pse_type == 1:
-                        scores = scores + pse_fp32
-                        scores_scaled = scores * scale
-                    else:
-                        scores_scaled = scores * scale
-                        scores_scaled = scores_scaled + pse_fp32
+                        pse_block_2d = pse[b_idx, n_idx, q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size].reshape(cur_q_size, cur_block_size)
+                        pse_fp32 = pse_block_2d.float()
 
-                    if atten_mask_fp32 is not None:
-                        mask_block = atten_mask_fp32[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
-                        valid_mask = 1.0 - mask_block
-                    else:
-                        valid_mask = torch.ones(cur_q_size, cur_block_size, dtype=torch.float32, device=query.device)
+                        if pse_type == 1:
+                            scores = scores + pse_fp32
+                            scores_scaled = scores * scale
+                        else:
+                            scores_scaled = scores * scale
+                            scores_scaled = scores_scaled + pse_fp32
 
-                    m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
-                    s_ij_sub_m = scores_scaled - m_ij
-                    p_ij = torch.exp(s_ij_sub_m)
-                    p_ij = p_ij * valid_mask
+                        mask_block = atten_mask_fp32[
+                            q_start:q_start + cur_q_size,
+                            kv_start:kv_start + cur_block_size,
+                        ]
+                        valid_mask = (mask_block + (-1.0)) * (-1.0)
 
-                    drop_mask_block = drop_mask[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
-                    p_ij = p_ij * drop_mask_block
+                        m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
+                        s_ij_sub_m = scores_scaled - m_ij
+                        p_ij = torch.exp(s_ij_sub_m)
+                        p_ij = p_ij * valid_mask
 
-                    l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
+                        drop_mask_block = drop_mask[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size]
+                        p_ij = p_ij * drop_mask_block
 
-                    v_block_2d = value[b_idx, n_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
-                    o_ij = torch.matmul(p_ij, v_block_2d)
+                        l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
 
-                    if kv_block_idx == 0:
-                        mi_update = m_ij
-                        li_update = l_ij
-                        oi_update = o_ij
-                    else:
-                        mi_new = torch.maximum(mi_update, m_ij)
-                        alpha = torch.exp(mi_update - mi_new)
-                        beta = torch.exp(m_ij - mi_new)
-                        li_update = alpha * li_update + beta * l_ij
-                        oi_update = alpha * oi_update + beta * o_ij
-                        mi_update = mi_new
+                        v_block_2d = value[b_idx, kv_head_idx, kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d).float()
+                        o_ij = torch.matmul(p_ij, v_block_2d)
 
-                o_final = oi_update / li_update
-                output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
-                softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
-                if keep_prob < 1.0:
-                    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = (li_update / keep_prob).reshape(cur_q_size, 1)
-                else:
-                    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = li_update.reshape(cur_q_size, 1)
+                        if kv_block_idx == 0:
+                            mi_update = m_ij
+                            li_update = l_ij
+                            oi_update = o_ij
+                        else:
+                            mi_new = torch.maximum(mi_update, m_ij)
+                            alpha = torch.exp(mi_update - mi_new)
+                            beta = torch.exp(m_ij - mi_new)
+                            li_update = alpha * li_update + beta * l_ij
+                            oi_update = alpha * oi_update + beta * o_ij
+                            mi_update = mi_new
+
+                    o_final = oi_update / li_update
+                    output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final.to(torch.bfloat16)
+                    softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1).to(torch.float32)
+
+                    l_out = li_update
+                    if keep_prob < 1.0:
+                        l_out = l_out * (1.0 / keep_prob)
+                    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = l_out.reshape(cur_q_size, 1).to(torch.float32)
 
     return output, softmax_max, softmax_sum
 
