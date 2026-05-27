@@ -575,11 +575,49 @@ git commit -m "code deployment: add core/ with fixed imports and auto_map"
 
 **目标：** 编写 PyPTO 算子代码, 若支持aclgraph，算子实现的skill需要支持aclgraph。
 
+**关键说明：**
+- 步骤 12 采集的真实用例是必须 pass 的基准
+- 输出无 NaN/Inf，与 Golden 对齐（diff < 2e-3）
+- **必须询问用户是否支持aclgraph**
+
+
 **推荐 Skill：** `pypto-op-develop`
 
 ---
 
-#### 步骤 18：单算子验证
+#### 步骤 18：算子支持aclgraph
+
+**目标：** 编写 PyPTO 算子代码, 若支持aclgraph，算子实现的skill需要支持aclgraph。
+
+**关键说明：**
+- **必须询问用户是否支持aclgraph**
+
+- 若支持aclgraph，实现如下代码：
+1、pypto kernel torch注册函数
+pyptolib = torch.library.Library("pypto", "FRAGMENT")
+pyptolib.define(f"{op}(Tensor input1, Tensor input2...) -> (Tensor output1, Tensor output2....)")
+根据实际算子调整 Tensor input1, Tensor input2等为上述JIT kernels 除output_tensor外的输入参数， Tensor output1, Tensor output2为上述JIT kernels 的output_tensor参数
+2、torch infershape 函数
+torch.library.impl(pyptolib, f"{op}", "Meta")
+def {op}(input_tensors: torch.Tensor):
+    output_tensors = torch.empty([input_tensors.size(0), input_tensors.size(1), input_tensors.size(2)], dtype=input_tensors.dtype, device=input_tensors.device)
+
+    return output_tensors
+根据实际算子调整 output shape 和 dtype，如果有多个，逐个指定并返回，每一维均需指定，动态轴从输入tensor取动态轴指定
+
+3、torch kernel调用 函数
+@torch.library.impl(pyptolib, f"{op}", "NPU")
+def {op}(Tensor input1, Tensor input2...):
+    return {op}_wrapper(Tensor input1, Tensor input2...)
+
+def {op}_pypto(Tensor input1, Tensor input2...):
+    return torch.ops.pypto.{op}(Tensor input1, Tensor input2..)
+
+
+
+---
+
+#### 步骤 19：单算子验证
 
 **目标：** 验证 PyPTO 实现正确性。
 
@@ -590,15 +628,43 @@ git commit -m "code deployment: add core/ with fixed imports and auto_map"
 **关键说明：**
 - 步骤 12 采集的真实用例是必须 pass 的基准
 - 输出无 NaN/Inf，与 Golden 对齐（diff < 2e-3）
-- **必须询问用户是否支持aclgraph**
+- 若支持aclgraph，测试用例增加:
+1、torch compile Model入口
+class {op}_MODEL(torch.nn.Module):
+    def forward(self, input_tensors:torch.Tensor):
+        return {op}_pypto(input_tensors:torch.Tensor)
 
 **推荐 Skill：** `pypto-precision-compare`
+2、在测试用例，调用pypto kernel接口地方，修改为：
+import torchair as tng
+    from torchair.configs.compiler_config import CompilerConfig
+    compiler_config = CompilerConfig()
+    compiler_config.mode = "reduce-overhead"
+    npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
+    model = torch.compile({op}_MODEL(), dynamic=False, fullgraph=True, backend=npu_backend)
+    
+    result = model(x)
+    pypto.runtime._device_synchronize()
+
+---
+
+#### 步骤 20：单算子调优
+
+**目标：** 优化 PyPTO 算子性能。
+
+**关键说明：**
+- 步骤 12 采集的真实用例是必须 pass 的基准
+- 输出无 NaN/Inf，与 Golden 对齐（diff < 2e-3）
+- 优化pypto kernel性能
+- 至少优化到性能超出模型baseline 15%
+
+**推荐 Skill：** `pypto-op-perf-tune`
 
 ---
 
 ### 阶段四：模型集成
 
-#### 步骤 19：调整目录结构
+#### 步骤 21：调整目录结构
 
 **目标：** 创建 PyPTO 算子库目录结构（按算子组织）。
 
@@ -627,7 +693,7 @@ pto_kernels/                        # 算子库顶层
 
 ---
 
-#### 步骤 20：配置适配层
+#### 步骤 22：配置适配层
 
 **目标：** 封装 PyPTO 算子调用。
 
@@ -651,7 +717,7 @@ pto_kernels/                        # 算子库顶层
 
 ---
 
-#### 步骤 21：修改模型调用逻辑 + sys.modules注入 ★
+#### 步骤 23：修改模型调用逻辑 + sys.modules注入 ★
 
 **目标：** 替换原始算子调用，通过 sys.modules注入绕过缓存。
 
@@ -699,7 +765,7 @@ def forward(self, hidden_states):
 
 ---
 
-#### 步骤 22：修改模型调用逻辑 + aclgraph适配 ★
+#### 步骤 24：修改模型调用逻辑 + aclgraph适配 ★
 
 **目标：** 模型调用接口适配aclgraph的调用模式。
 
@@ -748,7 +814,7 @@ def forward(self, hidden_states):
 
 ### 阶段五：验证与提交
 
-#### 步骤 22：验证与排查
+#### 步骤 25：验证与排查
 
 **目标：** 端到端精度验证 + 问题排查。
 
@@ -761,7 +827,7 @@ def forward(self, hidden_states):
 
 ---
 
-#### 步骤 23：性能采集与分析 [可选]
+#### 步骤 26：性能采集与分析 [可选]
 
 **目标：** PyPTO 融合完成后，量化算子替换带来的整网收益。
 
@@ -808,7 +874,18 @@ bash {model_weight_dir}/scripts/prof_{model_name}.sh
 
 ---
 
-#### 步骤 24：归档到 pypto-gym 仓库 [可选]
+##### 进一步模型级微调
+
+- 如果pypto kernel带来了额外的host allocation运算(如tensor创建及copy等)，尝试优化掉allocation
+- 对于部分可缓存的tensor，如cos/sin等，可以使用缓存机制
+- 消除不必要的dtype cast
+- 优化额外的contiguous运算
+- 验证多batch单样本多轮执行场景，如batch=1/2/4/8/16/32/128等，seq长度同样可以泛化验证
+- 若支持aclgraph，则尝试torch compile自动融合
+
+---
+
+#### 步骤 27：归档到 pypto-gym 仓库 [可选]
 
 **前置：** 步骤 22 端到端验证通过  
 **触发：** 询问用户是否归档
@@ -853,7 +930,7 @@ python3 tests/ops/{model_name}/test_rms_norm.py
 
 ---
 
-#### 步骤 25：还原重建指南 [可选]
+#### 步骤 28：还原重建指南 [可选]
 
 将归档文件 + 下载的权重重建为可运行环境。
 
@@ -892,7 +969,7 @@ python3 $MODEL_DIR/scripts/ask_{model_name}.py --prompt "你好" --use_pypto
 
 ---
 
-#### 步骤 26：Git管理 — 提交3：PTO 融合变更
+#### 步骤 29：Git管理 — 提交3：PTO 融合变更
 
 PTO 融合成功后，将算子库和修改后的代码提交：
 
@@ -904,7 +981,7 @@ git commit -m "pto integration: add fused kernel for {model_name}"
 
 ---
 
-#### 步骤 27：提交与文档
+#### 步骤 30：提交与文档
 
 **目标：** 创建 Issue 和 PR。
 
