@@ -82,20 +82,20 @@ def mhc_post_kernel_bf16(
         h_out_slice = h_out1[bs_idx: bs_idx + unroll_length, :, :]      
         h_post_slice = h_post1[bs_idx: bs_idx + unroll_length, :, :]   
 
-        pypto.set_vec_tile_shapes(1, N, 1, 1280)        
+        pypto.set_vec_tile_shapes(1, N, 1, 2048)        
         x_fp32 = pypto.cast(x_slice, pypto.DT_FP32)                
 
-        pypto.set_vec_tile_shapes(1, N, 1280) 
+        pypto.set_vec_tile_shapes(1, N, 2048) 
         h_out_fp32 = pypto.cast(h_out_slice, pypto.DT_FP32)        
         
         h_post_term = pypto.mul(h_post_slice, h_out_fp32)           
         
-        pypto.set_vec_tile_shapes(1, N, N, 1280)         
+        pypto.set_vec_tile_shapes(1, N, N, 2048)         
         weighted = pypto.mul(h_res_slice, x_fp32)                    
         
         h_comb_term = pypto.sum(weighted, dim=1, keepdim=False)   
         
-        pypto.set_vec_tile_shapes(1, N, 1280)
+        pypto.set_vec_tile_shapes(1, N, 2048)
         result_fp32 = pypto.add(h_post_term, h_comb_term)          
 
         result_bf16 = pypto.cast(result_fp32, pypto.DT_BF16)      
