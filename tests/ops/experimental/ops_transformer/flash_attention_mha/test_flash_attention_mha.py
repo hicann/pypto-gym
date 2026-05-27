@@ -22,12 +22,6 @@ attention matrix from [s1_size, s2_size] to [Q_TILE, K_TILE] per iteration.
 O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
 
-import os
-import logging
-from dataclasses import dataclass
-
-import torch
-import torch_npu
 
 import sys
 import os
@@ -37,10 +31,16 @@ while not os.path.isdir(os.path.join(_p, 'src')):
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
+import logging
+from dataclasses import dataclass
+
+import torch
+import torch_npu
+
 import numpy as np
 import pytest
 
-from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel
+from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel, FlashAttentionTileShapeConfig
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
@@ -66,9 +66,33 @@ class TileConfig:
                  用于将 Q seqlen 切分为多个 tile 迭代)
         k_tile: KV 序列维度的分块大小 (kernel 中 K_TILE_SIZE,
                  用于将 KV seqlen 切分为多个 tile 迭代)
+        init_cube_tile: 初始 cube tile shapes
+        init_vec_tile: 初始 vec tile shapes
+        c1_cube_tile: C1 matmul (Q@K^T) 的 cube tile shapes
+        v1_tile: softmax/exp/amax 等操作的 vec tile shapes
+        c2_cube_tile: C2 matmul (P@V) 的 cube tile shapes
+        v2_tile: online softmax update 的 vec tile shapes
     """
     q_tile: int = Q_TILE
     k_tile: int = K_TILE
+    init_cube_tile: list = [[128, 128], [128, 256], [128, 128]]
+    init_vec_tile: list = [64, 256]
+    c1_cube_tile: list = [[64, 512], [64, 64], [512, 512]]
+    v1_tile: list = [64, 512]
+    c2_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
+    v2_tile: list = [512, 64]
+
+    def to_impl_config(self):
+        return FlashAttentionTileShapeConfig(
+            q_tile=self.q_tile,
+            k_tile=self.k_tile,
+            init_cube_tile=self.init_cube_tile,
+            init_vec_tile=self.init_vec_tile,
+            c1_cube_tile=self.c1_cube_tile,
+            v1_tile=self.v1_tile,
+            c2_cube_tile=self.c2_cube_tile,
+            v2_tile=self.v2_tile,
+        )
 
 
 def get_device_id():
@@ -128,7 +152,7 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
 
 
-def attention_forward_golden(q, k, v, scale):
+def attention_forward_golden(q, k, v, scale, tile_config=None):
     """
     Golden reference: Flash Attention (online softmax)算法实现。
 
@@ -142,11 +166,14 @@ def attention_forward_golden(q, k, v, scale):
         q:     [s1_size, head_dim] BF16 — Q 切片
         k, v:  [s2_size, head_dim] BF16 — KV 切片
         scale: attention scale factor (1/sqrt(head_dim))
+        tile_config: TileConfig 分块配置 (可选, 默认使用全局 Q_TILE/K_TILE)
     Returns:
         o:     [s1_size, head_dim] BF16 — 输出 O
         m:     [s1_size, 1] FP32 — softmax 最大值 M
         l:     [s1_size, 1] FP32 — softmax 分母 L
     """
+    if tile_config is None:
+        tile_config = TileConfig()
     s1_size, head_dim = q.shape
     s2_size = k.shape[0]
 
@@ -154,8 +181,8 @@ def attention_forward_golden(q, k, v, scale):
     k_f = k.cpu().to(torch.float32)
     v_f = v.cpu().to(torch.float32)
 
-    q_tile = Q_TILE
-    k_tile = K_TILE
+    q_tile = tile_config.q_tile
+    k_tile = tile_config.k_tile
 
     q_tile_count = (s1_size + q_tile - 1) // q_tile
     k_tile_count = (s2_size + k_tile - 1) // k_tile
@@ -322,7 +349,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
             k_h = k[k_off:k_off + sk, h, :]
             v_h = v[k_off:k_off + sk, h, :]
 
-            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
+            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale, tile_config)
             # golden 返回 [sq, ...] FP32, 写入二维 golden tensor
             out_golden[q_off:q_off + sq, h_off:h_off + dim] = golden_o
             m_golden[q_off:q_off + sq, h:h + 1] = golden_m
@@ -333,7 +360,8 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
     flash_attention_varlen_forward_kernel(
-        q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k)
+        q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
+        tile_config.to_impl_config())
 
     # ---- 精度校验: kernel 输出 vs golden 输出 ----
     torch.set_printoptions(precision=6)

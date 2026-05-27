@@ -22,20 +22,30 @@ attention matrix from [s1_size, s2_size] to [Q_TILE, K_TILE] per iteration.
 O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
 
+from dataclasses import dataclass
 import pypto
 
-
-NUM_HEADS = 8
-HEAD_DIM = 64
-HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 
 Q_TILE = 320
 K_TILE = 320
 
-SCALE = 1.0 / (HEAD_DIM ** 0.5)
+
+@dataclass
+class FlashAttentionTileShapeConfig:
+    q_tile: int = Q_TILE
+    k_tile: int = K_TILE
+    init_cube_tile: list = [[128, 128], [128, 256], [128, 128]]
+    init_vec_tile: list = [64, 256]
+    c1_cube_tile: list = [[64, 512], [64, 64], [512, 512]]
+    v1_tile: list = [64, 512]
+    c2_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
+    v2_tile: list = [512, 64]
 
 
 @pypto.frontend.jit(
+    debug_options={
+        "runtime_debug_mode": 0,
+    },
     runtime_options={
         "device_sched_mode": 0,
         "stitch_function_max_num": 1024,
@@ -61,6 +71,8 @@ def flash_attention_varlen_forward_kernel(
     # 累积序列长度: shape=[batch_size + 1]
     cu_seqlens_q: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     cu_seqlens_k: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
+    # TileShape配置
+    tile_config: FlashAttentionTileShapeConfig = FlashAttentionTileShapeConfig(),
 ):
     """
     Flash Attention Forward - 4 loops (batch + head + q_tile + kv_tile).
@@ -120,15 +132,14 @@ def flash_attention_varlen_forward_kernel(
     v_2d = pypto.reshape(v, [total_kv, hidden_dim], inplace=True)
     # output/l/m 保持二维，无需 reshape
 
-    v1_tile = [64, 512]
-    v2_tile = [512, 64]
-
-    q_tile = Q_TILE
-    k_tile = K_TILE
+    q_tile = tile_config.q_tile
+    k_tile = tile_config.k_tile
+    v1_tile = tile_config.v1_tile
+    v2_tile = tile_config.v2_tile
 
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 128])
-    pypto.set_vec_tile_shapes(64, 256)
+    pypto.set_cube_tile_shapes(tile_config.init_cube_tile[0], tile_config.init_cube_tile[1], tile_config.init_cube_tile[2])
+    pypto.set_vec_tile_shapes(tile_config.init_vec_tile[0], tile_config.init_vec_tile[1])
 
     # 累计Q序列长度 batch_size + 1
     batch_size = cu_seqlens_q.shape[0] - 1
@@ -191,7 +202,7 @@ def flash_attention_varlen_forward_kernel(
                                             [k_start + k_tile_start, h_offset],
                                             valid_shape=[k_tile_len, head_dim])
 
-                        pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])
+                        pypto.set_cube_tile_shapes(tile_config.c1_cube_tile[0], tile_config.c1_cube_tile[1], tile_config.c1_cube_tile[2])
 
                         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
@@ -206,7 +217,7 @@ def flash_attention_varlen_forward_kernel(
                         pij = pypto.exp(s_shifted)
                         lij = pypto.sum(pij, dim=-1, keepdim=True)
 
-                        pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
+                        pypto.set_cube_tile_shapes(tile_config.c2_cube_tile[0], tile_config.c2_cube_tile[1], tile_config.c2_cube_tile[2])
 
                         if pypto.is_loop_begin(k_tile_idx):
                             if pypto.is_loop_end(k_tile_idx):
