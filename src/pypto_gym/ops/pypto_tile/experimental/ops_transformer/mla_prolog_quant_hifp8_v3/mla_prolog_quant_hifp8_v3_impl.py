@@ -637,7 +637,7 @@ def options_list():
         return {
             "pass_options": {
                 "cube_l1_reuse_setting": {-1: 4, 0: 1, 1: 1, 2: 1},
-                "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1, 2: 1, 3: 3},
+                "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1, 2: 8, 3: 3},
             },
             "runtime_options": {"device_sched_mode": 2},
             }
@@ -711,6 +711,7 @@ def mla_prolog_quant(
     Note:
         Configured for decode phase with optimized memory and latency settings.
     """
+    pypto.experimental.set_operation_options(combine_axis=True)
     mla_prolog_quant_compute(
                             token_x, w_dq, w_dq_scale, w_uq_qr, w_uqqr_scale, w_uk,
                             w_dkv_kr, w_dkvkr_scale, gamma_cq, gamma_ckv, cos,
