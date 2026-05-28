@@ -99,10 +99,11 @@ class FinalizeRoutingInputs:
 
 @pypto.frontend.jit(
     pass_options={
-        "cube_nbuffer_setting": {-1: 4},
-        "vec_nbuffer_setting": {-2: 1, -1: 4},
+        "cube_nbuffer_setting": {-1: 1},
+        "vec_nbuffer_setting": {-2: 1, -1: 1},
+        "auto_mix_partition": 1,
     },
-    runtime_options={"stitch_function_max_num": 8},
+    runtime_options={"stitch_function_max_num": 128},
 )
 def gmm_finalize_routing_kernel(
     x1: pypto.Tensor(),
@@ -134,13 +135,17 @@ def gmm_finalize_routing_kernel(
     )
 
     token_num = config.m // config.num_experts
+
     for expert_idx in pypto.loop(config.num_experts, parallel=True):
         start = expert_idx * token_num
         end = (expert_idx + 1) * token_num
 
+        pypto.experimental.set_operation_options(combine_axis=True)
+
         x_tile = x1[start:end, :]
         pertoken_scale_tile = pertoken_scale[start:end, :, :]
         weight_tile = x2[expert_idx, :, :]
+        weight_tile.set_cache_policy(pypto.CachePolicy.NONE_CACHEABLE, True)
 
         mm_result = pypto.scaled_mm(
             x_tile,
