@@ -69,8 +69,8 @@ def compute_rmsnorm_rsqrt(X_flat: pypto.Tensor, N_D: int, norm_eps: float) -> py
 # ─────────────────────────────────────────────
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128}, 
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}})
+    runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1}, 
+    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}, "cube_nbuffer_setting":{-1: 4}})
 def mhc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     phi_T: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),           # [N*D, N²+2N] 固定值
@@ -131,16 +131,16 @@ def mhc_pre_kernel(
     # ─────────────────────────────────────────
     bs_tile = 1
     bs_tile_2 = 1
-    D_tile = 2560
+    D_tile = 2048
 
-    if D < 2560:
+    if D < 2048:
         bs_tile = 8
         D_tile = 128
     else:
         bs_tile = 1
-        D_tile = 2560
+        D_tile = 2048
         
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[8, 1]):
+    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[16, 8, 1]):
         # 提取当前 slice（从已 reshape 的 tensor 切片）
         x_slice_flat = x_flat[bs_idx: bs_idx + unroll_length, :]  # [unroll_length, N*D] BF16
         x_slice_3d = x[bs_idx: bs_idx + unroll_length, :, :]  # [unroll_length, N, D] BF16 (用于 Step 5)
@@ -172,7 +172,6 @@ def mhc_pre_kernel(
         # matmul 需要正确设置 vec tile shapes 和 cube tile shapes
         # ✅ 使用 FP32 MatMul（符合 DESIGN.md 约束）
         # DESIGN.md 约束: matmul 两侧 dtype 一致，X_flat 和 phi_T 都是 FP32
-        pypto.set_vec_tile_shapes(bs_tile, D_tile)  # tileshape=1
 
         # MatMul: [unroll_length, N_D] @ [N_D, N_SQUARED_PLUS_2N] -> [unroll_length, N_SQUARED_PLUS_2N]
         # A: X_flat [unroll_length, N_D] FP32

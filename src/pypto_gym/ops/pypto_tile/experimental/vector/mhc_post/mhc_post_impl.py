@@ -39,7 +39,9 @@ import torch
 import torch_npu
 
 
-@pypto.frontend.jit(pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
+@pypto.frontend.jit(
+    runtime_options={"stitch_function_max_num": 1024},
+    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
 def mhc_post_kernel_bf16(
     x: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),       # [B*S, N, D] BF16
     h_res: pypto.Tensor([pypto.DYNAMIC, 4, 4], pypto.DT_FP32),              # [B*S, N, N] FP32
@@ -76,7 +78,7 @@ def mhc_post_kernel_bf16(
     h_res1 = pypto.reshape(h_res, [BS, N, N, 1], inplace=True)
     x1 = pypto.reshape(x, [BS, N, 1, D], inplace=True)
 
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[128, 8, 1]):
+    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[16, 8, 4, 2, 1]):
         x_slice = x1[bs_idx: bs_idx + unroll_length, :, :, :]           
         h_res_slice = h_res1[bs_idx: bs_idx + unroll_length, :, :, :]   
         h_out_slice = h_out1[bs_idx: bs_idx + unroll_length, :, :]      
