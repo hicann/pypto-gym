@@ -37,28 +37,19 @@ S2_TILE = 320
 
 @dataclass
 class FlashAttentionGradTileShapeConfig:
-    s2_tile: int = S2_TILE
-    sc_dp_cube_tile: list = [[128, 512], [64, 64], [256, 512]]
-    sc_softmax_vec_tile_3510: list = [64, 512]
-    sc_softmax_vec_tile: list = [64, 256]
-    sc_d_vec_tile_3510: list = [512, 64]
-    sc_d_vec_tile: list = [256, 64]
-    sc_dk_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
-    sc_dk_vec_tile_3510: list = [512, 64]
-    sc_dk_vec_tile: list = [256, 64]
-    ls_seq_tile: int = S_TILE_2
-    ls_c_tile: list = None
-    ls_v_tile_s: list = None
-    ls_v_tile_d: list = None
-
-    def __post_init__(self):
-        if self.ls_c_tile is None:
-            self.ls_c_tile = [[self.ls_seq_tile, self.ls_seq_tile], [self.ls_seq_tile, 256],
-                              [self.ls_seq_tile, self.ls_seq_tile]]
-        if self.ls_v_tile_s is None:
-            self.ls_v_tile_s = [self.ls_seq_tile, self.ls_seq_tile]
-        if self.ls_v_tile_d is None:
-            self.ls_v_tile_d = [self.ls_seq_tile, self.ls_seq_tile]
+    s2_tile: int
+    sc_dp_cube_tile: list
+    sc_softmax_vec_tile_3510: list
+    sc_softmax_vec_tile: list
+    sc_d_vec_tile_3510: list
+    sc_d_vec_tile: list
+    sc_dk_cube_tile: list
+    sc_dk_vec_tile_3510: list
+    sc_dk_vec_tile: list
+    ls_seq_tile: int
+    ls_c_tile: list
+    ls_v_tile_s: list
+    ls_v_tile_d: list
 
 
 @pypto.frontend.jit(
@@ -70,9 +61,6 @@ class FlashAttentionGradTileShapeConfig:
     runtime_options={
         "stitch_function_max_num": 256,
         "device_sched_mode": 0,
-    },
-    debug_options={
-        "runtime_debug_mode": 0
     }
 )
 def flash_attention_varlen_backward_kernel_small_seq(
@@ -100,7 +88,7 @@ def flash_attention_varlen_backward_kernel_small_seq(
     # actual_kv: shape=[batch_size + 1], KV seqlen 的前缀累加 (cumsum)
     actual_kv: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     # TileShape配置
-    tile_config: FlashAttentionGradTileShapeConfig = FlashAttentionGradTileShapeConfig(),
+    tile_config: FlashAttentionGradTileShapeConfig,
 ):
     """
     Flash Attention Backward - 4 loops (batch + head + q_tile + kv_tile).
@@ -346,10 +334,7 @@ def compute_p_ds(qi, ki, vi, doi, mi, li, d_i, sq, sk, scale, c_tile, v_tile_s, 
         "cube_nbuffer_setting": {0: 8},
         "vec_nbuffer_setting": {0: 8},
         "cube_l1_reuse_setting": {0: 8},
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
-    },
+    }
 )
 def flash_attention_mha_grad_kernel_long_seq(
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
@@ -365,7 +350,7 @@ def flash_attention_mha_grad_kernel_long_seq(
     actual_q: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     actual_kv: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     # TileShape配置
-    tile_config: FlashAttentionGradTileShapeConfig = FlashAttentionGradTileShapeConfig(),
+    tile_config: FlashAttentionGradTileShapeConfig,
 ):
     """合一 kernel: 两趟 (dQ, dK/dV) 共享外层 batch+head 循环。
 
@@ -506,7 +491,7 @@ def flash_attention_mha_grad_kernel_long_seq(
                     d_i = pypto.sum(pypto.cast(pypto.mul(o_i, do_i), pypto.DT_FP32),
                                     -1, keepdim=True)
 
-p_ij, ds_ij = compute_p_ds(q_i, k_j, v_j, do_i, m_i, l_i, d_i,
+                    p_ij, ds_ij = compute_p_ds(q_i, k_j, v_j, do_i, m_i, l_i, d_i,
                                                 actual_s1, actual_s2, scale,
                                                 c_tile, v_tile_s, s_tile)
 

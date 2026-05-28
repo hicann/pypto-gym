@@ -26,26 +26,17 @@ from dataclasses import dataclass
 import pypto
 
 
-Q_TILE = 320
-K_TILE = 320
-
-
 @dataclass
 class FlashAttentionTileShapeConfig:
-    q_tile: int = Q_TILE
-    k_tile: int = K_TILE
-    init_cube_tile: list = [[128, 128], [128, 256], [128, 128]]
-    init_vec_tile: list = [64, 256]
-    c1_cube_tile: list = [[64, 512], [64, 64], [512, 512]]
-    v1_tile: list = [64, 512]
-    c2_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
-    v2_tile: list = [512, 64]
+    q_tile: int
+    k_tile: int
+    c1_cube_tile: list
+    v1_tile: list
+    c2_cube_tile: list
+    v2_tile: list
 
 
 @pypto.frontend.jit(
-    debug_options={
-        "runtime_debug_mode": 0,
-    },
     runtime_options={
         "device_sched_mode": 0,
         "stitch_function_max_num": 1024,
@@ -54,7 +45,7 @@ class FlashAttentionTileShapeConfig:
         "cube_l1_reuse_setting": {-1: 8},
         "vec_nbuffer_setting": {-1: 8},
         "cube_nbuffer_setting": {-1: 8},
-    },
+    }
 )
 def flash_attention_varlen_forward_kernel(
     # Q侧输入: shape=[total_q, N, D], total_q=DYNAMIC, N=num_heads, D=head_dim
@@ -72,7 +63,7 @@ def flash_attention_varlen_forward_kernel(
     cu_seqlens_q: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     cu_seqlens_k: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     # TileShape配置
-    tile_config: FlashAttentionTileShapeConfig = FlashAttentionTileShapeConfig(),
+    tile_config: FlashAttentionTileShapeConfig,
 ):
     """
     Flash Attention Forward - 4 loops (batch + head + q_tile + kv_tile).
@@ -138,8 +129,6 @@ def flash_attention_varlen_forward_kernel(
     v2_tile = tile_config.v2_tile
 
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_cube_tile_shapes(tile_config.init_cube_tile[0], tile_config.init_cube_tile[1], tile_config.init_cube_tile[2])
-    pypto.set_vec_tile_shapes(tile_config.init_vec_tile[0], tile_config.init_vec_tile[1])
 
     # 累计Q序列长度 batch_size + 1
     batch_size = cu_seqlens_q.shape[0] - 1

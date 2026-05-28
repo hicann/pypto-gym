@@ -54,47 +54,6 @@ Q_TILE = 320
 K_TILE = 320
 
 
-@dataclass
-class TileConfig:
-    """
-    分块配置结构体，封装 kernel 所需的 tile 参数。
-
-    将 tile 信息集中管理，避免在 run_test 中直接引用全局变量。
-
-    Attributes:
-        q_tile: Q 序列维度的分块大小 (kernel 中 Q_TILE_SIZE,
-                 用于将 Q seqlen 切分为多个 tile 迭代)
-        k_tile: KV 序列维度的分块大小 (kernel 中 K_TILE_SIZE,
-                 用于将 KV seqlen 切分为多个 tile 迭代)
-        init_cube_tile: 初始 cube tile shapes
-        init_vec_tile: 初始 vec tile shapes
-        c1_cube_tile: C1 matmul (Q@K^T) 的 cube tile shapes
-        v1_tile: softmax/exp/amax 等操作的 vec tile shapes
-        c2_cube_tile: C2 matmul (P@V) 的 cube tile shapes
-        v2_tile: online softmax update 的 vec tile shapes
-    """
-    q_tile: int = Q_TILE
-    k_tile: int = K_TILE
-    init_cube_tile: list = [[128, 128], [128, 256], [128, 128]]
-    init_vec_tile: list = [64, 256]
-    c1_cube_tile: list = [[64, 512], [64, 64], [512, 512]]
-    v1_tile: list = [64, 512]
-    c2_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
-    v2_tile: list = [512, 64]
-
-    def to_impl_config(self):
-        return FlashAttentionTileShapeConfig(
-            q_tile=self.q_tile,
-            k_tile=self.k_tile,
-            init_cube_tile=self.init_cube_tile,
-            init_vec_tile=self.init_vec_tile,
-            c1_cube_tile=self.c1_cube_tile,
-            v1_tile=self.v1_tile,
-            c2_cube_tile=self.c2_cube_tile,
-            v2_tile=self.v2_tile,
-        )
-
-
 def get_device_id():
     if 'TILE_FWK_DEVICE_ID' not in os.environ:
         logging.info("Please set TILE_FWK_DEVICE_ID before running:")
@@ -152,7 +111,7 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
 
 
-def attention_forward_golden(q, k, v, scale, tile_config=None):
+def attention_forward_golden(q, k, v, scale):
     """
     Golden reference: Flash Attention (online softmax)算法实现。
 
@@ -166,14 +125,11 @@ def attention_forward_golden(q, k, v, scale, tile_config=None):
         q:     [s1_size, head_dim] BF16 — Q 切片
         k, v:  [s2_size, head_dim] BF16 — KV 切片
         scale: attention scale factor (1/sqrt(head_dim))
-        tile_config: TileConfig 分块配置 (可选, 默认使用全局 Q_TILE/K_TILE)
     Returns:
         o:     [s1_size, head_dim] BF16 — 输出 O
         m:     [s1_size, 1] FP32 — softmax 最大值 M
         l:     [s1_size, 1] FP32 — softmax 分母 L
     """
-    if tile_config is None:
-        tile_config = TileConfig()
     s1_size, head_dim = q.shape
     s2_size = k.shape[0]
 
@@ -181,8 +137,8 @@ def attention_forward_golden(q, k, v, scale, tile_config=None):
     k_f = k.cpu().to(torch.float32)
     v_f = v.cpu().to(torch.float32)
 
-    q_tile = tile_config.q_tile
-    k_tile = tile_config.k_tile
+    q_tile = Q_TILE
+    k_tile = K_TILE
 
     q_tile_count = (s1_size + q_tile - 1) // q_tile
     k_tile_count = (s2_size + k_tile - 1) // k_tile
@@ -260,7 +216,7 @@ def attention_forward_golden(q, k, v, scale, tile_config=None):
     return o_out, m_out, l_out
 
 
-def run_test(device, batch_size=None, num_heads=None, s1_size=None,
+def run_test(batch_size=None, num_heads=None, s1_size=None,
              s2_size=None, dim=None, tile_config=None):
     """
     运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
@@ -298,6 +254,13 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     Returns:
         passed: 是否通过精度校验
     """
+    device_id = get_device_id()
+    if device_id is None:
+        return None
+
+    torch.npu.set_device(device_id)
+    device = f'npu:{device_id}'
+
     if batch_size is None:
         batch_size = 1
     if num_heads is None:
@@ -309,7 +272,14 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     if dim is None:
         dim = HEAD_DIM
     if tile_config is None:
-        tile_config = TileConfig()
+        tile_config = FlashAttentionTileShapeConfig(
+            q_tile = Q_TILE,
+            k_tile = K_TILE,
+            c1_cube_tile = [[128, 128], [128, 256], [128, 128]],
+            v1_tile = [64, 512],
+            c2_cube_tile = [[128, 512], [256, 512], [64, 64]],
+            v2_tile = [512, 64]
+        )
 
     hidden_dim = num_heads * dim
     scale = 1.0 / (dim ** 0.5)
@@ -349,7 +319,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
             k_h = k[k_off:k_off + sk, h, :]
             v_h = v[k_off:k_off + sk, h, :]
 
-            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale, tile_config)
+            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
             # golden 返回 [sq, ...] FP32, 写入二维 golden tensor
             out_golden[q_off:q_off + sq, h_off:h_off + dim] = golden_o
             m_golden[q_off:q_off + sq, h:h + 1] = golden_m
@@ -361,7 +331,7 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     logging.info("  Running kernel...")
     flash_attention_varlen_forward_kernel(
         q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
-        tile_config.to_impl_config())
+        tile_config)
 
     # ---- 精度校验: kernel 输出 vs golden 输出 ----
     torch.set_printoptions(precision=6)
@@ -390,39 +360,39 @@ def run_test(device, batch_size=None, num_heads=None, s1_size=None,
     return passed
 
 
-def test_01(device):
+def test_01():
     """batch=8, heads=8, s1=320, s2=320, dim=64"""
-    return run_test(device, batch_size=8, num_heads=8, s1_size=320, s2_size=320, dim=64)
+    return run_test(batch_size=8, num_heads=8, s1_size=320, s2_size=320, dim=64)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_02(device):
+@pytest.mark.soc("950")
+def test_02():
     """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
-    return run_test(device, batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
+    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_03(device):
+@pytest.mark.soc("950")
+def test_03():
     """batch=8, heads=16, s1=32, s2=32, dim=32"""
-    return run_test(device, batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
+    return run_test(batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_04(device):
+@pytest.mark.soc("950")
+def test_04():
     """batch=8, heads=16, s1=64, s2=64, dim=32"""
-    return run_test(device, batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
+    return run_test(batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_05(device):
+@pytest.mark.soc("950")
+def test_05():
     """batch=8, heads=8, s1=32, s2=32, dim=64"""
-    return run_test(device, batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
+    return run_test(batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
 
 
-@pytest.mark.skip(reason="large test case")
-def test_06(device):
+@pytest.mark.soc("950")
+def test_06():
     """batch=8, heads=4, s1=64, s2=64, dim=128"""
-    return run_test(device, batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
+    return run_test(batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
 
 
 def main():
@@ -433,13 +403,6 @@ def main():
     logging.info("\n" + "=" * 60)
     logging.info("Flash Attention Forward (4-loop, Q+KV tiling)")
     logging.info("=" * 60 + "\n")
-
-    device_id = get_device_id()
-    if device_id is None:
-        return
-
-    torch.npu.set_device(device_id)
-    device = f'npu:{device_id}'
 
     test_funcs = [
         test_01,
@@ -454,7 +417,7 @@ def main():
     for i, fn in enumerate(test_funcs):
         logging.info(f"[{i+1}/{len(test_funcs)}] {fn.__name__}: {fn.__doc__}")
         try:
-            passed = fn(device)
+            passed = fn()
             results.append((fn.__name__, fn.__doc__, passed))
         except Exception as e:
             logging.info(f"  ERROR: {e}")

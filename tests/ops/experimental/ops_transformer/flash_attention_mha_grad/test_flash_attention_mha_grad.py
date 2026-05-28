@@ -53,6 +53,7 @@ HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 
 # KV 序列维度的分块大小 (全局配置常量, 与 kernel 默认值一致)
+S_TILE_2 = 128
 S2_TILE = 320
 
 
@@ -79,71 +80,6 @@ def device():
 ########################################################################
 # 公共工具函数
 ########################################################################
-
-
-@dataclass
-class TileConfig:
-    """
-    分块配置结构体，封装 kernel 所需的 tile 参数。
-
-    将 tile 信息集中管理，避免在 run_test 中直接引用全局变量。
-
-    Attributes:
-        s2_tile:     KV 序列维度的分块大小 (kernel 中 S2_TILE,
-                     用于将 KV seqlen 切分为多个 tile 迭代)
-        sc_dp_cube_tile: small_seq kernel 的 dp/scores matmul cube tile shapes
-        sc_softmax_vec_tile_3510: small_seq kernel 3510 架构的 softmax vec tile shapes
-        sc_softmax_vec_tile: small_seq kernel 非-3510 架构的 softmax vec tile shapes
-        sc_d_vec_tile_3510: small_seq kernel 3510 架构的 D 计算 vec tile shapes
-        sc_d_vec_tile: small_seq kernel 非-3510 架构的 D 计算 vec tile shapes
-        sc_dk_cube_tile: small_seq kernel 的 dk/dv/dq matmul cube tile shapes
-        sc_dk_vec_tile_3510: small_seq kernel 3510 架构的 dk vec tile shapes
-        sc_dk_vec_tile: small_seq kernel 非-3510 架构的 dk vec tile shapes
-        ls_seq_tile: long_seq kernel 的序列 tile 大小
-        ls_c_tile: long_seq kernel 的 cube tile shapes
-        ls_v_tile_s: long_seq kernel 的 softmax vec tile shapes
-        ls_v_tile_d: long_seq kernel 的 D 计算 vec tile shapes
-    """
-    s2_tile: int = S2_TILE
-    sc_dp_cube_tile: list = [[128, 512], [64, 64], [256, 512]]
-    sc_softmax_vec_tile_3510: list = [64, 512]
-    sc_softmax_vec_tile: list = [64, 256]
-    sc_d_vec_tile_3510: list = [512, 64]
-    sc_d_vec_tile: list = [256, 64]
-    sc_dk_cube_tile: list = [[128, 512], [256, 512], [64, 64]]
-    sc_dk_vec_tile_3510: list = [512, 64]
-    sc_dk_vec_tile: list = [256, 64]
-    ls_seq_tile: int = 128
-    ls_c_tile: list = None
-    ls_v_tile_s: list = None
-    ls_v_tile_d: list = None
-
-    def __post_init__(self):
-        if self.ls_c_tile is None:
-            self.ls_c_tile = [[self.ls_seq_tile, self.ls_seq_tile], [self.ls_seq_tile, 256],
-                              [self.ls_seq_tile, self.ls_seq_tile]]
-        if self.ls_v_tile_s is None:
-            self.ls_v_tile_s = [self.ls_seq_tile, self.ls_seq_tile]
-        if self.ls_v_tile_d is None:
-            self.ls_v_tile_d = [self.ls_seq_tile, self.ls_seq_tile]
-
-    def to_impl_config(self):
-        return FlashAttentionGradTileShapeConfig(
-            s2_tile=self.s2_tile,
-            sc_dp_cube_tile=self.sc_dp_cube_tile,
-            sc_softmax_vec_tile_3510=self.sc_softmax_vec_tile_3510,
-            sc_softmax_vec_tile=self.sc_softmax_vec_tile,
-            sc_d_vec_tile_3510=self.sc_d_vec_tile_3510,
-            sc_d_vec_tile=self.sc_d_vec_tile,
-            sc_dk_cube_tile=self.sc_dk_cube_tile,
-            sc_dk_vec_tile_3510=self.sc_dk_vec_tile_3510,
-            sc_dk_vec_tile=self.sc_dk_vec_tile,
-            ls_seq_tile=self.ls_seq_tile,
-            ls_c_tile=self.ls_c_tile,
-            ls_v_tile_s=self.ls_v_tile_s,
-            ls_v_tile_d=self.ls_v_tile_d,
-        )
-
 
 def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
                   q_seqlens=None, kv_seqlens=None):
@@ -385,7 +321,21 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if dim is None:
         dim = HEAD_DIM
     if tile_config is None:
-        tile_config = TileConfig()
+        tile_config = FlashAttentionGradTileShapeConfig(
+            s2_tile = S2_TILE,
+            sc_dp_cube_tile = [[128, 512], [64, 64], [256, 512]],
+            sc_softmax_vec_tile_3510 = [64, 512],
+            sc_softmax_vec_tile = [64, 256],
+            sc_d_vec_tile_3510 = [512, 64],
+            sc_d_vec_tile = [256, 64],
+            sc_dk_cube_tile = [[128, 512], [256, 512], [64, 64]],
+            sc_dk_vec_tile_3510 = [512, 64],
+            sc_dk_vec_tile = [256, 64],
+            ls_seq_tile = S2_TILE,
+            ls_c_tile = [[S_TILE_2, S_TILE_2], [dim, 256], [S_TILE_2, S_TILE_2]],
+            ls_v_tile_s = [S_TILE_2, S_TILE_2],
+            ls_v_tile_d = [S_TILE_2, dim],
+        )
 
     # varlen: 若显式传入 q_seqlens / kv_seqlens, 则覆盖 batch_size 与 s1_size/s2_size
     if q_seqlens is not None:
@@ -496,7 +446,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             q, k, v, o_out, do_t, l_out, m_out,
             dq_out, dk_out, dv_out,
             actual_q, actual_kv,
-            tile_config.to_impl_config())
+            tile_config)
         elapsed = time.time() - start_time
         logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     else:
@@ -506,7 +456,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             q, k, v, o_out, do_t, l_out, m_out,
             dq_out, dk_out, dv_out,
             actual_q, actual_kv,
-            tile_config.to_impl_config())
+            tile_config)
         elapsed = time.time() - start_time
         logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
