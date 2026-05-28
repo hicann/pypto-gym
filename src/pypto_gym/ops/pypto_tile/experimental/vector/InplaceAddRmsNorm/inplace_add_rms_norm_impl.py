@@ -59,8 +59,9 @@ def inplace_add_rms_norm_kernel_bf16(
     
     pypto.set_vec_tile_shapes(1, H)
     gamma_2d = pypto.reshape(gamma, [1, H], inplace=True)  
-    
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[64, 16, 4, 1]):
+    gamma_fp32 = pypto.cast(gamma_2d, pypto.DT_FP32)
+
+    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[64, 16, 4, 2, 1]):
       x1_row = x1[bs_idx:bs_idx+unroll_length, :]  
       x2_row = x2[bs_idx:bs_idx+unroll_length, :]  
      
@@ -76,21 +77,17 @@ def inplace_add_rms_norm_kernel_bf16(
       mean_square = pypto.mul(square_sum, mean_coeff)  
       
       ms_plus_eps = pypto.add(mean_square, eps)  
-      sqrt_ms = pypto.sqrt(ms_plus_eps)          
-      
+    #   sqrt_ms = pypto.sqrt(ms_plus_eps)   
+      rstd_fp32 = pypto.rsqrt(ms_plus_eps)       
+      rstd_bf16 = pypto.cast(rstd_fp32, pypto.DT_BF16) 
+
       pypto.set_vec_tile_shapes(1, H)
-      y_fp32 = pypto.div(x_add_fp32, sqrt_ms)  
-      
-      gamma_fp32 = pypto.cast(gamma_2d, pypto.DT_FP32)  
+      y_fp32 = pypto.mul(x_add_fp32, rstd_fp32)
       y_fp32_scaled = pypto.mul(y_fp32, gamma_fp32)     
       
       y_bf16 = pypto.cast(y_fp32_scaled, pypto.DT_BF16)  
       x_add_bf16 = pypto.cast(x_add_fp32, pypto.DT_BF16) 
-      
-      pypto.set_vec_tile_shapes(1, 1)
-      rstd_fp32 = pypto.reciprocal(sqrt_ms)  
-      rstd_bf16 = pypto.cast(rstd_fp32, pypto.DT_BF16) 
-      
+
       pypto.assemble(y_bf16, [bs_idx, 0], y_out)
       pypto.assemble(x_add_bf16, [bs_idx, 0], x_add_out)
       pypto.assemble(rstd_bf16, [bs_idx, 0], rstd_out)
@@ -122,7 +119,7 @@ def npu_inplace_add_rms_norm(
         f"x2 dtype must be bfloat16, got {x2.dtype}"
     assert gamma.dtype == torch.bfloat16, \
         f"gamma dtype must be bfloat16, got {gamma.dtype}"
-    
+
     BS = B * S
     x1_reshaped = x1.view(BS, H).contiguous()
     x2_reshaped = x2.view(BS, H).contiguous()
