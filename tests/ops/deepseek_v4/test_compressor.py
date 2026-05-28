@@ -301,7 +301,7 @@ def test_comp_128(enable_acl_graph=False):
     ro = False
 
     bsz = 64
-    st = torch.tensor([254] * bsz, dtype=torch.int32, device=device)
+    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
     print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
     seq = 2
     h = 4096
@@ -351,7 +351,7 @@ def test_comp_4(enable_acl_graph=False):
     ro = False
 
     bsz = 64
-    st = torch.tensor([255] * bsz, dtype=torch.int32, device=device)
+    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
     print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
     seq = 2
     h = 4096
@@ -403,7 +403,7 @@ def test_comp_indexer(enable_acl_graph=False):
     ro = True
 
     bsz = 64
-    st = torch.tensor([255] * bsz, dtype=torch.int32, device=device)
+    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
     print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
     seq = 2
     h = 4096

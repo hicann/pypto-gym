@@ -326,7 +326,7 @@ def softmax(x: pypto.Tensor, dim) -> pypto.Tensor:
     xsub = pypto.sub(x, xmax)
     xexp = pypto.exp(xsub)
     xsum = pypto.sum(xexp, dim, keepdim=True)
-    xdiv = pypto.div(xexp, xsum)
+    xdiv = pypto.div(xexp, xsum, precision_type=pypto.PrecisionType.INTRINSIC)
     return xdiv
 
 
@@ -345,7 +345,7 @@ def rms_norm(
     y = pypto.add(y, epsilon)
     y = pypto.sqrt(y)
     ones_vector = pypto.full(y.shape, 1.0, pypto.DT_FP32)
-    y = pypto.div(ones_vector, y)
+    y = pypto.div(ones_vector, y, precision_type=pypto.PrecisionType.INTRINSIC)
     y = pypto.mul(input_fp32, y)
     y = pypto.mul(gamma_fp32, y)
     y = pypto.cast(y, input_tensor.dtype)
@@ -404,7 +404,7 @@ def scatter_update_3d(input, index, src):
 @pypto.frontend.jit(
     pass_options={},
     runtime_options={
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
 )
@@ -436,6 +436,7 @@ def compressor_ratio_4_kernel(
     block_size = kv_state_total.shape[1]
     pypto.set_vec_tile_shapes(block_size)
     cache_index = pypto.arange(block_size)
+    cache_index = pypto.reshape(cache_index, [1, block_size])
 
     b = 64
     b_loop = (bsz + b - 1) // b
@@ -444,16 +445,13 @@ def compressor_ratio_4_kernel(
         x_view = pypto.view(x_tmp, [b * s1, h], [b_idx * b * s1, 0])
 
         # Matmul
-        pypto.set_cube_tile_shapes([128, 128], [256, 512], [128, 128])
+        pypto.set_cube_tile_shapes([64, 128], [256, 512], [128, 128])
         pypto.set_vec_tile_shapes(16, 2, 1024)
         kv_t = pypto.matmul(x_view, wkv, pypto.DT_FP32, b_trans=True)  # b*s,2d
         score_t = pypto.matmul(x_view, wgate, pypto.DT_FP32, b_trans=True)
 
-        for _ in pypto.loop(1):
-            pypto.set_pass_options(sg_set_scope=(1, True, False))
-            kv_t = pypto.reshape(kv_t, [b, s1, coff*d], inplace=True)
-            score_t = pypto.reshape(score_t, [b, s1, coff*d], inplace=True)
-            cache_index = pypto.reshape(cache_index, [1, block_size], inplace=True)
+        kv_t = pypto.reshape(kv_t, [b, s1, coff*d])
+        score_t = pypto.reshape(score_t, [b, s1, coff*d])
 
         for c_idx in pypto.loop(b_valid, name="LOOP_COMP_2", idx_name="c_idx"):
             pypto.set_pass_options(sg_set_scope=(1, True, False))
@@ -604,7 +602,7 @@ def compressor_ratio_4_kernel(
 @pypto.frontend.jit(
     pass_options={},
     runtime_options={
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
 )
@@ -636,6 +634,7 @@ def compressor_ratio_4_rotate_kernel(
     block_size = kv_state_total.shape[1]
     pypto.set_vec_tile_shapes(block_size)
     cache_index = pypto.arange(block_size)
+    cache_index = pypto.reshape(cache_index, [1, block_size])
     out_t = pypto.Tensor([bsz, d], pypto.DT_BF16)
     pypto.set_vec_tile_shapes(1, 1)
     is_compress = pypto.SymbolicScalar(0)
@@ -650,16 +649,13 @@ def compressor_ratio_4_rotate_kernel(
         x_view = pypto.view(x_tmp, [b * s1, h], [b_idx * b * s1, 0])
 
         # Matmul
-        pypto.set_cube_tile_shapes([128, 128], [256, 512], [64, 64])
+        pypto.set_cube_tile_shapes([64, 128], [256, 512], [64, 64])
         pypto.set_vec_tile_shapes(64, 2, 256)
         kv_t = pypto.matmul(x_view, wkv, pypto.DT_FP32, b_trans=True)  # b*s,2d
         score_t = pypto.matmul(x_view, wgate, pypto.DT_FP32, b_trans=True)
 
-        for _ in pypto.loop(1):
-            pypto.set_pass_options(sg_set_scope=(1, True, False))
-            kv_t = pypto.reshape(kv_t, [b, s1, coff*d], inplace=True)
-            score_t = pypto.reshape(score_t, [b, s1, coff*d], inplace=True)
-            cache_index = pypto.reshape(cache_index, [1, block_size], inplace=True)
+        kv_t = pypto.reshape(kv_t, [b, s1, coff*d])
+        score_t = pypto.reshape(score_t, [b, s1, coff*d])
 
         for c_idx in pypto.loop(b_valid, name="LOOP_COMP_2", idx_name="c_idx"):
             pypto.set_pass_options(sg_set_scope=(1, True, False))
@@ -826,7 +822,7 @@ def compressor_ratio_4_rotate_kernel(
 @pypto.frontend.jit(
     pass_options={},
     runtime_options={
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
 )
@@ -857,6 +853,7 @@ def compressor_ratio_128_kernel(
     block_size = kv_state_total.shape[1]
     pypto.set_vec_tile_shapes(block_size)
     cache_index = pypto.arange(block_size)
+    cache_index = pypto.reshape(cache_index, [1, block_size])
 
     b = 64
     b_loop = (bsz + b - 1) // b
@@ -865,16 +862,13 @@ def compressor_ratio_128_kernel(
         x_view = pypto.view(x_tmp, [b * s1, h], [b_idx * b * s1, 0])
 
         # Matmul
-        pypto.set_cube_tile_shapes([128, 128], [256, 512], [64, 64])
+        pypto.set_cube_tile_shapes([64, 128], [256, 512], [64, 64])
         pypto.set_vec_tile_shapes(32, 2, 512)
         kv_t = pypto.matmul(x_view, wkv, pypto.DT_FP32, b_trans=True)  # b*s,d
         score_t = pypto.matmul(x_view, wgate, pypto.DT_FP32, b_trans=True)
 
-        for _ in pypto.loop(1):
-            pypto.set_pass_options(sg_set_scope=(1, True, False))
-            kv_t = pypto.reshape(kv_t, [b, s1, d], inplace=True)
-            score_t = pypto.reshape(score_t, [b, s1, d], inplace=True)
-            cache_index = pypto.reshape(cache_index, [1, block_size], inplace=True)
+        kv_t = pypto.reshape(kv_t, [b, s1, d])
+        score_t = pypto.reshape(score_t, [b, s1, d])
 
         for c_idx in pypto.loop(b_valid, name="LOOP_COMP_2", idx_name="c_idx"):
             pypto.set_pass_options(sg_set_scope=(1, True, False))
