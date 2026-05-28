@@ -100,7 +100,9 @@ def apply_adam_w_v2_kernel_fp32(
 # ---------------------------------------------------------------------------
 # bf16 path: weight/grad are bf16; m, v stay fp32; intermediate math fp32.
 # ---------------------------------------------------------------------------
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
+@pypto.frontend.jit(
+    runtime_options={"run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 32}
+)
 def apply_adam_w_v2_kernel_bf16(
     weight: pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),
     grad:   pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),
@@ -121,6 +123,7 @@ def apply_adam_w_v2_kernel_bf16(
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
     pypto.set_vec_tile_shapes(VEC_TILE_M, VEC_TILE_N)
+    pypto.set_pass_options(vec_nbuffer_setting={"DEFAULT": 2})
 
     K = weight.shape[1]
     k_loops = (K + N_TILE - 1) // N_TILE
@@ -144,11 +147,11 @@ def apply_adam_w_v2_kernel_bf16(
         beta2_v = pypto.mul(v_tile, beta2)
         one_b2_gs = pypto.mul(grad_sq, one_m_b2)
         v_new = pypto.add(beta2_v, one_b2_gs)
-        m_hat = pypto.div(m_new, bc1)
-        v_hat = pypto.div(v_new, bc2)
+        m_hat = pypto.div(m_new, bc1, precision_type=pypto.PrecisionType.INTRINSIC)
+        v_hat = pypto.div(v_new, bc2, precision_type=pypto.PrecisionType.INTRINSIC)
         sqrt_v = pypto.sqrt(v_hat)
         denom = pypto.add(sqrt_v, eps)
-        term1 = pypto.div(m_hat, denom)
+        term1 = pypto.div(m_hat, denom, precision_type=pypto.PrecisionType.INTRINSIC)
         term2 = pypto.mul(w_f32, weight_decay)
         update = pypto.add(term1, term2)
         scaled = pypto.mul(update, lr)
