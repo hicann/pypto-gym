@@ -32,7 +32,6 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 MAX_S2 = 131072
 
-
 @dataclass
 class SCFATileShapeConfig:
     g_tile: int
@@ -59,6 +58,7 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
     topk_tile = topk
     sel_tile = win_size * 2 + topk_tile
     kv_tile = win_size + topk_tile
+    pypto.experimental.set_operation_options(combine_axis=True)
 
     for batch_idx in pypto.loop(0, batch_size_sym, 1, name="LOOP_L0_idx", idx_name="bIdx"):
         cur_s1 = actual_seq_q[batch_idx + 1] - actual_seq_q[batch_idx]
@@ -116,6 +116,7 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
 
             # V1
             pypto.set_semantic_label("Sa_V1")
+            pypto.set_pass_options(sg_set_scope=2)
             pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
             sij_scale = pypto.mul(sij, softmax_scale)
             tilda_mij_reduce = pypto.amax(sij_scale, dim=-1, keepdim=True)
@@ -126,8 +127,9 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
             sink_sub_res = pypto.sub(atten_sink_2d, tilda_mij_reduce)
             sink_exp_res = pypto.exp(sink_sub_res)
             tilda_lij_reduce = pypto.add(tilda_lij_reduce, sink_exp_res)
-            t_softmax = pypto.div(tilda_pij, tilda_lij_reduce)
+            t_softmax = pypto.div(tilda_pij, tilda_lij_reduce, precision_type=pypto.PrecisionType.INTRINSIC)
             tilda_pij_f16 = pypto.cast(t_softmax, dtype)
+            pypto.set_pass_options(sg_set_scope=-1)
 
             # C2
             pypto.set_semantic_label("Sa_C2")
@@ -143,12 +145,13 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
 @pypto.frontend.jit(
     pass_options={
         "cube_l1_reuse_setting": {-1: 2, 0: 8},
-        # "vec_nbuffer_setting": {-1: 8}
+        "cube_nbuffer_setting": {-1: 2},
+        "vec_nbuffer_setting": {-2: 1, -1: 8},
     },
     runtime_options={
-        "stitch_function_max_num": 128,
-        "device_sched_mode": 1
-    },
+        "stitch_function_max_num": 1024,
+        "device_sched_mode": 0
+    }
 )
 def sparse_compress_flash_attention_kernel(
     query: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),

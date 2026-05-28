@@ -157,7 +157,6 @@ def lightning_indexer_decode_compute(
                                 [b_idx * s1 + s1_tile * s1_tile_idx, 0, 0])
             w_scale = pypto.mul(cur_qs, cur_w) # (s1_tile, 1, idx_n_heads), fp16 * fp16
             q_offset = b_idx * s1 * idx_n_heads + s1_tile_idx * s1_tile * idx_n_heads
-            cur_q = pypto.view(query_2d, [s1_tile * idx_n_heads, index_d], [q_offset, 0])
             for bn_idx, unroll_loop in pypto.loop_unroll(
                 0, cur_block, 1, name="LOOP_BLOCK_NUM", idx_name="bn_idx", unroll_list=unroll_list,):
                 # static unroll into bigger block to reduce tasks
@@ -167,6 +166,7 @@ def lightning_indexer_decode_compute(
                     idx_in_block = bn_idx + sub_bn_idx
                     cur_block_idx = block_table[b_idx, idx_in_block]
                     tail_seq = pypto.min(block_size, cur_seq - (idx_in_block * block_size))
+                    cur_q = pypto.view(query_2d, [s1_tile * idx_n_heads, index_d], [q_offset, 0])
                     k_block = pypto.view(key_2d, [block_size, index_d], [cur_block_idx * block_size, 0],
                         valid_shape=[tail_seq, index_d]) # (blockSize, indexD)
                     pypto.set_cube_tile_shapes([c1_tile[0], c1_tile[1]], [c1_tile[2],
