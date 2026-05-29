@@ -41,7 +41,7 @@ import torch_npu
 
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 1024},
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
+    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}})
 def mhc_post_kernel_bf16(
     x: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),       # [B*S, N, D] BF16
     h_res: pypto.Tensor([pypto.DYNAMIC, 4, 4], pypto.DT_FP32),              # [B*S, N, N] FP32
