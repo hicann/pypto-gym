@@ -98,7 +98,7 @@ class Model(nn.Module):
 
         input_dtype = q.dtype
         kv_dtype = compress_kv.dtype
-        attention_output = torch.zeros(t, n1, d, dtype=input_dtype)
+        attention_output = torch.zeros(t, n1, d, dtype=input_dtype, device=q.device)
         atten_sink_2d = atten_sink.unsqueeze(-1)
 
         for b_idx in range(b):
@@ -126,8 +126,8 @@ class Model(nn.Module):
                     s2_end = s2_start + s2_tile_cur
 
                     topk_indices_tmp = topk_indices[t_idx, s2_start:s2_end]
-                    slc_compress_kv = torch.zeros(s2_tile_cur, self.d, dtype=kv_dtype)
-                    offset = torch.zeros(s2_tile_cur, dtype=torch.int32)
+                    slc_compress_kv = torch.zeros(s2_tile_cur, self.d, dtype=kv_dtype, device=q.device)
+                    offset = torch.zeros(s2_tile_cur, dtype=torch.int32, device=q.device)
                     for cur_s2_idx in range(s2_tile_cur):
                         topk_index = int(topk_indices_tmp[cur_s2_idx].item())
                         block_idx_in_batch = topk_index // self.block_size
@@ -147,7 +147,7 @@ class Model(nn.Module):
                     kv_cur = torch.cat(kv_list, dim=0)
                     win_kv_cache = kv_cur[start_offset:start_offset + origin_cur_win_size, :]
 
-                    kj = torch.zeros(origin_cur_win_size + s2_tile_cur, self.d, dtype=kv_dtype)
+                    kj = torch.zeros(origin_cur_win_size + s2_tile_cur, self.d, dtype=kv_dtype, device=q.device)
                     kj[0:origin_cur_win_size, :] = win_kv_cache
                     kj[origin_cur_win_size:origin_cur_win_size + s2_tile_cur, :] = slc_compress_kv
 

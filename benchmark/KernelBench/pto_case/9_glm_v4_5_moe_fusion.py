@@ -91,7 +91,7 @@ class Model(nn.Module):
         topk_weight_mask = tgm_expand.reshape(bs, -1)
         topk_weights_fill = topk_weights_add.masked_fill(~topk_weight_mask.bool(), 0.0)
         topk_ids = torch.topk(topk_weights_fill, k=self.top_k, dim=-1, sorted=False)[1].to(torch.int32)
-        topk_weights_gather = original_weights.gather(1, topk_ids)
+        topk_weights_gather = original_weights.gather(1, topk_ids.to(torch.int64))
         if self.renormalize:
             topk_weights_out = topk_weights_gather / topk_weights_gather.sum(dim=-1, keepdim=True)
         else:

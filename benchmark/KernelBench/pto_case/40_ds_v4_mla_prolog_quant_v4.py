@@ -40,7 +40,7 @@ class Model(nn.Module):
         q_a = torch.matmul(x.to(torch.float32), self.wq_a.to(torch.float32))
         q_ln = self._rms_norm(q_a, self.gamma_cq)
         q_quant, q_scale = self._quant(q_ln, is_pertoken=True)
-        q_b = torch.matmul(q_quant.to(torch.int32), wq_b_int8.to(torch.int32))
+        q_b = torch.matmul(q_quant.to(torch.float32), wq_b_int8.to(torch.float32))
         q_deq = q_b.to(torch.float32) * q_scale
         q_deq = q_deq * wq_b_scale
         q_r = self._rms_norm_new(q_deq.reshape(t, nh, hd)).to(torch.bfloat16)
