@@ -37,9 +37,9 @@ logger = create_logger(__name__)
 
 def gen_inputs(mla_config: MlaConfig, device: str):
     dtype = torch.bfloat16
-    query_shape = [mla_config.b, mla_config.n1, mla_config.s1, mla_config.q_d]  # BNSD
+    query_shape = [mla_config.b, mla_config.s1, mla_config.n1, mla_config.q_d]  # BSND
     query = torch.empty(query_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
-    query_rope_shape = [mla_config.b, mla_config.n1, mla_config.s1, mla_config.q_rope_d]  # BNSD
+    query_rope_shape = [mla_config.b, mla_config.s1, mla_config.n1, mla_config.q_rope_d]  # BSND
     query_rope = torch.empty(query_rope_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
 
     max_num_blocks_per_query = math.ceil(mla_config.s2 / mla_config.block_size)
@@ -190,7 +190,7 @@ def ifa_mla_golden(query, key, value, query_rope, key_rope):
 
 
 def get_case_config(case_name):
-    base_params = {"layout": "BNSD", "block_size": 128, "d": 512, "dr": 64, "softmax_scale": 576 ** -0.5}
+    base_params = {"layout": "BSND", "block_size": 128, "d": 512, "dr": 64, "softmax_scale": 576 ** -0.5}
     if case_name.startswith("1b4k"):
         params = {"b": 1, "n1": 128, "s1": 1, "s2": 4 * 1024, "n2": 1}
     elif case_name.startswith("8b4k"):
@@ -201,6 +201,12 @@ def get_case_config(case_name):
         params = {"b": 32, "n1": 128, "s1": 1, "s2": 2 * 1024, "n2": 1}
     elif case_name.startswith("32b4k"):
         params = {"b": 32, "n1": 128, "s1": 1, "s2": 4 * 1024, "n2": 1}
+    elif case_name.startswith("4b8k"):
+        params = {"b": 4, "n1": 128, "s1": 2, "s2": 8 * 1024, "n2": 1}
+    elif case_name.startswith("64b8k"):
+        params = {"b": 64, "n1": 128, "s1": 2, "s2": 8 * 1024, "n2": 1}
+    elif case_name.startswith("qs3_1b4k"):
+        params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 1}
     
     base_params.update(params)
 
@@ -282,6 +288,18 @@ def test_incre_flash_attention_mla_32b4k():
     do_test_incre_flash_attention_mla("32b4k")
 
 
+def test_incre_flash_attention_mla_4b8k():
+    do_test_incre_flash_attention_mla("4b8k")
+
+
+def test_incre_flash_attention_mla_64b8k():
+    do_test_incre_flash_attention_mla("64b8k")
+
+
+def test_incre_flash_attention_mla_qs3_1b4k():
+    do_test_incre_flash_attention_mla("qs3_1b4k")
+
+
 def main():
     logger.info("\n")
     logger.info("=" * 60)
@@ -294,6 +312,10 @@ def main():
     test_incre_flash_attention_mla_8b4k()
     test_incre_flash_attention_mla_16b8k()
     test_incre_flash_attention_mla_32b2k()
+
+    test_incre_flash_attention_mla_4b8k()
+    test_incre_flash_attention_mla_64b8k()
+    test_incre_flash_attention_mla_qs3_1b4k()
 
 
 if __name__ == "__main__":

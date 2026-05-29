@@ -86,10 +86,10 @@ attention_out[b, n, s1, d] = Σ_s (attention_weights[b, n, s1, s] * value[b, n, 
 
 | 参数名 | 类型 | 形状 | 说明 |
 |--------|------|------|------|
-| `query` | torch.Tensor (BF16) | [b, n1, s1, q_d] | 查询张量（非旋转部分） |
+| `query` | torch.Tensor (BF16) | [b, s1, n1, q_d] | 查询张量（非旋转部分） |
 | `key` | torch.Tensor (BF16) | [block_num, n2, block_size, kv_d] | Key Cache (Paged 格式) |
 | `value` | torch.Tensor (BF16) | [block_num, n2, block_size, kv_d] | Value Cache (Paged 格式，MLA 中与 key 共享) |
-| `query_rope` | torch.Tensor (BF16) | [b, n1, s1, q_rope_d] | 查询旋转位置编码部分 |
+| `query_rope` | torch.Tensor (BF16) | [b, s1, n1, q_rope_d] | 查询旋转位置编码部分 |
 | `key_rope` | torch.Tensor (BF16) | [block_num, n2, block_size, k_rope_d] | Key 旋转位置编码 Cache |
 | `kv_actual_seqs` | torch.Tensor (INT32) | [b] | 每个批次的实际 KV 序列长度 |
 | `block_table` | torch.Tensor (INT32) | [b, max_blocks_per_query] | 块表，映射逻辑块到物理块索引 |
@@ -106,7 +106,7 @@ attention_out[b, n, s1, d] = Σ_s (attention_weights[b, n, s1, s] * value[b, n, 
 
 | 参数名 | 默认值 | 说明 |
 |--------|--------|------|
-| `layout` | "BNSD" | 输入张量布局 |
+| `layout` | "BSND" | 输入张量布局 |
 | `b` | 32 | 批次大小 |
 | `n1` | 128 | 查询头数量 |
 | `s1` | 1 | 查询序列长度（增量生成: 1） |
@@ -215,7 +215,7 @@ For each s2_tile:
   C2 (MLA_C2): 计算 Softmax × V
   V2 (MLA_V2): 在线 Softmax 输出更新
   ↓
-Output: attention_output [batch_size, n1, s1, q_d]
+Output: attention_output [batch_size, s1, n1, q_d]
 ```
 
 ### 核心 API

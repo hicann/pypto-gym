@@ -159,9 +159,9 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     Reshape Q, K, V tensors to 2D
 
     Args:
-        query: Query tensor of shape [b, n1, s1, d]
+        query: Query tensor of shape [b, s1, n1, d]
         key: Key cache of shape [block_num, n2, block_size, d]
-        query_rope: Query rope tensor of shape [b, n1, s1, dr]
+        query_rope: Query rope tensor of shape [b, s1, n1, dr]
         key_rope: Key rope cache of shape [block_num, n2, block_size, dr]
         kp: Kernel config
 
@@ -181,8 +181,8 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     kv_d = kp.kv_d
     k_rope_d = kp.k_rope_d
 
-    qnope_2d_shape = (b * n1 * s1, q_d)
-    qrope_2d_shape = (b * n1 * s1, q_rope_d)
+    qnope_2d_shape = (b * s1 * n1 , q_d)
+    qrope_2d_shape = (b * s1 * n1, q_rope_d)
     knope_2d_shape = (block_num * block_size * n2, kv_d)
     krope_2d_shape = (block_num * block_size * n2, k_rope_d)
 
@@ -356,8 +356,8 @@ def handle_first_tile(wv, lse_reduce, lse, max_score, ctx):
         pypto.set_semantic_label("MLA_V2")
         tt.out_update[:] = wv / lse_reduce
         pypto.set_vec_tile_shapes(1, tc.v2_tile[0], 1, tc.v2_tile[1])
-        out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, tc.g_tile, 1, kp.q_d]), dtype)
-        out_off = [ctx.b_idx, ctx.n2_idx * kp.group + ctx.group_idx * tc.g_tile, ctx.s1_idx, 0]
+        out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, 1, tc.g_tile, kp.q_d]), dtype)
+        out_off = [ctx.b_idx, ctx.s1_idx, ctx.n2_idx * kp.group + ctx.group_idx * tc.g_tile, 0]
         pypto.assemble(out_4d, out_off, lt.attention_output)
     else:
         tt.out_update[:] = wv
@@ -394,10 +394,10 @@ def handle_other_tile(wv, lse, max_score, ctx):
 
     if pypto.cond(pypto.is_loop_end(ctx.s2_idx)):
         tt.out_update[:] = pypto.div(out_tmp, pypto.reshape(new_lse, [tc.g_tile, 1]), 
-                                     pypto.DivAlgorithm.INTRINSIC)
+                                     precision_type=pypto.PrecisionType.INTRINSIC)
         pypto.set_vec_tile_shapes(1, tc.v2_tile[0], 1, tc.v2_tile[1])
-        out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, tc.g_tile, 1, kp.q_d]), dtype)
-        out_off = [ctx.b_idx, ctx.n2_idx * kp.group + ctx.group_idx * tc.g_tile, ctx.s1_idx, 0]
+        out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, 1, tc.g_tile, kp.q_d]), dtype)
+        out_off = [ctx.b_idx, ctx.s1_idx, ctx.n2_idx * kp.group + ctx.group_idx * tc.g_tile, 0]
         pypto.assemble(out_4d, out_off, lt.attention_output)
     else:
         tt.out_update[:] = out_tmp
@@ -542,7 +542,7 @@ def incre_flash_attention_mla(
     block_table: torch.Tensor,
     kernel_config, tile_config
 ):
-    out_shape = (kernel_config.b, kernel_config.n1, kernel_config.s1, kernel_config.q_d)
+    out_shape = (kernel_config.b, kernel_config.s1, kernel_config.n1, kernel_config.q_d)
     attn_out = torch.zeros(out_shape, dtype=query.dtype, device=query.device)
     values = [query, key, value, query_rope, key_rope, block_table, kv_actual_seqs,
               attn_out, kernel_config, tile_config]

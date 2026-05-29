@@ -52,10 +52,10 @@ output_new = (exp(m_old - m_new) * output_old + exp(m_i - m_new) * output_i) / l
 
 | 参数名 | 数据类型 | 形状 | 说明 |
 |--------|----------|------|------|
-| query | DT_BF16 | [batch_size, n1, s1, q_d] | 查询张量（非旋转部分） |
+| query | DT_BF16 | [batch_size, s1, n1, q_d] | 查询张量（非旋转部分） |
 | key | DT_BF16 | [block_num, n2, block_size, kv_d] | Key Cache (Paged 格式) |
 | value | DT_BF16 | [block_num, n2, block_size, kv_d] | Value Cache (Paged 格式) |
-| query_rope | DT_BF16 | [batch_size, n1, s1, q_rope_d] | 查询旋转位置编码部分 |
+| query_rope | DT_BF16 | [batch_size, s1, n1, q_rope_d] | 查询旋转位置编码部分 |
 | key_rope | DT_BF16 | [block_num, n2, block_size, k_rope_d] | Key 旋转位置编码 Cache |
 | kv_actual_seqs | DT_INT32 | [batch_size] | 每个批次的实际 KV 序列长度 |
 | block_table | DT_INT32 | [batch_size, max_blocks_per_query] | 块表，映射逻辑块到物理块索引 |
@@ -66,7 +66,7 @@ output_new = (exp(m_old - m_new) * output_old + exp(m_i - m_new) * output_i) / l
 
 | 参数名 | 数据类型 | 默认值 | 说明 |
 |--------|----------|--------|------|
-| layout | str | "BNSD" | 输入张量布局 |
+| layout | str | "BSND" | 输入张量布局 |
 | b | int | 32 | 批次大小 |
 | n1 | int | 128 | 查询头数量 |
 | s1 | int | 1 | 查询序列长度（增量生成通常为 1） |
@@ -96,7 +96,7 @@ output_new = (exp(m_old - m_new) * output_old + exp(m_i - m_new) * output_i) / l
 
 | 参数名 | 数据类型 | 形状 | 说明 |
 |--------|----------|------|------|
-| attention_output | DT_BF16 | [batch_size, n1, s1, q_d] | 注意力输出 |
+| attention_output | DT_BF16 | [batch_size, s1, n1, q_d] | 注意力输出 |
 
 ## 4. 约束条件
 

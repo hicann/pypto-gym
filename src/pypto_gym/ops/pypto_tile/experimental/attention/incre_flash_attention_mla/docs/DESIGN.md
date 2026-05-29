@@ -19,8 +19,8 @@
 #### 2.1.1 Query 数据
 
 ```
-query: [batch_size, n1, s1, q_d]  (BNSD布局)
-query_rope: [batch_size, n1, s1, q_rope_d]
+query: [batch_size, s1, n1, q_d]  (BSND布局)
+query_rope: [batch_size, s1, n1, q_rope_d]
 
 拼接后: query_full = [query, query_rope]  维度: q_d + q_rope_d
 ```
@@ -74,7 +74,7 @@ block_table: [batch_size, max_blocks_per_query]
 └─────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────┐
-│  Output: attention_output [batch_size, n1, s1, q_d]      │
+│  Output: attention_output [batch_size, s1, n1, q_d]      │
 └─────────────────────────────────────────────────────────┘
 ```
 
