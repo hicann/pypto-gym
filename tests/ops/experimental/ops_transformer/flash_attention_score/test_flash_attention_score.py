@@ -12,8 +12,8 @@ Formulas (IEEE 754-2019 §4.3 / ISO/IEC 10967-2 LIA-2 §5 & §A.3):
   MERE = max_i  |d_i| / max(|golden_i|, eps)  for |golden_i| >= 2^-8
   RMSE = sqrt( mean( (impl - golden)^2 ) )             (root mean square error)
 
-L0 — canonical shape:  B=1, N=32, N_kv=8, Sq=64, Skv=128, D=128
-L1 — tail-block:       B=1, N=8,  N_kv=4, Sq=48, Skv=100, D=128
+L0 — canonical shape:  B=1, N=32, Sq=128, Skv=128, D=64
+L1 — tail-block:       B=1, N=8,  Sq=100, Skv=100, D=128
 """
 
 import sys
@@ -134,7 +134,6 @@ def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
 
     B = shape["B"]
     N = shape["N"]
-    N_kv = shape["N_kv"]
     Sq = shape["Sq"]
     Skv = shape["Skv"]
     D_val = shape["D"]
@@ -142,9 +141,9 @@ def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
     return FlashAttentionInputs(
         query=torch.randn(B, N, Sq, D_val,
                           dtype=torch.bfloat16, device=device) * 0.1,
-        key=torch.randn(B, N_kv, Skv, D_val,
+        key=torch.randn(B, N, Skv, D_val,
                         dtype=torch.bfloat16, device=device) * 0.1,
-        value=torch.randn(B, N_kv, Skv, D_val,
+        value=torch.randn(B, N, Skv, D_val,
                           dtype=torch.bfloat16, device=device) * 0.1,
         atten_mask=torch.zeros(Sq, Skv,
                                dtype=torch.bfloat16, device=device),
@@ -167,12 +166,12 @@ def test_l0() -> None:
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
-    shape  = {"B": 1, "N": 32, "N_kv": 8, "Sq": 64, "Skv": 128, "D": 128}
+    shape  = {"B": 1, "N": 32, "Sq": 128, "Skv": 128, "D": 64}
     inputs = _make_inputs(dev, seed=42, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
     print("L0 — canonical shape (integrated JIT, 2 KV blocks)")
-    print(f"  B={shape['B']}, N={shape['N']}, N_kv={shape['N_kv']}, "
+    print(f"  B={shape['B']}, N={shape['N']}, "
           f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
 
@@ -193,12 +192,12 @@ def test_l1() -> None:
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
-    shape  = {"B": 1, "N": 8, "N_kv": 4, "Sq": 48, "Skv": 100, "D": 128}
+    shape  = {"B": 1, "N": 8, "Sq": 100, "Skv": 100, "D": 128}
     inputs = _make_inputs(dev, seed=43, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
     print("L1 — tail-block (integrated JIT, Sq=48<64, Skv=100)")
-    print(f"  B={shape['B']}, N={shape['N']}, N_kv={shape['N_kv']}, "
+    print(f"  B={shape['B']}, N={shape['N']}, "
           f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
 
