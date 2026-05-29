@@ -40,7 +40,7 @@ import torch_npu
 import numpy as np
 import pytest
 
-from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel, FlashAttentionTileShapeConfig
+from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel, FlashAttentionTileShapeConfig, flash_attention_varlen_forward_kernel_910
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
@@ -217,7 +217,7 @@ def attention_forward_golden(q, k, v, scale):
 
 
 def run_test(batch_size=None, num_heads=None, s1_size=None,
-             s2_size=None, dim=None, tile_config=None):
+             s2_size=None, dim=None, tile_config=None, perf_910=False):
     """
     运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
 
@@ -254,11 +254,8 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     Returns:
         passed: 是否通过精度校验
     """
-    device_id = get_device_id()
-    if device_id is None:
-        return None
-
-    torch.npu.set_device(device_id)
+    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+    torch.npu.set_device(int(device_id))
     device = f'npu:{device_id}'
 
     if batch_size is None:
@@ -272,14 +269,24 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if dim is None:
         dim = HEAD_DIM
     if tile_config is None:
-        tile_config = FlashAttentionTileShapeConfig(
-            q_tile = Q_TILE,
-            k_tile = K_TILE,
-            c1_cube_tile = [[128, 128], [128, 256], [128, 128]],
-            v1_tile = [64, 512],
-            c2_cube_tile = [[128, 512], [256, 512], [64, 64]],
-            v2_tile = [512, 64]
-        )
+        if perf_910:
+            tile_config = FlashAttentionTileShapeConfig(
+                q_tile = 512,
+                k_tile = 2048,
+                c1_cube_tile = [[128, 512], [128, 128], [128, 512]],
+                v1_tile = [8, 2048],
+                c2_cube_tile = [[64, 64], [512, 512], [64, 64]],
+                v2_tile = [64, 128]
+            )
+        else:
+            tile_config = FlashAttentionTileShapeConfig(
+                q_tile = Q_TILE,
+                k_tile = K_TILE,
+                c1_cube_tile = [[128, 128], [128, 256], [128, 128]],
+                v1_tile = [64, 512],
+                c2_cube_tile = [[128, 512], [256, 512], [64, 64]],
+                v2_tile = [512, 64]
+            )          
 
     hidden_dim = num_heads * dim
     scale = 1.0 / (dim ** 0.5)
@@ -329,9 +336,14 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
 
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
-    flash_attention_varlen_forward_kernel(
-        q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
-        tile_config)
+    if perf_910:
+        flash_attention_varlen_forward_kernel_910(
+            q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
+            tile_config)
+    else:
+        flash_attention_varlen_forward_kernel(
+            q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
+            tile_config)
 
     # ---- 精度校验: kernel 输出 vs golden 输出 ----
     torch.set_printoptions(precision=6)
@@ -358,6 +370,11 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     logging.info(f"  {'PASSED' if passed else 'FAILED'}")
     logging.info("")
     return passed
+
+
+def test_00_910():
+    """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
+    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True)
 
 
 def test_01():
@@ -405,6 +422,7 @@ def main():
     logging.info("=" * 60 + "\n")
 
     test_funcs = [
+        test_00_910,
         test_01,
         test_02,
         test_03,
