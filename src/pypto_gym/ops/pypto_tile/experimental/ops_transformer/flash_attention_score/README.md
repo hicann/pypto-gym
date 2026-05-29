@@ -1,321 +1,91 @@
-# Flash Attention Score
+# flash_attention_score — Flash Attention Score with PSE and Dropout
 
-## 概述
+## 算子概述
 
-Flash Attention Score 是一个高效的注意力机制实现，采用 **Online Softmax** 算法实现分块计算，支持完整的训练场景。
+`flash_attention_score` 实现带 PSE（Positional Score Encoding）和 Dropout 的 Flash Attention forward pass，采用 GQA（Grouped Query Attention）架构和 online-softmax 算法。
 
-### 功能特性
+**核心特性：**
+- **GQA**：KV 头数 N_kv（默认 8）小于 Q 头数 N（默认 32），每个 KV 头服务 group = N / N_kv 个 Q 头
+- **PSE**：逐元素位置偏置，支持两种计算顺序（pse_type=1: `(scores+pse)*scale`；pse_type=2: `scores*scale+pse`）
+- **Dropout**：逐元素 dropout 掩码（keep_prob 控制保留概率）
+- **Online Softmax**：按 KV-block 分块累积 softmax 统计量（running max + running sum），避免全局 softmax 的大内存开销
+- **BF16 I/O + FP32 内部累积**：输入输出 bf16，所有内部计算 fp32
+- **Integrated JIT**：单次 JIT 调用，所有 5 层循环（batch / kv_head / group / Q-block / KV-block）均在 JIT 图内
+- **valid_shape**：通过 pypto.view(valid_shape=...) 原生处理尾块，零 host-side padding
 
--  **Online Softmax 分块计算** - 避免存储完整 attention matrix
--  **支持动态轴** - Batch size、Query seq len、KV seq len 均为动态维度
--  **反向传播支持** - 输出 softmax_max 和 softmax_sum 中间结果
--  **Dropout 支持** - 训练场景正则化
--  **位置编码支持** - 支持 4 种 pse_type 模式
--  **注意力掩码** - 支持因果掩码和自定义掩码
--  **Scale 可配置** - 支持自定义 scale_value 参数
--  **高精度** - 使用 FP32 进行中间计算，满足精度标准
+## 输入输出规格
 
----
+### 输入（完整 4D/2D 张量）
 
-## Kernel 概览
+| 参数 | Shape | Dtype | 说明 |
+|------|-------|-------|------|
+| `query` | `[B, N, Sq, D]` | `bfloat16` | Q 张量 |
+| `key` | `[B, N_kv, Skv, D]` | `bfloat16` | K 张量 |
+| `value` | `[B, N_kv, Skv, D]` | `bfloat16` | V 张量 |
+| `atten_mask` | `[Sq, Skv]` | `bfloat16` | Attention mask（0=valid, non-0=masked） |
+| `pse` | `[B, N, Sq, Skv]` | `bfloat16` | PSE 张量 |
+| `drop_mask` | `[Sq, Skv]` | `bfloat16` | Dropout mask（binary 0/1） |
+| `pse_type` | scalar | `int` | PSE 顺序：1=`(scores+pse)*scale`，2=`scores*scale+pse` |
+| `keep_prob` | scalar | `float` | Dropout 保留概率；<1.0 时 softmax_sum 乘以 1/keep_prob |
+| `scale_value` | scalar | `float` | 注意力缩放因子，通常 1/√D |
 
-| Kernel | 功能 | 数据类型 | 适用场景 |
-|--------|------|---------|---------|
-| `flash_attention_score_kernel_with_mask_origin` | 基础 mask (无中间输出) | BF16 | 简化推理场景 |
-| `flash_attention_score_kernel_with_mask` | 基础 mask 支持 | BF16 | 推理场景 |
-| `flash_attention_score_kernel_with_pse_and_dropout` | Mask + PSE + Dropout | BF16 | 训练场景 |
+### 输出
 
-**精度策略：** BF16 输入 -> FP32 中间计算 -> BF16 输出（带 cast）
+| 参数 | Shape | Dtype | 说明 |
+|------|-------|-------|------|
+| `output` | `[B, N, Sq, D]` | `bfloat16` | Attention 输出 |
+| `softmax_max` | `[B, N, Sq, 1]` | `float32` | Softmax row max |
+| `softmax_sum` | `[B, N, Sq, 1]` | `float32` | Softmax row sum（keep_prob 缩放后） |
 
----
-
-## 数学公式
-
-### Kernel 1: with_mask
-
-$$
-\text{attention\_out} = \text{Softmax}\left(\frac{Q @ K^T}{\sqrt{d}} \cdot \text{mask}\right) @ V
-$$
-
-### Kernel 2: with_pse_and_dropout
-
-**pseType = 1:**
-$$
-\text{attention\_out} = \text{Dropout}\left(\text{Softmax}\left(\text{Mask}\left(\text{scale} \cdot (\text{pse} + Q @ K^T), \text{atten\_mask}\right)\right), \text{keep\_prob}\right) @ V
-$$
-
-**pseType ≠ 1 (0, 2, 3):**
-$$
-\text{attention\_out} = \text{Dropout}\left(\text{Softmax}\left(\text{Mask}\left(\text{scale} \cdot Q @ K^T + \text{pse}, \text{atten\_mask}\right)\right), \text{keep\_prob}\right) @ V
-$$
-
----
-
-## 参数规格
-
-### Kernel 0: flash_attention_score_kernel_with_mask_origin
-
-基础版本，只输出 attention_out，不输出中间结果（softmax_max/softmax_sum），不支持反向传播。
-
-| 参数 | 类型 | Shape | 数据类型 | 说明 |
-|------|------|-------|----------|------|
-| query | 输入 | [B, N, Sq, D] | BF16 | Query 张量 |
-| key | 输入 | [B, N, Skv, D] | BF16 | Key 张量 |
-| value | 输入 | [B, N, Skv, D] | BF16 | Value 张量 |
-| atten_mask | 输入 | [Sq, Skv] | FP32 | 注意力掩码，1=不参与，0=参与 |
-| output | 输出 | [B, N, Sq, D] | BF16 | Attention 输出 |
-
-**特点：**
-- 固定 scale = 1/√D，不可配置
-- 仅支持 BF16 数据类型
-- 无中间输出，不适用于反向传播
-
-### Kernel 1: flash_attention_score_kernel_with_mask
-
-| 参数 | 类型 | Shape | 数据类型 | 说明 |
-|------|------|-------|----------|------|
-| query | 输入 | [B, N, Sq, D] | BF16 | Query 张量 |
-| key | 输入 | [B, N, Skv, D] | BF16 | Key 张量 |
-| value | 输入 | [B, N, Skv, D] | BF16 | Value 张量 |
-| atten_mask | 输入 | [Sq, Skv] | FP32 | 注意力掩码，1=不参与，0=参与 |
-| output | 输出 | [B, N, Sq, D] | BF16 | Attention 输出 |
-| softmax_max | 输出 | [B, N, Sq, 1] | FP32 | Softmax 最大值，用于反向 |
-| softmax_sum | 输出 | [B, N, Sq, 1] | FP32 | Softmax 指数和，用于反向 |
-| scale_value | 属性 | - | float | 缩放系数，默认 1/√D |
-
-### Kernel 2: flash_attention_score_kernel_with_pse_and_dropout
-
-| 参数 | 类型 | Shape | 数据类型 | 说明 |
-|------|------|-------|----------|------|
-| query | 输入 | [B, N, Sq, D] | BF16 | Query 张量 |
-| key | 输入 | [B, N, Skv, D] | BF16 | Key 张量 |
-| value | 输入 | [B, N, Skv, D] | BF16 | Value 张量 |
-| atten_mask | 输入 | [Sq, Skv] | FP32 | 注意力掩码，1=不参与，0=参与 |
-| pse | 输入 | [B, N, Sq, Skv] | BF16 | 位置编码 |
-| drop_mask | 输入 | [Sq, Skv] | FP32 | Dropout 掩码，1=保留，0=丢弃 |
-| output | 输出 | [B, N, Sq, D] | BF16 | Attention 输出 |
-| softmax_max | 输出 | [B, N, Sq, 1] | FP32 | Softmax 最大值，用于反向 |
-| softmax_sum | 输出 | [B, N, Sq, 1] | FP32 | Softmax 指数和，用于反向 |
-| pse_type | 属性 | - | int | PSE 模式 (0, 1, 2, 3) |
-| keep_prob | 属性 | - | float | Dropout 保留概率，默认 1.0 |
-| scale_value | 属性 | - | float | 缩放系数，默认 1/√D |
-
-### 固定参数
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| N (Num heads) | 8 | 注意力头数 |
-| D (Head dim) | 64 | 每个头的维度 |
-| Block size | 64 | 分块大小 |
-
-### 动态轴
-
-- **B (Batch size)**: 动态维度，运行时可变
-- **Sq (Query sequence length)**: 动态维度，运行时可变
-- **Skv (KV sequence length)**: 动态维度，运行时可变
-
----
-
-## pseType 模式说明
-
-| pseType | 计算公式 | 约束 |
-|---------|---------|------|
-| 1 | `scale * (pse + Q @ K^T)` | 无 |
-| 0, 2, 3 | `scale * Q @ K^T + pse` | pseType=2 或 3 时：Sq == Skv |
-
-**注意**: pseType 0, 2, 3 计算逻辑相同，区别仅在约束条件。
-
----
-
-## 反向传播支持
-
-两个 kernel 均输出中间结果用于反向传播：
+## 使用方式
 
 ```python
-# 前向传播
-flash_attention_score_kernel_with_mask(
-    query, key, value, atten_mask,
-    output, softmax_max, softmax_sum
-)
+from flash_attention_score_impl import flash_attention_score_wrapper
 
-# 反向传播使用中间结果
-# grad_q, grad_k, grad_v = flash_attention_backward(
-#     grad_output, query, key, value, output, softmax_max, softmax_sum
-# )
-```
-
----
-
-## 使用示例
-
-### 基础 Mask 示例
-
-```python
-import torch
-import math
-from flash_attention_score_impl import flash_attention_score_kernel_with_mask
-
-# 输入
-query = torch.randn(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-key = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-value = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-atten_mask = torch.zeros(64, 128, dtype=torch.float32, device='npu:0')
-
-# 输出
-output = torch.empty(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-softmax_max = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-softmax_sum = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-
-# 调用 kernel
-flash_attention_score_kernel_with_mask(
-    query, key, value, atten_mask,
-    output, softmax_max, softmax_sum,
-    scale_value=1.0 / math.sqrt(64)
-)
-```
-
-### 训练场景 (with_pse_and_dropout)
-
-```python
-import torch
-import math
-from flash_attention_score_impl import flash_attention_score_kernel_with_pse_and_dropout
-
-# 输入
-query = torch.randn(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-key = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-value = torch.randn(2, 8, 128, 64, dtype=torch.bfloat16, device='npu:0')
-atten_mask = torch.zeros(64, 128, dtype=torch.float32, device='npu:0')
-
-# PSE 和 Dropout
-pse = torch.randn(2, 8, 64, 128, dtype=torch.bfloat16, device='npu:0')
-drop_mask = torch.ones(64, 128, dtype=torch.float32, device='npu:0')
-
-# 输出
-output = torch.empty(2, 8, 64, 64, dtype=torch.bfloat16, device='npu:0')
-softmax_max = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-softmax_sum = torch.empty(2, 8, 64, 1, dtype=torch.float32, device='npu:0')
-
-# 调用 kernel
-flash_attention_score_kernel_with_pse_and_dropout(
+# 准备输入（所有张量在 NPU 设备上）
+output, softmax_max, softmax_sum = flash_attention_score_wrapper(
     query, key, value, atten_mask, pse, drop_mask,
-    output, softmax_max, softmax_sum,
-    pse_type=0, keep_prob=1.0,
-    scale_value=1.0 / math.sqrt(64)
+    pse_type=1, keep_prob=1.0, scale_value=0.0883883,
 )
 ```
-
----
 
 ## 运行测试
 
 ```bash
-# 设置环境变量
+# 从仓库根目录运行
 export TILE_FWK_DEVICE_ID=0
-
-# 运行全部测试
-python flash_attention_score.py
-
-# 仅测试 with_mask_origin kernel
-python flash_attention_score.py --kernel mask_origin
-
-# 仅测试 with_mask kernel
-python flash_attention_score.py --kernel mask
-
-# 仅测试 with_pse_and_dropout kernel
-python flash_attention_score.py --kernel pse_dropout
-
-# 测试自定义 scale_value
-python flash_attention_score.py --scale_value 0.2
-
-# 使用 sim 模式
-python flash_attention_score.py --run_mode sim
+export PTO_TILE_LIB_CODE_PATH=/root/pto-isa
+python custom/flash_attention_score/test_flash_attention_score.py
 ```
 
-**测试参数说明：**
-- `--kernel`: Kernel 类型（all/mask_origin/mask/pse_dropout），默认 all
-- `--scale_value`: 自定义 scale 值，默认 1/√D
-- `--run_mode`: 运行模式（npu/sim），默认 npu
+## 精度标准
 
----
+| 输出 | dtype | atol | rtol | MARE | MERE | RMSE | 备注 |
+|------|-------|------|------|------|------|------|------|
+| output | bf16 | 1 | 0 | <10 | <2 | <2 | bf16 < 2⁻⁸ 豁免 MERE |
+| softmax_max | fp32 | 1e-5 | 1e-5 | — | — | — | |
+| softmax_sum | fp32 | 1e-5 | 1e-5 | — | — | — | |
 
-## 测试结果
+## 架构说明
 
-### 精度验证
+### 设计决策
+- **模块分解（逻辑）**：3 模块（M1: Q@K^T+PSE+scale, M2: softmax+dropout+P@V, M3: online-softmax accumulation+normalize+output）
+- **生产架构**：单一 integrated JIT，5 层 pypto.loop，零 host-side padding
+- **Tile 配置**：vec=(16,64), cube_QK=([64,64],[128,128],[64,64]), cube_PV=([64,64],[64,64],[128,128])
+- **尾块处理**：pypto.view(valid_shape=[...])，2D→2D 视图，valid_shape 匹配源 tensor rank
 
-| Kernel | pseType | 最大差异 | 平均差异 | 状态 |
-|--------|---------|---------|---------|------|
-| with_mask_origin | - | 0.000977 | 0.000000 | 通过 |
-| with_mask | - | 0.001953 | 0.000000 | 通过 |
-| with_pse_and_dropout | 0 | 0.001953 | 0.000000 | 通过 |
-| with_pse_and_dropout | 1 | 0.000488 | 0.000000 | 通过 |
+### 与旧版本的差异
+| 方面 | 旧（Stage 7 版本） | 新（valid_shape 版本） |
+|------|-------------------|---------------------|
+| JIT 调用次数 | per-KV-block 多次调用 | 单次调用 |
+| Host wrapper | ~150 行（pad + slice） | ~25 行 |
+| Host-side padding | 大量 torch.zeros/full/ones | 零 |
+| 循环位置 | Host Python for loops | JIT 内 pypto.loop |
+| 尾块处理 | Host padding → slice | pypto.view(valid_shape) |
 
-**精度标准**: `rtol=0.0078125, atol=0.0001`
+## 已知约束
 
-### Scale 可配置验证
-
-| Scale 值 | Kernel | 状态 |
-|---------|--------|------|
-| 默认 (1/√D) | with_mask | 通过 |
-| 0.2 (自定义) | with_mask | 通过 |
-| 0.2 (自定义) | with_pse_and_dropout | 通过 |
-
----
-
-## Dropout 实现说明
-
-采用 **Inverted Dropout** 策略，在训练时对保留的激活值进行缩放：
-
-$$
-p_{\text{scaled}} = \frac{p \cdot \text{drop\_mask}}{\text{keep\_prob}}
-$$
-
-其中：
-- `drop_mask`: 掩码张量，1=保留，0=丢弃
-- `keep_prob`: 保留概率（例如 0.8 表示保留 80%）
-- 缩放因子 `1/keep_prob` 保持期望值不变
-
-**注意**：Golden Reference 实现必须与 Kernel 保持一致的 dropout 应用时机（在 softmax 计算过程中应用，而非事后跳过）。
-
----
-
-## 文件结构
-
-```
-flash_attention_score/
-├── flash_attention_score_impl.py     # Kernel 实现
-│   ├── flash_attention_score_kernel_with_mask_origin (BF16, 无中间输出)
-│   ├── flash_attention_score_kernel_with_mask (BF16)
-│   └── flash_attention_score_kernel_with_pse_and_dropout (BF16)
-├── flash_attention_score.py          # 测试套件 + Golden Reference
-└── README.md                         # 本文档
-```
-
----
-
-## 已知限制
-
-| 限制 | 说明 |
-|------|------|
-| 固定维度 | Num heads=8, Head dim=64 |
-| drop_mask dtype | 使用 FP32 而非 UINT8 |
-
-### drop_mask 使用 FP32 说明
-
-AscendC 文档要求 `drop_mask` 使用 UINT8 类型，但 PyPTO 实现中使用 FP32。原因是 UINT8 类型在当前 PyPTO 版本中存在兼容性问题。FP32 实现在功能上完全等价，仅内存占用略高。
-
----
-
-## 开发进度
-
-| Stage | 功能 | 状态 |
-|-------|------|------|
-| Stage 1 | 反向传播中间结果 (softmax_max, softmax_sum) | 已完成 |
-| Stage 2 | Dropout + PSE 支持 | 已完成 |
-| Stage 3 | Scale 可配置 | 已完成 |
-
----
-
-## 参考资料
-- [Online Softmax 论文](https://arxiv.org/abs/2006.04768)
-- [Flash Attention 论文](https://arxiv.org/abs/2205.14135)
+- D 固定为 128（compile-time 常量）
+- pse_type 和 keep_prob 为 JIT trace-time 常量（每次改变需重新 JIT）
+- BLOCK_Q=64, BLOCK_KV=64 为模块级常量
+- 需要在 NPU 环境中运行（不支持纯 CPU SIM 模式）
