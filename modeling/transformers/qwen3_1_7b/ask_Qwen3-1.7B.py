@@ -2,34 +2,40 @@
 """
 Qwen3-1.7B 推理脚本 (with benchmark instrumentation)
 用法: python3 ask_Qwen3-1.7B.py [--prompt "问题"] [--device 卡号] [--model-path 路径]
-       [--sentence_file 提示词文件] [--output_length 长度] [--use_pypto]
+       [--sentence_file 提示词文件] [--output_length 长度] [--use-pto]
        [--report-file 报告文件路径]
 """
 
-import argparse, sys, json, time, torch, torch_npu
+import argparse
+import sys
+import json
+import time
+import torch
+import torch_npu
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import logging
 
 parser = argparse.ArgumentParser(description="Qwen3-1.7B 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/mnt/workspace/gitCode/cann/models/Qwen3-1.7B", help="模型权重路径")
+parser.add_argument("--model-path", default="/data/h00520348/optimize0524/models/Qwen3-1.7B", help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
-parser.add_argument("--use_pypto", action="store_true", help="启用PyPTO融合算子")
+parser.add_argument("--use-pto", action="store_true", help="启用PyPTO融合算子")
 parser.add_argument("--report-file", type=str, default=None, help="性能报告输出文件（JSON）")
 args = parser.parse_args()
 
-import logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-# ---- PyPTO sys.modules injection (must be BEFORE transformers import) ----
-if args.use_pypto:
-    sys.path.insert(0, args.model_path)
-    import qwen3_pto_kernels as _pto
-    sys.modules["qwen3_pto_kernels"] = _pto
-    _pto.USE_PTO_RMS_NORM = True
-    logging.info("PyPTO mode enabled: RMSNorm kernel injected")
+metrics = {}
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+# ---- PyPTO setup (sys.modules injection) ----
+if args.use_pto:
+    sys.path.insert(0, args.model_path)
+    import pto_kernels
+    sys.modules["pto_kernels"] = pto_kernels
+    pto_kernels.rope.USE_PTO_ROPE = True
+    logging.info("PyPTO RoPE mode enabled")
 
 metrics = {}
 
@@ -87,12 +93,11 @@ metrics["generated_tokens"] = generated_tokens
 metrics["tokens_per_second"] = round(generated_tokens / metrics["generate_s"], 1) if metrics["generate_s"] > 0 else 0
 metrics["generate_peak_mem_mb"] = round(torch.npu.max_memory_allocated() / 1024**2, 1)
 
-# ---- Decode ----
 response = tokenizer.decode(outputs[0], skip_special_tokens=True)
 logging.info(response)
 
 # ---- Report ----
-metrics["mode"] = "pypto" if args.use_pypto else "baseline"
+metrics["mode"] = "pypto" if args.use_pto else "baseline"
 metrics["model"] = "Qwen3-1.7B"
 
 logging.info(f"\n--- Performance ---")

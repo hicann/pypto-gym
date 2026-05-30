@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+# coding: utf-8
+"""
+Batch Size性能对比测试脚本
+对比Baseline ACLGraph和PyPTO ACLGraph在不同BS组合下的性能
+"""
+
+import subprocess
+import json
+import time
+import re
+import os
+import sys
+
+os.chdir('/data/h00520348/optimize_aclgraph/models/DeepSeek-V2-Lite-Chat')
+
+test_configs = [
+    # BS=1, 不同输出长度（影响KV cache长度）
+    {'bs': 1, 'output_length': 10, 'prompt': '你好'},
+    {'bs': 1, 'output_length': 20, 'prompt': '你好'},
+    {'bs': 1, 'output_length': 50, 'prompt': '你好，请介绍一下你自己'},
+    {'bs': 1, 'output_length': 100, 'prompt': '请详细介绍一下人工智能的发展历程'},
+    
+    # 不同batch size（需要修改脚本支持多batch）
+    # 当前脚本不支持多batch，先用单batch不同输出长度测试
+]
+
+def run_test(use_kv_fusion, output_length, prompt, device=7):
+    """
+    运行单次测试
+    
+    Args:
+        use_kv_fusion: bool - 是否使用PyPTO KV融合
+        output_length: int - 输出token数量
+        prompt: str - 输入提示
+        device: int - NPU设备ID
+    
+    Returns:
+        dict: {'throughput': float, 'inference_time': float, 'tokens': int}
+    """
+    cmd = [
+        'python3', 
+        'scripts/ask_DeepSeek-V2-Lite-Chat.py',
+        '--prompt', prompt,
+        '--device', str(device),
+        '--use_acl_graph',
+        '--output_length', str(output_length),
+    ]
+    
+    if use_kv_fusion:
+        cmd.append('--use_kv_fusion')
+    
+    mode_name = "PyPTO ACLGraph" if use_kv_fusion else "Baseline ACLGraph"
+    print(f"\n{'='*60}")
+    print(f"测试: {mode_name}, OutputLen={output_length}")
+    print(f"{'='*60}")
+    
+    start_time = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    elapsed = time.time() - start_time
+    
+    # 解析输出
+    output = result.stdout + result.stderr
+    
+    # 提取性能指标（更宽松的正则）
+    throughput_match = re.search(r'吞吐量.*?([\d.]+).*?tokens/s', output)
+    inference_match = re.search(r'推理耗时.*?([\d.]+).*?s', output)
+    tokens_match = re.search(r'生成token数.*?(\d+)', output)
+    
+    if throughput_match and inference_match and tokens_match:
+        throughput = float(throughput_match.group(1))
+        inference_time = float(inference_match.group(1))
+        tokens = int(tokens_match.group(1))
+        
+        print(f"✓ 成功: {tokens} tokens, {inference_time:.2f}s, {throughput:.1f} tokens/s")
+        
+        return {
+            'throughput': throughput,
+            'inference_time': inference_time,
+            'tokens': tokens,
+            'total_time': elapsed,
+            'success': True,
+            'mode': mode_name,
+        }
+    else:
+        print(f"✗ 失败: 无法解析性能指标")
+        print(f"输出片段:\n{output[-500:]}")
+        return {
+            'success': False,
+            'mode': mode_name,
+            'error': 'Failed to parse metrics',
+        }
+
+def main():
+    print("\n" + "="*80)
+    print("Batch Size性能对比测试")
+    print("对比Baseline ACLGraph vs PyPTO ACLGraph")
+    print("="*80)
+    
+    results = []
+    
+    for config in test_configs:
+        bs = config['bs']
+        output_length = config['output_length']
+        prompt = config['prompt']
+        
+        print(f"\n{'#'*80}")
+        print(f"配置: BS={bs}, OutputLen={output_length}, Prompt='{prompt[:30]}...'")
+        print(f"{'#'*80}")
+        
+        # 测试Baseline ACLGraph
+        baseline_result = run_test(
+            use_kv_fusion=False,
+            output_length=output_length,
+            prompt=prompt
+        )
+        
+        # 等待NPU冷却
+        time.sleep(5)
+        
+        # 测试PyPTO ACLGraph
+        pypto_result = run_test(
+            use_kv_fusion=True,
+            output_length=output_length,
+            prompt=prompt
+        )
+        
+        # 记录结果
+        results.append({
+            'config': config,
+            'baseline': baseline_result,
+            'pypto': pypto_result,
+        })
+        
+        # 等待NPU冷却
+        time.sleep(10)
+    
+    # 生成对比报告
+    print("\n" + "="*80)
+    print("性能对比汇总")
+    print("="*80)
+    
+    print(f"\n{'BS':>4} {'OutputLen':>10} {'Baseline':>12} {'PyPTO':>12} {'Speedup':>10} {'Status':>10}")
+    print("-" * 80)
+    
+    for r in results:
+        config = r['config']
+        baseline = r['baseline']
+        pypto = r['pypto']
+        
+        if baseline['success'] and pypto['success']:
+            baseline_tps = baseline['throughput']
+            pypto_tps = pypto['throughput']
+            
+            if baseline_tps > 0:
+                speedup = (pypto_tps / baseline_tps - 1) * 100
+                speedup_str = f"{speedup:+.1f}%"
+            else:
+                speedup_str = "N/A"
+            
+            if abs(speedup) < 5:
+                status = "≈相同"
+            elif speedup > 0:
+                status = "✓ PyPTO快"
+            else:
+                status = "⚠ Baseline快"
+            
+            print(f"{config['bs']:>4} {config['output_length']:>10} "
+                  f"{baseline_tps:>12.1f} {pypto_tps:>12.1f} "
+                  f"{speedup_str:>10} {status:>10}")
+        else:
+            print(f"{config['bs']:>4} {config['output_length']:>10} "
+                  f"{'FAILED':>12} {'FAILED':>12} {'N/A':>10} {'ERROR':>10}")
+    
+    # 保存结果到JSON
+    result_file = 'benchmark_bs_results.json'
+    with open(result_file, 'w') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n✓ 结果已保存到: {result_file}")
+    
+    # 详细分析
+    print("\n" + "="*80)
+    print("详细分析")
+    print("="*80)
+    
+    for r in results:
+        config = r['config']
+        baseline = r['baseline']
+        pypto = r['pypto']
+        
+        print(f"\n配置: BS={config['bs']}, OutputLen={config['output_length']}")
+        
+        if baseline['success']:
+            print(f"  Baseline ACLGraph:")
+            print(f"    - 吞吐量: {baseline['throughput']:.2f} tokens/s")
+            print(f"    - 推理耗时: {baseline['inference_time']:.2f}s")
+            print(f"    - 生成token数: {baseline['tokens']}")
+        
+        if pypto['success']:
+            print(f"  PyPTO ACLGraph:")
+            print(f"    - 吞吐量: {pypto['throughput']:.2f} tokens/s")
+            print(f"    - 推理耗时: {pypto['inference_time']:.2f}s")
+            print(f"    - 生成token数: {pypto['tokens']}")
+            
+            if baseline['success'] and baseline['throughput'] > 0:
+                speedup = (pypto['throughput'] / baseline['throughput'] - 1) * 100
+                print(f"  性能差异: {speedup:+.2f}%")
+
+if __name__ == '__main__':
+    main()

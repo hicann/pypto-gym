@@ -10,11 +10,23 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Qwen3-1.7B PyPTO 融合算子库
+Qwen3-1.7B PyPTO 融合算子库 - 实际集成版本
 
-开关设计：按算子粒度控制，便于渐进式验证
+实际集成的算子：
+- RoPE (部分融合): q_norm + k_norm + RoPE
+
+融合范围：
+- 部分融合: q_proj/k_proj [B,S,N,D] -> [q_norm + k_norm + RoPE] -> Q/K [B,N,S,D]
+- q_proj/k_proj/v_proj: 在 PyTorch 中完成
+- q_norm/k_norm: 在部分融合 kernel 中完成（USE_PTO_ROPE=True）
 """
 
-USE_PTO_RMS_NORM = False
+USE_PTO_ROPE = False
 
-from .rms_norm.rms_norm_impl import rms_norm_impl
+from .rope.rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
+
+__all__ = [
+    'USE_PTO_ROPE',
+    'qwen3_qk_rope_q',
+    'qwen3_qk_rope_k',
+]

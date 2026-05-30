@@ -1,0 +1,114 @@
+{
+    "test_cases": [
+        {
+            "id": "mla_prolog_001",
+            "description": "minimal prefill - (1, 1, 2048) fp16",
+            "seed": 42,
+            "input": {
+                "hidden_states": {"shape": [1, 1, 2048], "dtype": "float16"},
+                "kv_a_weight": {"shape": [2048, 576], "dtype": "float16"},
+                "kv_b_weight": {"shape": [512, 4096], "dtype": "float16"},
+                "ln_weight": {"shape": [512], "dtype": "float16"},
+                "eps": {"value": 1e-06},
+                "cos": {"shape": [1, 64], "dtype": "float16"},
+                "sin": {"shape": [1, 64], "dtype": "float16"},
+                "pos_ids": {"shape": [1, 1], "dtype": "int64"}
+            },
+            "output": {
+                "k_nope": {"shape": [1, 16, 1, 128], "dtype": "float16"},
+                "value": {"shape": [1, 16, 1, 128], "dtype": "float16"},
+                "k_pe": {"shape": [1, 1, 1, 64], "dtype": "float16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "mla_prolog_002",
+            "description": "prefill seq_len=2 - (1, 2, 2048) fp16",
+            "seed": 43,
+            "input": {
+                "hidden_states": {"shape": [1, 2, 2048], "dtype": "float16"},
+                "kv_a_weight": {"shape": [2048, 576], "dtype": "float16"},
+                "kv_b_weight": {"shape": [512, 4096], "dtype": "float16"},
+                "ln_weight": {"shape": [512], "dtype": "float16"},
+                "eps": {"value": 1e-06},
+                "cos": {"shape": [2, 64], "dtype": "float16"},
+                "sin": {"shape": [2, 64], "dtype": "float16"},
+                "pos_ids": {"shape": [1, 2], "dtype": "int64"}
+            },
+            "output": {
+                "k_nope": {"shape": [1, 16, 2, 128], "dtype": "float16"},
+                "value": {"shape": [1, 16, 2, 128], "dtype": "float16"},
+                "k_pe": {"shape": [1, 1, 2, 64], "dtype": "float16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "mla_prolog_003",
+            "description": "prefill seq_len=16 - (1, 16, 2048) fp16",
+            "seed": 44,
+            "input": {
+                "hidden_states": {"shape": [1, 16, 2048], "dtype": "float16"},
+                "kv_a_weight": {"shape": [2048, 576], "dtype": "float16"},
+                "kv_b_weight": {"shape": [512, 4096], "dtype": "float16"},
+                "ln_weight": {"shape": [512], "dtype": "float16"},
+                "eps": {"value": 1e-06},
+                "cos": {"shape": [16, 64], "dtype": "float16"},
+                "sin": {"shape": [16, 64], "dtype": "float16"},
+                "pos_ids": {"shape": [1, 16], "dtype": "int64"}
+            },
+            "output": {
+                "k_nope": {"shape": [1, 16, 16, 128], "dtype": "float16"},
+                "value": {"shape": [1, 16, 16, 128], "dtype": "float16"},
+                "k_pe": {"shape": [1, 1, 16, 64], "dtype": "float16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "mla_prolog_004",
+            "description": "batch prefill - (2, 4, 2048) fp16",
+            "seed": 45,
+            "input": {
+                "hidden_states": {"shape": [2, 4, 2048], "dtype": "float16"},
+                "kv_a_weight": {"shape": [2048, 576], "dtype": "float16"},
+                "kv_b_weight": {"shape": [512, 4096], "dtype": "float16"},
+                "ln_weight": {"shape": [512], "dtype": "float16"},
+                "eps": {"value": 1e-06},
+                "cos": {"shape": [4, 64], "dtype": "float16"},
+                "sin": {"shape": [4, 64], "dtype": "float16"},
+                "pos_ids": {"shape": [2, 4], "dtype": "int64"}
+            },
+            "output": {
+                "k_nope": {"shape": [2, 16, 4, 128], "dtype": "float16"},
+                "value": {"shape": [2, 16, 4, 128], "dtype": "float16"},
+                "k_pe": {"shape": [2, 1, 4, 64], "dtype": "float16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "mla_prolog_005",
+            "description": "edge case - (4, 8, 2048) fp16 batch",
+            "seed": 46,
+            "input": {
+                "hidden_states": {"shape": [4, 8, 2048], "dtype": "float16"},
+                "kv_a_weight": {"shape": [2048, 576], "dtype": "float16"},
+                "kv_b_weight": {"shape": [512, 4096], "dtype": "float16"},
+                "ln_weight": {"shape": [512], "dtype": "float16"},
+                "eps": {"value": 1e-06},
+                "cos": {"shape": [8, 64], "dtype": "float16"},
+                "sin": {"shape": [8, 64], "dtype": "float16"},
+                "pos_ids": {"shape": [4, 8], "dtype": "int64"}
+            },
+            "output": {
+                "k_nope": {"shape": [4, 16, 8, 128], "dtype": "float16"},
+                "value": {"shape": [4, 16, 8, 128], "dtype": "float16"},
+                "k_pe": {"shape": [4, 1, 8, 64], "dtype": "float16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        }
+    ]
+}

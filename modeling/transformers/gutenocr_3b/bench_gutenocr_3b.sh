@@ -2,21 +2,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # CANN Open Software License Agreement Version 2.0
 
-# Benchmark script for Qwen3-1.7B
+# Benchmark script for gutenocr_3b
 # Compares baseline vs PyPTO with timing + memory metrics
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODEL_ID="Qwen3-1.7B"
-MODEL_PATH="/data/h00520348/optimize0524/models/Qwen3-1.7B"
+MODEL_ID="gutenocr_3b"
+MODEL_PATH="/data/h00520348/optimize525/models/gutenocr_3b"
 INPUT_FILE="${SCRIPT_DIR}/sample_inputs.txt"
 OUTPUT_LENGTH=100
 BASELINE_REPORT="${SCRIPT_DIR}/bench_baseline.json"
 PYPTO_REPORT="${SCRIPT_DIR}/bench_pypto.json"
 
 echo "========================================"
-echo "  Qwen3-1.7B Performance Benchmark"
+echo "  gutenocr_3b Performance Benchmark"
 echo "========================================"
 echo ""
 echo "Model: ${MODEL_ID}"
@@ -27,7 +27,7 @@ echo ""
 
 # ---- Phase 1: Baseline ----
 echo ">>> Phase 1: Baseline (no PyPTO)"
-python3 "${SCRIPT_DIR}/ask_Qwen3-1.7B.py" \
+python3 "${SCRIPT_DIR}/ask_gutenocr_3b.py" \
     --model-path "${MODEL_PATH}" \
     --sentence_file "${INPUT_FILE}" \
     --output_length ${OUTPUT_LENGTH} \
@@ -37,7 +37,7 @@ echo ""
 
 # ---- Phase 2: PyPTO ----
 echo ">>> Phase 2: PyPTO fused mode"
-python3 "${SCRIPT_DIR}/ask_Qwen3-1.7B.py" \
+python3 "${SCRIPT_DIR}/ask_gutenocr_3b.py" \
     --model-path "${MODEL_PATH}" \
     --sentence_file "${INPUT_FILE}" \
     --output_length ${OUTPUT_LENGTH} \

@@ -1,0 +1,107 @@
+{
+  "op_name": "swiglu_mlp",
+  "source": "GutenOCR-3B (Qwen2.5-VL-3B)",
+  "description": "SwiGLU MLP 算子真实测试用例（打点采集）",
+  "test_cases": [
+    {
+      "id": "case_001",
+      "description": "MLP层 batch=1",
+      "seed": 42,
+      "input": {
+        "x": {"shape": [1, 2048], "dtype": "bfloat16"},
+        "gate_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "up_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "down_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+        "down_bias": {"shape": [2048], "dtype": "bfloat16"}
+      },
+      "output": {
+        "shape": [1, 2048],
+        "dtype": "bfloat16"
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_002",
+      "description": "MLP层 batch=4",
+      "seed": 42,
+      "input": {
+        "x": {"shape": [4, 2048], "dtype": "bfloat16"},
+        "gate_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "up_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "down_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+        "down_bias": {"shape": [2048], "dtype": "bfloat16"}
+      },
+      "output": {
+        "shape": [4, 2048],
+        "dtype": "bfloat16"
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_003",
+      "description": "MLP层 batch=8",
+      "seed": 42,
+      "input": {
+        "x": {"shape": [8, 2048], "dtype": "bfloat16"},
+        "gate_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "up_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "down_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+        "down_bias": {"shape": [2048], "dtype": "bfloat16"}
+      },
+      "output": {
+        "shape": [8, 2048],
+        "dtype": "bfloat16"
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_004",
+      "description": "MLP层 batch=16",
+      "seed": 42,
+      "input": {
+        "x": {"shape": [16, 2048], "dtype": "bfloat16"},
+        "gate_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "up_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+        "down_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+        "down_bias": {"shape": [2048], "dtype": "bfloat16"}
+      },
+      "output": {
+        "shape": [16, 2048],
+        "dtype": "bfloat16"
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_005",
+      "description": "MLP层无bias版本 batch=4",
+      "seed": 42,
+      "input": {
+        "x": {"shape": [4, 2048], "dtype": "bfloat16"},
+        "gate_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "gate_bias": {"shape": null, "dtype": "bfloat16"},
+        "up_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+        "up_bias": {"shape": null, "dtype": "bfloat16"},
+        "down_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+        "down_bias": {"shape": null, "dtype": "bfloat16"}
+      },
+      "output": {
+        "shape": [4, 2048],
+        "dtype": "bfloat16"
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    }
+  ]
+}
