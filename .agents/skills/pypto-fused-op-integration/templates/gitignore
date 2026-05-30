@@ -1,0 +1,27 @@
+# 模型权重（大文件）
+*.safetensors
+*.bin
+*.pt
+*.pth
+model.safetensors.index.json
+
+# Tokenizer 大文件
+tokenizer.json
+tokenizer.model
+vocab.json
+merges.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# 编译/运行时产物
+kernel_meta/
+output/
+*.log
+.cache/
+
+# Profiling 采集目录
+PROF_*/
+*_profiling_output_record

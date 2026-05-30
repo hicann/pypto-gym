@@ -217,7 +217,7 @@ python3 {pypto_repo}/.agents/skills/pypto-fused-op-integration/scripts/generate_
 **生成的脚本特性：**
 - 默认模型路径：`{user_model_dir}/{model_name}`（可通过 `--model-path` 指定）
 - 使用 `local_files_only=True` 离线加载，`trust_remote_code=True`
-- 参数：`--prompt`（优先级最高）、`--sentence_file`（从文件读取提示词）、`--output_length`（默认100）、`--use_pypto`（PyPTO占位标记）、`--report-file`（JSON性能报告）
+- 参数：`--prompt`（优先级最高）、`--sentence_file`（从文件读取提示词）、`--output-length`（默认100）、`--use_pypto`（PyPTO占位标记）、`--per-step-timing`（打印每个 forward step 耗时，格式 `====duration==== Xus`，对齐 GLM-Net）、`--report-file`（JSON性能报告）
 - `--prompt` 提供时优先使用，否则 `--sentence_file` 提供时读取文件，均不提供则使用默认 "你好"
 - 内嵌 `time.perf_counter()` + `torch.npu.reset_peak_memory_stats()` 计时/显存采集
 
@@ -279,20 +279,7 @@ cd {model_weight_dir}
 # 已有 .git 则跳过 init
 [ ! -d .git ] && git init
 
-cat > .gitignore << 'EOF'
-*.safetensors
-*.bin
-*.pt
-*.pth
-tokenizer.json
-tokenizer.model
-vocab.json
-merges.txt
-__pycache__/
-*.log
-.cache/
-output/
-EOF
+cp {pypto_repo}/.agents/skills/pypto-fused-op-integration/templates/gitignore {model_weight_dir}/.gitignore
 
 git add scripts/ *.json *.md .gitignore
 git commit -m "migrate {model_name} to NPU — baseline before pto integration"
@@ -851,6 +838,8 @@ bash {model_weight_dir}/scripts/bench_{model_name}.sh
 | 吞吐 (tokens/s) | | | |
 | 峰值显存 (MB) | | | |
 
+- 快速查看 per-step 耗时：加 `--per-step-timing`，每步打印 `====duration==== Xus`
+
 ##### 方法二：msprof kernel 级采集
 
 ```bash
@@ -863,6 +852,17 @@ bash {model_weight_dir}/scripts/prof_{model_name}.sh
   - `device_*/timeline/*.json` — Chrome trace 时间线
   - `device_*/aicore_metrics_*.csv` — AI Core 利用率
 - 脚本自动 diff Top 15 算子耗时差异
+
+##### 方法三：msprof Task Wait 深度分析
+
+```bash
+msprof --application="python3 scripts/ask_{model_name}.py --use-acl-graph" --output=PROF/
+
+python3 {pypto_repo}/.agents/skills/pypto-fused-op-integration/scripts/analyze_msprof_taskwait.py PROF_xxx/
+```
+
+- 输出：全局 Wait 统计 + 按算子 Wait 排行 + 单层段内延迟分布
+- 支持多目录对比：`... PROF_1/ PROF_2/` 自动输出对比汇总
 
 ##### 记录结果
 

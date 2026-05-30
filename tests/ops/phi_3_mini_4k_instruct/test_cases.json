@@ -1,0 +1,59 @@
+{
+  "op_name": "rms_norm",
+  "source": "Phi-3-mini-4k-instruct",
+  "description": "Phi-3-mini-4k-instruct RMSNorm 算子真实测试用例 (hidden_size=3072)",
+  "test_cases": [
+    {
+      "id": "layernorm_gen",
+      "description": "input_layernorm/post_attention_layernorm 生成阶段 [1,1,3072]",
+      "seed": 42,
+      "input": {
+        "hidden_states": {"shape": [1, 1, 3072], "dtype": "float16"},
+        "gamma": {"shape": [3072], "dtype": "float16"},
+        "eps": {"value": 1e-5}
+      },
+      "output": {"shape": [1, 1, 3072], "dtype": "float16"},
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "layernorm_prefill_5",
+      "description": "input_layernorm/post_attention_layernorm 短预填充 [1,5,3072]",
+      "seed": 42,
+      "input": {
+        "hidden_states": {"shape": [1, 5, 3072], "dtype": "float16"},
+        "gamma": {"shape": [3072], "dtype": "float16"},
+        "eps": {"value": 1e-5}
+      },
+      "output": {"shape": [1, 5, 3072], "dtype": "float16"},
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "layernorm_prefill_128",
+      "description": "input_layernorm/post_attention_layernorm 中预填充 [1,128,3072]",
+      "seed": 42,
+      "input": {
+        "hidden_states": {"shape": [1, 128, 3072], "dtype": "float16"},
+        "gamma": {"shape": [3072], "dtype": "float16"},
+        "eps": {"value": 1e-5}
+      },
+      "output": {"shape": [1, 128, 3072], "dtype": "float16"},
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "layernorm_prefill_4096",
+      "description": "input_layernorm/post_attention_layernorm 最大预填充 [1,4096,3072]",
+      "seed": 42,
+      "input": {
+        "hidden_states": {"shape": [1, 4096, 3072], "dtype": "float16"},
+        "gamma": {"shape": [3072], "dtype": "float16"},
+        "eps": {"value": 1e-5}
+      },
+      "output": {"shape": [1, 4096, 3072], "dtype": "float16"},
+      "rtol": 1e-2,
+      "atol": 1e-2
+    }
+  ]
+}
