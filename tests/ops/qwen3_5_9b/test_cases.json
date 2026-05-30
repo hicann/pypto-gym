@@ -1,0 +1,57 @@
+{
+  "op_name": "gated_delta_rule",
+  "source": "Qwen3.5-9B (real shapes captured via module-level monkey-patch on torch_{chunk,recurrent}_gated_delta_rule, 16-token prefill + 5-token greedy decode, single layer = 1/24)",
+  "description": "Two paths fire in Qwen3_5GatedDeltaNet.forward (line 510 / 522): recurrent path on decode (seq_len==1, has cache), chunk path on prefill or chunked-decode. Model config: num_v_heads=32, num_k_heads=16, head_k_dim=head_v_dim=128 (q/k already broadcast to Nv=32 by repeat_interleave). g is fp32 (forced by .float() on A_log + softplus). use_qk_l2norm_in_kernel=True so the op pre-normalizes q,k internally. initial_state for recurrent comes from the cache as bf16; last_recurrent_state output is always fp32. End-to-end gate: bf16-realistic (atol 5e-2, rtol 1e-2) for fused outputs; --strict mode promotes to fp32 and gates at 3e-3.",
+  "test_cases": [
+    {
+      "id": "case_001_recurrent_decode",
+      "description": "decode path: recurrent_gated_delta_rule with seq_len=1 and cached state, 120 calls per 6-token greedy run (24 layers x 5 decode tokens)",
+      "seed": 42,
+      "path": "recurrent",
+      "input": {
+        "query":  {"shape": [1, 1, 32, 128], "dtype": "bfloat16"},
+        "key":    {"shape": [1, 1, 32, 128], "dtype": "bfloat16"},
+        "value":  {"shape": [1, 1, 32, 128], "dtype": "bfloat16"},
+        "g":      {"shape": [1, 1, 32], "dtype": "float32"},
+        "beta":   {"shape": [1, 1, 32], "dtype": "bfloat16"},
+        "initial_state":          {"shape": [1, 32, 128, 128], "dtype": "bfloat16"},
+        "output_final_state":     {"value": true},
+        "use_qk_l2norm_in_kernel": {"value": true}
+      },
+      "output": {
+        "core_attn_out":         {"shape": [1, 1, 32, 128], "dtype": "bfloat16"},
+        "last_recurrent_state":  {"shape": [1, 32, 128, 128], "dtype": "float32"}
+      },
+      "rtol": 0.01,
+      "atol": 0.05,
+      "strict_rtol": 0.003,
+      "strict_atol": 0.003,
+      "fuse_path": "pypto"
+    },
+    {
+      "id": "case_002_chunk_prefill",
+      "description": "prefill path: chunk_gated_delta_rule with seq_len=16, no initial state, 24 calls (1 per layer per prefill)",
+      "seed": 42,
+      "path": "chunk",
+      "input": {
+        "query":  {"shape": [1, 16, 32, 128], "dtype": "bfloat16"},
+        "key":    {"shape": [1, 16, 32, 128], "dtype": "bfloat16"},
+        "value":  {"shape": [1, 16, 32, 128], "dtype": "bfloat16"},
+        "g":      {"shape": [1, 16, 32], "dtype": "float32"},
+        "beta":   {"shape": [1, 16, 32], "dtype": "bfloat16"},
+        "initial_state":          {"value": null},
+        "output_final_state":     {"value": true},
+        "use_qk_l2norm_in_kernel": {"value": true}
+      },
+      "output": {
+        "core_attn_out":         {"shape": [1, 16, 32, 128], "dtype": "bfloat16"},
+        "last_recurrent_state":  {"shape": [1, 32, 128, 128], "dtype": "float32"}
+      },
+      "rtol": 0.01,
+      "atol": 0.05,
+      "strict_rtol": 0.003,
+      "strict_atol": 0.003,
+      "fuse_path": "pypto"
+    }
+  ]
+}
