@@ -885,7 +885,7 @@ def test_b64_s64k2_pa_nd_bf16_d():
 
     if pypto.platform.npuarch == 'DAV_3510':
         tile_config.pre_quant_cube_tile = [m_tile_value, m_tile_value, 64, 256, 128, 128]
-        tile_config.cube_qb_tile = [m_tile_value, m_tile_value, 64, 256, 256, 256]
+        tile_config.cube_qb_tile = [32, 32, 64, 256, 256, 256]
         tile_config.cube_wuk_tile = [tile_config.m_tile, tile_config.m_tile, 128, 128, 128, 128]
     else:
         tile_config.pre_quant_cube_tile = [32, 32, 64, 256, 128, 128]
@@ -897,7 +897,7 @@ def test_b64_s64k2_pa_nd_bf16_d():
     tile_config.k_vec_tile0 = 32
     tile_config.k_vec_tile1 = 512
     if pypto.platform.npuarch == 'DAV_3510':
-        tile_config.unroll_list = [128, 64, 32, 16, 8, 4, 2, 1]
+        tile_config.unroll_list = [64, 32, 16, 8, 4, 2, 1]
     else:
         tile_config.unroll_list = [64, 32, 16, 8, 4, 2, 1]
 

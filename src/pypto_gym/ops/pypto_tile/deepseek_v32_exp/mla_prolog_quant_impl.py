@@ -721,7 +721,7 @@ def options_list():
     else:
         return {
             "pass_options": {
-                "cube_l1_reuse_setting": {-1: 8, 0: 1, 1: 1},
+                "cube_l1_reuse_setting": {-1: 8, 0: 1, 1: 1, 2: 1},
                 "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1},
                 "vec_nbuffer_setting": {-2: 1, -1: 4},
             },
