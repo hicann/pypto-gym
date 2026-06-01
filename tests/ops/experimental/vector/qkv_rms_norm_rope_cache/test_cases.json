@@ -1,0 +1,38 @@
+{
+  "op_name": "qkv_rms_norm_rope_cache",
+  "source": "AscendC public contract + torch CPU golden",
+  "test_cases": [
+    {
+      "id": "mtp2_tp4_network_quant",
+      "description": "MTP2-TP4 network case: Nq=16, Nk=Nv=1, BF16 input, INT8 PA_NZ cache",
+      "seed": 20260515,
+      "qkv_size": [16, 3, 18, 128],
+      "head_nums": [16, 1, 1],
+      "block_num": 11898,
+      "block_size": 128,
+      "c0": 32,
+      "cache_dtype": "int8",
+      "epsilon": 0.000001,
+      "cache_mode": "PA_NZ",
+      "is_output_qkv": false,
+      "rtol": 0.004,
+      "atol": 0.004
+    },
+    {
+      "id": "mtp2_tp1_network_quant",
+      "description": "MTP2-TP1 network case: Nq=64, Nk=Nv=4, BF16 input, INT8 PA_NZ cache",
+      "seed": 20260516,
+      "qkv_size": [4, 3, 72, 128],
+      "head_nums": [64, 4, 4],
+      "block_num": 11898,
+      "block_size": 128,
+      "c0": 32,
+      "cache_dtype": "int8",
+      "epsilon": 0.000001,
+      "cache_mode": "PA_NZ",
+      "is_output_qkv": false,
+      "rtol": 0.004,
+      "atol": 0.004
+    }
+  ]
+}
