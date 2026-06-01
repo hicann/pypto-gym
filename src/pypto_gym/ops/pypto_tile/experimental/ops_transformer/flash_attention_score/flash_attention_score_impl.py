@@ -20,19 +20,23 @@ CUBE_PV = ([64, 64], [64, 64], [128, 128])   # P@V:   M≤64, K≤64, N≤256
 
 @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
 def flash_attention_score_kernel_npu(
-    query:       pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    key:         pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    value:       pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    query:       pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    key:         pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    value:       pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     atten_mask:  pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
-    pse:         pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
+    pse:         pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
     drop_mask:   pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
-    output:      pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    softmax_max: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, 1], pypto.DT_FP32),
-    softmax_sum: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.DYNAMIC, 1], pypto.DT_FP32),
+    output:      pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    softmax_max: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_FP32),
+    softmax_sum: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_FP32),
     pse_type:    int,
     keep_prob:   float,
     scale_value: float,
     N_kv:        int,
+    B:           int,
+    N:           int,
+    Sq:          int,
+    Skv:         int,
 ):
     """Integrated Flash Attention Score kernel.
 
@@ -41,31 +45,24 @@ def flash_attention_score_kernel_npu(
     pypto.view(valid_shape=...). Output via 2D→2D pypto.assemble into
     flattened 2D output (host-side unflatten restores 4D).
     """
-    # --- Symbolic dimensions (DYNAMIC axes) ---
-    B      = query.shape[0]                                            # SymbolicScalar
-    N      = query.shape[1]                                            # SymbolicScalar
-    Sq     = query.shape[2]                                            # SymbolicScalar
-    Skv    = key.shape[2]                                              # SymbolicScalar
-    D      = query.shape[3]                                            # compile-time int (pypto.STATIC) — safe for view/tensor shapes
-
-    group = N // N_kv                                                   # SymbolicScalar (GQA group size)
-    num_blocks_q  = (Sq + BLOCK_Q - 1) // BLOCK_Q                      # SymbolicScalar
-    num_blocks_kv = (Skv + BLOCK_KV - 1) // BLOCK_KV                   # SymbolicScalar
+    # --- Symbolic dimensions (compile-time constants from host) ---
+    D           = query.shape[1]                                     # STATIC — safe for view/tensor shapes
+    group       = N // N_kv
+    num_blocks_q  = (Sq + BLOCK_Q - 1) // BLOCK_Q
+    num_blocks_kv = (Skv + BLOCK_KV - 1) // BLOCK_KV
 
     # =====================================================================
-    # Flatten 4D → 2D (inplace=True preserves underlying buffer)
-    # After flattening, all block extraction is 2D→2D pypto.view
-    # (matching the reference flash_attention_mha_impl.py pattern).
+    # Wrapper flattens 4D→2D on host side. Kernel works entirely in 2D.
+    # All block extraction via 2D→2D pypto.view ; output via
+    # pypto.assemble directly into 2D output parameters.
     # =====================================================================
-    query_2d  = pypto.reshape(query,  [B * N * Sq,      D],      inplace=True)
-    key_2d    = pypto.reshape(key,    [B * N_kv * Skv,  D],      inplace=True)
-    value_2d  = pypto.reshape(value,  [B * N_kv * Skv,  D],      inplace=True)
-    pse_2d    = pypto.reshape(pse,    [B * N * Sq,      Skv],    inplace=True)
-    output_2d = pypto.reshape(output, [B * N * Sq,      D],      inplace=True)
-
-    # softmax_max / softmax_sum: reshape to 2D for 2D assemble
-    mm_2d = pypto.reshape(softmax_max, [B * N * Sq, 1], inplace=True)
-    ms_2d = pypto.reshape(softmax_sum, [B * N * Sq, 1], inplace=True)
+    query_2d   = query
+    key_2d     = key
+    value_2d   = value
+    pse_2d     = pse
+    output_2d  = output
+    mm_2d      = softmax_max
+    ms_2d      = softmax_sum
 
     # =====================================================================
     # 5 nested loops
@@ -204,7 +201,8 @@ def flash_attention_score_kernel_npu(
                                                        pypto.DT_BF16)    # [BLOCK_Q,D] bf16
                                 pypto.set_vec_tile_shapes(16, 64)
 
-                                # 2D assemble: write o_final [BLOCK_Q, D] → output_2d
+                                 # 2D assemble: write o_final [BLOCK_Q, D] → output_2d
+
                                 out_row = b_idx * N * Sq + n_idx * Sq + q_start
                                 pypto.assemble(o_final, [out_row, 0], output_2d)
                                 pypto.assemble(m_ij, [out_row, 0], mm_2d)
@@ -272,39 +270,42 @@ def flash_attention_score_wrapper(
     keep_prob,   # float
     scale_value, # float                        (typically 1/sqrt(D))
 ):
-    """Thin host wrapper for flash_attention_score.
+    """Wrapper for flash_attention_score — flatten on host, kernel works in 2D.
 
-    Responsibilities (only these):
-      1. Extract dimensions from input shapes.
-      2. Pre-allocate output buffers (torch.*, per OL58).
-      3. Call JIT exactly ONCE — all 5 loops live inside JIT.
-      4. Return outputs as 4D.
-
-    Outputs are allocated as 4D, flattened to 2D inside JIT (inplace),
-    and returned as 4D — no user-facing flatten/unflatten.
+    The kernel signature is 2D because pypto.assemble only writes back to
+    kernel-parameter tensors, not to pypto-internal buffers.  Flattening
+    on the host side (torch.reshape — a no-copy view) and assembling
+    directly into the 2D output parameter is the only mechanism that
+    reliably transfers result data out of the JIT graph.
     """
-    # Import inside function for torch dependency
     import torch
     import torch_npu  # noqa: F401
 
-    B, N, Sq, D_actual = query.shape
-    N_kv = key.shape[1]
-
     device = query.device
+    B, N, Sq, D = query.shape
+    N_kv = key.shape[1]
+    Skv = key.shape[2]
 
-    # Pre-allocate output buffers as 4D
-    output = torch.empty(B, N, Sq, D_actual,
-                         dtype=torch.bfloat16, device=device)
-    softmax_max = torch.empty(B, N, Sq, 1,
-                              dtype=torch.float32, device=device)
-    softmax_sum = torch.empty(B, N, Sq, 1,
-                              dtype=torch.float32, device=device)
+    # Flatten 4D → 2D (no-copy view)
+    q_2d = query.reshape(B * N * Sq, D)
+    k_2d = key.reshape(B * N_kv * Skv, D)
+    v_2d = value.reshape(B * N_kv * Skv, D)
+    p_2d = pse.reshape(B * N * Sq, Skv)
 
-    # Single JIT call — all 5 loops are inside the JIT graph
+    output_2d = torch.zeros(B * N * Sq, D, dtype=torch.bfloat16, device=device)
+    mm_2d  = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
+    ms_2d  = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
+
     flash_attention_score_kernel_npu(
-        query, key, value, atten_mask, pse, drop_mask,
-        output, softmax_max, softmax_sum,
+        q_2d, k_2d, v_2d, atten_mask, p_2d, drop_mask,
+        output_2d, mm_2d, ms_2d,
         pse_type, keep_prob, scale_value, N_kv,
+        B, N, Sq, Skv,
     )
+
+    # Unflatten 2D → 4D (no-copy view)
+    output       = output_2d.reshape(B, N, Sq, D)
+    softmax_max  = mm_2d.reshape(B, N, Sq, 1)
+    softmax_sum  = ms_2d.reshape(B, N, Sq, 1)
 
     return output, softmax_max, softmax_sum

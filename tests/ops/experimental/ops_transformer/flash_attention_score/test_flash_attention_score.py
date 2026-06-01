@@ -14,6 +14,7 @@ Formulas (IEEE 754-2019 §4.3 / ISO/IEC 10967-2 LIA-2 §5 & §A.3):
 
 L0 — canonical shape:  B=1, N=32, Sq=128, Skv=128, D=64
 L1 — tail-block:       B=1, N=8,  Sq=100, Skv=100, D=128
+L2 — GQA:              B=1, N=16, N_kv=4, Sq=128, Skv=128, D=64
 """
 
 import sys
@@ -129,11 +130,17 @@ def _precision_verify(impl_out, gold_out, tag,
 # ============================================================================
 
 def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
-    """Build FlashAttentionInputs — all tensors created on device."""
+    """Build FlashAttentionInputs — all tensors created on device.
+
+    shape dict keys:
+      B, N, Sq, Skv, D — required
+      N_kv — optional, defaults to N (for GQA: N > N_kv, N % N_kv == 0)
+    """
     torch.manual_seed(seed)
 
     B = shape["B"]
     N = shape["N"]
+    N_kv = shape.get("N_kv", N)
     Sq = shape["Sq"]
     Skv = shape["Skv"]
     D_val = shape["D"]
@@ -141,9 +148,9 @@ def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
     return FlashAttentionInputs(
         query=torch.randn(B, N, Sq, D_val,
                           dtype=torch.bfloat16, device=device) * 0.1,
-        key=torch.randn(B, N, Skv, D_val,
+        key=torch.randn(B, N_kv, Skv, D_val,
                         dtype=torch.bfloat16, device=device) * 0.1,
-        value=torch.randn(B, N, Skv, D_val,
+        value=torch.randn(B, N_kv, Skv, D_val,
                           dtype=torch.bfloat16, device=device) * 0.1,
         atten_mask=torch.zeros(Sq, Skv,
                                dtype=torch.bfloat16, device=device),
@@ -162,7 +169,7 @@ def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
 # ============================================================================
 
 def test_l0() -> None:
-    """L0: canonical shape (Sq=64, Skv=128) — 2 KV blocks, no tail."""
+    """L0: canonical shape (Sq=128, Skv=128) — 2 KV blocks, no tail."""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
@@ -188,7 +195,7 @@ def test_l0() -> None:
 
 
 def test_l1() -> None:
-    """L1: tail-block (Sq=48, Skv=100) — partial Q and KV blocks."""
+    """L1: tail-block (Sq=100, Skv=100) — partial Q and KV blocks."""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
@@ -196,7 +203,7 @@ def test_l1() -> None:
     inputs = _make_inputs(dev, seed=43, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
-    print("L1 — tail-block (integrated JIT, Sq=48<64, Skv=100)")
+    print("L1 — tail-block (integrated JIT, Sq=100, Skv=100, tails=36)")
     print(f"  B={shape['B']}, N={shape['N']}, "
           f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
@@ -213,6 +220,32 @@ def test_l1() -> None:
     print()
 
 
+def test_l2() -> None:
+    """L2: GQA < n_q != n_kv> (B=1, N=16, N_kv=4, Sq=128, Skv=128, D=64)."""
+    _set_device()
+    dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
+
+    shape  = {"B": 1, "N": 16, "N_kv": 4, "Sq": 128, "Skv": 128, "D": 64}
+    inputs = _make_inputs(dev, seed=44, shape=shape, pse_type=1, keep_prob=1.0)
+
+    print("=" * 60)
+    print("L2 — GQA <n_q != n_kv> (N=16, N_kv=4, group=4)")
+    print(f"  B={shape['B']}, N={shape['N']}, N_kv={shape['N_kv']}, "
+          f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
+    print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
+
+    gold = flash_attention_score_golden(inputs, npu=True)
+    impl = flash_attention_score_wrapper(
+        inputs.query, inputs.key, inputs.value,
+        inputs.atten_mask, inputs.pse, inputs.drop_mask,
+        inputs.pse_type, inputs.keep_prob, inputs.scale_value,
+    )
+
+    ok = _precision_verify(impl, gold, tag="L2", atol_bf16=1.0, rtol_bf16=0.0)
+    assert ok, "L2: precision check FAILED"
+    print()
+
+
 # ============================================================================
 # Runner
 # ============================================================================
@@ -225,7 +258,7 @@ if __name__ == "__main__":
     print()
 
     failed = False
-    for name, fn in [("L0", test_l0), ("L1", test_l1)]:
+    for name, fn in [("L0", test_l0), ("L1", test_l1), ("L2", test_l2)]:
         try:
             fn()
             print(f"\N{white heavy check mark} {name} PASSED")
