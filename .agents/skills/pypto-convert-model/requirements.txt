@@ -1,0 +1,17 @@
+# Core
+torch>=2.5
+transformers>=4.46
+huggingface_hub
+safetensors
+accelerate
+
+# Image classifiers (pretrained source for the experiment)
+timm
+
+# ONNX path
+onnx>=1.16
+onnxruntime
+onnxscript
+
+# Optional: needed only by `port.py` for onnx → pt
+onnx2torch

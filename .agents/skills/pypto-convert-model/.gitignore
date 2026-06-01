@@ -1,0 +1,17 @@
+# Cached Python bytecode and editor swap files
+__pycache__/
+*.pyc
+*.bak
+
+# Runtime artifacts produced by scripts/run.py and scripts/port.py
+# default to $XDG_CACHE_HOME / ~/.cache/pypto-convert-model (outside this repo),
+# but accept overrides like $CONVERT_MODEL_WORKDIR=./.cache during development.
+.cache/
+
+# Detailed wiki is maintained out-of-tree and shipped via a separate channel
+# (not as part of this skill's PRs).
+WIKI.md
+
+# Note:
+#   references/matrix.md      IS tracked (frozen evidence of last run).
+#   references/results/*.json IS tracked (per-model evidence).

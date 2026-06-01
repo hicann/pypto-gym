@@ -1,0 +1,32 @@
+{
+  "onnx": {
+    "status": "CONVERT_FAIL",
+    "error": "OnnxExporterError('Module onnx is not installed!')"
+  },
+  "pt": {
+    "status": "PASS",
+    "convert_seconds": 0.13,
+    "artifact": "outputs/toy_soft_moe/pt/model.pt",
+    "size_mb": 0.17,
+    "diff": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "max_rel": 0.0,
+      "size": 20,
+      "allclose": true
+    }
+  },
+  "safetensors": {
+    "status": "PASS",
+    "convert_seconds": 0.0,
+    "artifact": "outputs/toy_soft_moe/safetensors/model.safetensors",
+    "size_mb": 0.14,
+    "diff": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "max_rel": 0.0,
+      "size": 20,
+      "allclose": true
+    }
+  }
+}
