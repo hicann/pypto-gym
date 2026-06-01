@@ -41,7 +41,7 @@ from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 
-from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import set_qwen_common_config, get_common_config, ifa_func_kernel_v2_bound
+from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import get_case_config, build_pfa_config, pfa_func_kernel_v2_bound
 import pypto
 
 np.random.seed(0)
@@ -141,9 +141,9 @@ def gen_block_table(actual_seq_len, block_size, block_table_shape):
 
 def kv_cache_concat_bsnd(kr_cache_out, kv_cache_out, k_scale, block_table, atten_config):
     b = atten_config.b
-    n2 = atten_config.n2
-    kv_lora_rank = atten_config.q_d
-    rope_dim = atten_config.kv_d
+    nkv = atten_config.nkv
+    kv_lora_rank = atten_config.qd
+    rope_dim = atten_config.kvd
     block_size = atten_config.block_size
     kv_cache_actual_seq = atten_config.actual_seq
     dtype = kr_cache_out.dtype
@@ -161,15 +161,15 @@ def kv_cache_concat_bsnd(kr_cache_out, kv_cache_out, k_scale, block_table, atten
 
     # 使用 torch 创建张量，保持在同一设备上
     device = kr_cache_out.device
-    k_cache = torch.zeros([b, kv_max, n2, kv_lora_rank], dtype=dtype, device=device)
-    k_sclae_cache = torch.zeros([b, kv_max, n2, 1], dtype=scale_dtype, device=device)
-    v_cache = torch.zeros([b, kv_max, n2, rope_dim], dtype=kv_cache_out.dtype, device=device)
+    k_cache = torch.zeros([b, kv_max, nkv, kv_lora_rank], dtype=dtype, device=device)
+    k_sclae_cache = torch.zeros([b, kv_max, nkv, 1], dtype=scale_dtype, device=device)
+    v_cache = torch.zeros([b, kv_max, nkv, rope_dim], dtype=kv_cache_out.dtype, device=device)
 
     for b_idx in range(b):
         block_list = block_table[b_idx]
-        kv_nope_temp_tensor = torch.zeros([1, kv_max, n2, kv_lora_rank], dtype=kv_cache_out.dtype, device=device)
-        kv_rope_temp_tensor = torch.zeros([1, kv_max, n2, rope_dim], dtype=dtype, device=device)
-        k_scale_temp_tensor = torch.zeros([1, kv_max, n2, 1], dtype=scale_dtype, device=device)
+        kv_nope_temp_tensor = torch.zeros([1, kv_max, nkv, kv_lora_rank], dtype=kv_cache_out.dtype, device=device)
+        kv_rope_temp_tensor = torch.zeros([1, kv_max, nkv, rope_dim], dtype=dtype, device=device)
+        k_scale_temp_tensor = torch.zeros([1, kv_max, nkv, 1], dtype=scale_dtype, device=device)
         s_idx = 0
 
         for _, block_idx in enumerate(block_list):
@@ -310,15 +310,15 @@ def fp8_bsnd_to_pa_format(tensor_bsnd, block_table, actual_seq, block_size, devi
     return pa_tensor.to(device)
 
 
-def ifa(atten_cfg):
+def pfa(atten_cfg, tile_config):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch_dtype = torch.bfloat16
     torch.npu.set_device(int(device_id))
     b = atten_cfg.b
     s1 = atten_cfg.s1
-    d = atten_cfg.q_d
-    nq = atten_cfg.n1
-    nkv = atten_cfg.n2
+    d = atten_cfg.qd
+    nq = atten_cfg.nq
+    nkv = atten_cfg.nkv
 
     block_size = atten_cfg.block_size
     max_num_blocks_per_query = atten_cfg.max_num_blocks_per_query
@@ -361,9 +361,9 @@ def ifa(atten_cfg):
     act_seq_torch = kv_cache_actual_seq.to(dtype=torch.int32, device=device)
     out_torch = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
 
-    ifa_flash_torch(q=q_fp8_e4m3, q_scale=q_scale, k=k_fp8_e4m3, k_sclae_bsnd=k_scale, v=v_fp8_e4m3,
+    pfa_flash_torch(q=q_fp8_e4m3, q_scale=q_scale, k=k_fp8_e4m3, k_sclae_bsnd=k_scale, v=v_fp8_e4m3,
                     v_scale=v_scale, block_table=block_table_torch, kv_act_seqs=act_seq_torch,
-                    out=attention_output, atten_cfg=atten_cfg)
+                    out=attention_output, atten_cfg=atten_cfg, tile_config=tile_config)
 
     inputs = [
         q_fp8_e4m3,
@@ -377,7 +377,7 @@ def ifa(atten_cfg):
         out_torch
     ]
     # 5. 执行kernel并获取结果
-    attention(*inputs)
+    attention(*inputs, atten_cfg.softmax_scale, tile_config)
 
     # 6. 与PyTorch参考实现对比
     assert_allclose(np.array(attention_output.cpu().flatten().tolist()),
@@ -390,7 +390,7 @@ def matmul_proxy(left, right):
     return torch.matmul(left.to(torch_fp32), right.to(torch_fp32))
 
 
-def ifa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, atten_cfg):
+def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, atten_cfg, tile_config):
     """
     PyTorch版本的FP8量化Flash Attention golden实现（与kernel逻辑一致）
     
@@ -417,7 +417,7 @@ def ifa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
     g_tile = g
 
     softmax_scale = d ** -0.5
-    s2_tile = atten_cfg.s2_tile
+    s2_tile = tile_config.s2_tile
 
     k_2d_shape = (block_num * block_size, n2 * d)
     k_scale_2d_shape = (block_num * block_size, n2 * 1)
@@ -539,23 +539,43 @@ def ifa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
     return out
 
 
-def ifa_test_impl(b=16, s1=1, s2=8192):
-    # 1. 设置参数
-    set_qwen_common_config(b=b, s1=s1, s2=s2)
-    atten_cfg, _ = get_common_config()
+def pfa_test_impl(case_name):
+    case_config = get_case_config(case_name)
+    atten_cfg, tile_config = build_pfa_config(case_config)
 
-    # 检查 B 的大小和 actual_seq 长度是否相等
     check_cond(atten_cfg.b == len(atten_cfg.actual_seq), \
                f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等')
 
-    # 检查所有值是否都小于 s2
     if atten_cfg.actual_seq.device.type != 'cpu':
         actual_seq_cpu = atten_cfg.actual_seq.cpu()
     else:
         actual_seq_cpu = atten_cfg.actual_seq
 
     check_cond(all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2")
-    ifa(atten_cfg)
+    pfa(atten_cfg, tile_config)
+
+
+@pytest.mark.soc("950")
+def test_pfa_for_950():
+    case_names = [
+        "pfa_fp8_b16_s1_1_s2_8k_nkv_1",
+        "pfa_fp8_b16_s1_1_s2_8k_nkv_2",
+        "pfa_fp8_b2_s1_1_s2_1k",
+        "pfa_fp8_b16_s1_1_s2_256_nkv_4",
+    ]
+    for case_name in case_names:
+        case_config = get_case_config(case_name)
+        atten_cfg, tile_config = build_pfa_config(case_config)
+
+        assert atten_cfg.b == len(
+            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+
+        if atten_cfg.actual_seq.device.type != 'cpu':
+            actual_seq_cpu = atten_cfg.actual_seq.cpu()
+        else:
+            actual_seq_cpu = atten_cfg.actual_seq
+        assert all(x <= atten_cfg.s2 for x in actual_seq_cpu), "所有值都必须小于s2"
+        pfa(atten_cfg, tile_config)
 
 
 @allow_in_graph
@@ -568,7 +588,9 @@ def attention(
     value_cache_sclae: torch.Tensor,
     block_tables: torch.Tensor,
     actual_seqs: torch.Tensor,
-    attn_res: torch.Tensor
+    attn_res: torch.Tensor,
+    softmax_scale,
+    tile_config
 ) -> None:
     """
     Main attention function with Attention support.
@@ -584,6 +606,8 @@ def attention(
         block_tables: Block mapping table with shape [batch_size, max_num_blocks_per_query]
         actual_seqs: Actual sequence lengths with shape [batch_size]
         attn_res: Output attention tensor with shape [num_tokens, num_head, head_size]
+        softmax_scale: Scaling factor for attention scores
+        tile_config: PfaTileShapeConfig object containing tiling parameters
 
     Note:
         This function is decorated with @allow_in_graph to enable integration
@@ -603,21 +627,9 @@ def attention(
     inputs = [query, query_scale, key_cache, key_cache_scale, value_cache, value_cache_sclae, block_tables,
               actual_seqs, attn_res]
     for _ in range(1):
-        ifa_func_kernel_v2_bound(*inputs)
-
-
-@pytest.mark.soc("950")
-def test_ifa_01():
-    ifa_test_impl(b=16, s1=1, s2=8192)
-
-
-@pytest.mark.soc("950")
-def test_ifa_02():
-    ifa_test_impl(b=2, s1=1, s2=1024)
+        pfa_func_kernel_v2_bound(*inputs, softmax_scale, tile_config)
 
 
 if __name__ == "__main__":
     if pypto.platform.npuarch == 'DAV_3510':
-        # 950上板
-        test_ifa_01()
-        test_ifa_02()
+        test_pfa_for_950()

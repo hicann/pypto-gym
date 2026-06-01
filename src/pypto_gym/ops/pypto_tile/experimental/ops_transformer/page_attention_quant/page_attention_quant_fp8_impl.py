@@ -17,7 +17,7 @@ handle variable-length sequences and dynamic batch sizes in attention computatio
 
 Main Functions:
     - attention: Main attention function with Attention support
-    - ifa_func: JIT compiled kernel implementing Flash Attention with paged KV cache
+    - pfa_func: JIT compiled kernel implementing Flash Attention with paged KV cache
     - gen_block_table: Generate block mapping table for Attention
     - kv_cache_concat_bsnd: Convert paged KV cache to BSND format
 """
@@ -29,81 +29,107 @@ import pypto
 
 
 @dataclass
-class AttentionTileConfig:
-    g_tile: int = 12
-    s2_tile: int = 512
-    c1_tile_shape: list = None
-    v1_tile_shape: list = None
-    c2_tile_shape: list = None
-    v2_tile_shape: list = None
-
-
-global_tile_config = AttentionTileConfig()
+class PfaTileShapeConfig:
+    g_tile: int
+    s2_tile: int
+    c1_tile_shape: list
+    v1_tile_shape: list
+    c2_tile_shape: list
+    v2_tile_shape: list
 
 
 @dataclass
-class AttentionConfig:
-    b: int = 8
-    s1: int = 1
-    s2: int = 16384
-    n1: int = 12
-    n2: int = 1
-    q_d: int = 128
-    kv_d: int = 128
-    block_size: int = 128
+class PfaConfig:
+    b: int
+    s1: int
+    s2: int
+    nq: int
+    nkv: int
+    qd: int
+    kvd: int
+    block_size: int
     max_num_blocks_per_query: int = 0
     softmax_scale: float = 1.0
     kv_layout: str = "PA_BSND"
-    actual_seq: torch.Tensor = None  # 改为 torch.Tensor 类型
+    actual_seq: torch.Tensor = None
     block_table_batch: int = 0
     kv_num_blocks: int = 0
     s2_tile: int = 1024
 
 
-global_config = AttentionConfig()
+def create_config(b, s1, s2, nq, nkv, qd, block_size, s2_tile, m_tile, cube_tile, v2_tile):
+    return {
+        "b": b, "s1": s1, "s2": s2, "nq": nq, "nkv": nkv, "qd": qd, "block_size": block_size,
+        "tile_config": PfaTileShapeConfig(
+            g_tile=nq // nkv,  # 动态计算
+            s2_tile=min(s2_tile, s2),
+            c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+            v1_tile_shape=[m_tile, s2_tile],
+            c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+            v2_tile_shape=[m_tile, v2_tile],
+        ),
+    }
 
 
-def get_common_config():
-    return global_config, global_tile_config
+def get_case_config(case_name: str):
+    m_tile = 128
+    cube_tile = 128
+    s2_tile = 1024
+    v2_tile = 512
+    test_case_config = {
+        "pfa_fp8_b16_s1_1_s2_8k_nkv_1": create_config(
+            b=16, s1=1, s2=8192, nq=12, nkv=1, qd=128, 
+            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
+            cube_tile=cube_tile, v2_tile=v2_tile
+        ),
+        "pfa_fp8_b16_s1_1_s2_8k_nkv_2": create_config(
+            b=16, s1=1, s2=8192, nq=12, nkv=2, qd=128, 
+            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
+            cube_tile=cube_tile, v2_tile=v2_tile
+        ),
+        "pfa_fp8_b2_s1_1_s2_1k": create_config(
+            b=2, s1=1, s2=1024, nq=12, nkv=1, qd=128, 
+            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
+            cube_tile=cube_tile, v2_tile=v2_tile
+        ),
+        "pfa_fp8_b16_s1_1_s2_256_nkv_4": create_config(
+            b=16, s1=1, s2=256, nq=16, nkv=4, qd=128, 
+            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
+            cube_tile=cube_tile, v2_tile=v2_tile
+        ),
+    }
+    return test_case_config.get(case_name)
 
 
-def set_qwen_common_config(b=16, s1=1, s2=8192):
-    global global_tile_config
-    global global_config
+def build_pfa_config(case_config):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     device = f'npu:{device_id}'
-    b = b
-    s1 = s1
-    s2 = s2
-    q_d = 128
-    nq = 12
-    nkv = 1
+
+    b = case_config["b"]
+    s1 = case_config["s1"]
+    s2 = case_config["s2"]
+    nq = case_config["nq"]
+    nkv = case_config["nkv"]
+    qd = case_config["qd"]
+    block_size = case_config["block_size"]
     kv_layout = "PA_BSND"
-    softmax_scale = q_d ** -0.5
+    softmax_scale = qd ** -0.5
     block_table_batch = b
-    s2_tile = 1024
-    block_size = 128
+    s2_tile = case_config["tile_config"].s2_tile
     kv_num_blocks = b * ((s2 + block_size - 1) // block_size)
 
-    # 创建 torch tensor 类型的 actual_seq
     actual_seq_values = [s2] * b
     actual_seq_tensor = torch.tensor(actual_seq_values, dtype=torch.int32, device=device)
 
-    atten_cfg = AttentionConfig(b=b, s1=s1, s2=s2, n1=nq, n2=nkv, softmax_scale=softmax_scale, kv_layout=kv_layout,
-                                q_d=q_d, kv_d=q_d, block_size=block_size, block_table_batch=block_table_batch,
-                                kv_num_blocks=kv_num_blocks, actual_seq=actual_seq_tensor, s2_tile=s2_tile)
+    atten_cfg = PfaConfig(
+        b=b, s1=s1, s2=s2, nq=nq, nkv=nkv, qd=qd, kvd=qd,
+        block_size=block_size, softmax_scale=softmax_scale, kv_layout=kv_layout,
+        block_table_batch=block_table_batch, kv_num_blocks=kv_num_blocks,
+        actual_seq=actual_seq_tensor, s2_tile=s2_tile
+    )
     atten_cfg.max_num_blocks_per_query = (s2 + block_size - 1) // block_size
-    cube_tile = 128
-    m_tile = 128
-    tile_cfg = AttentionTileConfig(
-        nq,
-        s2_tile,
-        [[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
-        [m_tile, s2_tile],
-        [[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
-        [m_tile, 512])
-    global_config = atten_cfg
-    global_tile_config = tile_cfg
+
+    return atten_cfg, case_config["tile_config"]
 
 
 def dequant_dynamic(in_tensor, scale_1, scale_2):
@@ -163,9 +189,9 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
         "enable_pass_verify": False,
         "pass_verify_save_tensor": False,
     },
-    host_options={"compile_monitor_enable": 1}
+    host_options={"compile_monitor_enable": 1},
 )
-def ifa_func_kernel_v2_bound(
+def pfa_func_kernel_v2_bound(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),
     q_scale: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32),
     k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),
@@ -174,19 +200,11 @@ def ifa_func_kernel_v2_bound(
     v_scale: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32),
     block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32),
     kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
-    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
+    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    softmax_scale, tile_config
 ):
-    # 1. 添加支持动态的config
     pypto.experimental.set_operation_options(combine_axis=True)
 
-    atten_cfg, tile_cfg = get_common_config()
-    if tile_cfg.c1_tile_shape is None:
-        set_qwen_common_config(b=16, s1=1, s2=8192)
-        atten_cfg, tile_cfg = get_common_config()
-    
-    softmax_scale = atten_cfg.softmax_scale
-
-    # 2. 从入参拿到输入和输出tensor
     shape_q = q.shape
     shape_k = k.shape
     bs_scalar = shape_q[0]
@@ -201,17 +219,16 @@ def ifa_func_kernel_v2_bound(
     group = nq // nkv
     n2_sym = nkv
 
-    g_tile = tile_cfg.g_tile
-    s2_tile = tile_cfg.s2_tile
-    c1_tile = tile_cfg.c1_tile_shape
-    v1_tile = tile_cfg.v1_tile_shape
-    c2_tile = tile_cfg.c2_tile_shape
-    v2_tile = tile_cfg.v2_tile_shape
+    g_tile = tile_config.g_tile
+    s2_tile = tile_config.s2_tile
+    c1_tile = tile_config.c1_tile_shape
+    v1_tile = tile_config.v1_tile_shape
+    c2_tile = tile_config.c2_tile_shape
+    v2_tile = tile_config.v2_tile_shape
 
     # 3. 得到动态tensor的shape
     s1_scalar = bs_scalar // b_scalar
-    g = nq // nkv
-    g_loop = g // g_tile
+    g_loop = group // g_tile
 
     k_2d_shape = (block_num_scalar * block_size, n2_sym * dn)
     q_2d_shape = (b_scalar * s1_scalar * nq, dn)
@@ -254,9 +271,9 @@ def ifa_func_kernel_v2_bound(
                             block_idx = block_table[b_idx, idx + i]
                             block_idx_valid = block_idx.max(0)
                             kj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
-                                pypto.view(k_2d, [block_size, dn], [block_idx_valid * block_size, 0])
+                                pypto.view(k_2d, [block_size, dn], [block_idx_valid * block_size, n2_idx * dn])
                             kj_sclae_assemble[i * block_size:(i + 1) * block_size, 0:] = \
-                                pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, 0])
+                                pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, n2_idx * 1])
                         
                         kj_assemble = pypto.view(kj_assemble, [s2_tile, dn], [0, 0], valid_shape=[s2_tile, dn])
                         kj_sclae_assemble = pypto.view(kj_sclae_assemble, [s2_tile, 1], [0, 0], 
@@ -291,7 +308,7 @@ def ifa_func_kernel_v2_bound(
                             block_idx = block_table[b_idx, idx + i]
                             block_idx_valid = block_idx.max(0)
                             vj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
-                                pypto.view(v_2d, [block_size, dn], [block_idx_valid * block_size, 0])
+                                pypto.view(v_2d, [block_size, dn], [block_idx_valid * block_size, n2_idx * dn])
                         
                         vj_assemble = pypto.view(vj_assemble, [s2_tile, dn],
                                                     [0, 0], valid_shape=[actual_s2_tile, dn])
@@ -300,7 +317,7 @@ def ifa_func_kernel_v2_bound(
                         oi_tmp_quant = pypto.matmul(tilda_pij_fp8_e4m3, vj_assemble, pypto.DT_FP32)
                         # dequant
                         pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
-                        vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, 0])
+                        vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, n2_idx * dn])
                         mm2_res = dequant_dynamic(oi_tmp_quant, tilda_pij_scale, vj_scale_assemble)
                         
                         # # v2
