@@ -57,12 +57,16 @@ class PfaConfig:
     s2_tile: int = 1024
 
 
-def create_config(b, s1, s2, nq, nkv, qd, block_size, s2_tile, m_tile, cube_tile, v2_tile):
+def create_config(b, s1, s2, nq, nkv, qd, block_size):
+    m_tile = 128
+    cube_tile = 128
+    s2_tile = 128
+    v2_tile = 512
     return {
         "b": b, "s1": s1, "s2": s2, "nq": nq, "nkv": nkv, "qd": qd, "block_size": block_size,
         "tile_config": PfaTileShapeConfig(
             g_tile=nq // nkv,  # 动态计算
-            s2_tile=min(s2_tile, s2),
+            s2_tile=1024 if s2 == 8192 else s2_tile,
             c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
             v1_tile_shape=[m_tile, s2_tile],
             c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -72,30 +76,27 @@ def create_config(b, s1, s2, nq, nkv, qd, block_size, s2_tile, m_tile, cube_tile
 
 
 def get_case_config(case_name: str):
-    m_tile = 128
-    cube_tile = 128
-    s2_tile = 1024
-    v2_tile = 512
+
     test_case_config = {
+        "pfa_fp8_b16_s1_1_s2_8195_nkv_2": create_config(
+            b=16, s1=1, s2=8195, nq=12, nkv=2, qd=128, 
+            block_size=128
+        ),
         "pfa_fp8_b16_s1_1_s2_8k_nkv_1": create_config(
             b=16, s1=1, s2=8192, nq=12, nkv=1, qd=128, 
-            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
-            cube_tile=cube_tile, v2_tile=v2_tile
+            block_size=128
         ),
         "pfa_fp8_b16_s1_1_s2_8k_nkv_2": create_config(
             b=16, s1=1, s2=8192, nq=12, nkv=2, qd=128, 
-            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
-            cube_tile=cube_tile, v2_tile=v2_tile
+            block_size=128
         ),
         "pfa_fp8_b2_s1_1_s2_1k": create_config(
             b=2, s1=1, s2=1024, nq=12, nkv=1, qd=128, 
-            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
-            cube_tile=cube_tile, v2_tile=v2_tile
+            block_size=128
         ),
         "pfa_fp8_b16_s1_1_s2_256_nkv_4": create_config(
             b=16, s1=1, s2=256, nq=16, nkv=4, qd=128, 
-            block_size=128, s2_tile=s2_tile, m_tile=m_tile, 
-            cube_tile=cube_tile, v2_tile=v2_tile
+            block_size=128
         ),
     }
     return test_case_config.get(case_name)

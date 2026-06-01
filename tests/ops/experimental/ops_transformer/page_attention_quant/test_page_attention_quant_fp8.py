@@ -558,6 +558,7 @@ def pfa_test_impl(case_name):
 @pytest.mark.soc("950")
 def test_pfa_for_950():
     case_names = [
+        "pfa_fp8_b16_s1_1_s2_8195_nkv_2",
         "pfa_fp8_b16_s1_1_s2_8k_nkv_1",
         "pfa_fp8_b16_s1_1_s2_8k_nkv_2",
         "pfa_fp8_b2_s1_1_s2_1k",
