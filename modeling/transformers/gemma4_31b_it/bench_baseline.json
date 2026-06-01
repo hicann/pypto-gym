@@ -1,0 +1,25 @@
+{
+  "model": "Gemma-4-31B-it",
+  "mode": "baseline",
+  "device": "npu:14",
+  "input_tokens": 9900,
+  "output_length": 100,
+  "prefill_s": 6.387,
+  "warmup_iters": 0,
+  "num_iters": 1,
+  "time_mean_s": 20.635,
+  "time_std_s": 0.0,
+  "time_min_s": 20.635,
+  "time_max_s": 20.635,
+  "tps_mean": 4.8,
+  "tps_std": 0.0,
+  "tps_min": 4.8,
+  "tps_max": 4.8,
+  "per_iter": [
+    {
+      "time_s": 20.635,
+      "tokens": 100,
+      "tps": 4.8
+    }
+  ]
+}

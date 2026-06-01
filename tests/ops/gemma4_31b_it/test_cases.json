@@ -1,0 +1,96 @@
+{
+  "model": "gemma-4-31b-it",
+  "source": "Gemma-4-31B-it: hidden_size=5376, intermediate_size=21504, head_dim=256, sliding_window=1024",
+  "test_cases": [
+    {
+      "op_name": "attn_softmax",
+      "id": "softmax_decode_s1",
+      "description": "Decode step: S=1 (single KV token).",
+      "seed": 42,
+      "input": [{"name": "scores", "shape": [1, 1], "dtype": "bfloat16"}],
+      "scale": 0.0625,
+      "rtol": 0.0078125,
+      "atol": 0.0001
+    },
+    {
+      "op_name": "attn_softmax",
+      "id": "softmax_prefill_s128",
+      "description": "Short prefill: S=128.",
+      "seed": 42,
+      "input": [{"name": "scores", "shape": [1, 128], "dtype": "bfloat16"}],
+      "scale": 0.0625,
+      "rtol": 0.0078125,
+      "atol": 0.0001
+    },
+    {
+      "op_name": "attn_softmax",
+      "id": "softmax_prefill_s512",
+      "description": "Medium prefill: S=512.",
+      "seed": 42,
+      "input": [{"name": "scores", "shape": [1, 512], "dtype": "bfloat16"}],
+      "scale": 0.0625,
+      "rtol": 0.0078125,
+      "atol": 0.0001
+    },
+    {
+      "op_name": "attn_softmax",
+      "id": "softmax_prefill_s1024",
+      "description": "Sliding window max: S=1024.",
+      "seed": 42,
+      "input": [{"name": "scores", "shape": [1, 1024], "dtype": "bfloat16"}],
+      "scale": 0.0625,
+      "rtol": 0.0078125,
+      "atol": 0.0001
+    },
+    {
+      "op_name": "gqa_decode_attn",
+      "id": "gqa_global_skv64",
+      "description": "Global attention, Skv=64 (1 S2_TILE).",
+      "seed": 42,
+      "Skv": 64,
+      "layer_kind": "global",
+      "rtol": 0.005,
+      "atol": 0.005
+    },
+    {
+      "op_name": "gqa_decode_attn",
+      "id": "gqa_global_skv128",
+      "description": "Global attention, Skv=128 (2 S2_TILEs).",
+      "seed": 42,
+      "Skv": 128,
+      "layer_kind": "global",
+      "rtol": 0.005,
+      "atol": 0.005
+    },
+    {
+      "op_name": "gqa_decode_attn",
+      "id": "gqa_global_skv512",
+      "description": "Global attention, Skv=512.",
+      "seed": 42,
+      "Skv": 512,
+      "layer_kind": "global",
+      "rtol": 0.005,
+      "atol": 0.005
+    },
+    {
+      "op_name": "gqa_decode_attn",
+      "id": "gqa_local_skv512",
+      "description": "Local attention, Skv=512 (< W=1024, no slice).",
+      "seed": 42,
+      "Skv": 512,
+      "layer_kind": "local",
+      "rtol": 0.005,
+      "atol": 0.005
+    },
+    {
+      "op_name": "gqa_decode_attn",
+      "id": "gqa_local_skv4096",
+      "description": "Local attention, Skv=4096 (> W=1024, sliced to 1024).",
+      "seed": 42,
+      "Skv": 4096,
+      "layer_kind": "local",
+      "rtol": 0.005,
+      "atol": 0.005
+    }
+  ]
+}
