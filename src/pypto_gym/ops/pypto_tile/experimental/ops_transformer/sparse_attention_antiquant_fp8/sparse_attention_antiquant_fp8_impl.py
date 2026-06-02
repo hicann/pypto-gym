@@ -273,7 +273,6 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config):
 
 @pypto.frontend.jit(
     host_options={
-        "compile_monitor_enable": True,
         "compile_timeout": 10,
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
@@ -349,7 +348,6 @@ def sparse_attention_antiquant_d(
 
 @pypto.frontend.jit(
     host_options={
-        "compile_monitor_enable": True,
         "compile_timeout": 10,
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
