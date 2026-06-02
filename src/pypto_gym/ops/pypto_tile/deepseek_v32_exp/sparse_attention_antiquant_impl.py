@@ -113,6 +113,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                     for s2_idx, _ in pypto.loop_unroll(0, bn_per_batch, 1,
                         name="LOOP_L4_s2_SA", idx_name="s2_idx", unroll_list={1}):
                         cur_s2_tile = s2_tile
+
                         pypto.set_pass_options(sg_set_scope=5001)
                         cur_topk_indices = pypto.view(topk_indices, [1, cur_s2_tile],
                                                   [batch_idx * s1_sym + slc_idx, s2_idx * cur_s2_tile],
@@ -228,7 +229,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                         t_sub = pypto.sub(sij_scale, tilda_mij_reduce)
                         tilda_pij = pypto.exp(t_sub)
                         tilda_lij_reduce = pypto.sum(tilda_pij, dim=-1, keepdim=True)
-                        t_softmax = pypto.div(tilda_pij, tilda_lij_reduce)
+                        t_softmax = pypto.div(tilda_pij, tilda_lij_reduce, pypto.PrecisionType.INTRINSIC)
                         tilda_pij_f16 = pypto.cast(t_softmax, dtype)
 
                         # C2
@@ -244,16 +245,36 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                         pypto.assemble(q1, [cur_offset, 0], attention_out)
 
 
+def options_list():
+    if pypto.platform.npuarch == 'DAV_3510':
+        return {
+            "pass_options": {
+                "vec_nbuffer_setting": {"DEFAULT": 1,"func20_8": 2, "func20_0": 8, "func20_1": 2},
+                "cube_l1_reuse_setting": {"DEFAULT": 8, "func20_1": 1},
+            },
+            "runtime_options": {
+                "stitch_function_max_num": 128,
+                "device_sched_mode": 3,
+                "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+            },
+            }
+    else:
+        return {
+            "pass_options": {
+                "vec_nbuffer_setting": {-1: 2, 0: 4},
+                "cube_l1_reuse_setting": {-1: 2},
+            },
+            "runtime_options": {
+                "stitch_function_max_num": 128,
+                "device_sched_mode": 3,
+                "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+            },
+        }
+
+
 @pypto.frontend.jit(
-    pass_options={
-        "vec_nbuffer_setting": {-1: 2, 0: 4},
-        "cube_l1_reuse_setting": {-1: 2},
-    },
-    runtime_options={
-        "stitch_function_max_num": 128,
-        "device_sched_mode": 3,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
-    }
+    pass_options=options_list()["pass_options"],
+    runtime_options=options_list()["runtime_options"],
 )
 def sparse_attention_antiquant_d(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),

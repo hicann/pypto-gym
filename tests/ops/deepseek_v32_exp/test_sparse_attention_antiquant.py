@@ -313,14 +313,24 @@ def do_test_sparse_attention_func_aq(bn1n2s1, actual_seq, input_params, input_da
             v2_tile_shape=[64, 128]
         )
     else:
-        tile_config = SaTileShapeConfig(
+        if pypto.platform.npuarch == 'DAV_3510':
+            tile_config = SaTileShapeConfig(
             g_tile=128,
             s_kv_tile=2048,
-            c1_tile_shape=[128, 128, 128, 128, 128, 128],
+            c1_tile_shape=[128, 128, 128, 128, 64, 64],
             v1_tile_shape=[8, 2048],
             c2_tile_shape=[128, 128, 128, 128, 128, 128],
             v2_tile_shape=[64, 128]
         )
+        else:
+            tile_config = SaTileShapeConfig(
+                g_tile=128,
+                s_kv_tile=2048,
+                c1_tile_shape=[128, 128, 128, 128, 128, 128],
+                v1_tile_shape=[8, 2048],
+                c2_tile_shape=[128, 128, 128, 128, 128, 128],
+                v2_tile_shape=[64, 128]
+            )
 
     b, s1, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num, block_size, topk, \
         softmax_scale = input_params
