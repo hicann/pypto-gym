@@ -708,23 +708,13 @@ def mla_prolog_quant_compute(
             kv_cache_out[:] = pypto.scatter_update(kv_cache, -2, index, k_nope_4d)
 
 
-
 def options_list():
     if pypto.platform.npuarch == 'DAV_3510':
         return {
-            "pass_options": {
-                "cube_l1_reuse_setting": {-1: 4, 0: 1, 1: 1, 2: 1},
-                "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1, 2: 1, 3: 3},
-            },
             "runtime_options": {"device_sched_mode": 2},
             }
     else:
         return {
-            "pass_options": {
-                "cube_l1_reuse_setting": {-1: 8, 0: 1, 1: 1, 2: 1},
-                "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1},
-                "vec_nbuffer_setting": {-2: 1, -1: 4},
-            },
             "runtime_options": {
                 "device_sched_mode": 2, 
                 "stitch_function_max_num": 128
@@ -812,7 +802,6 @@ def mla_prolog_quant_p(
 
 
 @pypto.frontend.jit(
-    pass_options=options_list()["pass_options"],
     runtime_options=options_list()["runtime_options"],
 )
 def mla_prolog_quant_d(
@@ -875,6 +864,18 @@ def mla_prolog_quant_d(
     Note:
         Configured for decode phase with optimized memory and latency settings.
     """
+    t = token_x.shape[0]
+    if pypto.platform.npuarch == 'DAV_3510':
+        if t > 64:
+            pypto.set_pass_options(cube_l1_reuse_setting={-1: 4, 0: 1, 1: 1, 2: 1, 3: 1})
+            pypto.set_pass_options(cube_nbuffer_setting={-1: 4, 0: 1, 1: 1, 2: 1, 3: 3})
+        else:
+            pypto.set_pass_options(cube_l1_reuse_setting={-1: 4, 0: 1, 1: 1, 2: 1})
+            pypto.set_pass_options(cube_nbuffer_setting={-1: 4, 0: 1, 1: 1, 2: 3})
+    else:
+        pypto.set_pass_options(cube_l1_reuse_setting={-1: 8, 0: 1, 1: 1, 2: 1})
+        pypto.set_pass_options(cube_nbuffer_setting={-1: 4, 0: 1, 1: 1})
+        pypto.set_pass_options(vec_nbuffer_setting={-2: 1, -1: 4})
     mla_prolog_quant_compute(
                             token_x, w_dq, w_uq_qr, dequant_scale, w_uk,
                             w_dkv_kr, gamma_cq, gamma_ckv, cos,
