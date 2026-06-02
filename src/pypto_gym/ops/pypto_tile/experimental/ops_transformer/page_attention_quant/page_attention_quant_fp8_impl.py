@@ -78,6 +78,10 @@ def create_config(b, s1, s2, nq, nkv, qd, block_size):
 def get_case_config(case_name: str):
 
     test_case_config = {
+        "pfa_fp8_b1_s1_2_s2_2048_nkv_8": create_config(
+            b=1, s1=2, s2=2048, nq=48, nkv=8, qd=128, 
+            block_size=128
+        ),
         "pfa_fp8_b16_s1_1_s2_8195_nkv_2": create_config(
             b=16, s1=1, s2=8195, nq=12, nkv=2, qd=128, 
             block_size=128
@@ -233,7 +237,7 @@ def pfa_func_kernel_v2_bound(
 
     k_2d_shape = (block_num_scalar * block_size, n2_sym * dn)
     q_2d_shape = (b_scalar * s1_scalar * nq, dn)
-    q_scale_2d_shape = (b_scalar * 1 * nq, 1)
+    q_scale_2d_shape = (b_scalar * s1_scalar * nq, 1)
     k_scale_2d_shape = (block_num_scalar * block_size, n2_sym * 1)
     v_scale_2d_shape = (b_scalar * 1, n2_sym * dn)
 
@@ -247,7 +251,7 @@ def pfa_func_kernel_v2_bound(
     # 4. 实现kernel逻辑，循环展开B动态轴
     for b_idx in pypto.loop(b_scalar, name="LOOP_b", idx_name="b_idx"):
         for s1_idx in pypto.loop(s1_scalar, name="LOOP_s1", idx_name="s1_idx"):
-            cur_seq = kv_act_seqs[b_idx] - (s1_scalar - 1 - s1_idx)
+            cur_seq = (kv_act_seqs[b_idx] - (s1_scalar - 1 - s1_idx)).max(0)
             s2_loop = (cur_seq + s2_tile - 1) // s2_tile
             for n2_idx in pypto.loop(n2_sym, name="LOOP_n2", idx_name="n2_idx"):
                 for g_idx in pypto.loop(g_loop, name="LOOP_g", idx_name="g_idx"):
@@ -276,9 +280,9 @@ def pfa_func_kernel_v2_bound(
                             kj_sclae_assemble[i * block_size:(i + 1) * block_size, 0:] = \
                                 pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, n2_idx * 1])
                         
-                        kj_assemble = pypto.view(kj_assemble, [s2_tile, dn], [0, 0], valid_shape=[s2_tile, dn])
+                        kj_assemble = pypto.view(kj_assemble, [s2_tile, dn], [0, 0], valid_shape=[actual_s2_tile, dn])
                         kj_sclae_assemble = pypto.view(kj_sclae_assemble, [s2_tile, 1], [0, 0], 
-                                            valid_shape=[s2_tile, 1])
+                                            valid_shape=[actual_s2_tile, 1])
 
                         # c1
                         # 6. 下面是flash attention的计算逻辑
