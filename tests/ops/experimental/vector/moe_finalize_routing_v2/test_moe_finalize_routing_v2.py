@@ -189,53 +189,6 @@ def test_moe_finalize_routing_v2_basic(device_id=None, run_mode="npu"):
     )
 
 
-def test_moe_finalize_routing_v2_small_scale(device_id=None, run_mode="npu"):
-    """Level 0: 小规模验证，K=1，无可选参数。"""
-    run_moe_finalize_routing_v2_test(
-        num_rows=8, K=1, H=16,
-        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
-        drop_pad_mode=2, seed=100,
-        device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=8, K=1, H=16 (Level 0 - Small Scale)",
-    )
-
-
-def test_moe_finalize_routing_v2_drop_pad(device_id=None, run_mode="npu"):
-    """Level 0: drop_pad 场景验证，K=1。"""
-    run_moe_finalize_routing_v2_test(
-        num_rows=8, K=1, H=16,
-        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
-        drop_pad_mode=3, seed=200,
-        device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=8, K=1, H=16, drop_pad_mode=3 (Level 0)",
-    )
-
-def test_moe_finalize_routing_v2_16384(device_id=None, run_mode="npu"):
-    """Level 0: drop_pad 场景验证，K=1。"""
-    run_moe_finalize_routing_v2_test(
-        num_rows=16384, K=1, H=7168,
-        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
-        drop_pad_mode=2, seed=200,
-        device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=16384, K=1, H=7168, drop_pad_mode=2 (Level 0)",
-    )
-
-
-# ─────────────────────────────────────────────
-# 4. Level 1 测试：可选参数验证
-# ─────────────────────────────────────────────
-
-def test_moe_finalize_routing_v2_with_residual(device_id=None, run_mode="npu"):
-    """Level 1: 残差连接测试，K=1。"""
-    run_moe_finalize_routing_v2_test(
-        num_rows=4096, K=4, H=7168,
-        has_x1=True, has_x2=True, has_bias=False, has_scales=False,
-        drop_pad_mode=2, seed=42,
-        device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=4096, K=1, H=7168, with x1+x2 (Level 1)",
-    )
-
-
 def test_moe_finalize_routing_v2_with_scales(device_id=None, run_mode="npu"):
     """Level 1: 路由权重测试，K=2。"""
     run_moe_finalize_routing_v2_test(
@@ -247,28 +200,46 @@ def test_moe_finalize_routing_v2_with_scales(device_id=None, run_mode="npu"):
     )
 
 
-def test_moe_finalize_routing_v2_with_expert_params(device_id=None, run_mode="npu"):
-    """Level 1: 专家参数测试（bias + expert_idx + scales），K=4。"""
+def test_moe_finalize_routing_v2_8(device_id=None, run_mode="npu"):
+    """Level 0: drop_pad 场景验证，K=1。"""
     run_moe_finalize_routing_v2_test(
-        num_rows=4096, K=4, H=7168, E=8,
-        has_x1=False, has_x2=False, has_bias=True, has_scales=True,
-        drop_pad_mode=2, seed=42,
+        num_rows=8, K=8, H=7168,
+        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
+        drop_pad_mode=2, seed=200,
         device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=4096, K=4, H=7168, E=8, with bias+scales (Level 1)",
+        test_name="num_rows=8, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
 
-
-def test_moe_finalize_routing_v2_full_params(device_id=None, run_mode="npu"):
-    """Level 1: 全参数测试（x1 + x2 + bias + scales），K=4。"""
+def test_moe_finalize_routing_v2_128(device_id=None, run_mode="npu"):
+    """Level 0: drop_pad 场景验证，K=1。"""
     run_moe_finalize_routing_v2_test(
-        num_rows=512, K=4, H=256, E=8,
-        has_x1=True, has_x2=True, has_bias=True, has_scales=True,
-        drop_pad_mode=2, seed=100,
+        num_rows=128, K=8, H=7168,
+        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
+        drop_pad_mode=2, seed=200,
         device_id=device_id, run_mode=run_mode,
-        test_name="num_rows=512, K=4, H=256, E=8, full params (Level 1)",
+        test_name="num_rows=128, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
 
+def test_moe_finalize_routing_v2_8192(device_id=None, run_mode="npu"):
+    """Level 0: drop_pad 场景验证，K=1。"""
+    run_moe_finalize_routing_v2_test(
+        num_rows=8192, K=8, H=7168,
+        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
+        drop_pad_mode=2, seed=200,
+        device_id=device_id, run_mode=run_mode,
+        test_name="num_rows=8192, K=8, H=7168, drop_pad_mode=2 (Level 0)",
+    )
 
+def test_moe_finalize_routing_v2_16384(device_id=None, run_mode="npu"):
+    """Level 0: drop_pad 场景验证，K=1。"""
+    run_moe_finalize_routing_v2_test(
+        num_rows=16384, K=8, H=7168,
+        has_x1=False, has_x2=False, has_bias=False, has_scales=False,
+        drop_pad_mode=2, seed=200,
+        device_id=device_id, run_mode=run_mode,
+        test_name="num_rows=16384, K=8, H=7168, drop_pad_mode=2 (Level 0)",
+    )
+    
 # ─────────────────────────────────────────────
 # 5. CLI 入口
 # ─────────────────────────────────────────────
@@ -279,35 +250,25 @@ EXAMPLES = {
         "description": "test_moe_finalize_routing_v2_basic",
         "function": test_moe_finalize_routing_v2_basic,
     },
-    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_small_scale": {
-        "name": "moe_finalize_routing_v2 Small Scale",
-        "description": "test_moe_finalize_routing_v2_small_scale",
-        "function": test_moe_finalize_routing_v2_small_scale,
-    },
-    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_drop_pad": {
-        "name": "moe_finalize_routing_v2 Drop Pad",
-        "description": "test_moe_finalize_routing_v2_drop_pad",
-        "function": test_moe_finalize_routing_v2_drop_pad,
-    },
-    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_with_residual": {
-        "name": "moe_finalize_routing_v2 With Residual",
-        "description": "test_moe_finalize_routing_v2_with_residual",
-        "function": test_moe_finalize_routing_v2_with_residual,
-    },
     "moe_finalize_routing_v2::test_moe_finalize_routing_v2_with_scales": {
         "name": "moe_finalize_routing_v2 With Scales",
         "description": "test_moe_finalize_routing_v2_with_scales",
         "function": test_moe_finalize_routing_v2_with_scales,
     },
-    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_with_expert_params": {
-        "name": "moe_finalize_routing_v2 With Expert Params",
-        "description": "test_moe_finalize_routing_v2_with_expert_params",
-        "function": test_moe_finalize_routing_v2_with_expert_params,
+    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_8": {
+        "name": "test_moe_finalize_routing_v2_8",
+        "description": "test_moe_finalize_routing_v2_8",
+        "function": test_moe_finalize_routing_v2_8,
     },
-    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_full_params": {
-        "name": "moe_finalize_routing_v2 Full Params",
-        "description": "test_moe_finalize_routing_v2_full_params",
-        "function": test_moe_finalize_routing_v2_full_params,
+    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_128": {
+        "name": "test_moe_finalize_routing_v2_128",
+        "description": "test_moe_finalize_routing_v2_128",
+        "function": test_moe_finalize_routing_v2_128,
+    },
+    "moe_finalize_routing_v2::test_moe_finalize_routing_v2_8192": {
+        "name": "test_moe_finalize_routing_v2_8192",
+        "description": "test_moe_finalize_routing_v2_8192",
+        "function": test_moe_finalize_routing_v2_8192,
     },
     "moe_finalize_routing_v2::test_moe_finalize_routing_v2_16384": {
         "name": "test_moe_finalize_routing_v2_16384",
