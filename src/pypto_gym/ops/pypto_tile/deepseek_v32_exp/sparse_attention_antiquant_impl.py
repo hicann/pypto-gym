@@ -115,10 +115,11 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
                         cur_s2_tile = s2_tile
 
                         pypto.set_pass_options(sg_set_scope=5001)
-                        cur_topk_indices = pypto.view(topk_indices, [1, cur_s2_tile],
-                                                  [batch_idx * s1_sym + slc_idx, s2_idx * cur_s2_tile],
-                                                  valid_shape=[1, (cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile)])
-                        cur_block_table = pypto.view(block_table, [1, max_blocknum_perbatch], [batch_idx, 0])
+                        if pypto.platform.npuarch != 'DAV_3510':
+                            cur_topk_indices = pypto.view(topk_indices, [1, cur_s2_tile],
+                                                    [batch_idx * s1_sym + slc_idx, s2_idx * cur_s2_tile],
+                                                    valid_shape=[1, (cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile)])
+                            cur_block_table = pypto.view(block_table, [1, max_blocknum_perbatch], [batch_idx, 0])
 
                         # V0
                         # nope_cache索引
@@ -249,12 +250,12 @@ def options_list():
     if pypto.platform.npuarch == 'DAV_3510':
         return {
             "pass_options": {
-                "vec_nbuffer_setting": {"DEFAULT": 1,"func20_8": 2, "func20_0": 8, "func20_1": 2},
-                "cube_l1_reuse_setting": {"DEFAULT": 8, "func20_1": 1},
+                "vec_nbuffer_setting": {"DEFAULT": 1, "func20_8": 2, "func20_0": 8, "func20_1": 2},
+                "cube_l1_reuse_setting": {"DEFAULT": 4, "func20_1": 1},
             },
             "runtime_options": {
-                "stitch_function_max_num": 128,
-                "device_sched_mode": 3,
+                "stitch_function_max_num": 256,
+                "device_sched_mode": 2,
                 "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
             },
             }
