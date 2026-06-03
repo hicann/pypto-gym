@@ -17,16 +17,16 @@ import torch
 # JIT Kernel
 # ─────────────────────────────────────────────
 
-@pypto.frontend.jit(runtime_options={"device_sched_mode": 1}, debug_options={"runtime_debug_mode": 1}, pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
+@pypto.frontend.jit(runtime_options={"device_sched_mode": 0}, pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}})
 def scatter_pa_kv_cache_kernel(
     # Tensor 描述符：动态轴标为 pypto.DYNAMIC，静态轴写常量整数
     # 禁止 pypto.Tensor() / pypto.Tensor([], dtype) 空注解
     # num_tokens 和 num_blocks 都是动态轴（SPEC.md: dynamic_axes: ['num_tokens', 'num_blocks'])
-    key: pypto.Tensor([pypto.DYNAMIC, 2, 256], pypto.DT_BF16),                  # [num_tokens, num_heads, head_size]
-    key_cache: pypto.Tensor([pypto.DYNAMIC, 128, 2, 256], pypto.DT_BF16),       # [num_blocks, block_size, num_heads, head_size]
+    key: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),                  # [num_tokens, num_heads, head_size]
+    key_cache: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),       # [num_blocks, block_size, num_heads, head_size]
     slot_mapping: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),                # [num_tokens]
-    value: pypto.Tensor([pypto.DYNAMIC, 2, 256], pypto.DT_BF16),                # [num_tokens, num_heads, head_size]
-    value_cache: pypto.Tensor([pypto.DYNAMIC, 128, 2, 256], pypto.DT_BF16),     # [num_blocks, block_size, num_heads, head_size]
+    value: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),                # [num_tokens, num_heads, head_size]
+    value_cache: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),     # [num_blocks, block_size, num_heads, head_size]
 ):
     """PyPTO jit kernel for scatter_pa_kv_cache.
 
@@ -72,8 +72,15 @@ def scatter_pa_kv_cache_kernel(
     slot_mapping_2d = pypto.reshape(slot_mapping, [num_tokens, 1], inplace=True)  # INT32, [num_tokens, 1]
     
     # Tiling 配置（TileShape 维度数必须与 src 维度数一致）
+    # 性能优化：tile_tokens 按 kv_dim 分段调整，减少大 kv_dim 时的 loop 迭代次数
     tile_tokens = 32  # 每次 scatter 更新 32 个 token
-    pypto.set_vec_tile_shapes(tile_tokens, kv_dim)  # [32, 512]
+    if kv_dim <= 512:
+        tile_tokens = 32
+    elif kv_dim <= 4096:
+        tile_tokens = 16
+    else:
+        tile_tokens = 4
+    pypto.set_vec_tile_shapes(tile_tokens, kv_dim)  # [tile_tokens, kv_dim]
     
     # Loop 计算（num_tokens_loop 为 SymbolicScalar）
     num_tokens_loop = (num_tokens + tile_tokens - 1) // tile_tokens

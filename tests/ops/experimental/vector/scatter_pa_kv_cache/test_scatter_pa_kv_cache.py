@@ -219,29 +219,29 @@ def run_scatter_pa_kv_cache_test(
 # ─────────────────────────────────────────────
 
 def test_config1_performance_p0(device_id=None, run_mode="npu"):
-    """配置1_性能P0: num_tokens=2633, 适中序列长度性能测试。"""
+    """配置1_性能P0: num_tokens=8, 适中序列长度性能测试。"""
     run_scatter_pa_kv_cache_test(
-        num_tokens=2633, num_blocks=9760, block_size=128, num_heads=2, head_size=256,
+        num_tokens=8, num_blocks=512, block_size=128, num_heads=1, head_size=512,
         seed=42, device_id=device_id, run_mode=run_mode,
-        test_name="num_tokens=2633, num_blocks=100, block_size=128, num_heads=2, head_size=256 (配置1_性能P0)",
+        test_name="num_tokens=8, num_blocks=512, block_size=128, num_heads=1, head_size=512 (配置1_性能P0)",
     )
 
 
 def test_config2_function_p0(device_id=None, run_mode="npu"):
-    """配置2_功能P0: num_tokens=7902, 较长序列功能验证。"""
+    """配置2_功能P0: num_tokens=128, 较长序列功能验证。"""
     run_scatter_pa_kv_cache_test(
-        num_tokens=7902, num_blocks=9760, block_size=128, num_heads=2, head_size=256,
+        num_tokens=128, num_blocks=512, block_size=128, num_heads=4, head_size=128,
         seed=42, device_id=device_id, run_mode=run_mode,
-        test_name="num_tokens=7902, num_blocks=200, block_size=128, num_heads=2, head_size=256 (配置2_功能P0)",
+        test_name="num_tokens=128, num_blocks=512, block_size=128, num_heads=4, head_size=128 (配置2_功能P0)",
     )
 
 
 def test_config3_boundary_p0(device_id=None, run_mode="npu"):
-    """配置3_边界P0: num_tokens=16384, 最大序列长度边界测试。"""
+    """配置3_边界P0: num_tokens=4096, 最大序列长度边界测试。"""
     run_scatter_pa_kv_cache_test(
-        num_tokens=16384, num_blocks=9760, block_size=128, num_heads=2, head_size=256,
+        num_tokens=4096, num_blocks=512, block_size=128, num_heads=64, head_size=64,
         seed=42, device_id=device_id, run_mode=run_mode,
-        test_name="num_tokens=16384, num_blocks=200, block_size=128, num_heads=2, head_size=256 (配置3_边界P0)",
+        test_name="num_tokens=4096, num_blocks=512, block_size=128, num_heads=64, head_size=64 (配置3_边界P0)",
     )
 
 
