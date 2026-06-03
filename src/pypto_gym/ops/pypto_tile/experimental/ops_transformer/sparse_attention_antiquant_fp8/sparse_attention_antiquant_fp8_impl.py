@@ -128,7 +128,7 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config):
     s1_n2_gsym = query_nope.shape[0] // batch_size_sym
     s1_sym = s1_n2_gsym // nq
 
-    g_loop_sym = group // group_tile
+    g_loop_sym = (group + group_tile - 1) // group_tile
 
     for batch_idx in pypto.loop(0, batch_size_sym, 1, name="LOOP_L0_idx", idx_name="bIdx"):
         cur_act_seq = kv_act_seqs[batch_idx]
@@ -139,7 +139,7 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config):
 
             for n_kv_idx in pypto.loop(0, n_kv_sym, 1, name="LOOP_L2_n_kv_SA", idx_name="n_kvIdx"):
                 for group_idx in pypto.loop(0, g_loop_sym, 1, name="LOOP_L3_g_SA", idx_name="gIdx"):
-                    cur_group_tile = group_tile
+                    cur_group_tile = pypto.min(group, group_tile)
                     cur_offset = batch_idx * s1_n2_gsym + slc_idx * nq + n_kv_idx * group + group_idx * cur_group_tile
                     for s2_idx, _ in pypto.loop_unroll(0, bn_per_batch, 1,
                         name="LOOP_L4_s2_SA", idx_name="s2_idx", unroll_list={1}):
@@ -273,6 +273,7 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config):
 
 @pypto.frontend.jit(
     host_options={
+        "compile_monitor_enable": 1,
         "compile_timeout": 10,
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
@@ -348,6 +349,7 @@ def sparse_attention_antiquant_d(
 
 @pypto.frontend.jit(
     host_options={
+        "compile_monitor_enable": 1,
         "compile_timeout": 10,
         "compile_timeout_stage": 5,
         "compile_monitor_print_interval": 2},
