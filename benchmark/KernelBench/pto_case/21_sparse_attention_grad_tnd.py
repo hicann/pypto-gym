@@ -101,8 +101,8 @@ class Model(nn.Module):
                     for g in range(group):
                         q_h = kv_h * group + g
 
-                        q_n = q_nope[t_idx, q_h, :].unsqueeze(0).to(torch.float32)
-                        q_r = q_pe[t_idx, q_h, :].unsqueeze(0).to(torch.float32)
+                        q_n = q_nope[t_idx, q_h, :].unsqueeze(0).to(torch.bfloat16).to(torch.float32)
+                        q_r = q_pe[t_idx, q_h, :].unsqueeze(0).to(torch.bfloat16).to(torch.float32)
                         q_full = torch.cat([q_n, q_r], dim=-1)
 
                         do_g = d_out[t_idx, q_h, :].unsqueeze(0).to(torch.float32)
@@ -118,18 +118,21 @@ class Model(nn.Module):
 
                         # dP = dO @ V^T
                         dp_mat = torch.matmul(do_g, sel_v.T).squeeze(0)
-                        # dV_local = P^T @ dO
-                        dv_local = torch.matmul(p_mat.unsqueeze(0).T, do_g)
+                        # dV_local = P^T @ dO (cast P to BF16 first)
+                        p_bf16 = p_mat.to(torch.bfloat16).float()
+                        dv_local = torch.matmul(p_bf16.unsqueeze(0).T, do_g)
 
                         # D_val = rowsum(dO * O)
                         d_val = torch.sum(do_g * out_g, dim=-1, keepdim=True)
                         # dS = P ⊙ (dP - D_val)
                         ds_mat = p_mat * (dp_mat - d_val.squeeze())
+                        # Cast dS to BF16 then back to FP32
+                        ds_bf16 = ds_mat.to(torch.bfloat16).float()
 
                         # dQ_local = dS @ sel_k * scale
-                        dq_local = torch.matmul(ds_mat.unsqueeze(0), sel_k) * scale
+                        dq_local = torch.matmul(ds_bf16.unsqueeze(0), sel_k) * scale
                         # dK_local = dS^T @ Q_full * scale
-                        dk_local = torch.matmul(ds_mat.unsqueeze(0).T, q_full) * scale
+                        dk_local = torch.matmul(ds_bf16.unsqueeze(0).T, q_full) * scale
 
                         dq_nope[t_idx, q_h, :] += dq_local[0, :D]
                         dq_pe[t_idx, q_h, :] += dq_local[0, D:]

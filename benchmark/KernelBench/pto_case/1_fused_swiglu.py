@@ -31,10 +31,10 @@ class Model(nn.Module):
         self.b_fc = nn.Parameter(torch.randn(1, n, dtype=torch.bfloat16) / math.sqrt(n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gate = x.float() @ self.w_g.float() + self.b_g
-        fc = x.float() @ self.w_fc.float() + self.b_fc
+        gate = x @ self.w_g + self.b_g
+        fc = x @ self.w_fc + self.b_fc
         gate_silu = gate * torch.sigmoid(gate)
-        y = (gate_silu * fc).to(torch.bfloat16)
+        y = gate_silu * fc
         return y
 
 

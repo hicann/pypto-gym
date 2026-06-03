@@ -37,19 +37,19 @@ class Model(nn.Module):
         self.kv_lora_rank = kv_lora_rank
         self.q_head_dim = qk_nope_head_dim + qk_rope_head_dim
 
-        self.w_dq = nn.Parameter(torch.randn(h, q_lora_rank, dtype=torch.float32) * 0.01)
+        self.w_dq = nn.Parameter(torch.randn(h, q_lora_rank, dtype=torch.bfloat16) * 0.01)
         self.w_uqqr = nn.Parameter(
-            torch.randn(q_lora_rank, n * self.q_head_dim, dtype=torch.float32) * 0.01
+            torch.randn(q_lora_rank, n * self.q_head_dim, dtype=torch.bfloat16) * 0.01
         )
         self.w_uk = nn.Parameter(
-            torch.randn(n, qk_nope_head_dim, kv_lora_rank, dtype=torch.float32) * 0.01
+            torch.randn(n, qk_nope_head_dim, kv_lora_rank, dtype=torch.bfloat16) * 0.01
         )
         self.w_dkvkr = nn.Parameter(
-            torch.randn(h, kv_lora_rank + qk_rope_head_dim, dtype=torch.float32) * 0.01
+            torch.randn(h, kv_lora_rank + qk_rope_head_dim, dtype=torch.bfloat16) * 0.01
         )
 
-        self.gamma_cq = nn.Parameter(torch.randn(q_lora_rank, dtype=torch.float32))
-        self.gamma_ckv = nn.Parameter(torch.randn(kv_lora_rank, dtype=torch.float32))
+        self.gamma_cq = nn.Parameter(torch.randn(q_lora_rank, dtype=torch.bfloat16))
+        self.gamma_ckv = nn.Parameter(torch.randn(kv_lora_rank, dtype=torch.bfloat16))
 
     @staticmethod
     def _rms_norm(x: torch.Tensor, gamma: torch.Tensor) -> torch.Tensor:
@@ -58,7 +58,7 @@ class Model(nn.Module):
         x_f32 = x.float()
         square = x_f32 * x_f32
         mean_res = square * mean_coff
-        reduce_sum = torch.sum(mean_res, dim=-1, keepdim=True)
+        reduce_sum = torch.sum(mean_res, dim=-1, keepdim=True) + 1e-5
         reduce_sqrt = torch.sqrt(reduce_sum)
         res_div = x_f32 / reduce_sqrt
         res = res_div * gamma.float()
@@ -76,29 +76,35 @@ class Model(nn.Module):
     def _rope_3d(
         x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     ) -> torch.Tensor:
-        """Interleaved RoPE for (t, num_heads, head_dim)."""
+        """Half-split RoPE for (t, num_heads, head_dim)."""
         x_dtype = x.dtype
         x_f32 = x.float()
         t, hx, d = x_f32.shape
-        x_interleaved = x_f32.reshape(t, hx, d // 2, 2).permute(0, 1, 3, 2).reshape(t, hx, d)
-        cos_f32 = cos.float().unsqueeze(1)
-        sin_f32 = sin.float().unsqueeze(1)
-        x_embed = x_interleaved * cos_f32 + Model._rotate_half(x_interleaved) * sin_f32
-        return x_embed.to(x_dtype)
+        half_dim = d // 2
+        x_even = x_f32[..., :half_dim]
+        x_odd = x_f32[..., half_dim:]
+        cos_half = cos.float()[..., :half_dim].unsqueeze(1)
+        sin_half = sin.float()[..., :half_dim].unsqueeze(1)
+        out_even = x_even * cos_half - x_odd * sin_half
+        out_odd = x_odd * cos_half + x_even * sin_half
+        return torch.cat([out_even, out_odd], dim=-1).to(x_dtype)
 
     @staticmethod
     def _rope_2d(
         x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     ) -> torch.Tensor:
-        """Interleaved RoPE for (t, head_dim)."""
+        """Half-split RoPE for (t, head_dim)."""
         x_dtype = x.dtype
         x_f32 = x.float()
         t, d = x_f32.shape
-        x_interleaved = x_f32.reshape(t, d // 2, 2).permute(0, 2, 1).reshape(t, d)
-        cos_f32 = cos.float()
-        sin_f32 = sin.float()
-        x_embed = x_interleaved * cos_f32 + Model._rotate_half(x_interleaved) * sin_f32
-        return x_embed.to(x_dtype)
+        half_dim = d // 2
+        x_even = x_f32[:, :half_dim]
+        x_odd = x_f32[:, half_dim:]
+        cos_half = cos.float()[:, :half_dim]
+        sin_half = sin.float()[:, :half_dim]
+        out_even = x_even * cos_half - x_odd * sin_half
+        out_odd = x_odd * cos_half + x_even * sin_half
+        return torch.cat([out_even, out_odd], dim=-1).to(x_dtype)
 
     def forward(
         self, hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
@@ -119,29 +125,29 @@ class Model(nn.Module):
         t = hidden_states.shape[0]
 
         # === Q path: x → w_dq → RMSNorm → w_uqqr → split nope/rope ===
-        q_a = (hidden_states.float() @ self.w_dq.float()).to(x_dtype)
+        q_a = torch.matmul(hidden_states, self.w_dq.to(x_dtype))
         q_a_norm = self._rms_norm(q_a, self.gamma_cq)
 
-        q_b = (q_a_norm.float() @ self.w_uqqr.float()).to(x_dtype)
+        q_b = torch.matmul(q_a_norm.to(x_dtype), self.w_uqqr.to(x_dtype))
         q_reshape = q_b.reshape(t, self.n, self.q_head_dim)
 
         q_nope_raw = q_reshape[:, :, : self.qk_nope_head_dim]
         q_nope_t = q_nope_raw.permute(1, 0, 2)
-        q_nope_proj = (q_nope_t.float() @ self.w_uk.float()).to(x_dtype)
+        q_nope_proj = torch.matmul(q_nope_t.to(x_dtype), self.w_uk.to(x_dtype))
         q_nope = q_nope_proj.permute(1, 0, 2)
 
         q_rope_raw = q_reshape[:, :, self.qk_nope_head_dim:]
         q_rope = self._rope_3d(q_rope_raw, cos, sin)
 
         # === KV path: x → w_dkvkr → split ckv/k_rope ===
-        kv = (hidden_states.float() @ self.w_dkvkr.float()).to(x_dtype)
+        kv = torch.matmul(hidden_states, self.w_dkvkr.to(x_dtype))
         compressed_kv = kv[:, : self.kv_lora_rank]
         k_nope = self._rms_norm(compressed_kv, self.gamma_ckv)
 
         k_rope_raw = kv[:, self.kv_lora_rank:]
         k_rope = self._rope_2d(k_rope_raw, cos, sin)
 
-        return q_nope, q_rope, k_nope, k_rope, q_a_norm
+        return q_nope, q_rope, k_nope, k_rope
 
 
 def get_inputs():

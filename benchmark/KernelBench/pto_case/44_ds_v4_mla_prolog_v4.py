@@ -39,12 +39,12 @@ class Model(nn.Module):
         hd = self.head_dim
         nh = self.num_heads
 
-        q_a = torch.matmul(x.to(torch.float32), self.wq_a.to(torch.float32))
+        q_a = torch.matmul(x, self.wq_a)
         q_a_ln = self._rms_norm(q_a, self.gamma_cq).to(torch.bfloat16)
         q_b = torch.matmul(q_a_ln, self.wq_b)
         q_reshape = self._rms_norm_new(q_b.reshape(t, nh, hd)).to(torch.bfloat16)
 
-        kv_a = torch.matmul(x.to(torch.float32), self.w_kv.to(torch.float32))
+        kv_a = torch.matmul(x, self.w_kv)
         kv_ln = self._rms_norm(kv_a, self.gamma_ckv).reshape(t, hd).to(torch.bfloat16)
 
         rdim = self.qk_rope_head_dim

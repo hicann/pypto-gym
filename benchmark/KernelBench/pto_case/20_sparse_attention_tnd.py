@@ -105,8 +105,9 @@ class Model(nn.Module):
                         s_sum = s_exp.sum(dim=-1, keepdim=True)
                         p = s_exp / s_sum  # [1, eff_topk]
 
-                        # Output: p @ kv_sel  → [1, D]
-                        out_val = torch.matmul(p, kv_sel).squeeze(0).to(torch.bfloat16)
+                        # Output: p @ kv_sel  → [1, D] (cast P to BF16 first)
+                        p_bf16 = p.to(torch.bfloat16)
+                        out_val = torch.matmul(p_bf16.float(), kv_sel).squeeze(0).to(torch.bfloat16)
                         core_attn_out[t_idx, q_h, :] = out_val
                         softmax_max[kv_h, t_idx, g] = s_max.squeeze()
                         softmax_sum[kv_h, t_idx, g] = s_sum.squeeze()

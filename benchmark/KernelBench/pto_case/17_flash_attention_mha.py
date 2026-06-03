@@ -51,8 +51,8 @@ class Model(nn.Module):
         batch_size = cu_seqlens_q.shape[0] - 1
 
         o = torch.zeros(q.shape[0], hidden_dim, dtype=torch.float32, device=q.device)
-        l_out = torch.zeros(q.shape[0], 1, dtype=torch.float32, device=q.device)
-        m_out = torch.zeros(q.shape[0], 1, dtype=torch.float32, device=q.device)
+        l_out = torch.zeros(q.shape[0], self.num_heads, dtype=torch.float32, device=q.device)
+        m_out = torch.zeros(q.shape[0], self.num_heads, dtype=torch.float32, device=q.device)
 
         for b in range(batch_size):
             q_start = cu_seqlens_q[b].item()
@@ -72,11 +72,12 @@ class Model(nn.Module):
                 m_h = scores.max(dim=-1, keepdim=True)[0]
                 p = torch.exp(scores - m_h)
                 l_h = p.sum(dim=-1, keepdim=True)
-                o_h = torch.matmul(p / l_h, v_h)
+                p_bf16 = (p / l_h).to(torch.bfloat16)
+                o_h = torch.matmul(p_bf16.float(), v_h)
 
                 o[q_start:q_end, h_off:h_off + self.head_dim] = o_h
-                l_out[q_start:q_end, 0:1] = l_h
-                m_out[q_start:q_end, 0:1] = m_h
+                l_out[q_start:q_end, h] = l_h.squeeze(-1)
+                m_out[q_start:q_end, h] = m_h.squeeze(-1)
 
         return o.to(torch.bfloat16), l_out, m_out
 

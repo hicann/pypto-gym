@@ -219,7 +219,7 @@ def get_init_inputs():
 | NPU API                                                            | 纯 PyTorch 近似                                                              | 说明              |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------- |
 | `torch_npu.npu_quantize(x, scale, offset, dtype, axis, symmetric)` | `(x * scale + offset).round().clamp(-128, 127).to(torch.int8)`            | per-channel 量化  |
-| `torch_npu.npu_quant_matmul(x_int8, weight, deq_scale, bias)`      | `x_int8.float() @ weight.float()` 然后 `* deq_scale + bias`（⚠️ 必须用 float32，aclnn 不支持 int32 MatMul） | 量化 MatMul + 反量化 |
+| `torch_npu.npu_quant_matmul(x_int8, weight, deq_scale, bias)`      | `mm = x_int8.float() @ weight.float()` 然后 `(mm + bias) * deq_scale`（⚠️ 必须用 float32，aclnn 不支持 int32 MatMul；⚠️ **顺序：先加 bias 再乘 deq_scale，与 `mm * deq_scale + bias` 数学不等价**） | 量化 MatMul + 反量化 |
 
 
 注意：近似实现只需在 golden 精度可接受范围内即可，不需要 100% 等价。

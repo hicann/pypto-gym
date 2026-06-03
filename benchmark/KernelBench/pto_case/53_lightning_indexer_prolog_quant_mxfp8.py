@@ -7,8 +7,8 @@ import torch.nn as nn
 
 
 FORMULA = (
-    "q_fp8[t, h, d] = fp8e4m3_quant(Hq @ RoPE(split(dequant(Q_norm) @ dequant(W_qb)))); "
-    "k_fp8 = scatter_update(cache, fp8e4m3_quant(Hk @ RoPE(split(RMSNorm(x @ W_k))))); "
+    "q_fp8[t, h, d] = fp8e4m3_quant(Hq @ RoPE(split((Q_norm @ W_qb) * q_norm_scale * w_qb_scale))); "
+    "k_fp8 = scatter_update(cache, fp8e4m3_quant(Hk @ RoPE(split(LayerNorm(x @ W_k, gamma, beta))))); "
     "weights[t, h] = (x @ W_proj) * (n^-0.5) * (d^-0.5)"
 )
 DYNAMIC_AXIS = ["B", "S"]
@@ -65,6 +65,7 @@ class Model(nn.Module):
         self.w_k = nn.Parameter(torch.randn(h, d, dtype=torch.float32) / math.sqrt(h))
         self.w_proj = nn.Parameter(torch.randn(h, n, dtype=torch.float32) / math.sqrt(h))
         self.gamma = nn.Parameter(torch.ones(d, dtype=torch.float32))
+        self.beta = nn.Parameter(torch.zeros(d, dtype=torch.float32))
         self.hadamard_q = nn.Parameter(torch.randn(d, d, dtype=torch.float32) / math.sqrt(d))
         self.hadamard_k = nn.Parameter(torch.randn(d, d, dtype=torch.float32) / math.sqrt(d))
 
@@ -78,18 +79,22 @@ class Model(nn.Module):
         return x * cos + Model._rotate_half(x) * sin
 
     @staticmethod
-    def _rms_norm(x, gamma, eps=1e-6):
-        rms = torch.sqrt(torch.mean(x.float() ** 2, dim=-1, keepdim=True) + eps)
-        return (x.float() / rms * gamma.float())
+    def _layer_norm(x, gamma, beta, eps=1e-6):
+        x_fp32 = x.float()
+        mean = x_fp32.mean(dim=-1, keepdim=True)
+        var = ((x_fp32 - mean) ** 2).mean(dim=-1, keepdim=True)
+        x_norm = (x_fp32 - mean) / torch.sqrt(var + eps)
+        return (x_norm * gamma.float() + beta.float())
 
     @staticmethod
     def _fp8e4m3_quantize(x_fp32):
         max_val = torch.amax(torch.abs(x_fp32), dim=-1, keepdim=True).clamp(min=1e-10)
         scale = 448.0 / max_val
         y_scaled = x_fp32 * scale
-        y_sim = y_scaled.clamp(-448.0, 448.0)
+        y_rounded = torch.round(y_scaled)
+        y_clamped = y_rounded.clamp(-448.0, 448.0)
         dequant_scale = 1.0 / scale
-        return y_sim, dequant_scale
+        return y_clamped, dequant_scale
 
     @staticmethod
     def _scatter_update(cache, values, cache_index):
@@ -122,29 +127,35 @@ class Model(nn.Module):
         x_dtype = x.dtype
 
         # ── Q path ──
-        w_qb_fp = self.w_qb * self.w_qb_scale
-        q_proj = (q_norm.to(torch.float32) @ w_qb_fp).to(x_dtype)
-        q_proj = q_proj.view(-1, n, d)
+        q = torch.matmul(q_norm.float(), self.w_qb.float())
+        q_f32 = q.to(torch.float32)
+        q_f32 = q_f32 * q_norm_scale.float()
+        q_f32 = q_f32 * self.w_qb_scale.float()
+        q_bf16 = q_f32.view(-1, n, d).to(x_dtype)
 
-        q_rope, q_nope = torch.split(q_proj, [rdim, d - rdim], dim=-1)
+        q_rope, q_nope = torch.split(q_bf16, [rdim, d - rdim], dim=-1)
         cos_r = cos.view(-1, 1, 1, rdim).float()
         sin_r = sin.view(-1, 1, 1, rdim).float()
         q_rope = self._apply_rope(q_rope.float().view(-1, n, 1, rdim), cos_r, sin_r)
         q_rope = q_rope.to(x_dtype).view(-1, n, rdim)
+        q_nope = q_nope.float().to(x_dtype)
         q_cat = torch.cat((q_rope, q_nope), dim=-1)
         q_hadamard = (q_cat.float() @ self.hadamard_q).to(x_dtype)
         q_fp8, q_scale = self._fp8e4m3_quantize(q_hadamard.float())
+        q_scale = q_scale.to(torch.float16)
 
         # ── K path ──
         k_proj = x.float() @ self.w_k
-        k_rms_norm = self._rms_norm(k_proj, self.gamma).to(x_dtype)
+        k_ln = self._layer_norm(k_proj, self.gamma, self.beta).to(x_dtype)
 
-        k_rope, k_nope = torch.split(k_rms_norm, [rdim, d - rdim], dim=-1)
+        k_rope, k_nope = torch.split(k_ln, [rdim, d - rdim], dim=-1)
         k_rope = self._apply_rope(k_rope.float().view(-1, 1, 1, rdim), cos_r, sin_r)
         k_rope = k_rope.to(x_dtype).view(-1, rdim)
+        k_nope = k_nope.float().to(x_dtype)
         k_cat = torch.cat((k_rope, k_nope), dim=-1)
         k_hadamard = (k_cat.float() @ self.hadamard_k).to(x_dtype)
         k_fp8, k_scale = self._fp8e4m3_quantize(k_hadamard.float())
+        k_scale = k_scale.to(torch.float16)
 
         b = cache_index.shape[0]
         s_val = k_hadamard.shape[0] // b
@@ -152,8 +163,9 @@ class Model(nn.Module):
         k_scale_out = self._scatter_update(k_scale_cache.clone(), k_scale.view(b, s_val, 1, 1), cache_index)
 
         # ── W path ──
-        weights = (x.float() @ self.w_proj).to(x_dtype)
+        weights = (x.float() @ self.w_proj).to(x_dtype).to(torch.float32)
         weights = weights * (n ** -0.5) * (d ** -0.5)
+        weights = weights.to(torch.float16)
 
         return q_fp8, q_scale, k_cache_out, k_scale_out, weights
 
@@ -176,9 +188,9 @@ def get_inputs():
 
     x = torch.randn(t, h, dtype=torch.bfloat16) / math.sqrt(h)
 
-    q_norm = torch.randn(t, qr, dtype=torch.float32) / math.sqrt(qr)
+    q_norm = torch.randint(-128, 128, (t, qr), dtype=torch.int8)
 
-    q_norm_scale = torch.ones(t, qr // 32, dtype=torch.float32)
+    q_norm_scale = torch.randn(t, 1, dtype=torch.float32) * 0.5 + 1.0
 
     random_angles = torch.rand(t, rdim, dtype=torch.float32) * 2 * math.pi
     cos = torch.cos(random_angles).to(torch.bfloat16) / math.sqrt(rdim)

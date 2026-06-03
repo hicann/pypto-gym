@@ -128,8 +128,8 @@ class Model(nn.Module):
 
         # 3. Quantized MatMul + Dequantize (approximate pure PyTorch)
         mm = x_quant.float() @ self.atten_qkv_weight.float()
-        mm = mm.float() * self.atten_qkv_deq_scale.float().unsqueeze(0)
         mm = mm + self.atten_qkv_quant_bias.float().unsqueeze(0)
+        mm = mm * self.atten_qkv_deq_scale.float().unsqueeze(0)
         mm_golden = mm.to(torch.bfloat16)
 
         # 4. Split QKV

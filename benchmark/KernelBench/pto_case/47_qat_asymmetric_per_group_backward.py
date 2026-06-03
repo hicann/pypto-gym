@@ -51,11 +51,10 @@ class Model(nn.Module):
 
         scale_mask = (s_f32 > eps_t).float()
 
-        grad_weight = (go_f32 * mask).to(torch.bfloat16).view(weight.shape)
+        grad_weight = (go_f32 * mask * alpha).to(torch.bfloat16).view(weight.shape)
 
         grad_offset = (go_f32 * inv_mask).sum(dim=1, keepdim=True)
-        term_diff = weight_denorm - weight_norm * mask
-        grad_alpha = (go_f32 * term_diff).sum(dim=1, keepdim=True)
+        grad_alpha = (go_f32 * mask * weight_norm).sum(dim=1, keepdim=True)
         grad_scale = (grad_alpha * n_levels * scale_mask).to(torch.bfloat16)
 
         grad_offset = grad_offset.to(torch.bfloat16)

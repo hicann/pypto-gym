@@ -28,7 +28,8 @@ class Model(nn.Module):
         self.q_lora_rank = q_lora_rank
         self.rope_dim = rope_dim
 
-        self.idx_wq_b = nn.Parameter(torch.randn(q_lora_rank, idx_nq * head_dim, dtype=torch.float32))
+        self.register_buffer('idx_wq_b',
+            torch.randint(-128, 128, (q_lora_rank, idx_nq * head_dim), dtype=torch.int8))
         self.weights_proj = nn.Parameter(torch.randn(h, idx_nq, dtype=torch.bfloat16))
         self.hadamard = nn.Parameter(torch.randn(head_dim, head_dim, dtype=torch.bfloat16))
 
@@ -40,7 +41,7 @@ class Model(nn.Module):
         t = qr.shape[0]
         calc_dtype = torch.bfloat16
 
-        q_fp32 = torch.matmul(qr.to(torch.float32), self.idx_wq_b.to(torch.float32)).to(torch.float32)
+        q_fp32 = torch.matmul(qr.float(), self.idx_wq_b.float()).to(torch.float32)
         q_fp32 = q_fp32 * qr_scale * idx_wq_b_scale.reshape(1, self.idx_nq * self.head_dim)
         q_re = q_fp32.to(calc_dtype).reshape(t, self.idx_nq, self.head_dim)
         q_nope, q_rope = torch.split(q_re, [self.head_dim - self.rope_dim, self.rope_dim], dim=-1)
@@ -80,7 +81,7 @@ def apply_rotary_pos_emb(q, cos, sin):
     t, n, d = q_f32.shape
     q_re = q_f32.reshape(t, n, d//2, 2)
     q_rot = rotate_half(q_re).reshape(t, n, d)
-    q_embed = (q_f32 * cos_f32) + (q_rot * sin_f32)
+    q_embed = (q_f32 * cos_f32) + (q_rot * -sin_f32)
     return q_embed.to(orig)
 
 
@@ -89,9 +90,11 @@ def per_token_quant(x):
     abs_res = torch.abs(x_f32)
     max_val = torch.max(abs_res, dim=-1, keepdims=True)[0]
     scale = 127.0 / max_val
-    out = torch.round(x_f32 * scale).clamp(-127, 127).to(torch.int8)
+    y_fp32 = x_f32 * scale
+    y_int32 = torch.round(y_fp32).to(torch.int32)
+    y_int8 = torch.trunc(y_int32.to(x.dtype)).to(torch.int8)
     deq_scale = 1.0 / scale
-    return out, deq_scale
+    return y_int8, deq_scale
 
 
 def get_inputs():

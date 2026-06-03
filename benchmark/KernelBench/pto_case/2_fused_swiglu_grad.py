@@ -31,13 +31,13 @@ class Model(nn.Module):
     def forward(self, dy: torch.Tensor, g: torch.Tensor, fc: torch.Tensor, x: torch.Tensor):
         sigmoid_g = torch.sigmoid(g)
         silu_g = g * sigmoid_g
-        dg = dy.float() * fc * sigmoid_g * (1 + g * (1 - sigmoid_g))
-        dfc = dy.float() * silu_g
-        db_g = (dg.sum(dim=0)).to(torch.bfloat16)
-        db_fc = (dfc.sum(dim=0)).to(torch.bfloat16)
-        dw_g = (x.float().T @ dg).to(torch.bfloat16)
-        dw_fc = (x.float().T @ dfc).to(torch.bfloat16)
-        dx = (dg @ self.w_g.float().T + dfc @ self.w_fc.float().T).to(torch.bfloat16)
+        dg = dy * fc * sigmoid_g * (1 + g * (1 - sigmoid_g))
+        dfc = dy * silu_g
+        db_g = dg.sum(dim=0, keepdim=True)
+        db_fc = dfc.sum(dim=0, keepdim=True)
+        dw_g = torch.transpose(x, 0, 1) @ dg
+        dw_fc = torch.transpose(x, 0, 1) @ dfc
+        dx = dg @ torch.transpose(self.w_g, 0, 1) + dfc @ torch.transpose(self.w_fc, 0, 1)
         return dx, dw_g, dw_fc, db_g, db_fc
 
 

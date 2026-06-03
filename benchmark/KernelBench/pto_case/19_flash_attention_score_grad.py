@@ -69,9 +69,12 @@ class Model(nn.Module):
         dp_var = torch.matmul(dy_f, v.transpose(-2, -1))
         ds_var = p_mat * (dp_var - d_var)
 
-        dq_out = torch.matmul(ds_var, k) * scale_value
-        dk_out = torch.matmul(ds_var.transpose(-2, -1), q) * scale_value
-        dv_out = torch.matmul(p_mat.transpose(-2, -1), dy_f)
+        ds_bf16 = ds_var.to(orig_dtype).float()
+        p_bf16 = p_mat.to(orig_dtype).float()
+
+        dq_out = torch.matmul(ds_bf16, k) * scale_value
+        dk_out = torch.matmul(ds_bf16.transpose(-2, -1), q) * scale_value
+        dv_out = torch.matmul(p_bf16.transpose(-2, -1), dy_f)
 
         return dq_out.to(orig_dtype), dk_out.to(orig_dtype), dv_out.to(orig_dtype)
 

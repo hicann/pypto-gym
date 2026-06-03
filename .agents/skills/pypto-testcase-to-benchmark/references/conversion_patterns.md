@@ -230,8 +230,8 @@ x_offset = self.input_offset.float().unsqueeze(0)
 x_quant = (x_g.float() * x_scale + x_offset).round().clamp(-128, 127).to(torch.int8)
 
 mm = x_quant.float() @ self.weight.float()  # ⚠️ 用 float32 代替 int32，aclnn matmul 不支持 int32 输入
-mm = mm.float() * self.deq_scale.float().unsqueeze(0)
-mm = mm + self.quant_bias.float().unsqueeze(0)
+mm = mm + self.quant_bias.float().unsqueeze(0)  # ⚠️ 先加 bias
+mm = mm * self.deq_scale.float().unsqueeze(0)   # ⚠️ 再乘 deq_scale（顺序不可交换，与 mm*deq_scale+bias 不等价）
 mm_golden = mm.to(torch.bfloat16)
 ```
 
