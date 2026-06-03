@@ -62,6 +62,7 @@ def mhc_sinkhorn_kernel(
 
         row_sum = pypto.sum(comb_flag, 1, True)
         comb_flag = comb_flag / (row_sum + eps)
+        comb_flag = comb_flag + eps
 
         col_sum = pypto.sum(comb_flag, 0, True)
         comb_flag = comb_flag / (col_sum + eps)
@@ -72,12 +73,12 @@ def mhc_sinkhorn_kernel(
             col_sum = comb_flag.sum( 0, keepdim=True)
             comb_flag = comb_flag / (col_sum + eps)
         
-        comb_flag = pypto.reshape(comb_flag, [hc*hc, tile_t], valid_shape=[hc*hc, t_valid], inplace=True)
+        comb_flag = pypto.reshape(comb_flag, [hc*hc, tile_t])
         pypto.set_vec_tile_shapes(16, 256)
         comb_flag = pypto.transpose(comb_flag, 1, 0)
         pypto.set_vec_tile_shapes(256, 16)
         
-        comb_flag = pypto.reshape(comb_flag, [tile_t, hc, hc], valid_shape=[t_valid, hc, hc], inplace=True)
+        comb_flag = pypto.reshape(comb_flag, [tile_t, hc, hc])
         out[t_idx:, :, :] = comb_flag
 
 
