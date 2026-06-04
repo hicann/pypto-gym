@@ -711,7 +711,7 @@ def mla_prolog_quant_compute(
 def options_list():
     if pypto.platform.npuarch == 'DAV_3510':
         return {
-            "runtime_options": {"device_sched_mode": 2},
+            "runtime_options": {"device_sched_mode": 3},
             }
     else:
         return {

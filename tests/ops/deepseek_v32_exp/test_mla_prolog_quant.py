@@ -784,7 +784,6 @@ def test_b64_s64k2_pa_nd_bf16_quantb_d():
 
     tile_config.m_tile = 128 
 
-    tile_config.pre_quant_cube_tile = [32, 32, 256, 256, 128, 128]
     tile_config.cube_qb_tile = [128, 128, 128, 256, 256, 256]
     tile_config.cube_wuk_tile = [tile_config.m_tile, tile_config.m_tile, 128, 256, 256, 256]
     tile_config.mv_tile = 8
@@ -792,7 +791,13 @@ def test_b64_s64k2_pa_nd_bf16_quantb_d():
     tile_config.q_vec_tile1 = 128
     tile_config.k_vec_tile0 = 32
     tile_config.k_vec_tile1 = 512
-    tile_config.unroll_list = [64, 32, 8, 4, 2, 1]
+    
+    if pypto.platform.npuarch == 'DAV_3510':
+        tile_config.pre_quant_cube_tile = [128, 128, 256, 256, 128, 128]
+        tile_config.unroll_list = [128, 64, 32, 8, 4, 2, 1]
+    else:
+        tile_config.pre_quant_cube_tile = [32, 32, 256, 256, 128, 128]
+        tile_config.unroll_list = [64, 32, 8, 4, 2, 1]
 
     actual_seq = torch.tensor([params["s2"]] * params["b"], dtype=torch.int32).unsqueeze(-1)
     input_tensors, golden_data = gen_mla_prolog_quant_v32_data(params, (torch.bfloat16, torch.bfloat16), actual_seq, \
