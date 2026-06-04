@@ -167,24 +167,42 @@ def kv_cache_concat(cache_tensor, kv_actual_seqs, block_table, mla_config, devic
 
 
 def ifa_mla_golden(query, key, value, query_rope, key_rope):
-    query_full = torch.cat([query, query_rope], dim=-1)
-    key_full = torch.cat([key, key_rope], dim=-1)
+    b = query.shape[0]
+    s1 = query.shape[1]
+    n1 = query.shape[2]
+    n2 = key.shape[1]
+    s2 = key.shape[2]
+    kv_d = key.shape[3]
+    group_size = n1 // n2
 
-    softmax_scale = query_full.shape[-1] ** -0.5
+    d_full = query.shape[3] + query_rope.shape[3]
+    softmax_scale = d_full ** -0.5
     logger.info(f"softmax_scale: {softmax_scale}")
+    logger.info(f"group_size: {group_size}, n1: {n1}, n2: {n2}")
 
-    # First matrix multiplication: Q x K^T
-    qk_mm_res = torch.matmul(query_full, key_full.transpose(-2, -1))
-    logger.info(f"qk_mm_res.shape: {qk_mm_res.shape}")
-    qk_ele_res = qk_mm_res * softmax_scale
-    logger.info(f"qk_ele_res.shape: {qk_ele_res.shape}")
+    attention_out = torch.zeros([b, s1, n1, kv_d], dtype=query.dtype, device=query.device)
 
-    # Softmax computation
-    softmax_res = F.softmax(qk_ele_res, dim=-1)
-    logger.info(f"softmax_res.shape: {softmax_res.shape}")
+    for n2_idx in range(n2):
+        q_group = query[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :]
+        qr_group = query_rope[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :]
+        q_full = torch.cat([q_group, qr_group], dim=-1)
 
-    # Second matrix multiplication: Softmax x V
-    attention_out = torch.matmul(softmax_res, value)
+        k_nope = key[:, n2_idx:n2_idx + 1, :, :]
+        k_rope = key_rope[:, n2_idx:n2_idx + 1, :, :]
+        k_full = torch.cat([k_nope, k_rope], dim=-1)
+
+        v_head = value[:, n2_idx:n2_idx + 1, :, :]
+
+        qk_mm_res = torch.matmul(q_full, k_full.transpose(-2, -1))
+        logger.info(f"n2_idx={n2_idx}, qk_mm_res.shape: {qk_mm_res.shape}")
+        qk_ele_res = qk_mm_res * softmax_scale
+        softmax_res = F.softmax(qk_ele_res, dim=-1)
+        logger.info(f"n2_idx={n2_idx}, softmax_res.shape: {softmax_res.shape}")
+        attn_group = torch.matmul(softmax_res, v_head)
+        logger.info(f"n2_idx={n2_idx}, attn_group.shape: {attn_group.shape}")
+
+        attention_out[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :] = attn_group
+
     logger.info(f"attention_out.shape: {attention_out.shape}")
     return attention_out
 
@@ -207,21 +225,26 @@ def get_case_config(case_name):
         params = {"b": 64, "n1": 128, "s1": 2, "s2": 8 * 1024, "n2": 1}
     elif case_name.startswith("qs3_1b4k"):
         params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 1}
+    elif case_name.startswith("nkv2_qs3_1b4k"):
+        params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 2}
+    elif case_name.startswith("dn128_qs3_1b4k"):
+        params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 2, "d": 128, "dr": 64, "softmax_scale": 192 ** -0.5}
     
     base_params.update(params)
+    group = base_params["n1"] // base_params["n2"]
 
     case_config = MlaConfig(layout=base_params["layout"], b=base_params["b"], n1=base_params["n1"], 
                             s1=base_params["s1"], q_d=base_params["d"], q_rope_d=base_params["dr"], 
                             n2=base_params["n2"], s2=base_params["s2"], kv_d=base_params["d"], 
                             k_rope_d=base_params["dr"], block_size=base_params["block_size"], 
-                            softmax_scale=base_params["softmax_scale"])
+                            softmax_scale=base_params["softmax_scale"], group=group)
     return case_config
 
 
 def get_tile_config(case_config):
 
     tile_config = AttentionTileConfig(
-        g_tile=case_config.n1,
+        g_tile=case_config.group,
         s2_tile=2048,
         v0_tile=[128, 576],
         c1_tile=[[128, 128], [128, 128], [128, 128]],
@@ -300,6 +323,14 @@ def test_incre_flash_attention_mla_qs3_1b4k():
     do_test_incre_flash_attention_mla("qs3_1b4k")
 
 
+def test_incre_flash_attention_mla_nkv2_qs3_1b4k():
+    do_test_incre_flash_attention_mla("nkv2_qs3_1b4k")
+
+
+def test_incre_flash_attention_mla_dn128_qs3_1b4k():
+    do_test_incre_flash_attention_mla("dn128_qs3_1b4k")
+
+
 def main():
     logger.info("\n")
     logger.info("=" * 60)
@@ -307,15 +338,17 @@ def main():
     logger.info("=" * 60 + "\n")
 
     test_incre_flash_attention_mla_32b4k()
-
     test_incre_flash_attention_mla_1b4k()
     test_incre_flash_attention_mla_8b4k()
     test_incre_flash_attention_mla_16b8k()
     test_incre_flash_attention_mla_32b2k()
+    test_incre_flash_attention_mla_qs3_1b4k()
+    test_incre_flash_attention_mla_nkv2_qs3_1b4k()
+    test_incre_flash_attention_mla_dn128_qs3_1b4k()
 
+    # prof case
     test_incre_flash_attention_mla_4b8k()
     test_incre_flash_attention_mla_64b8k()
-    test_incre_flash_attention_mla_qs3_1b4k()
 
 
 if __name__ == "__main__":

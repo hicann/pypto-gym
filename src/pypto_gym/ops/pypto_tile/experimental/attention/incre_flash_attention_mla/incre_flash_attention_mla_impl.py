@@ -213,6 +213,7 @@ def assemble_key_blocks(ctx):
     block_size = kernel_config.block_size
     kv_d = kernel_config.kv_d
     k_rope_d = kernel_config.k_rope_d
+    n2 = kernel_config.n2
 
     s2_tile = tile_config.s2_tile
     v0_tile = tile_config.v0_tile
@@ -226,7 +227,7 @@ def assemble_key_blocks(ctx):
     block_num = s2_tile // block_size
     base_idx = ctx.s2_idx * block_num
     for i in range(block_num):
-        b_idx = block_table[ctx.b_idx, base_idx + i].max(0) * block_size
+        b_idx = (block_table[ctx.b_idx, base_idx + i].max(0) * n2 + ctx.n2_idx) * block_size
         kn_view = pypto.view(knope_2d, [block_size, kv_d], [b_idx, 0])
         pypto.assemble(kn_view, [i * block_size, 0], kn_assemble)
         pypto.assemble(kn_view, [i * block_size, 0], key_assemble)
