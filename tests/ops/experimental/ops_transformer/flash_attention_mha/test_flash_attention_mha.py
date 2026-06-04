@@ -284,11 +284,11 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if tile_config is None:
         if perf_910:
             tile_config = FlashAttentionTileShapeConfig(
-                q_tile = 512,
+                q_tile = 2048,
                 k_tile = 2048,
-                c1_cube_tile = [[128, 128], [64, 128], [256, 256]],
-                v1_tile = [8, 2048],
-                c2_cube_tile = [[128, 128], [128, 512], [128, 128]],
+                c1_cube_tile = [[128, 128], [256, 512], [128, 128]],
+                v1_tile = [8, 1024],
+                c2_cube_tile = [[128, 128], [256, 512], [128, 128]],
                 v2_tile = [64, 128]
             )
         else:
@@ -391,9 +391,19 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     return passed
 
 
-def test_00_910():
+def test_00_910_1b():
     """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
     return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
+
+
+def test_00_910_2b():
+    """batch=2, heads=8, s1=4096, s2=4096, dim=128"""
+    return run_test(batch_size=2, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
+
+
+def test_00_910_8b():
+    """batch=8, heads=8, s1=4096, s2=4096, dim=128"""
+    return run_test(batch_size=8, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
 def test_01():
@@ -441,7 +451,9 @@ def main():
     logging.info("=" * 60 + "\n")
 
     test_funcs = [
-        test_00_910,
+        test_00_910_1b,
+        test_00_910_2b,
+        test_00_910_8b,
         test_01,
         test_02,
         test_03,

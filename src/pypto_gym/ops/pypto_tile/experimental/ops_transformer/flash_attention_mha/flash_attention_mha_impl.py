@@ -278,7 +278,7 @@ def flash_attention_varlen_forward_kernel(
         "stitch_function_max_num": 256,
     },
     pass_options={
-        "cube_l1_reuse_setting": {0: 4, 1: 1},
+        "cube_l1_reuse_setting": {0: 8, 1: 1},
         "cube_nbuffer_setting": {0: 1, 1: 1},
         "vec_nbuffer_setting": {-2: 1, 0: 8, 1: 2},
     },
