@@ -111,6 +111,19 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
 
 
+def attention_forward_golden_noflash(q, k, v, scale):
+    scores = torch.matmul(q.cpu().to(torch.float32), k.cpu().transpose(1, 0).to(torch.float32)) * scale
+    m = scores.amax(dim=-1, keepdim=True)
+
+    p_unnorm = torch.exp(scores - m)
+    l = p_unnorm.sum(dim=-1, keepdim=True)
+
+    p_norm = p_unnorm / l
+    o = torch.matmul(p_norm.to(torch.bfloat16).to(torch.float32), v.cpu().to(torch.float32)).to(torch.bfloat16)
+
+    return o, m, l
+
+
 def attention_forward_golden(q, k, v, scale):
     """
     Golden reference: Flash Attention (online softmax)算法实现。
@@ -217,7 +230,7 @@ def attention_forward_golden(q, k, v, scale):
 
 
 def run_test(batch_size=None, num_heads=None, s1_size=None,
-             s2_size=None, dim=None, tile_config=None, perf_910=False):
+             s2_size=None, dim=None, tile_config=None, perf_910=False, no_flash=False):
     """
     运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
 
@@ -273,9 +286,9 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             tile_config = FlashAttentionTileShapeConfig(
                 q_tile = 512,
                 k_tile = 2048,
-                c1_cube_tile = [[128, 512], [128, 128], [128, 512]],
+                c1_cube_tile = [[128, 128], [64, 128], [256, 256]],
                 v1_tile = [8, 2048],
-                c2_cube_tile = [[64, 64], [512, 512], [64, 64]],
+                c2_cube_tile = [[128, 128], [128, 512], [128, 128]],
                 v2_tile = [64, 128]
             )
         else:
@@ -326,7 +339,10 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             k_h = k[k_off:k_off + sk, h, :]
             v_h = v[k_off:k_off + sk, h, :]
 
-            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
+            if no_flash:
+                golden_o, golden_m, golden_l = attention_forward_golden_noflash(q_h, k_h, v_h, scale)
+            else:
+                golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
             # golden 返回 [sq, ...] FP32, 写入二维 golden tensor
             out_golden[q_off:q_off + sq, h_off:h_off + dim] = golden_o
             m_golden[q_off:q_off + sq, h:h + 1] = golden_m
@@ -337,6 +353,9 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
     if perf_910:
+        a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
+        for _ in range(100):
+            a_max = torch.max(a)
         flash_attention_varlen_forward_kernel_910(
             q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
             tile_config)
@@ -374,7 +393,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
 
 def test_00_910():
     """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
-    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True)
+    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
 def test_01():
