@@ -25,11 +25,6 @@ dK and dV are accumulated across kv tiles.
 
 import sys
 import os
-_p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')):
-    _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import logging
 from dataclasses import dataclass
@@ -40,8 +35,8 @@ import pytest
 import torch
 import torch_npu
 
-from flash_attention_mha_grad_impl \
-    import flash_attention_varlen_backward_kernel_small_seq, flash_attention_mha_grad_kernel_long_seq
+from flash_attention_mha_grad_impl import flash_attention_mha_grad_kernel_impl, \
+    FlashAttentionGradTileShapeConfig
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
@@ -50,9 +45,9 @@ logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 NUM_HEADS = 8
 HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
-
 # KV 序列维度的分块大小 (全局配置常量)
-S2_TILE = 256
+S1_TILE = 1024
+S2_TILE = 1024
 
 
 def get_device_id():
@@ -141,10 +136,10 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
 
     torch.manual_seed(42)
     # Q 张量: shape=[sum(q_seqlens), num_heads, head_dim], dtype=BF16
-    q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
+    q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1
     # K/V 张量: shape=[sum(kv_seqlens), num_heads, head_dim], dtype=BF16
-    k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
-    v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.01
+    k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1
+    v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) * 0.1
 
     # 前缀累加构造 actual_q / actual_kv (shape=[batch_size + 1])
     q_cumsum = [0]
@@ -212,18 +207,18 @@ def attention_backward_golden(q, k, v, o_input, do_t, scale):
     #  计算流：kernel: matmul(ds_half, qi, out_dtype=FP32, a_trans=True) 即 ds_half^T @ Q
     #  计算流：ds_half: [s1, s2], Q: [s1, D] → ds_half^T: [s2, s1] @ Q: [s1, D] → [s2, D]
     dk_fp32 = torch.matmul(ds_half.float().T, q.float()) * scale
-    dk = dk_fp32.to(torch.bfloat16)
+    dk = dk_fp32.to(torch.float32)
 
     #  计算流：---- dV = p_half^T(BF16) @ dO(BF16) → BF16 ----
     #  计算流：kernel: matmul(p_half, doi, out_dtype=BF16, a_trans=True) 即 p_half^T @ dO
     #  计算流：p_half: [s1, s2], dO: [s1, D] → p_half^T: [s2, s1] @ dO: [s1, D] → [s2, D]
     # 注: 模拟 BF16 matmul — 先 FP32 计算再 cast BF16
-    dv = torch.matmul(p_half.float().T, do_t.float()).to(torch.bfloat16)
+    dv = torch.matmul(p_half.float().T, do_t.float()).to(torch.float32)
 
     #  计算流：---- dQ = ds_half(BF16) @ K(BF16) → FP32 * scale → BF16 ----
     #  计算流：kernel: matmul(ds_half, ki_tile, out_dtype=FP32) → mul(scale) → 累加(FP32) → cast(BF16)
     dq_fp32 = torch.matmul(ds_half.float(), k.float()) * scale
-    dq = dq_fp32.to(torch.bfloat16)
+    dq = dq_fp32.to(torch.float32)
 
     return dq, dk, dv
 
@@ -334,7 +329,13 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if dim is None:
         dim = HEAD_DIM
     if tile_config is None:
-        tile_config = TileConfig()
+        tile_config = FlashAttentionGradTileShapeConfig(
+            s1_tile = S2_TILE,
+            s2_tile = S2_TILE,
+            c_tile = [[256, 512], [128, 256], [128, 512]],
+            v_tile_s = [64, 256],
+            v_tile_d = [64, 256],
+        )
 
     # varlen: 若显式传入 q_seqlens / kv_seqlens, 则覆盖 batch_size 与 s1_size/s2_size
     if q_seqlens is not None:
@@ -360,6 +361,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     # ---- 构造输入张量，dtype 严格匹配 kernel 签名 ----
     # Q: [batch * s1_size, num_heads, dim], KV: [batch * s2_size, num_heads, dim]
     # kernel 签名为三维 [DYNAMIC, N, D]
+    torch.manual_seed(2026)
     q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens = create_inputs(
         batch_size, s1_size, s2_size, num_heads, dim, device,
         q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
@@ -373,9 +375,8 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
 
     # 注意: 此处使用与 create_inputs 不同的种子，避免 do_t 与 q 数值完全相同，
     # 否则会掩盖 dQ/dK/dV 计算路径中与 dO 相关的错误。
-    torch.manual_seed(2026)
     # dO: Q 侧, shape=[batch * s1_size, num_heads, dim], dtype=BF16
-    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.01
+    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.1
 
     # L, M: Q 侧, shape=[batch * s1_size, num_heads, 1], dtype=FP32
     l_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
@@ -403,16 +404,25 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             o_out[q_off: q_off + sq, h, :] = o_h
 
     # dQ: Q 侧, shape=[batch * s1_size, hidden_dim] (二维), dtype=BF16
-    dq_out = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16, device=device)
+    # 使用 zeros 预初始化，kernel 内不再做 assemble 清零
+    dq_out = torch.zeros(total_q, hidden_dim, dtype=torch.float32, device=device)
     # dK, dV: KV 侧, shape=[batch * s2_size, hidden_dim] (二维), dtype=BF16
-    dk_out = torch.empty(total_kv, hidden_dim, dtype=torch.bfloat16, device=device)
-    dv_out = torch.empty(total_kv, hidden_dim, dtype=torch.bfloat16, device=device)
+    dk_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
+    dv_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
+
+    # ---- 工作空间: kernel 内部用 pypto.assemble 固定 UB 分配, 防止 JIT 复叠导致精度退化 ----
+    # _ws: 用于 s_ij / ds_ij 的 UB fix, shape=[num_heads * S_TILE_2, S_TILE_2]
+    s2_tile = tile_config.s2_tile
+    ws_rows = num_heads * s2_tile
+    ws = torch.zeros(ws_rows, s2_tile, dtype=torch.float32, device=device)
+    # _ws_dq: 专门用于 dq_final 的 UB fix, shape=[num_heads * S_TILE_2, dim]
+    ws_dq = torch.zeros(ws_rows, dim, dtype=torch.float32, device=device)
 
     # ---- Golden 计算: 先完整计算所有 batch/head 的 golden dQ/dK/dV ----
     # golden dQ/dK/dV 与 kernel 输出同 shape: [total, hidden_dim], dtype=BF16
-    dq_golden = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16, device=device)
-    dk_golden = torch.empty(total_kv, hidden_dim, dtype=torch.bfloat16, device=device)
-    dv_golden = torch.empty(total_kv, hidden_dim, dtype=torch.bfloat16, device=device)
+    dq_golden = torch.empty(total_q, hidden_dim, dtype=torch.float32, device=device)
+    dk_golden = torch.empty(total_kv, hidden_dim, dtype=torch.float32, device=device)
+    dv_golden = torch.empty(total_kv, hidden_dim, dtype=torch.float32, device=device)
 
     for b in range(batch_size):
         q_off = q_cumsum[b]
@@ -436,26 +446,15 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     # ---- 调用 kernel ----
     logging.info("  Running kernel...")
     import time
-    # 路由决策基于 max(q_seqlens) (varlen) 或 s1_size (uniform)
-    max_s1 = max(q_seqlens)
-    if max_s1 > 320:
-        # perf run
-        start_time = time.time()
-        flash_attention_mha_grad_kernel_long_seq(
-            q, k, v, o_out, do_t, l_out, m_out,
-            dq_out, dk_out, dv_out,
-            actual_q, actual_kv)
-        elapsed = time.time() - start_time
-        logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
-    else:
-        # perf run
-        start_time = time.time()
-        flash_attention_varlen_backward_kernel_small_seq(
-            q, k, v, o_out, do_t, l_out, m_out,
-            dq_out, dk_out, dv_out,
-            actual_q, actual_kv)
-        elapsed = time.time() - start_time
-        logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
+    # perf run
+    start_time = time.time()
+    flash_attention_mha_grad_kernel_impl(
+        q, k, v, o_out, do_t, l_out, m_out,
+        dq_out, dk_out, dv_out,
+        actual_q, actual_kv,
+        ws, ws_dq, tile_config)
+    elapsed = time.time() - start_time
+    logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
     rtol = 0.0078125  # 1/128, 约 BF16 精度
     atol = 0.0001
