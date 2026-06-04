@@ -47,11 +47,13 @@ def _set_process_desc(desc: str):
 
 @pytest.fixture
 def device():
+    print(f"=========current device is {int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}")
     return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 @pytest.fixture
 def device_id():
+    print(f"=========current device 111 is {int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}")
     return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
@@ -79,41 +81,86 @@ def _is_case_match_cards(item, target_cards) -> bool:
     return True
 
 
+# @pytest.hookimpl(optionalhook=True)
+# def pytest_configure_node(node):
+#     print(f"========== pytest_configure_node called for node {node.gateway.id} ==========", flush=True)
+#     device_id_lst: Optional[List[int]] = node.config.getoption("--device")
+#     cards_per_case: int = node.config.getoption("--cards-per-case", 1)
+
+#     if device_id_lst:
+#         if cards_per_case > 1:
+#             if len(device_id_lst) % cards_per_case != 0:
+#                 raise ValueError(
+#                     f"Cannot divide {len(device_id_lst)} devices into groups of {cards_per_case}"
+#                 )
+#             num_groups = len(device_id_lst) // cards_per_case
+#             worker_idx = int(str(node.gateway.id).lstrip("gw"))
+#             if worker_idx >= num_groups:
+#                 node.gateway.id = "NoDevices"
+#                 node.gateway.remote_exec('import os; os.environ.pop("TILE_FWK_DEVICE_ID", None)')
+#                 node.gateway.remote_exec('import os; os.environ.pop("TILE_FWK_DEVICE_ID_LIST", None)')
+#                 return
+#             start_idx = worker_idx * cards_per_case
+#             end_idx = start_idx + cards_per_case
+#             device_group = device_id_lst[start_idx:end_idx]
+#             device_group_str = ",".join(map(str, device_group))
+#             node.gateway.id = f"Devices[{device_group_str}]"
+#             node.gateway.remote_exec(
+#                 f'import os; os.environ["TILE_FWK_DEVICE_ID_LIST"] = "{device_group_str}"'
+#             )
+#         else:
+#             worker_idx = int(str(node.gateway.id).lstrip("gw"))
+#             if worker_idx >= len(device_id_lst):
+#                 raise ValueError(f"WorkerIdx[{worker_idx}] out of DeviceIdLst{device_id_lst} range.")
+#             device_id: int = device_id_lst[worker_idx]
+#             node.gateway.id = f"Device[{device_id}]"
+#             node.gateway.remote_exec(f'import os; os.environ["TILE_FWK_DEVICE_ID"] = "{device_id}"')
+#     else:
+#         node.gateway.remote_exec(f'import os; os.environ.pop("TILE_FWK_DEVICE_ID", None)')
+
 @pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
-    device_id_lst: Optional[List[int]] = node.config.getoption("--device")
+    """为每个 worker 节点配置设备"""
+    print(f"========== pytest_configure_node called for node {node.gateway.id} ==========", flush=True)
+    
+    # 从环境变量获取设备列表
+    available_devices_env = os.environ.get("PYTEST_AVAILABLE_DEVICES", "")
+    if not available_devices_env:
+        return
+    
+    device_id_lst = [int(d.strip()) for d in available_devices_env.split(",") if d.strip()]
     cards_per_case: int = node.config.getoption("--cards-per-case", 1)
-
-    if device_id_lst:
-        if cards_per_case > 1:
-            if len(device_id_lst) % cards_per_case != 0:
-                raise ValueError(
-                    f"Cannot divide {len(device_id_lst)} devices into groups of {cards_per_case}"
-                )
-            num_groups = len(device_id_lst) // cards_per_case
-            worker_idx = int(str(node.gateway.id).lstrip("gw"))
-            if worker_idx >= num_groups:
-                node.gateway.id = "NoDevices"
-                node.gateway.remote_exec('import os; os.environ.pop("TILE_FWK_DEVICE_ID", None)')
-                node.gateway.remote_exec('import os; os.environ.pop("TILE_FWK_DEVICE_ID_LIST", None)')
-                return
-            start_idx = worker_idx * cards_per_case
-            end_idx = start_idx + cards_per_case
-            device_group = device_id_lst[start_idx:end_idx]
-            device_group_str = ",".join(map(str, device_group))
-            node.gateway.id = f"Devices[{device_group_str}]"
-            node.gateway.remote_exec(
-                f'import os; os.environ["TILE_FWK_DEVICE_ID_LIST"] = "{device_group_str}"'
-            )
-        else:
-            worker_idx = int(str(node.gateway.id).lstrip("gw"))
-            if worker_idx >= len(device_id_lst):
-                raise ValueError(f"WorkerIdx[{worker_idx}] out of DeviceIdLst{device_id_lst} range.")
-            device_id: int = device_id_lst[worker_idx]
-            node.gateway.id = f"Device[{device_id}]"
-            node.gateway.remote_exec(f'import os; os.environ["TILE_FWK_DEVICE_ID"] = "{device_id}"')
+    
+    worker_id = str(node.gateway.id)
+    worker_idx = int(worker_id.lstrip("gw"))
+    
+    if cards_per_case > 1:
+        num_groups = len(device_id_lst) // cards_per_case
+        if worker_idx >= num_groups:
+            return
+        start_idx = worker_idx * cards_per_case
+        end_idx = start_idx + cards_per_case
+        device_group = device_id_lst[start_idx:end_idx]
+        device_group_str = ",".join(map(str, device_group))
+        
+        # 使用 remote_exec 设置环境变量
+        node.gateway.remote_exec(
+            f'import os; os.environ["ASCEND_VISIBLE_DEVICES"] = "{device_group_str}"'
+        )
+        node.gateway.remote_exec(
+            f'import os; os.environ["TILE_FWK_DEVICE_ID_LIST"] = "{device_group_str}"'
+        )
     else:
-        node.gateway.remote_exec(f'import os; os.environ.pop("TILE_FWK_DEVICE_ID", None)')
+        if worker_idx >= len(device_id_lst):
+            return
+        device_id = device_id_lst[worker_idx]
+        
+        node.gateway.remote_exec(
+            f'import os; os.environ["ASCEND_VISIBLE_DEVICES"] = "{device_id}"'
+        )
+        node.gateway.remote_exec(
+            f'import os; os.environ["TILE_FWK_DEVICE_ID"] = "{device_id}"'
+        )
 
 
 @pytest.hookimpl(tryfirst=True)
