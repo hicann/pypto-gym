@@ -355,7 +355,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
         max_diff = np.abs(npu_np - golden_np).max()
 
         try:
-            from tests.ops.deepseek_v4.utils.compare import compare
+            from tests.ops.utils.compare import compare
             compare(npu_tensor.cpu(), golden_tensor, name, atol=atol, rtol=rtol, max_error_count=10)
 
             logging.info(f"  {name}: PASSED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")

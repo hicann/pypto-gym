@@ -869,12 +869,9 @@ class BuildCtrl():
         dev_lst = [int(d) for d in self.auto_execute_device_id.split(":")]
         dev_ext = " ".join(f"{d}" for d in dev_lst)
         ext_str = f"-n {len(dev_lst)}"
-        # ext_str = f"--device 0"
-        print(f"=========自动分配设备 {ext_str}==========",  flush=True)
 
         # 关键：必须让 pytest 自动分配设备
         ext_str += " --dist=loadscope"
-        print(f"=========自动分配设备 {ext_str}==========",  flush=True)
 
         # 执行用例Models
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/")],
@@ -917,81 +914,21 @@ class BuildCtrl():
         # 执行 pytest
         self._py_tests_run_pytest(dist=dist, filter_str=filter_str, ext=ext)
 
-    # def py_run_examples(self, dist: Optional[Path], tests: TestsFilterParam, def_filter: str,
-    #                     dev_ext_comma: str = "0", n_workers: str = "auto"):
-    #     """运行示例测试用例
-
-    #     根据 backend_type 决定执行模式 (NPU 或 SIM) , 支持设备分配和超时控制.
-
-    #     :param dist: 二进制分发包安装路径
-    #     :type dist: Optional[Path]
-    #     :param tests: 测试过滤参数
-    #     :type tests: TestsFilterParam
-    #     :param def_filter: 默认过滤条件
-    #     :type def_filter: str
-    #     :param dev_ext_comma: 设备 ID 列表 (逗号分隔)
-    #     :type dev_ext_comma: str
-    #     :param n_workers: 并行工作数
-    #     :type n_workers: str
-    #     """
-    #     if not tests.enable:
-    #         return
-    #     if not self.tests.exec.auto_execute:
-    #         return
-    #     # filter 处理
-    #     filter_str = tests.get_filter_str(def_filter=def_filter).replace(',', ' ')
-
-    #     # 根据 backend_type 决定执行模式
-    #     update_env = self._get_py_tests_update_env(dist=dist)
-    #     # 获取 case_timeout 参数
-    #     case_timeout = self.tests.exec.case_execute_timeout
-    #     timeout_arg = f" --timeout {case_timeout}" if case_timeout and case_timeout > 0 else ""
-
-    #     if self.feature.backend_type == "npu":
-    #         # NPU 模式
-    #         cmd = f"{sys.executable} validate_examples.py -t {filter_str} -d {dev_ext_comma}{timeout_arg}"
-    #         logging.info("examples --run_mode npu, Cmd: %s", cmd)
-    #         ret, duration = self.run_build_cmd(cmd=cmd, check=True, update_env=update_env)
-    #         ret.check_returncode()
-    #         logging.info("examples --run_mode npu, Cmd: %s, Duration %s sec", cmd, duration)
-    #     else:
-    #         # SIM 模式
-    #         n_workers_val = int(n_workers) if n_workers != "auto" else 16
-    #         cmd = f"{sys.executable} validate_examples.py -t {filter_str} \
-    #               --run_mode sim -w {n_workers_val}{timeout_arg} --no-serial-fallback"
-    #         logging.info("examples --run_mode sim, Cmd: %s", cmd)
-    #         ret, duration = self.run_build_cmd(cmd=cmd, check=True, update_env=update_env)
-    #         ret.check_returncode()
-    #         logging.info("examples --run_mode sim, Cmd: %s, Duration %s sec", cmd, duration)
-
     def _py_tests_run_pytest(self, dist: Optional[Path], filter_str: str, ext: str = ""):
-        print("HYQ _py_tests_run_pytest running", flush=True)
-        print("HYQ auto_execute =", self.tests.exec.auto_execute, flush=True)
-        print("HYQ not auto_execute =", not self.tests.exec.auto_execute, flush=True)
         if not self.tests.exec.auto_execute:
-            print("HYQ _py_tests_run_pytest running 111", flush=True)
             return
 
-        # ===================== 加这一行 =====================
-        print("HYQ 准备执行 filter_str.replace", flush=True)
-        print("HYQ filter_str =", filter_str, flush=True)
         filter_str = filter_str.replace(',', ' ')
 
-        # ===================== 加这一行 =====================
-        print("HYQ 准备获取 auto_execute_device_id", flush=True)
 
         device_id_raw = self.auto_execute_device_id
-        print("HYQ 原始 device_id_raw =", device_id_raw, flush=True)  # 一定打印
 
         # 空值保护
         if not device_id_raw:
-            print("HYQ 警告：auto_execute_device_id 为空，默认使用 0", flush=True)
             device_id_raw = "0"
         # ===================== 修复 =====================
         # 把设备列表传入环境变量，pytest 插件会自动均分
         dev_ids = self.auto_execute_device_id.replace(":", ",")
-
-        print("HYQ 原始 dev_ids =", dev_ids, flush=True)  # 一定打印
         
         update_env = os.environ.copy()
         device_id_raw = self.auto_execute_device_id
@@ -1002,7 +939,6 @@ class BuildCtrl():
         # ===============================================
         cmd = f"{sys.executable} -m pytest {filter_str} -v --durations=0 -s --capture=no"
         cmd += f" --rootdir={self.src_root} {ext}"
-        print(f"=========执行命令是 {cmd}==========", flush=True)
 
         if self.check_pip_dependencies(deps={"pytest-xdist": ">=3.8.0"}, raise_err=False, log_err=False):
             cmd += " --no-loadscope-reorder"
@@ -1011,60 +947,6 @@ class BuildCtrl():
         _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="pytest")
         logging.info("pytest run success, %s", duration)
 
-
-    # def _py_tests_run_pytest(self, dist: Optional[Path], filter_str: str, ext: str = ""):
-    #     print("HYQ _py_tests_run_pytest running", flush=True)
-    #     print("HYQ auto_execute =", self.tests.exec.auto_execute, flush=True)
-        
-    #     if not self.tests.exec.auto_execute:
-    #         return
-
-    #     filter_str = filter_str.replace(',', ' ')
-
-    #     dev_list = self.auto_execute_device_id.split(":")
-    #     print(f"HYQ 总设备列表: {dev_list}", flush=True)
-
-    #     # ===================== 🔥 正确：自动均分设备，每个进程只看见自己的卡 =====================
-    #     # 让 pytest-xdist 自动绑定 进程ID <-> 设备ID
-    #     import os
-    #     worker_id = os.environ.get("PYTEST_XDIST_WORKER", "0")
-    #     worker_index = 0
-    #     if worker_id != "master":
-    #         worker_index = int(worker_id.replace("gw", "")) % len(dev_list)
-
-    #     use_dev = dev_list[worker_index]
-    #     visible_dev = use_dev
-    #     print(f"HYQ 进程 [{worker_id}] 绑定设备 [{use_dev}]", flush=True)
-
-    #     # 昇腾设备 强隔离
-    #     update_env = os.environ.copy()
-    #     update_env["ASCEND_VISIBLE_DEVICES"] = visible_dev
-    #     update_env["CANN_VISIBLE_DEVICES"] = visible_dev
-    #     update_env["ASCEND_DEVICE_ID"] = visible_dev
-    #     update_env["DEVICE_ID"] = visible_dev
-    #     # ======================================================================================
-
-    #     cmd = f"{sys.executable} -m pytest {filter_str} -v --durations=0 -s --capture=no"
-    #     cmd += f" --rootdir={self.src_root} {ext}"
-
-    #     print(f"HYQ 执行命令: {cmd}", flush=True)
-    #     print(f"HYQ 进程 {worker_id} 可见设备: {visible_dev}", flush=True)
-
-    #     if self.check_pip_dependencies(deps={"pytest-xdist": ">=3.8.0"}, raise_err=False, log_err=False):
-    #         cmd += " --no-loadscope-reorder"
-
-    #     _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="pytest")
-    #     logging.info("pytest run success, %s", duration)
-
-    def _get_py_tests_update_env(self, dist: Optional[Path]) -> Dict[str, str]:
-
-        # if dist:
-        #     origin_env = os.environ.copy()
-        #     ori_env_python_path = origin_env.get(self._PYTHONPATH, "")
-        #     act_env_python_path = f"{dist}:{ori_env_python_path}" if ori_env_python_path else f"{dist}"
-        #     update_env.update({self._PYTHONPATH: act_env_python_path})
-        # update_env.update(self._py_tests_get_xsan_env())
-        return {}
 
     @staticmethod
     def get_system_processor() -> str:

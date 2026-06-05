@@ -34,7 +34,7 @@ import pypto
 
 from deepseek_v4.mla_prolog_v4_impl import mla_prolog_pypto, mla_prolog_v4, \
     MlaPrologV4Attrs, MlaPrologV4Configs, check_input_output_shape_dtype
-from utils.compare import compare
+from tests.ops.utils.compare import compare
 
 torch.manual_seed(5)
 

@@ -208,7 +208,7 @@ def test_win_atten_tnd_mask(allow_in_graph=False) -> None:
 
         golden = win_atten_calc_tnd(input_params_win_attn, seqused_kv_list, sinks, q_tnd, \
             kv_cache, block_table, cu_seqlens_q, device_id)
-        from utils.compare import compare
+        from tests.ops.utils.compare import compare
         compare(golden, atten_out, "SWA tnd mask 版本", rtol=0.0078125, atol=0.0001)
 
 

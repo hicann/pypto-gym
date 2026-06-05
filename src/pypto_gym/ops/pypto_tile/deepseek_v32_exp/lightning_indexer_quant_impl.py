@@ -19,45 +19,14 @@ Main Functions:
     - lightning_indexer_decode_compute: JIT-compiled decode version
 
 Example:
-    See tests/ops/deepseek_v32_exp/test_lightning_indexer_quant.py for usage examples.
+    See deepseekv32_lightning_indexer_quant.py for usage examples.
 """
 import sys
-from dataclasses import dataclass
-
 import torch
 from pypto.operation import op_wrapper
 import pypto
 from pypto import pypto_impl
-
-
-@dataclass
-class LightningIndexerConfigs:
-    """Configuration parameters for the lightning indexer kernel.
-
-    Includes graph optimization, L1 reuse, vector buffer, tile shape and
-    matmul-relu fusion settings consumed by ``lightning_indexer_decode_compute``.
-    """
-    # graph optimization params
-    # used for copy in merge graph
-    mg_copy_in_upper_bound = 2 * 1024 * 1024
-    # l1 reuse merge params
-    cube_l1_reuse_setting = {
-        0: 16
-    }
-    # vector graph fuse optimization
-    vec_merge_mode = 2
-    vec_nbuffer_setting = {
-        -1: 16
-    }
-    # tile params
-    s1_tile = 2
-    topk_tile = 8192
-    # set the tileshape size in cube computation
-    c1_tile = [64, 64, 128, 128, 128, 128]  # (m, M), (k, K), (n, N)
-    c2_tile = [128, 128, 64, 64, 128, 128]  # (m, M), (k, K), (n, N)
-    # matmul relu fuse params
-    extend_param = {'scale': 1 / 2048.0, 'relu_type': pypto.ReLuType.RELU}
-
+from test_lightning_indexer_quant import LightningIndexerConfigs
 
 MAX_LI_S1 = 4
 MAX_LI_S2 = 128 * 1024
@@ -157,6 +126,7 @@ def lightning_indexer_decode_compute(
                                 [b_idx * s1 + s1_tile * s1_tile_idx, 0, 0])
             w_scale = pypto.mul(cur_qs, cur_w) # (s1_tile, 1, idx_n_heads), fp16 * fp16
             q_offset = b_idx * s1 * idx_n_heads + s1_tile_idx * s1_tile * idx_n_heads
+            cur_q = pypto.view(query_2d, [s1_tile * idx_n_heads, index_d], [q_offset, 0])
             for bn_idx, unroll_loop in pypto.loop_unroll(
                 0, cur_block, 1, name="LOOP_BLOCK_NUM", idx_name="bn_idx", unroll_list=unroll_list,):
                 # static unroll into bigger block to reduce tasks
@@ -166,7 +136,6 @@ def lightning_indexer_decode_compute(
                     idx_in_block = bn_idx + sub_bn_idx
                     cur_block_idx = block_table[b_idx, idx_in_block]
                     tail_seq = pypto.min(block_size, cur_seq - (idx_in_block * block_size))
-                    cur_q = pypto.view(query_2d, [s1_tile * idx_n_heads, index_d], [q_offset, 0])
                     k_block = pypto.view(key_2d, [block_size, index_d], [cur_block_idx * block_size, 0],
                         valid_shape=[tail_seq, index_d]) # (blockSize, indexD)
                     pypto.set_cube_tile_shapes([c1_tile[0], c1_tile[1]], [c1_tile[2],
@@ -179,13 +148,11 @@ def lightning_indexer_decode_compute(
                 pypto.set_vec_tile_shapes(pypto.min(s1_tile * idx_n_heads, block_size), block_size)
                 valid_cat_shape = (unroll_loop - 1) * block_size + last_seq
                 qk_3d = pypto.reshape(first_mm_collect, [s1_tile, idx_n_heads, unroll_loop * block_size],
-                    valid_shape=[s1_tile, idx_n_heads, pypto.min(unroll_loop * block_size, valid_cat_shape)],
                                         inplace=True)
                 pypto.set_cube_tile_shapes(
                     [c2_tile[0], c2_tile[1]], [c2_tile[2], c2_tile[3]], [c2_tile[4], c2_tile[5]])
                 w_qk = pypto.matmul(w_scale, qk_3d, pypto.DT_FP32, a_trans=False, b_trans=False)
-                second_mm = pypto.reshape(w_qk, [s1_tile, unroll_loop * block_size],
-                    valid_shape=[s1_tile, pypto.min(unroll_loop * block_size, valid_cat_shape)], inplace=True)
+                second_mm = pypto.reshape(w_qk, [s1_tile, unroll_loop * block_size], inplace=True)
 
                 ks_assemble = pypto.tensor([1, unroll_loop * block_size], pypto.DT_FP16, "ks_assemble")
                 pypto.set_vec_tile_shapes(1, block_size)

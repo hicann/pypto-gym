@@ -32,7 +32,7 @@ import pypto
 from deepseek_v4.sparse_compress_flash_attention_impl \
     import sparse_compress_flash_attention_kernel, SCFATileShapeConfig, \
         npu_sparse_compress_flash_attention, sparse_compress_flash_attention_graph
-from utils.compare import compare
+from tests.ops.utils.compare import compare
 
 
 class CompressSFA(torch.nn.Module):

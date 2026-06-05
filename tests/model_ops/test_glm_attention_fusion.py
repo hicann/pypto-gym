@@ -37,6 +37,7 @@ np.set_printoptions(formatter={'float': '{:.6f}'.format})
 
 @pytest.mark.soc("950", "910")
 def test_attention():
+    # 使用 torch 生成数据
     torch_npu.npu.config.allow_internal_format = True
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     device = f'npu:{device_id}'
@@ -61,6 +62,7 @@ def test_attention():
     block_size = attn_cfg.block_size
     max_num_blocks_per_query = attn_cfg.max_num_blocks_per_query
 
+    # 获取 torch tensor 类型的 actual_seq
     actual_seq_lens = attn_cfg.actual_seq.to(dtype=torch.int32, device=device)
 
     kv_cache_shape = [attn_cfg.kv_num_blocks, block_size, n2, d]
@@ -70,8 +72,7 @@ def test_attention():
 
     key_cache = torch.empty(kv_cache_shape, dtype=torch_dtype).uniform_(-1, 1).to(npu) * 0
     value_cache = torch.empty(kv_cache_shape, dtype=torch_dtype).uniform_(-1, 1).to(npu) * 0
-    block_tables = attn_golden.gen_block_table(actual_seq_lens, block_size, block_table_shape)
-    block_tables = block_tables.to(dtype=torch.int32, device=f'npu:{device_id}')
+    block_tables = attn_golden.gen_block_table(actual_seq_lens, block_size, block_table_shape).to(npu)
     key_cache_clone = key_cache.clone()
     value_cache_clone = value_cache.clone()
 
@@ -82,10 +83,9 @@ def test_attention():
     qkv_proj_scale = torch.rand(hidden_size, dtype=torch.bfloat16).to(npu)
     qkv_proj_offset = torch.rand(hidden_size, dtype=torch.bfloat16).to(npu)
 
-    qkv_proj_weight = torch.randint(0, 128, size=(hidden_size, total_head_size), dtype=torch.int8,
-                                    device=f'npu:{device_id}')
-    qkv_proj_weight = torch_npu.npu_format_cast(qkv_proj_weight, 29)
-    qkv_proj_quant_bias = torch.randint(0, 128, size=(total_head_size,), dtype=torch.int32, device=f'npu:{device_id}')
+    qkv_proj_weight = torch.randint(0, 128, size=(hidden_size, total_head_size), dtype=torch.int8).to(npu)
+    qkv_proj_weight = torch_npu.npu_format_cast(qkv_proj_weight, 29).to(npu)
+    qkv_proj_quant_bias = torch.randint(0, 128, size=(total_head_size,), dtype=torch.int32).to(npu)
     qkv_proj_deq_scale = torch.rand(total_head_size, dtype=torch.float32).to(npu)
     q_norm_weight = torch.rand(d, dtype=torch.bfloat16).to(npu)
     q_norm_bias = torch.rand(d, dtype=torch.bfloat16).to(npu)

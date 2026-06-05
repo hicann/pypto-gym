@@ -10,25 +10,48 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+from dataclasses import dataclass
 import os
 import logging
 import math
 import pytest
 import torch
 import torch_npu
-
+import numpy as np
+import pypto
 import sys
-import os
+
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
-import numpy as np
-import pypto
-from deepseek_v32_exp.lightning_indexer_quant_impl import LightningIndexerConfigs
 from deepseek_v32_exp.utils.compare import compare
+
+
+@dataclass
+class LightningIndexerConfigs:
+    # graph optimization params
+    # used for copy in merge graph
+    mg_copy_in_upper_bound = 2 * 1024 * 1024
+    # l1 reuse merge params
+    cube_l1_reuse_setting = {
+        0: 16
+    }
+    # vector graph fuse optimization
+    vec_merge_mode = 2
+    vec_nbuffer_setting = {
+        -1: 16
+    }
+    # tile params
+    s1_tile = 2
+    topk_tile = 8192
+    # set the tileshape size in cube computation
+    c1_tile = [64, 64, 128, 128, 128, 128] # (m, M), (k, K), (n, N)
+    c2_tile = [128, 128, 64, 64, 128, 128] # (m, M), (k, K), (n, N)
+    # matmul relu fuse params
+    extend_param = {'scale': 1 / 2048.0, 'relu_type': pypto.ReLuType.RELU}
 
 
 def gen_cache_tensor(k_tensor, block_table, block_num, block_size, b):

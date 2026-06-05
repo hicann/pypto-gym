@@ -30,7 +30,7 @@ from deepseek_v4.lightning_indexer_prolog_quant_v4_impl import (
     IndexerPrologQuantConfig,
     quant_lightning_indexer_prolog_kernel,
 )
-from utils.compare import compare
+from tests.ops.utils.compare import compare
 
 
 def rotate_half(x):

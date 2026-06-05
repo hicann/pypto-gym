@@ -446,7 +446,7 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
             attention_out = cfa_attention(q, cmp_kv, sinks, cmp_block_table, seqused_kv, ori_kv, ori_block_table, cmp_ratio)
         # pypto.runtime._device_synchronize()  # 内部接口，不推荐使用
 
-    import utils.compare as compare
+    from tests.ops.utils import compare
     compare.compare(output_flash, attention_out, "golden vs npu", rtol=0.0078125, atol=0.0001)
 
 
