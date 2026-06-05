@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2024 The Qwen team, Alibaba Group and the HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,7 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Qwen3 model configuration"""
+#
+# NOTICE: This file was modified by Huawei Technologies Co., Ltd. in 2026 to 
+# leverage pypto technology for fusing multiple small operators within the network.
+# Version 2.0.
+#
 
 from huggingface_hub.dataclasses import strict
 
