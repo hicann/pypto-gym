@@ -61,11 +61,15 @@ def inplace_add_rms_norm_kernel_bf16(
     gamma_2d = pypto.reshape(gamma, [1, H], inplace=True)  
     gamma_fp32 = pypto.cast(gamma_2d, pypto.DT_FP32)
 
+    bs_tile = 2
+    if pypto.platform.npuarch == 'DAV_3510':
+        bs_tile = 1
+
     for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[64, 16, 4, 2, 1]):
       x1_row = x1[bs_idx:bs_idx+unroll_length, :]  
       x2_row = x2[bs_idx:bs_idx+unroll_length, :]  
      
-      pypto.set_vec_tile_shapes(1, H)
+      pypto.set_vec_tile_shapes(bs_tile, H)
       x1_fp32 = pypto.cast(x1_row, pypto.DT_FP32)  
       x2_fp32 = pypto.cast(x2_row, pypto.DT_FP32) 
       
@@ -73,15 +77,14 @@ def inplace_add_rms_norm_kernel_bf16(
       square = pypto.mul(x_add_fp32, x_add_fp32)  
       square_sum = pypto.sum(square, dim=-1, keepdim=True)  
       
-      pypto.set_vec_tile_shapes(1, 1)
+      pypto.set_vec_tile_shapes(bs_tile, 1)
       mean_square = pypto.mul(square_sum, mean_coeff)  
       
-      ms_plus_eps = pypto.add(mean_square, eps)  
-    #   sqrt_ms = pypto.sqrt(ms_plus_eps)   
-      rstd_fp32 = pypto.rsqrt(ms_plus_eps)       
+      ms_plus_eps = pypto.add(mean_square, eps) 
+      rstd_fp32 = pypto.rsqrt(ms_plus_eps)
       rstd_bf16 = pypto.cast(rstd_fp32, pypto.DT_BF16) 
 
-      pypto.set_vec_tile_shapes(1, H)
+      pypto.set_vec_tile_shapes(bs_tile, H)
       y_fp32 = pypto.mul(x_add_fp32, rstd_fp32)
       y_fp32_scaled = pypto.mul(y_fp32, gamma_fp32)     
       
@@ -107,8 +110,7 @@ def npu_inplace_add_rms_norm(
     B = x1.shape[0]
     S = x1.shape[1]
     H = x1.shape[2]
-    
-    assert H == 7168, f"H must be 7168, got {H}"
+
     assert x2.shape == (B, S, H), \
         f"x2 shape mismatch: expected {(B, S, H)}, got {x2.shape}"
     assert gamma.shape == (H,), \

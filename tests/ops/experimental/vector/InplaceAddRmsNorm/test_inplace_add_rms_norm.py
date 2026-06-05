@@ -61,7 +61,7 @@ DTYPE_MAP = {
 }
 
 # Required test levels - default set covers all P0 shapes.
-REQUIRED_LEVELS = ("level0", "level1", "level4")
+REQUIRED_LEVELS = ("level0", "level1", "level2", "level3")
 
 
 def _device() -> str:
@@ -195,7 +195,7 @@ def test_level1(device: str) -> bool:
 
 
 def test_level2(device: str) -> bool:
-    """level2: bf16, [8,128,7168] B*S=1024 min."""
+    """level2: bf16, [32768, 1, 4096] B*S=1024 min."""
     cases = [c for c in _load_cases() if c["id"] == "level2"]
     return _run_case(cases[0], device)
 
@@ -225,8 +225,8 @@ def main() -> int:
 
         all_ok = True
         # 取消注释你要跑的 level；默认跑 level0 + level1 + level4
-        #for runner in (test_level0, test_level1, test_level4):
-        for runner in (test_level0,):
+        for runner in (test_level0, test_level1, test_level2, test_level3):
+        # for runner in (test_level2,):
         # for runner in (test_level3,):
             try:
                 ok = runner(device)
