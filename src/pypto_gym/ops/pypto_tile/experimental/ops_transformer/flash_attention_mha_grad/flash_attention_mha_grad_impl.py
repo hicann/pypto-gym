@@ -41,7 +41,7 @@ class FlashAttentionGradTileShapeConfig:
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 256,
+        "stitch_function_max_num": 128,
         "device_sched_mode": 1,
     },
     pass_options={
@@ -65,13 +65,6 @@ def flash_attention_mha_grad_kernel_impl(
     dv: pypto.Tensor([pypto.DYN, ...], pypto.DT_FP32),
     actual_q: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
     actual_kv: pypto.Tensor([pypto.DYN], pypto.DT_INT32),
-    # 工作空间: 防止多 head 迭代时 JIT 编译器复叠 UB 内存导致精度退化
-    # 每个 head 槽位大小为 s2_tile x s2_tile × 4B, 总共 num_heads * s2_tile 行
-    _ws: pypto.Tensor([pypto.DYN, pypto.DYN], pypto.DT_FP32),
-    # 临时 assemble 输出: 专门用于 dq_final 的 UB 固定，强制 JIT 编译器分配
-    # 独立的 UB 区域。shape=[num_heads * s2_tile, head_dim], dtype=FP32
-    _ws_dq: pypto.Tensor([pypto.DYN, pypto.DYN], pypto.DT_FP32),
-    # tileshape 配置
     tile_config: FlashAttentionGradTileShapeConfig,
 ):
     """合一 kernel: 两趟 (dQ, dK/dV) 共享外层 batch+head 循环。
@@ -136,29 +129,18 @@ def flash_attention_mha_grad_kernel_impl(
                     s_ij = pypto.matmul(q_i, k_j, pypto.DT_FP32, b_trans=True)
                     dp_ij = pypto.matmul(do_i, v_j, pypto.DT_FP32, b_trans=True)
 
-                    # [UB fix 1/3] 固定 s_ij 的 UB 分配, 防止跨 head 复叠
-                    pypto.assemble(s_ij, [n_idx * s2_tile, 0], _ws)
-
-                    pypto.set_pass_options(sg_set_scope=2)
+                    pypto.set_pass_options(sg_set_scope=1)
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
                     do_i_fp32 = pypto.cast(do_i, pypto.DT_FP32)
                     o_i_fp32 = pypto.cast(o_i, pypto.DT_FP32)
                     do_mul_oi = pypto.mul(o_i_fp32, do_i_fp32)
-                    pypto.set_vec_tile_shapes(32, 1024)
                     d_i = pypto.sum(do_mul_oi, -1, keepdim=True)
-                    pypto.set_pass_options(sg_set_scope=-1)
 
-                    pypto.set_pass_options(sg_set_scope=3)
                     pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
                     s_ij = pypto.mul(s_ij, scale)
                     p_ij = pypto.exp(pypto.sub(s_ij, m_i))
                     p_ij = pypto.div(p_ij, l_i, precision_type=pypto.PrecisionType.INTRINSIC)
-
-                    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
                     ds_ij = pypto.mul(p_ij, pypto.sub(dp_ij, d_i))
-
-                    # [UB fix 2/3] 固定 ds_ij 的 UB 分配, 防止跨 head 复叠
-                    pypto.assemble(ds_ij, [n_idx * s2_tile, 0], _ws)
 
                     ds_bf16 = pypto.cast(ds_ij, pypto.DT_BF16)
                     p_bf16 = pypto.cast(p_ij, pypto.DT_BF16)
@@ -168,16 +150,15 @@ def flash_attention_mha_grad_kernel_impl(
                     dv_tile = pypto.matmul(p_bf16, do_i, pypto.DT_FP32, a_trans=True)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
 
                     dq_tile = pypto.matmul(ds_bf16, k_j, pypto.DT_FP32)
                     dk_tile = pypto.matmul(ds_bf16, q_i, pypto.DT_FP32, a_trans=True)
 
+                    pypto.set_pass_options(sg_set_scope=2)
+                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
                     dq_final = pypto.mul(dq_tile, scale)
-                    dk_final = pypto.mul(dk_tile, scale)
-
-                    # [UB fix 3/3] 固定 dq_final 的 UB 分配, 防止跨 head 复叠
-                    pypto.assemble(dq_final, [n_idx * s2_tile, 0], _ws_dq)
-
                     pypto.atomic_add(dq_final, [s1_off, h_ofs], dq)
-                    pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
+                    dk_final = pypto.mul(dk_tile, scale)
                     pypto.atomic_add(dk_final, [s2_off, h_ofs], dk)
+                    pypto.set_pass_options(sg_set_scope=-1)

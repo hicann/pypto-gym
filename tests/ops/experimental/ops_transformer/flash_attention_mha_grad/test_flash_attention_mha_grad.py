@@ -25,7 +25,11 @@ dK and dV are accumulated across kv tiles.
 
 import sys
 import os
-
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import logging
 from dataclasses import dataclass
 
@@ -411,14 +415,6 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     dk_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
     dv_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
 
-    # ---- 工作空间: kernel 内部用 pypto.assemble 固定 UB 分配, 防止 JIT 复叠导致精度退化 ----
-    # _ws: 用于 s_ij / ds_ij 的 UB fix, shape=[num_heads * S_TILE_2, S_TILE_2]
-    s2_tile = tile_config.s2_tile
-    ws_rows = num_heads * s2_tile
-    ws = torch.zeros(ws_rows, s2_tile, dtype=torch.float32, device=device)
-    # _ws_dq: 专门用于 dq_final 的 UB fix, shape=[num_heads * S_TILE_2, dim]
-    ws_dq = torch.zeros(ws_rows, dim, dtype=torch.float32, device=device)
-
     # ---- Golden 计算: 先完整计算所有 batch/head 的 golden dQ/dK/dV ----
     # golden dQ/dK/dV 与 kernel 输出同 shape: [total, hidden_dim], dtype=BF16
     dq_golden = torch.empty(total_q, hidden_dim, dtype=torch.float32, device=device)
@@ -452,8 +448,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     flash_attention_mha_grad_kernel_impl(
         q, k, v, o_out, do_t, l_out, m_out,
         dq_out, dk_out, dv_out,
-        actual_q, actual_kv,
-        ws, ws_dq, tile_config)
+        actual_q, actual_kv, tile_config)
     elapsed = time.time() - start_time
     logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
     # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
