@@ -36,11 +36,12 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.testing import assert_allclose
 import pytest
+import pypto
 import torch
 import torch_npu
 
 
-from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl \
+from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_grad_impl_a3 \
     import flash_attention_mha_grad_kernel_impl, FlashAttentionGradTileShapeConfig
 
 
@@ -51,8 +52,8 @@ NUM_HEADS = 8
 HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 # KV 序列维度的分块大小 (全局配置常量)
-S1_TILE = 1024
-S2_TILE = 1024
+S1_TILE = 2048
+S2_TILE = 2048
 
 
 def get_device_id():
@@ -337,7 +338,7 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
         tile_config = FlashAttentionGradTileShapeConfig(
             s1_tile = S1_TILE,
             s2_tile = S2_TILE,
-            c_tile = [[128, 512], [128, 512], [256, 512]],
+            c_tile = [[256, 512], [128, 256], [128, 512]],
             v_tile_s = [64, 256],
             v_tile_d = [64, 256],
         )

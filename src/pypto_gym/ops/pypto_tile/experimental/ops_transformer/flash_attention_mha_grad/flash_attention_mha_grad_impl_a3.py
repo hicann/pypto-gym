@@ -41,11 +41,11 @@ class FlashAttentionGradTileShapeConfig:
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 512,
-        "device_sched_mode": 1,
+        "stitch_function_max_num": 128,
+        "device_sched_mode": 3,
     },
     pass_options={
-        "vec_nbuffer_setting": {-2:1, -1: 4},
+        "vec_nbuffer_setting": {-1:1, 0: 4},
     },
     debug_options={
         "runtime_debug_mode": 0,
