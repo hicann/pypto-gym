@@ -10,17 +10,17 @@
 # -----------------------------------------------------------------------------------------------------------
 
 import os
+import sys
 import logging
 from dataclasses import dataclass
 import math
+import subprocess
 
 import torch
 import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose
 
-import sys
-import os
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -42,7 +42,14 @@ def gen_inputs(mla_config: MlaConfig, device: str):
     query_rope_shape = [mla_config.b, mla_config.s1, mla_config.n1, mla_config.q_rope_d]  # BSND
     query_rope = torch.empty(query_rope_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
 
-    max_num_blocks_per_query = math.ceil(mla_config.s2 / mla_config.block_size)
+    if isinstance(mla_config.s2, list):
+        max_s2 = max(mla_config.s2)
+        kv_actual_seqs = torch.tensor(mla_config.s2, dtype=torch.int32, device=device)
+    else:
+        max_s2 = mla_config.s2
+        kv_actual_seqs = torch.tensor([mla_config.s2] * mla_config.b, dtype=torch.int32, device=device)
+
+    max_num_blocks_per_query = math.ceil(max_s2 / mla_config.block_size)
     kv_num_blocks = mla_config.b * max_num_blocks_per_query
     key_cache_shape = [kv_num_blocks, mla_config.n2, mla_config.block_size, mla_config.kv_d]  # PA_BnNBsD format
     key_cache = torch.empty(key_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
@@ -50,8 +57,6 @@ def gen_inputs(mla_config: MlaConfig, device: str):
 
     key_rope_cache_shape = [kv_num_blocks, mla_config.n2, mla_config.block_size, mla_config.k_rope_d]  # PA_BnNBsD format
     key_rope_cache = torch.empty(key_rope_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
-
-    kv_actual_seqs = torch.tensor([mla_config.s2] * mla_config.b, dtype=torch.int32, device=device)
 
     block_table = gen_block_table(mla_config, kv_actual_seqs, device)
 
@@ -108,7 +113,8 @@ def gen_block_table(mla_config, kv_actual_seqs, device: str):
     
     block_size = mla_config.block_size
     block_table_batch = mla_config.b
-    max_num_blocks_per_query = math.ceil(mla_config.s2 / block_size)
+    max_s2 = kv_actual_seqs.max().item()
+    max_num_blocks_per_query = math.ceil(max_s2 / block_size)
     block_table_shape = [block_table_batch, max_num_blocks_per_query]
 
     # Calculate number of blocks needed for each batch element
@@ -136,19 +142,20 @@ def gen_block_table(mla_config, kv_actual_seqs, device: str):
 def kv_cache_concat(cache_tensor, kv_actual_seqs, block_table, mla_config, device: str):
     batch_size = mla_config.b
     kv_num_heads = mla_config.n2 
-    kv_seqs_len = mla_config.s2
+    max_kv_seqs_len = kv_actual_seqs.max().item()
     d = cache_tensor.shape[3]  # BNSD
 
     block_size = mla_config.block_size
     dtype = cache_tensor.dtype
 
     # Initializes output tensors
-    result = torch.zeros([batch_size, kv_num_heads, kv_seqs_len, d], dtype=dtype, device=device)
+    result = torch.zeros([batch_size, kv_num_heads, max_kv_seqs_len, d], dtype=dtype, device=device)
     
     # Reconstruct tensors by following block table
     for b_idx in range(batch_size):
+        cur_kv_seq_len = kv_actual_seqs[b_idx].item()
         block_list = block_table[b_idx]
-        temp_tensor = torch.zeros([1, kv_num_heads, kv_seqs_len, d], dtype=dtype, device=device)
+        temp_tensor = torch.zeros([1, kv_num_heads, cur_kv_seq_len, d], dtype=dtype, device=device)
         s_idx = 0
 
         # Copy blocks according to block table
@@ -156,22 +163,21 @@ def kv_cache_concat(cache_tensor, kv_actual_seqs, block_table, mla_config, devic
             if block_idx == -1:
                 break
             start_idx = s_idx * block_size
-            end_idx = (s_idx + 1) * block_size
+            end_idx = min((s_idx + 1) * block_size, cur_kv_seq_len)
 
             # Copy block from cache to temp tensor
-            temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor[block_idx:block_idx + 1, :, :, :]
+            temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor[block_idx:block_idx + 1, :, :end_idx - start_idx, :]
             s_idx += 1
 
-        result[b_idx:b_idx + 1, :, :, :] = temp_tensor
+        result[b_idx:b_idx + 1, :, :cur_kv_seq_len, :] = temp_tensor
     return result
 
 
-def ifa_mla_golden(query, key, value, query_rope, key_rope):
+def ifa_mla_golden(query, key, value, query_rope, key_rope, kv_actual_seqs):
     b = query.shape[0]
     s1 = query.shape[1]
     n1 = query.shape[2]
     n2 = key.shape[1]
-    s2 = key.shape[2]
     kv_d = key.shape[3]
     group_size = n1 // n2
 
@@ -180,29 +186,33 @@ def ifa_mla_golden(query, key, value, query_rope, key_rope):
     logger.info(f"softmax_scale: {softmax_scale}")
     logger.info(f"group_size: {group_size}, n1: {n1}, n2: {n2}")
 
-    attention_out = torch.zeros([b, s1, n1, kv_d], dtype=query.dtype, device=query.device)
+    attention_out = torch.zeros([b, s1, n1, kv_d], dtype=torch.float32, device=query.device)
 
-    for n2_idx in range(n2):
-        q_group = query[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :]
-        qr_group = query_rope[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :]
-        q_full = torch.cat([q_group, qr_group], dim=-1)
+    for b_idx in range(b):
+        total_kv_len = kv_actual_seqs[b_idx].item()
 
-        k_nope = key[:, n2_idx:n2_idx + 1, :, :]
-        k_rope = key_rope[:, n2_idx:n2_idx + 1, :, :]
-        k_full = torch.cat([k_nope, k_rope], dim=-1)
+        for s1_idx in range(s1):
+            cur_s2 = total_kv_len - s1 + 1 + s1_idx
 
-        v_head = value[:, n2_idx:n2_idx + 1, :, :]
+            for n2_idx in range(n2):
+                q_nope = query[b_idx:b_idx + 1, s1_idx:s1_idx + 1, n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                q_rope_cur = query_rope[b_idx:b_idx + 1, s1_idx:s1_idx + 1, n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                q_full = torch.cat([q_nope, q_rope_cur], dim=-1)
 
-        qk_mm_res = torch.matmul(q_full, k_full.transpose(-2, -1))
-        logger.info(f"n2_idx={n2_idx}, qk_mm_res.shape: {qk_mm_res.shape}")
-        qk_ele_res = qk_mm_res * softmax_scale
-        softmax_res = F.softmax(qk_ele_res, dim=-1)
-        logger.info(f"n2_idx={n2_idx}, softmax_res.shape: {softmax_res.shape}")
-        attn_group = torch.matmul(softmax_res, v_head)
-        logger.info(f"n2_idx={n2_idx}, attn_group.shape: {attn_group.shape}")
+                k_nope = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                k_rope_cur = key_rope[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                k_full = torch.cat([k_nope, k_rope_cur], dim=-1)
 
-        attention_out[:, :, n2_idx * group_size:(n2_idx + 1) * group_size, :] = attn_group
+                v_head = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
 
+                qk_mm_res = torch.matmul(q_full, k_full.transpose(-2, -1))
+                qk_ele_res = qk_mm_res * softmax_scale
+                softmax_res = F.softmax(qk_ele_res, dim=-1)
+                attn_group = torch.matmul(softmax_res, v_head)
+
+                attention_out[b_idx, s1_idx, n2_idx * group_size:(n2_idx + 1) * group_size, :] = attn_group[0, 0]
+
+    attention_out = attention_out.to(query.dtype)
     logger.info(f"attention_out.shape: {attention_out.shape}")
     return attention_out
 
@@ -229,14 +239,20 @@ def get_case_config(case_name):
         params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 2}
     elif case_name.startswith("dn128_qs3_1b4k"):
         params = {"b": 1, "n1": 128, "s1": 3, "s2": 4 * 1024, "n2": 2, "d": 128, "dr": 64, "softmax_scale": 192 ** -0.5}
+    elif case_name.startswith("vary_s2_2b8k"):
+        s2 = [8191, 8193]
+        params = {"b": 2, "n1": 128, "s1": 1, "s2": s2, "n2": 1}
+    elif case_name.startswith("vary_s2_4b8k"):
+        s2 = [4096, 6144, 10240, 12288]
+        params = {"b": 4, "n1": 128, "s1": 1, "s2": s2, "n2": 1}
     
     base_params.update(params)
     group = base_params["n1"] // base_params["n2"]
 
     case_config = MlaConfig(layout=base_params["layout"], b=base_params["b"], n1=base_params["n1"], 
                             s1=base_params["s1"], q_d=base_params["d"], q_rope_d=base_params["dr"], 
-                            n2=base_params["n2"], s2=base_params["s2"], kv_d=base_params["d"], 
-                            k_rope_d=base_params["dr"], block_size=base_params["block_size"], 
+                            n2=base_params["n2"], s2=base_params["s2"],
+                            kv_d=base_params["d"], k_rope_d=base_params["dr"], block_size=base_params["block_size"], 
                             softmax_scale=base_params["softmax_scale"], group=group)
     return case_config
 
@@ -272,14 +288,14 @@ def do_test_incre_flash_attention_mla(case_name):
     query_rope = mla_inputs['query_rope']
     key_rope = mla_inputs['key_rope']
 
-    mla_golden = ifa_mla_golden(query, key, value, query_rope, key_rope)
+    mla_golden = ifa_mla_golden(query, key, value, query_rope, key_rope, mla_inputs['kv_actual_seqs'])
 
     tile_config = get_tile_config(case_config)
     pypto_kernel_inputs = dict(
-        query=query,
+        query=mla_inputs['query'],
         key=mla_inputs['key_cache'],
         value=mla_inputs['value_cache'],
-        query_rope=query_rope,
+        query_rope=mla_inputs['query_rope'],
         key_rope=mla_inputs['key_rope_cache'],
         kv_actual_seqs=mla_inputs['kv_actual_seqs'],
         block_table=mla_inputs['block_table'],
@@ -291,64 +307,28 @@ def do_test_incre_flash_attention_mla(case_name):
     print("[PRECISION_PASS]")
 
 
-def test_incre_flash_attention_mla_1b4k():
-    do_test_incre_flash_attention_mla("1b4k")
-
-
-def test_incre_flash_attention_mla_8b4k():
-    do_test_incre_flash_attention_mla("8b4k")
-
-
-def test_incre_flash_attention_mla_16b8k():
-    do_test_incre_flash_attention_mla("16b8k")
-
-
-def test_incre_flash_attention_mla_32b2k():
-    do_test_incre_flash_attention_mla("32b2k")
-
-
-def test_incre_flash_attention_mla_32b4k():
-    do_test_incre_flash_attention_mla("32b4k")
-
-
-def test_incre_flash_attention_mla_4b8k():
-    do_test_incre_flash_attention_mla("4b8k")
-
-
-def test_incre_flash_attention_mla_64b8k():
-    do_test_incre_flash_attention_mla("64b8k")
-
-
-def test_incre_flash_attention_mla_qs3_1b4k():
-    do_test_incre_flash_attention_mla("qs3_1b4k")
-
-
-def test_incre_flash_attention_mla_nkv2_qs3_1b4k():
-    do_test_incre_flash_attention_mla("nkv2_qs3_1b4k")
-
-
-def test_incre_flash_attention_mla_dn128_qs3_1b4k():
-    do_test_incre_flash_attention_mla("dn128_qs3_1b4k")
-
-
 def main():
     logger.info("\n")
     logger.info("=" * 60)
     logger.info("PyPTO incre_flash_attention_mla example")
     logger.info("=" * 60 + "\n")
 
-    test_incre_flash_attention_mla_32b4k()
-    test_incre_flash_attention_mla_1b4k()
-    test_incre_flash_attention_mla_8b4k()
-    test_incre_flash_attention_mla_16b8k()
-    test_incre_flash_attention_mla_32b2k()
-    test_incre_flash_attention_mla_qs3_1b4k()
-    test_incre_flash_attention_mla_nkv2_qs3_1b4k()
-    test_incre_flash_attention_mla_dn128_qs3_1b4k()
+    case_names = [
+        "32b4k", "1b4k", "8b4k", "16b8k", "32b2k",
+        "qs3_1b4k", "nkv2_qs3_1b4k", "dn128_qs3_1b4k",
+        "vary_s2_2b8k", "vary_s2_4b8k", "4b8k", "64b8k",
+    ]
 
-    # prof case
-    test_incre_flash_attention_mla_4b8k()
-    test_incre_flash_attention_mla_64b8k()
+    for case_name in case_names:
+        cmd = [
+            sys.executable, "-c",
+            f"from test_incre_flash_attention_mla import do_test_incre_flash_attention_mla; "
+            f"do_test_incre_flash_attention_mla('{case_name}')"
+        ]
+        result = subprocess.run(cmd, capture_output=False, text=True,
+                                cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    logger.info("All test cases passed!")
 
 
 if __name__ == "__main__":
