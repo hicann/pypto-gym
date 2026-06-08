@@ -46,11 +46,7 @@ class FlashAttentionGradTileShapeConfig:
     },
     pass_options={
         "vec_nbuffer_setting": {-2:1, -1: 4},
-    },
-    debug_options={
-        "runtime_debug_mode": 0,
-        "compile_debug_mode": 0
-    },
+    }
 )
 def flash_attention_mha_grad_kernel_impl(
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
