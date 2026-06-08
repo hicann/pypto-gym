@@ -43,8 +43,9 @@ cfg = DEFAULT_CONFIG
 # Auto environment configuration
 # ===========================================================================
 _DEFAULT_ASCEND_HOME = "/home/developer/Ascend/cann-9.0.0"
-_DEFAULT_PYPTO_PATH = "/mnt/workspace/gitCode/cann/pypto/python"
-_FORK_PYPTO_PATH = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
+_DEFAULT_PYPTO_PATH  = "/mnt/workspace/gitCode/cann/pypto/python"
+_FORK_PYPTO_PATH     = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
+_DEFAULT_PTO_ISA_PATH = "/mnt/workspace/gitCode/cann/mce/pto-isa"
 
 
 def _check_env():
@@ -63,6 +64,14 @@ def _check_env():
     os.environ["TILE_FWK_DEVICE_ID"] = devid
     print(f"[ENV] TILE_FWK_DEVICE_ID = {devid}")
 
+    # PTO_TILE_LIB_CODE_PATH: must use mce pto-isa to avoid DivAlgorithm enum conflict
+    pto_isa_path = os.environ.get("PTO_TILE_LIB_CODE_PATH", _DEFAULT_PTO_ISA_PATH)
+    if not os.path.isdir(pto_isa_path):
+        warnings.append(f"PTO_TILE_LIB_CODE_PATH not found: {pto_isa_path}")
+    else:
+        os.environ["PTO_TILE_LIB_CODE_PATH"] = pto_isa_path
+        print(f"[ENV] PTO_TILE_LIB_CODE_PATH = {pto_isa_path}")
+
     # Respect PYPTO_PATH env var; default to original (stable) pypto
     pypto_path = os.environ.get("PYPTO_PATH", _DEFAULT_PYPTO_PATH)
 
@@ -77,7 +86,7 @@ def _check_env():
         print(f"[ENV] PyPTO path = {pypto_path}")
 
     try:
-        result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=300)
+        result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
             warnings.append("npu-smi info returned non-zero")
         else:
@@ -176,28 +185,47 @@ def _collect_updated_dirs():
 
 
 def _identify_kernel(output_dir):
+    """Identify kernel types from kernel_aicore directory.
+
+    Returns a list of identified kernel type labels. For merged kernels that
+    contain both dQ and dK/dV phases, the list will contain both labels.
+    """
     kernel_aicore = os.path.join(output_dir, "kernel_aicore")
     if not os.path.isdir(kernel_aicore):
-        return "Unknown"
+        return ["Unknown"]
     loop_prefixes = set()
     for f in os.listdir(kernel_aicore):
-        m = re.match(r"TENSOR_LOOP_([a-z_]*?)(?:qblk|kblk)", f)
+        m = re.match(r"TENSOR_LOOP_([a-z_]*?)(?:qblk|kblk|sub)", f)
         if m:
             prefix = m.group(1).rstrip("_")
             if prefix:
                 loop_prefixes.add(prefix)
     prefix_map = {
         "fwd_s": "FWD", "fwd_d": "FWD", "fwd": "FWD",
-        "dq": "dQ", "dkdv": "dK/dV",
+        "dq": "dQ", "dqd": "dQ",
+        "dkdv": "dK/dV", "dkdvd": "dK/dV",
     }
+    identified = set()
     for prefix in loop_prefixes:
         for key, label in prefix_map.items():
             if prefix.startswith(key):
-                return label
-    return "Unknown"
+                identified.add(label)
+    if not identified:
+        return ["Unknown"]
+    return sorted(identified)
 
 
 def _parse_swimlane(output_dir):
+    """Parse merged_swimlane.json, computing per-execution metrics.
+
+    When the swimlane file accumulates events from multiple kernel
+    executions (cached kernel reused across test cases), we isolate
+    each execution by finding contiguous clusters of real-task events
+    separated by large gaps (idle periods between test cases).
+
+    Each cluster is treated as a single execution, and we return the
+    metrics for the LAST cluster (the one most recently executed).
+    """
     swim_path = os.path.join(output_dir, "merged_swimlane.json")
     if not os.path.exists(swim_path):
         return None
@@ -214,12 +242,34 @@ def _parse_swimlane(output_dir):
     real_tasks = [t for t in all_tasks if "(fake)" not in t.get("name", "")]
     if not real_tasks:
         return None
-    global_first = min(t["ts"] for t in real_tasks)
-    global_last = max(t["ts"] + t["dur"] for t in real_tasks)
+
+    # Sort real tasks by start time
+    real_tasks.sort(key=lambda t: t["ts"])
+
+    # Split into clusters: a gap > 10ms between consecutive real tasks
+    # indicates a new execution (idle period between test cases)
+    CLUSTER_GAP_US = 10000  # 10ms in microseconds
+    clusters = []
+    current_cluster = [real_tasks[0]]
+    for i in range(1, len(real_tasks)):
+        prev_end = current_cluster[-1]["ts"] + current_cluster[-1]["dur"]
+        curr_start = real_tasks[i]["ts"]
+        if curr_start - prev_end > CLUSTER_GAP_US:
+            clusters.append(current_cluster)
+            current_cluster = [real_tasks[i]]
+        else:
+            current_cluster.append(real_tasks[i])
+    clusters.append(current_cluster)
+
+    # Use the LAST cluster (most recent execution)
+    latest_cluster = clusters[-1] if clusters else real_tasks
+
+    global_first = min(t["ts"] for t in latest_cluster)
+    global_last = max(t["ts"] + t["dur"] for t in latest_cluster)
     task_time = global_last - global_first
-    aicore_time = sum(t["dur"] for t in real_tasks)
+    aicore_time = sum(t["dur"] for t in latest_cluster)
     active_core_ids = set()
-    for t in real_tasks:
+    for t in latest_cluster:
         core_name = tid2core.get(t["tid"], "")
         m = re.search(r"(\d+)$", core_name)
         if m:
@@ -230,19 +280,36 @@ def _parse_swimlane(output_dir):
 
 
 def _record_perf_from_dirs(test_name, updated_dirs, kernel_filter=None):
+    """Record perf data from output dirs, supporting merged kernels that
+    produce multiple kernel types (e.g. both dQ and dK/dV) from a single dir.
+
+    When _identify_kernel returns a list with multiple types, a separate perf
+    record is created for each type, all using the same combined swimlane data.
+    Dirs are deduplicated to avoid processing the same merged output twice.
+    """
+    seen_dirs = set()
     best_per_type = {}
     for d in updated_dirs:
-        ktype = _identify_kernel(d)
-        if kernel_filter and ktype not in kernel_filter:
+        # Deduplicate dirs (important for merged kernels where both dQ and
+        # dK/dV perf entries point to the same output directory)
+        if d in seen_dirs:
             continue
-        if ktype == "Unknown":
-            continue
+        seen_dirs.add(d)
+
+        ktypes = _identify_kernel(d)
         swim = os.path.join(d, "merged_swimlane.json")
         if not os.path.isfile(swim):
             continue
         mtime = os.path.getmtime(swim)
-        if ktype not in best_per_type or mtime > best_per_type[ktype][1]:
-            best_per_type[ktype] = (d, mtime)
+
+        for ktype in ktypes:
+            if kernel_filter and ktype not in kernel_filter:
+                continue
+            if ktype == "Unknown":
+                continue
+            if ktype not in best_per_type or mtime > best_per_type[ktype][1]:
+                best_per_type[ktype] = (d, mtime)
+
     for ktype, (d, _) in best_per_type.items():
         result = _parse_swimlane(d)
         if result is not None:
@@ -271,15 +338,12 @@ def _print_perf_summary():
     W_UTIL = 10
 
     def _fmt_us(val):
-        if val is None:
-            return "N/A".rjust(W_TASK)
-        if val >= 1000:
-            return f"{val / 1000:.2f} ms".rjust(W_TASK)
+        if val is None: return "N/A".rjust(W_TASK)
+        if val >= 1000: return f"{val / 1000:.2f} ms".rjust(W_TASK)
         return f"{val:.1f} us".rjust(W_TASK)
 
     def _fmt_pct(val):
-        if val is None:
-            return "N/A".rjust(W_UTIL)
+        if val is None: return "N/A".rjust(W_UTIL)
         return f"{val:.1f}%".rjust(W_UTIL)
 
     sep = "+" + "-" * (W_TEST + 2) + "+" + "-" * (W_KERNEL + 2) + \

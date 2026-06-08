@@ -78,13 +78,13 @@ _CUBE_TILE = (128, 128)
 _VEC_TILE_OUTPUT = (16, 128, 128)
 _CUBE_TILE_LIST = list(_CUBE_TILE)
 
+# Swimlane tuning: testing sched_mode=1 (L2 affinity only) for perf
+# Baseline sched_mode=3: S1024 1.05ms, S2048 2.00ms, Util 22-38%
 _DEVICE_SCHED_MODE = 3
-_CUBE_L1_REUSE_SETTING = {-1: 64}
+_CUBE_L1_REUSE_SETTING = {-1: 16}
 _RUNTIME_DEBUG_MODE = 1
 _STITCH_FUNCTION_NUM_INITIAL = 128
 _STITCH_FUNCTION_NUM_STEP = 64
-_STITCH_FUNCTION_INNER_MEMORY = 100
-_STITCH_FUNCTION_OUTCAST_MEMORY = 100
 
 
 def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
@@ -93,7 +93,7 @@ def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
 
     Args:
         extra_pass_options: optional dict merged into pass_options
-            (e.g. {"vec_nbuffer_setting": {-1: 4}} for backward kernels).
+            (e.g. {"cube_l1_reuse_setting": {-1: 4}} for backward kernels).
         extra_runtime_options: optional dict merged into runtime_options
             (e.g. {"device_sched_mode": 1} for L2 affinity).
     """
@@ -102,10 +102,6 @@ def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
         pass_opts.update(extra_pass_options)
     rt_opts = {
         "device_sched_mode": _DEVICE_SCHED_MODE,
-        "stitch_function_num_initial": _STITCH_FUNCTION_NUM_INITIAL,
-        "stitch_function_num_step": _STITCH_FUNCTION_NUM_STEP,
-        "stitch_function_inner_memory": _STITCH_FUNCTION_INNER_MEMORY,
-        "stitch_function_outcast_memory": _STITCH_FUNCTION_OUTCAST_MEMORY,
     }
     if extra_runtime_options:
         rt_opts.update(extra_runtime_options)
@@ -266,6 +262,165 @@ def _build_sparse_kv(block_sparse_mask, k_2d, v_2d,
                                Sq - (numQB - 1) * bx)
 
     return k_compact, v_compact, valid_mask, maxSel
+
+
+# ===========================================================================
+# C3: Mask structure cache (reuse valid_mask/maxSel across calls)
+# ===========================================================================
+_mask_cache = {}
+
+
+def _build_sparse_kv_cached(block_sparse_mask, k_2d, v_2d,
+                             B, Hq, Hkv, Sq, Skv, Sq_pad, Skv_pad, numQB, numKB,
+                             bx, by, D, device):
+    """Cached version: reuse mask structure if mask is unchanged."""
+    global _mask_cache
+    total_qblocks = B * Hq * numQB
+
+    # Cache key = mask hash + shape info (not k_2d/v_2d which change per call)
+    cache_key = (block_sparse_mask.data_ptr(), B, Hq, Hkv, numQB, numKB, bx, by)
+
+    cached = _mask_cache.get(cache_key)
+    if cached is not None:
+        qblock_info, maxSel = cached
+    else:
+        qblock_info, maxSel = _collect_valid_kv_per_qblock(
+            block_sparse_mask, B, Hq, Hkv, numQB, numKB)
+        _mask_cache[cache_key] = (qblock_info, maxSel)
+
+    k_compact, v_compact, valid_mask = _fill_compacted_kv(
+        qblock_info, maxSel, k_2d, v_2d, None,
+        Hkv, Skv_pad, bx, by, D, device, total_qblocks)
+
+    if Skv_pad > Skv:
+        _apply_kv_boundary_mask(
+            valid_mask, qblock_info, maxSel, bx, numKB,
+            Skv - (numKB - 1) * by)
+
+    if Sq_pad > Sq:
+        _apply_q_boundary_mask(valid_mask, total_qblocks, maxSel, bx, numQB,
+                               Sq - (numQB - 1) * bx)
+
+    return k_compact, v_compact, valid_mask, maxSel
+
+
+# ---------------------------------------------------------------------------
+# Compacted Q builders (shared by backward dK/dV — baseline and concurrent)
+# ---------------------------------------------------------------------------
+def _collect_valid_q_per_kvblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
+    group = Hq // Hkv
+    nkv_cols = block_sparse_mask.shape[3]
+    kvblock_info = []
+    maxInner = 0
+
+    for flat_idx in range(B * Hkv):
+        b = flat_idx // Hkv
+        h_kv = flat_idx % Hkv
+        for v_blk in range(numKB):
+            valid_q = [
+                (h_kv * group + g_idx, u)
+                for g_idx in range(group)
+                for u in range(numQB)
+                if v_blk < nkv_cols and block_sparse_mask[b, h_kv * group + g_idx, u, v_blk].item()
+            ]
+            kvblock_info.append((b, valid_q))
+            maxInner = max(maxInner, len(valid_q))
+
+    return kvblock_info, max(maxInner, 1)
+
+
+def _fill_compacted_q(kvblock_info, maxInner, q_2d, do_2d, o_2d, lse_2d,
+                       Hq, Sq_pad, bx, by, D, device, total_kv):
+    q_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
+    do_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
+    o_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
+    lse_compact = torch.full([total_kv * maxInner * bx, 1], 1e30, dtype=torch.float32, device=device)
+    inner_mask = torch.zeros(total_kv * maxInner * bx, by, dtype=torch.float32, device=device)
+
+    for i, (b, valid_q) in enumerate(kvblock_info):
+        for j, (h_q, u) in enumerate(valid_q):
+            src = (b * Hq + h_q) * Sq_pad + u * bx
+            dst = i * maxInner * bx + j * bx
+            q_compact[dst:dst + bx] = q_2d[src:src + bx]
+            do_compact[dst:dst + bx] = do_2d[src:src + bx]
+            o_compact[dst:dst + bx] = o_2d[src:src + bx]
+            lse_compact[dst:dst + bx] = lse_2d[src:src + bx]
+            inner_mask[dst:dst + bx, :] = 1.0
+
+        if valid_q:
+            h_q0, u0 = valid_q[0]
+            src0 = (b * Hq + h_q0) * Sq_pad + u0 * bx
+            for j in range(len(valid_q), maxInner):
+                dst = i * maxInner * bx + j * bx
+                q_compact[dst:dst + bx] = q_2d[src0:src0 + bx]
+                do_compact[dst:dst + bx] = do_2d[src0:src0 + bx]
+                o_compact[dst:dst + bx] = o_2d[src0:src0 + bx]
+                lse_compact[dst:dst + bx] = lse_2d[src0:src0 + bx]
+
+    return q_compact, do_compact, o_compact, lse_compact, inner_mask
+
+
+def _apply_q_boundary_inner_mask(inner_mask, kvblock_info, maxInner, bx, numQB, remaining_q):
+    for i, (b, valid_q) in enumerate(kvblock_info):
+        for j, (h_q, u) in enumerate(valid_q):
+            if u == numQB - 1:
+                m_dst = i * maxInner * bx + j * bx
+                inner_mask[m_dst + remaining_q:m_dst + bx, :] = 0.0
+
+
+def _build_sparse_q_dkdv(block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
+                           B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
+                           bx, by, D, device):
+    total_kv = B * Hkv * numKB
+
+    kvblock_info, maxInner = _collect_valid_q_per_kvblock(
+        block_sparse_mask, B, Hq, Hkv, numQB, numKB)
+
+    q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(
+        kvblock_info, maxInner, q_2d, do_2d, o_2d, lse_2d,
+        Hq, Sq_pad, bx, by, D, device, total_kv)
+
+    if Sq_pad > Sq:
+        _apply_q_boundary_inner_mask(
+            inner_mask, kvblock_info, maxInner, bx, numQB,
+            Sq - (numQB - 1) * bx)
+
+    return q_compact, do_compact, o_compact, lse_compact, inner_mask, maxInner
+
+
+# ===========================================================================
+# C3: Mask structure cache for dK/dV (reuse kvblock_info/maxInner across calls)
+# ===========================================================================
+_q_dkdv_cache = {}
+
+
+def _build_sparse_q_dkdv_cached(block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
+                                  B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
+                                  bx, by, D, device):
+    """Cached version: reuse mask structure if mask is unchanged."""
+    global _q_dkdv_cache
+    total_kv = B * Hkv * numKB
+
+    cache_key = (block_sparse_mask.data_ptr(), B, Hq, Hkv, numQB, numKB, bx, by)
+
+    cached = _q_dkdv_cache.get(cache_key)
+    if cached is not None:
+        kvblock_info, maxInner = cached
+    else:
+        kvblock_info, maxInner = _collect_valid_q_per_kvblock(
+            block_sparse_mask, B, Hq, Hkv, numQB, numKB)
+        _q_dkdv_cache[cache_key] = (kvblock_info, maxInner)
+
+    q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(
+        kvblock_info, maxInner, q_2d, do_2d, o_2d, lse_2d,
+        Hq, Sq_pad, bx, by, D, device, total_kv)
+
+    if Sq_pad > Sq:
+        _apply_q_boundary_inner_mask(
+            inner_mask, kvblock_info, maxInner, bx, numQB,
+            Sq - (numQB - 1) * bx)
+
+    return q_compact, do_compact, o_compact, lse_compact, inner_mask, maxInner
 
 
 # ===========================================================================
