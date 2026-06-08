@@ -9,8 +9,8 @@ import pypto
 import torch
 import torch_npu  # noqa: F401  required for NPU device init
 
-BLOCK_Q = 64
-BLOCK_KV = 64
+BLOCK_Q = 320
+BLOCK_KV = 320
 
 # Tile shapes from DESIGN.md §3.2.5 — first-pass minimum-viable (Stage 5 default)
 VEC_TILE = (16, 64)
@@ -18,7 +18,7 @@ CUBE_QK = ([64, 64], [128, 128], [64, 64])   # Q@K^T: M≤64, K≤256, N≤64
 CUBE_PV = ([64, 64], [64, 64], [128, 128])   # P@V:   M≤64, K≤64, N≤256
 
 
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
+@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 1024})
 def flash_attention_score_kernel_npu(
     query:       pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     key:         pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
@@ -270,14 +270,6 @@ def flash_attention_score_wrapper(
     keep_prob,   # float
     scale_value, # float                        (typically 1/sqrt(D))
 ):
-    """Wrapper for flash_attention_score — flatten on host, kernel works in 2D.
-
-    The kernel signature is 2D because pypto.assemble only writes back to
-    kernel-parameter tensors, not to pypto-internal buffers.  Flattening
-    on the host side (torch.reshape — a no-copy view) and assembling
-    directly into the 2D output parameter is the only mechanism that
-    reliably transfers result data out of the JIT graph.
-    """
     import torch
     import torch_npu  # noqa: F401
 
@@ -286,26 +278,25 @@ def flash_attention_score_wrapper(
     N_kv = key.shape[1]
     Skv = key.shape[2]
 
-    # Flatten 4D → 2D (no-copy view)
-    q_2d = query.reshape(B * N * Sq, D)
-    k_2d = key.reshape(B * N_kv * Skv, D)
-    v_2d = value.reshape(B * N_kv * Skv, D)
-    p_2d = pse.reshape(B * N * Sq, Skv)
+    query_2d = query.reshape(B * N * Sq, D)
+    key_2d = key.reshape(B * N_kv * Skv, D)
+    value_2d = value.reshape(B * N_kv * Skv, D)
+    pse_2d = pse.reshape(B * N * Sq, Skv)
 
     output_2d = torch.zeros(B * N * Sq, D, dtype=torch.bfloat16, device=device)
-    mm_2d  = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
-    ms_2d  = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
+    softmax_max_2d = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
+    softmax_sum_2d = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
 
     flash_attention_score_kernel_npu(
-        q_2d, k_2d, v_2d, atten_mask, p_2d, drop_mask,
-        output_2d, mm_2d, ms_2d,
+        query_2d, key_2d, value_2d,
+        atten_mask, pse_2d, drop_mask,
+        output_2d, softmax_max_2d, softmax_sum_2d,
         pse_type, keep_prob, scale_value, N_kv,
         B, N, Sq, Skv,
     )
 
-    # Unflatten 2D → 4D (no-copy view)
-    output       = output_2d.reshape(B, N, Sq, D)
-    softmax_max  = mm_2d.reshape(B, N, Sq, 1)
-    softmax_sum  = ms_2d.reshape(B, N, Sq, 1)
+    output = output_2d.reshape(B, N, Sq, D)
+    softmax_max = softmax_max_2d.reshape(B, N, Sq, 1)
+    softmax_sum = softmax_sum_2d.reshape(B, N, Sq, 1)
 
     return output, softmax_max, softmax_sum

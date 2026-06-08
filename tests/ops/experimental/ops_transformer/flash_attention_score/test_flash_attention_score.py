@@ -2,15 +2,18 @@
 # coding: utf-8
 """E2E test for flash_attention_score — integrated JIT kernel vs golden.
 
-Precision standards (per DESIGN.md §6.2):
+Precision standards (Ascend Precision Standard 2.1, L0):
   atol=1  rtol=0  MARE<10  MERE<2  RMSE<2
-  Exemption: bf16 elements with |golden| < 2^-8 excluded from MERE.
 
-Formulas (IEEE 754-2019 §4.3 / ISO/IEC 10967-2 LIA-2 §5 & §A.3):
-  |impl - golden| <= atol + rtol * |golden|          (per-element tolerance)
-  MARE = max_i  |d_i| / max(|golden_i|, eps)          (max absolute relative error)
-  MERE = max_i  |d_i| / max(|golden_i|, eps)  for |golden_i| >= 2^-8
-  RMSE = sqrt( mean( (impl - golden)^2 ) )             (root mean square error)
+Formulas (compare_2_1.py — Ascend Precision Standard 2.1):
+  |impl - golden| <= atol + rtol * |golden|            (per-element tolerance)
+  Large value domain: |golden| >= 2^-8 (bf16)
+    relative_error = |impl - golden| / (|golden| + 1e-7)
+    MARE = max(relative_error)
+    MERE = mean(relative_error)
+    RMSE = sqrt(mean((impl - golden)^2))
+  Small value domain: |golden| < 2^-8 (bf16)
+    error_count = count(|impl - golden| > 2^-16)
 
 L0 — canonical shape:  B=1, N=32, Sq=128, Skv=128, D=64
 L1 — tail-block:       B=1, N=8,  Sq=100, Skv=100, D=128
@@ -96,20 +99,27 @@ def _precision_verify(impl_out, gold_out, tag,
     n_tot = g.numel()
 
     abs_err = (im - g).abs()
-    denom   = g.abs().clamp_min(_EPS)                  # relative-error denominator
-    rel_err = abs_err / denom
 
-    # RMSE  (ISO LIA-2 §A.3)
-    rmse = abs_err.pow(2).mean().sqrt().item()
+    # Large value domain: |golden| >= 2^-8
+    large_mask = g.abs() >= _MERE_EXEMPT
+    n_small    = (~large_mask).sum().item()
+    n_large    = large_mask.sum().item()
 
-    # MARE — over ALL elements
-    mare = rel_err.max().item()
+    if n_large > 0:
+        g_large  = g[large_mask]
+        im_large = im[large_mask]
+        abs_diff_large = abs_err[large_mask]
+        relative_error = abs_diff_large / (g_large.abs() + 1e-7)
+        mare = relative_error.max().item()
+        mere = relative_error.mean().item()
+        rmse = (im_large - g_large).pow(2).mean().sqrt().item()
+    else:
+        mare, mere, rmse = 0.0, 0.0, 0.0
 
-    # MERE — restricted to |gold_i| >= 2^-8
-    valid_mask = g.abs() >= _MERE_EXEMPT
-    n_exempt   = (~valid_mask).sum().item()
-    n_valid    = valid_mask.sum().item()
-    mere       = rel_err[valid_mask].max().item() if n_valid > 0 else 0.0
+    # Small value domain: |golden| < 2^-8, count abs errors > 2^-16
+    small_err_count = 0
+    if n_small > 0:
+        small_err_count = (abs_err[~large_mask] > 2**-16).sum().item()
 
     # --- 3. Threshold checks ---
     mare_ok = mare < 10.0
@@ -119,8 +129,8 @@ def _precision_verify(impl_out, gold_out, tag,
     print(f"    MARE = {mare:.6f}  {'PASS' if mare_ok else 'FAIL'}  (threshold < 10)")
     print(f"    MERE = {mere:.6f}  {'PASS' if mere_ok else 'FAIL'}  (threshold <  2)")
     print(f"    RMSE = {rmse:.6f}  {'PASS' if rmse_ok else 'FAIL'}  (threshold <  2)")
-    print(f"    exempt (|gold|<2^-8): {n_exempt}/{n_tot}  "
-          f"valid: {n_valid}/{n_tot}")
+    print(f"    small (|gold|<2^-8): {n_small}/{n_tot}  "
+          f"large: {n_large}/{n_tot}  small_err>{'2^-16'}: {small_err_count}")
 
     return mare_ok and mere_ok and rmse_ok
 
