@@ -9,6 +9,7 @@ SplitVD -> RMSNorm(q, k) -> half-and-half RoPE(q, k) -> PA_NZ cache scatter.
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> Tuple[
     return batch, seq, num_qkv, dim, num_q, num_k, num_v
 
 
-def rms_norm_torch(x: torch.Tensor, gamma: torch.Tensor, epsilon: float) -> torch.Tensor:
+def rms_norm_torch(x: torch.Tensor, gamma: torch.Tensor, epsilon: float) -> torch.Tensor:  # pylint: disable=too-many-return-values
     import torch
 
     x_fp32 = x.to(torch.float32)
@@ -90,7 +91,7 @@ def scatter_pa_nz_torch(cache: torch.Tensor, index: torch.Tensor, src: torch.Ten
     return out
 
 
-def qkv_rms_norm_rope_cache_golden(
+def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments,too-many-return-values
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,
@@ -129,7 +130,7 @@ def qkv_rms_norm_rope_cache_golden(
     k_rope = rope_torch(k_norm, cos.reshape(tokens, dim), sin.reshape(tokens, dim))
 
     q_new = q_rope.reshape(tokens, num_q * dim).to(q_out.dtype)
-    if k_cache.dtype != __import__("torch").int8 or v_cache.dtype != __import__("torch").int8:
+    if k_cache.dtype != importlib.import_module("torch").int8 or v_cache.dtype != importlib.import_module("torch").int8:
         raise ValueError("current reference only supports int8 k_cache/v_cache")
     if k_scale is None or v_scale is None:
         raise ValueError("k_scale and v_scale are required when k_cache/v_cache are int8")

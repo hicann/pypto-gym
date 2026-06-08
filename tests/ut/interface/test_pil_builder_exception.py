@@ -34,7 +34,7 @@ def test_pil_builder_raise():
                 try:
                     raise Expr.TypeA(0)
                 except Expr.TypeA:
-                    raise
+                    raise  # noqa: TRY200 - Testing PIL builder's handling of bare raise in except handler
             except Expr.TypeA as e:
                 Expr.int(e.value)
 
@@ -185,7 +185,7 @@ def test_pil_builder_try():
                 raise Expr.TypeA(0)
             except Expr.TypeB:
                 Expr.str(10)
-            except:
+            except Exception:
                 Expr.str(20)
 
         # --- else branch fires when no exception ---

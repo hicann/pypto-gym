@@ -33,6 +33,7 @@ ATOL = 0.0001
 # 1. 环境工具
 # ─────────────────────────────────────────────
 
+
 def get_device_id():
     """从环境变量获取 TILE_FWK_DEVICE_ID。"""
     if "TILE_FWK_DEVICE_ID" not in os.environ:
@@ -180,14 +181,18 @@ def run_scatter_pa_kv_cache_test(
 
     # 分步转换：先处理 key_cache，释放后再处理 value_cache，降低内存峰值
     result_key_np = result_key_cache_cpu.float().numpy()
-    del result_key_cache_cpu; gc.collect()
+    del result_key_cache_cpu
+    gc.collect()
     golden_key_np = golden_key_cache.float().numpy()
-    del golden_key_cache; gc.collect()
+    del golden_key_cache
+    gc.collect()
 
     result_value_np = result_value_cache_cpu.float().numpy()
-    del result_value_cache_cpu; gc.collect()
+    del result_value_cache_cpu
+    gc.collect()
     golden_value_np = golden_value_cache.float().numpy()
-    del golden_value_cache; gc.collect()
+    del golden_value_cache
+    gc.collect()
 
     max_diff_key = np.abs(result_key_np - golden_key_np).max()
     mean_diff_key = np.abs(result_key_np - golden_key_np).mean()
@@ -349,7 +354,7 @@ Note: Before running, please set environment:
         if args.example_id not in EXAMPLES:
             print(f"ERROR: unknown case '{args.example_id}'")
             print(f"Valid: {', '.join(sorted(EXAMPLES))}")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = [(args.example_id, EXAMPLES[args.example_id])]
     else:
         to_run = list(sorted(EXAMPLES.items()))

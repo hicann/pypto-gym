@@ -6,7 +6,12 @@ Phi-3-mini-4k-instruct 推理脚本 (with benchmark instrumentation)
        [--report-file 报告文件路径]
 """
 
-import argparse, sys, json, time, torch, torch_npu
+import argparse
+import sys
+import json
+import time
+import torch
+import torch_npu
 
 parser = argparse.ArgumentParser(description="Phi-3-mini-4k-instruct 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")

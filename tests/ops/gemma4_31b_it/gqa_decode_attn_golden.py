@@ -58,7 +58,8 @@ def gqa_decode_attn_golden(query_states, key_states, value_states, attention_mas
     # Average groups of 4 adjacent KV heads: [B, 16, Skv, D] -> [B, 4, Skv, D]
     k_reduced = (key_states[:, 0::4] + key_states[:, 1::4] + key_states[:, 2::4] + key_states[:, 3::4]).float() / 4.0
     k_reduced = k_reduced.to(key_states.dtype)
-    v_reduced = (value_states[:, 0::4] + value_states[:, 1::4] + value_states[:, 2::4] + value_states[:, 3::4]).float() / 4.0
+    v_reduced = (value_states[:, 0::4] + value_states[:, 1::4] + \
+                 value_states[:, 2::4] + value_states[:, 3::4]).float() / 4.0
     v_reduced = v_reduced.to(value_states.dtype)
 
     G = Nq_l // Nkv  # 8

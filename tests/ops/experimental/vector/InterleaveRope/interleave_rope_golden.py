@@ -188,7 +188,7 @@ def _validate():
         ("功能_P0_typ_fp16 ", 1, 8, 1024, 64, 1024, torch.float16, "P0"),
         # 性能_P0_max 较大，仍可在 CPU 上跑（fp32 中间约 4*128*8192*64*4B=1GB），酌情仅做 shape 验证
     ]
-    for name, B, N, S, D, S_cs, dtype, prio in typical_cases:
+    for name, B, N, S, D, S_cs, dtype, _ in typical_cases:
         x, cos, sin = _make_inputs(B, N, S, D, S_cs, dtype, seed=42)
         y = interleave_rope_golden(x, cos, sin)
         cond = (y.shape == x.shape) and (y.dtype == dtype)

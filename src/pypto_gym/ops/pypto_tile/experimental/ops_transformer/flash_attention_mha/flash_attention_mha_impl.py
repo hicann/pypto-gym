@@ -70,12 +70,12 @@ def flash_attention_varlen_forward_kernel(
 
     输入张量为三维 [total_seq, N, D] (total_seq=DYNAMIC, N=num_heads, D=head_dim),
     输出张量为二维 [total_seq, hidden_dim] (hidden_dim = N*D)。
-    
+
     Kernel入口处从输入tensor shape 获取 num_heads 和 head_dim:
       num_heads = q.shape[1]
       head_dim = q.shape[2]
       hidden_dim = num_heads * head_dim
-    
+
     然后 reshape inplace 输入为二维 [total_seq, hidden_dim] 以便按 head 做 view 切片，
     输出保持二维布局。
 
@@ -191,7 +191,10 @@ def flash_attention_varlen_forward_kernel(
                                             [k_start + k_tile_start, h_offset],
                                             valid_shape=[k_tile_len, head_dim])
 
-                        pypto.set_cube_tile_shapes(tile_config.c1_cube_tile[0], tile_config.c1_cube_tile[1], tile_config.c1_cube_tile[2])
+                        pypto.set_cube_tile_shapes(
+    tile_config.c1_cube_tile[0],
+    tile_config.c1_cube_tile[1],
+     tile_config.c1_cube_tile[2])
 
                         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
@@ -206,7 +209,10 @@ def flash_attention_varlen_forward_kernel(
                         pij = pypto.exp(s_shifted)
                         lij = pypto.sum(pij, dim=-1, keepdim=True)
 
-                        pypto.set_cube_tile_shapes(tile_config.c2_cube_tile[0], tile_config.c2_cube_tile[1], tile_config.c2_cube_tile[2])
+                        pypto.set_cube_tile_shapes(
+    tile_config.c2_cube_tile[0],
+    tile_config.c2_cube_tile[1],
+     tile_config.c2_cube_tile[2])
 
                         if pypto.is_loop_begin(k_tile_idx):
                             if pypto.is_loop_end(k_tile_idx):
@@ -309,12 +315,12 @@ def flash_attention_varlen_forward_kernel_910(
 
     输入张量为三维 [total_seq, N, D] (total_seq=DYNAMIC, N=num_heads, D=head_dim),
     输出张量为二维 [total_seq, hidden_dim] (hidden_dim = N*D)。
-    
+
     Kernel入口处从输入tensor shape 获取 num_heads 和 head_dim:
       num_heads = q.shape[1]
       head_dim = q.shape[2]
       hidden_dim = num_heads * head_dim
-    
+
     然后 reshape inplace 输入为二维 [total_seq, hidden_dim] 以便按 head 做 view 切片，
     输出保持二维布局。
 
@@ -365,7 +371,7 @@ def flash_attention_varlen_forward_kernel_910(
 
     v1_tile = tile_config.v1_tile
     v2_tile = tile_config.v2_tile
-    
+
     q_tile = tile_config.q_tile
     k_tile = tile_config.k_tile
 
@@ -419,7 +425,10 @@ def flash_attention_varlen_forward_kernel_910(
                                             valid_shape=[k_tile_len, head_dim])
 
                         # C1
-                        pypto.set_cube_tile_shapes(tile_config.c1_cube_tile[0], tile_config.c1_cube_tile[1], tile_config.c1_cube_tile[2])
+                        pypto.set_cube_tile_shapes(
+    tile_config.c1_cube_tile[0],
+    tile_config.c1_cube_tile[1],
+     tile_config.c1_cube_tile[2])
                         scores = pypto.matmul(q_tile_view, k_tile_view, out_dtype=pypto.DT_FP32, b_trans=True)
 
                         # V1
@@ -432,9 +441,12 @@ def flash_attention_varlen_forward_kernel_910(
                         lij = pypto.sum(pij, dim=-1, keepdim=True)
                         pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
                         pypto.set_pass_options(sg_set_scope = -1)
-                        
+
                         # C2
-                        pypto.set_cube_tile_shapes(tile_config.c2_cube_tile[0], tile_config.c2_cube_tile[1], tile_config.c2_cube_tile[2])
+                        pypto.set_cube_tile_shapes(
+    tile_config.c2_cube_tile[0],
+    tile_config.c2_cube_tile[1],
+     tile_config.c2_cube_tile[2])
                         oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
 
                         # V2

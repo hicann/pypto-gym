@@ -253,12 +253,11 @@ def mla_prolog_quant_v32_compute(inputs):
     kr_cache_tmp = kr_cache.clone()
     kr_cache_out = scatter_update([kr_cache_tmp, k_embed_r, cache_index], -2)
 
-
     return q_out, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out, \
             kr_cache_out
 
 
-def gen_block_table(act_seq, block_size, s1, need_indices=False):
+def gen_block_table(act_seq, block_size, s1, need_indices=False):  # pylint: disable=too-many-return-values
     b = act_seq.shape[0]
     block_num = 0
     block_num_each = []
@@ -347,7 +346,6 @@ def gen_mla_prolog_quant_v32_input_data(params, dtypes, actual_seq, is_quant=(Fa
         w_dkvkr, w_kva_scale = quant_hif8(w_dkvkr, -2)
         res[4]["w_dq"] = w_qa_scale
         res[4]["w_dkvkr"] = w_kva_scale
-
 
     if is_quant_b:
         w_uqqr, w_qb_scale = quant_hif8(w_uqqr, -2)

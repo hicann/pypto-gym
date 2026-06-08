@@ -45,8 +45,7 @@ def get_device():
 def load_test_cases():
     json_path = os.path.join(os.path.dirname(__file__), "test_cases.json")
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
@@ -65,27 +64,27 @@ def run_single_case(case_data, device):
     int_dtype_map = {"int64": torch.long, "int32": torch.int32}
 
     inputs = case_data["input"]
-    
+
     hidden_dtype = dtype_map[inputs["hidden_states"]["dtype"]]
     hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=hidden_dtype, device="cpu")
-    
+
     kv_a_weight_dtype = dtype_map[inputs["kv_a_weight"]["dtype"]]
     kv_a_weight = torch.randn(inputs["kv_a_weight"]["shape"], dtype=kv_a_weight_dtype, device="cpu")
-    
+
     kv_b_weight_dtype = dtype_map[inputs["kv_b_weight"]["dtype"]]
     kv_b_weight = torch.randn(inputs["kv_b_weight"]["shape"], dtype=kv_b_weight_dtype, device="cpu")
-    
+
     ln_weight_dtype = dtype_map[inputs["ln_weight"]["dtype"]]
     ln_weight = torch.randn(inputs["ln_weight"]["shape"], dtype=ln_weight_dtype, device="cpu")
-    
+
     eps = inputs["eps"]["value"]
-    
+
     cos_dtype = dtype_map[inputs["cos"]["dtype"]]
     cos = torch.randn(inputs["cos"]["shape"], dtype=cos_dtype, device="cpu")
-    
+
     sin_dtype = dtype_map[inputs["sin"]["dtype"]]
     sin = torch.randn(inputs["sin"]["shape"], dtype=sin_dtype, device="cpu")
-    
+
     pos_ids_dtype = int_dtype_map[inputs["pos_ids"]["dtype"]]
     bsz = inputs["hidden_states"]["shape"][0]
     seq_len = inputs["hidden_states"]["shape"][1]
@@ -136,7 +135,7 @@ def run_single_case(case_data, device):
         raise
 
     outputs = case_data["output"]
-    
+
     expected_k_nope_shape = torch.Size(outputs["k_nope"]["shape"])
     expected_k_nope_dtype = dtype_map[outputs["k_nope"]["dtype"]]
     assert k_nope_impl.shape == expected_k_nope_shape, f"k_nope shape mismatch: {k_nope_impl.shape} vs {expected_k_nope_shape}"

@@ -30,7 +30,7 @@ class MlaConfig:
         q_d: Query head dimension
         q_rope_d: Query rope dimension
         n2: Number of key/value heads (for grouped query attention)
-        s2: Key/Value sequence length. int means all batches share the same length; list means per-batch KV sequence lengths (s2 must contain the max value).
+        s2: Key/Value sequence length (maximum)
         kv_d: Key/Value head dimension
         k_rope_d: Key rope dimension
         block_size: Size of each block in paged KV cache (default: 128)
@@ -44,7 +44,7 @@ class MlaConfig:
     q_d: int = 512
     q_rope_d: int = 64
     n2: int = 1
-    s2: int | list = 4 * 1024
+    s2: int = 4 * 1024
     kv_d: int = 512
     k_rope_d: int = 64
     block_size: int = 128
@@ -148,12 +148,11 @@ class ContextParams:
     group_idx: int = 0
     s2_idx: int = 0
     s2_loop: int = 0
-    seq: object = None
     kernel_config: MlaConfig = None
     tile_config: AttentionTileConfig = None
     loop_tensors: LoopTensor = None
     temp_update_tensors: TempUpdateTensor = None
-    
+
 
 def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     """
@@ -182,7 +181,7 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     kv_d = kp.kv_d
     k_rope_d = kp.k_rope_d
 
-    qnope_2d_shape = (b * s1 * n1 , q_d)
+    qnope_2d_shape = (b * s1 * n1, q_d)
     qrope_2d_shape = (b * s1 * n1, q_rope_d)
     knope_2d_shape = (block_num * block_size * n2, kv_d)
     krope_2d_shape = (block_num * block_size * n2, k_rope_d)
@@ -194,13 +193,12 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     return qnope_2d, knope_2d, qrope_2d, krope_2d
 
 
-def assemble_key_blocks(ctx, actual_s2_tile):
+def assemble_key_blocks(ctx):
     """
     Assemble K tensor for current tile from paged blocks.
 
     Args:
         ctx: Context parameters containing tensors and config
-        actual_s2_tile: current kv_act_seqs
 
     Returns:
         pypto.Tensor: Assembled K tensor of shape [s2_tile, d]
@@ -230,7 +228,7 @@ def assemble_key_blocks(ctx, actual_s2_tile):
     base_idx = ctx.s2_idx * block_num
     for i in range(block_num):
         b_idx = (block_table[ctx.b_idx, base_idx + i].max(0) * n2 + ctx.n2_idx) * block_size
-        kn_view = pypto.view(knope_2d, [block_size, kv_d], [b_idx, 0], valid_shape=[actual_s2_tile, kv_d])
+        kn_view = pypto.view(knope_2d, [block_size, kv_d], [b_idx, 0])
         pypto.assemble(kn_view, [i * block_size, 0], kn_assemble)
         pypto.assemble(kn_view, [i * block_size, 0], key_assemble)
         kr_view = pypto.view(krope_2d, [block_size, k_rope_d], [b_idx, 0])
@@ -274,7 +272,7 @@ def assemble_query_blocks(ctx):
     return query_assemble
 
 
-def compute_c1(query_assemble, key_assemble, ctx, actual_s2_tile):
+def compute_c1(query_assemble, key_assemble, ctx):
     """
     Compute first matrix multiplication: Q x K^T.
 
@@ -282,21 +280,15 @@ def compute_c1(query_assemble, key_assemble, ctx, actual_s2_tile):
         query_assemble: Query tensor for current head group, shape [g_tile, d]
         kj_assemble: Assembled K tensor for current tile, shape [s2_tile, d]
         ctx: Context parameters containing tensors and config
-        actual_s2_tile: current kv_act_seqs
 
     Returns:
         pypto.Tensor: QK^T scores of shape [g_tile, actual_s2_tile]
     """
     pypto.set_semantic_label("MLA_C1")
-    v0_tile = ctx.tile_config.v0_tile
     c1_tile = ctx.tile_config.c1_tile
-    g_tile = ctx.tile_config.g_tile
-    s2_tile = ctx.tile_config.s2_tile
-    
+
     pypto.set_cube_tile_shapes(c1_tile[0], c1_tile[1], c1_tile[2])
     score = pypto.matmul(query_assemble, key_assemble, pypto.DT_FP32, a_trans=False, b_trans=True)
-    pypto.set_vec_tile_shapes(v0_tile[0], v0_tile[1])
-    score = pypto.view(score, [g_tile, s2_tile], [0, 0], valid_shape=[g_tile, actual_s2_tile])
     return score
 
 
@@ -388,6 +380,7 @@ def handle_other_tile(wv, lse, max_score, ctx):
 
     pypto.set_semantic_label("MLA_UpdateVec2")
     pypto.set_vec_tile_shapes(tc.v2_update_tile[0], tc.v2_update_tile[1])
+    pypto.set_pass_options(sg_set_scope=1)
 
     new_max = pypto.maximum(tt.max_update, max_score)
     old_diff = pypto.sub(tt.max_update, new_max)
@@ -412,6 +405,7 @@ def handle_other_tile(wv, lse, max_score, ctx):
 
     tt.sum_update[:] = new_lse
     tt.max_update[:] = new_max
+    pypto.set_pass_options(sg_set_scope=-1)
 
 
 def compute_loop_s2(ctx):
@@ -421,19 +415,9 @@ def compute_loop_s2(ctx):
     Args:
         ctx: Context parameters
     """
-    kp = ctx.kernel_config
-    tc = ctx.tile_config
-    seq = ctx.seq
-    s2_idx = ctx.s2_idx
-    s2_tile = tc.s2_tile
-    g_tile = tc.g_tile
-    kv_d = kp.kv_d
-
-    actual_s2_tile = (seq - s2_idx * s2_tile).min(s2_tile)
-    key_assemble, kn_assemble = assemble_key_blocks(ctx, actual_s2_tile)
-
+    key_assemble, kn_assemble = assemble_key_blocks(ctx)
     query_assemble = assemble_query_blocks(ctx)
-    score = compute_c1(query_assemble, key_assemble, ctx, actual_s2_tile)
+    score = compute_c1(query_assemble, key_assemble, ctx)
     prob_fp16, lse_reduce, lse, max_score = compute_v1(score, ctx)
     wv = compute_c2(prob_fp16, kn_assemble, ctx)
 
@@ -493,7 +477,7 @@ def compute_loop_s1(ctx):
     for s1_idx in pypto.loop(kp.s1, name="LOOP_s1", idx_name="s1Idx"):
         seq = (cur_seq - kp.s1 + 1 + s1_idx)
         seq.as_variable()
-        ctx = replace(ctx, s1_idx=s1_idx, s2_loop=(seq + tc.s2_tile - 1) // tc.s2_tile, seq=seq)
+        ctx = replace(ctx, s1_idx=s1_idx, s2_loop=(seq + tc.s2_tile - 1) // tc.s2_tile)
         compute_loop_n2(ctx)
 
 
@@ -533,7 +517,7 @@ def incre_flash_attention_mla_kernel(
     kernel_config, tile_config
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
-    
+
     qnope_2d, knope_2d, qrope_2d, krope_2d = reshape_qkv_to_2d(
         query, key, query_rope, key_rope, kernel_config
     )

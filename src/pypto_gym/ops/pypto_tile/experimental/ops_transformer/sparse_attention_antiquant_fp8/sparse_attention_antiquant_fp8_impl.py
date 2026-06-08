@@ -286,7 +286,7 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config):
         "device_sched_mode": 3
     }
 )
-def sparse_attention_antiquant_d(
+def sparse_attention_antiquant_d(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     nope_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),
@@ -361,7 +361,7 @@ def sparse_attention_antiquant_d(
         "stitch_function_max_num": 128
     }
 )
-def sparse_attention_antiquant_p(
+def sparse_attention_antiquant_p(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     nope_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),

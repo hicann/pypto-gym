@@ -83,7 +83,7 @@ def apply_rotary_pos_emb_v2(
     return x_embed
 
 
-def golden_compress(
+def golden_compress(  # pylint: disable=huawei-too-many-arguments
     x,
     sin,
     cos,
@@ -264,7 +264,7 @@ def gen_inputs(
 
 
 class Compressor(nn.Module):
-    def __init__(self):
+    def __init__(self):  # pylint: disable=huawei-too-many-arguments
         super().__init__()
 
     def forward(
@@ -281,7 +281,7 @@ def compile_model(model):
         "frozen_parameter": True,
         "static_kernel_compile": False,
     }
-    compile_model = torch.compile(model, dynamic=False, fullgraph=True, backend="npugraph_ex", options=compile_options)
+    compile_model = torch.compile(model, dynamic=False, fullgraph=True, backend="npugraph_ex", options=compile_options)  # pylint: disable=redefined-outer-name
 
     return compile_model
 

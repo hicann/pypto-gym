@@ -24,7 +24,7 @@ pyptolib.define(
 
 
 @torch.library.impl(pyptolib, "compressor", "Meta")
-def compressor(
+def compressor(  # pylint: disable=huawei-too-many-arguments
     x,
     kv_state,
     score_state,
@@ -50,7 +50,7 @@ def compressor(
 
 try:
     @torch.library.impl(pyptolib, "compressor", "NPU")
-    def compressor(
+    def compressor(  # pylint: disable=huawei-too-many-arguments
         x,
         kv_state,
         score_state,
@@ -93,7 +93,7 @@ except Exception as e:
         print(f"Skip: Unexpected error : {e}")
 
 
-def compressor_pypto(
+def compressor_pypto(  # pylint: disable=huawei-too-many-arguments
     x,
     kv_state,
     score_state,
@@ -132,7 +132,7 @@ def compressor_pypto(
 
 
 @allow_in_graph
-def npu_compressor(
+def npu_compressor(  # pylint: disable=huawei-too-many-arguments
     x,
     kv_state,
     score_state,
@@ -173,7 +173,7 @@ def npu_compressor(
     return out, kv_state, score_state
 
 
-def check_args(
+def check_args(  # pylint: disable=huawei-too-many-arguments
     x,
     kv_state,
     score_state,
@@ -408,7 +408,7 @@ def scatter_update_3d(input, index, src):
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_4_kernel(
+def compressor_ratio_4_kernel(  # pylint: disable=huawei-too-many-arguments
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -470,7 +470,7 @@ def compressor_ratio_4_kernel(
                     b_idx * b + c_idx, start_pos // block_size
                 ]
                 score_block_idx = score_block_table[
-                    b_idx * b + c_idx, start_pos// block_size
+                    b_idx * b + c_idx, start_pos // block_size
                 ]
                 cur_pos = start_pos % block_size
                 pypto.set_vec_tile_shapes(1, s1, 1024)
@@ -581,7 +581,7 @@ def compressor_ratio_4_kernel(
                 kv = rms_norm(pypto.cast(kv, dtype), weight)  # b,d
 
                 kv_nope = kv[:, : d - rope_head_dim]
-                kv_rope = kv[:, d - rope_head_dim :]
+                kv_rope = kv[:, d - rope_head_dim:]
                 sin_tile = pypto.view(
                     sin, kv_rope.shape, [b_idx * b + c_idx, 0]
                 )  # b, 1, 64
@@ -606,7 +606,7 @@ def compressor_ratio_4_kernel(
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_4_rotate_kernel(
+def compressor_ratio_4_rotate_kernel(  # pylint: disable=huawei-too-many-arguments
     x_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -772,7 +772,6 @@ def compressor_ratio_4_rotate_kernel(
                     kv_state = scatter_update_3d(kv_state, index, kv_pre) # b,128,d
                     score_state = scatter_update_3d(score_state, index, score_pre)
 
-
                 pypto.set_vec_tile_shapes(1, 8, 256)
                 kv_state_tmp = pypto.concat(
                     [pre_kv_state, kv_state[:, :, d:]], 1
@@ -788,7 +787,7 @@ def compressor_ratio_4_rotate_kernel(
                 kv = rms_norm(pypto.cast(kv, dtype), weight)  # b,d
 
                 kv_nope = kv[:, : d - rope_head_dim]
-                kv_rope = kv[:, d - rope_head_dim :]
+                kv_rope = kv[:, d - rope_head_dim:]
                 sin_tile = pypto.view(
                     sin, kv_rope.shape, [b_idx * b + c_idx, 0]
                 )  # b, 1, 64
@@ -826,7 +825,7 @@ def compressor_ratio_4_rotate_kernel(
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_128_kernel(
+def compressor_ratio_128_kernel(  # pylint: disable=huawei-too-many-arguments
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -963,7 +962,7 @@ def compressor_ratio_128_kernel(
                 kv = rms_norm(pypto.cast(kv, dtype), weight)  # b,d
 
                 kv_nope = kv[:, : d - rope_head_dim]
-                kv_rope = kv[:, d - rope_head_dim :]
+                kv_rope = kv[:, d - rope_head_dim:]
                 sin_tile = pypto.view(
                     sin, kv_rope.shape, [b_idx * b + c_idx, 0]
                 )  # b, 1, 64

@@ -71,7 +71,7 @@ def compute_rmsnorm_rsqrt(X_flat: pypto.Tensor, N_D: int, norm_eps: float) -> py
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1}, 
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}, "cube_nbuffer_setting":{-1: 4}})
-def mhc_pre_kernel(
+def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     phi_T: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),           # [N*D, N²+2N] 固定值
     bias_pre: pypto.Tensor([pypto.STATIC], pypto.DT_FP32),               # [N] - 已切片（Step 5 使用）

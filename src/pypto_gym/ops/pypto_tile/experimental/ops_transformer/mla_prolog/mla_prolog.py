@@ -63,7 +63,7 @@ class MLAPrologParams:
 
 
 @pypto.frontend.jit()
-def mla_prolog_kernel(
+def mla_prolog_kernel(  # pylint: disable=huawei-too-many-arguments
     token_x: pypto.Tensor([T, HE], pypto.DT_BF16),
     weight_dq: pypto.Tensor([HE, HCQ], pypto.DT_BF16),
     weight_uq_qr: pypto.Tensor([HCQ, N * (D + DR)], pypto.DT_BF16),

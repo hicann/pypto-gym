@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
+"""Pre-import torch_npu so that @pypto.frontend.jit decorators in kernel
+impl files can call torch.npu.is_available() during module collection."""
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -9,6 +11,4 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Pre-import torch_npu so that @pypto.frontend.jit decorators in kernel
-impl files can call torch.npu.is_available() during module collection."""
 import torch_npu  # noqa: F401

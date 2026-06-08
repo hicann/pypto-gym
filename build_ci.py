@@ -66,6 +66,7 @@ from typing import Optional, List, Dict, Tuple, Any
 from importlib import metadata
 from packaging import requirements
 
+
 @dataclasses.dataclass
 class FeatureParam():
     """特性控制相关参数
@@ -135,6 +136,7 @@ class FeatureParam():
         parser.add_argument("-b", "--backend", nargs="?", type=str, default="npu",
                             choices=["npu", "cost_model"],
                             help="backend, such as npu/cost_model etc.")
+
 
 @dataclasses.dataclass
 class TestsExecuteParam():
@@ -403,6 +405,7 @@ class BuildParam():
             cmd_list.append(cmd)
         return cmd_list
 
+
 @dataclasses.dataclass
 class TestsFilterParam():
     """测试过滤参数
@@ -462,6 +465,7 @@ class TestsFilterParam():
         :return: 过滤字符串, 如果未启用则返回空字符串
         :rtype: str
         """
+        # pylint: disable=inconsistent-return-statements
         if not self.enable:
             return ""
         if self.filter_str not in ["ON"]:
@@ -571,7 +575,6 @@ class BuildCtrl():
                                                                       raise_err=False, log_err=False)
         devs = ["0"]
         if args.device is not None:
-            # devs = [str(d) for d in list(set(args.device)) if d is not None and str(d) != ""]
             devs = [str(d) for d in args.device if d is not None]
         self.auto_execute_device_id = ":".join(devs)
 
@@ -708,7 +711,6 @@ class BuildCtrl():
         logging.info("%s", ctrl)
         logging.info("Front-end(python3), start process")
         ctrl.py_clean()
-        # ctrl.py_build()
         ctrl.py_tests()
 
     def run_build_cmd(self, cmd: str, update_env: Optional[Dict[str, str]] = None,
@@ -813,7 +815,6 @@ class BuildCtrl():
 
         清理包括 CMake 构建目录, Python 缓存文件, 输出目录等. 仅在 clean 标记为 True 时执行额外清理.
         """
-        # pkg_src = Path(self.src_root, "python/pypto")
         pkg_src = Path(self.src_root)
         print(f"========pkg_src is {pkg_src}=======")
         path_lst = [
@@ -839,8 +840,6 @@ class BuildCtrl():
     def py_build(self):
         # 重装 whl 包
         dist = self.install_root
-        # self.pip_uninstall(name=self.feature.whl_name, path=dist)
-        # self.pip_install(whl=self.src_root, dest=dist)
 
     def py_tests(self):
         """执行 Python 前端测试
@@ -851,7 +850,6 @@ class BuildCtrl():
         tests_enable = self.tests.utest.enable or self.tests.stest.enable
         if not tests_enable and not self.tests.models.enable:
             return
-        # dist = self._get_pip_install_dist()
         dist = None
         print(f"==========pip list is {dist}=========")
         # 执行用例, UTest
@@ -861,7 +859,7 @@ class BuildCtrl():
             n_workers = str(self.build.job_num)
         else:
             n_workers = "auto"
-        
+
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.utest, "tests/ut/")],
                                  ext=f"-n {n_workers} -W ignore::DeprecationWarning")
 
@@ -876,7 +874,7 @@ class BuildCtrl():
         # 执行用例Models
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/")],
                                  ext=ext_str)
-        
+
         # 执行用例STest
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.stest, "tests/st/")],
                                  ext=ext_str)
@@ -920,7 +918,6 @@ class BuildCtrl():
 
         filter_str = filter_str.replace(',', ' ')
 
-
         device_id_raw = self.auto_execute_device_id
 
         # 空值保护
@@ -929,11 +926,10 @@ class BuildCtrl():
         # ===================== 修复 =====================
         # 把设备列表传入环境变量，pytest 插件会自动均分
         dev_ids = self.auto_execute_device_id.replace(":", ",")
-        
+
         update_env = os.environ.copy()
         device_id_raw = self.auto_execute_device_id
         dev_list = device_id_raw.split(":")
-        update_env["ASCEND_VISIBLE_DEVICES"] = dev_ids
         update_env["PYTEST_AVAILABLE_DEVICES"] = ",".join(dev_list)
 
         # ===============================================
@@ -946,7 +942,6 @@ class BuildCtrl():
         # 传入 update_env !!!
         _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="pytest")
         logging.info("pytest run success, %s", duration)
-
 
     @staticmethod
     def get_system_processor() -> str:
@@ -991,7 +986,6 @@ class BuildCtrl():
         for k, v in update_env.items():
             logging.info("%s=%s", k, v)
         return update_env
-
 
     def _get_pip_install_dist(self) -> Optional[Path]:
         # pip install -e 场景需直接安装到 site-packages 默认路径(与指定 --target 参数逻辑冲突), 其他场景安装到自定义目录

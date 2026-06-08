@@ -196,7 +196,7 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
     },
     host_options={"compile_monitor_enable": 1},
 )
-def pfa_func_kernel_v2_bound(
+def pfa_func_kernel_v2_bound(  # pylint: disable=huawei-too-many-arguments
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),
     q_scale: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32),
     k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),
@@ -279,7 +279,7 @@ def pfa_func_kernel_v2_bound(
                                 pypto.view(k_2d, [block_size, dn], [block_idx_valid * block_size, n2_idx * dn])
                             kj_sclae_assemble[i * block_size:(i + 1) * block_size, 0:] = \
                                 pypto.view(k_scale_2d, [block_size, 1], [block_idx_valid * block_size, n2_idx * 1])
-                        
+
                         kj_assemble = pypto.view(kj_assemble, [s2_tile, dn], [0, 0], valid_shape=[actual_s2_tile, dn])
                         kj_sclae_assemble = pypto.view(kj_sclae_assemble, [s2_tile, 1], [0, 0], 
                                             valid_shape=[actual_s2_tile, 1])
@@ -314,7 +314,7 @@ def pfa_func_kernel_v2_bound(
                             block_idx_valid = block_idx.max(0)
                             vj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
                                 pypto.view(v_2d, [block_size, dn], [block_idx_valid * block_size, n2_idx * dn])
-                        
+
                         vj_assemble = pypto.view(vj_assemble, [s2_tile, dn],
                                                     [0, 0], valid_shape=[actual_s2_tile, dn])
 
@@ -324,7 +324,7 @@ def pfa_func_kernel_v2_bound(
                         pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                         vj_scale_assemble = pypto.view(v_scale_2d, [1, dn], [b_idx, n2_idx * dn])
                         mm2_res = dequant_dynamic(oi_tmp_quant, tilda_pij_scale, vj_scale_assemble)
-                        
+
                         # # v2
                         if pypto.is_loop_begin(s2_idx):
                             pypto.set_pass_options(sg_set_scope=2)
@@ -332,7 +332,8 @@ def pfa_func_kernel_v2_bound(
                             oi_tmp = mm2_res
                             oi_update[:] = pypto.tensor(oi_tmp.shape, pypto.DT_FP32, "oi_update")
                             if pypto.is_loop_end(s2_idx):
-                                oi_update[:] = pypto.div(oi_tmp, sum_local, precision_type=pypto.PrecisionType.INTRINSIC)
+                                oi_update[:] = pypto.div(
+    oi_tmp, sum_local, precision_type=pypto.PrecisionType.INTRINSIC)
                                 pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_3d = pypto.cast(pypto.reshape(oi_update, [1, g_tile, dn]),
                                                         dtype)

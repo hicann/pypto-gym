@@ -19,6 +19,7 @@ from typing import Optional
 # Golden reference (pure torch)
 # ─────────────────────────────────────────────
 
+
 def RMSNorm_golden(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     """RMS Normalization (Root Mean Square Normalization) PyTorch reference.
 

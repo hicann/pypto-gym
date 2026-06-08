@@ -69,7 +69,7 @@ def get_device_id():
 
 def setup_npu(device_id):
     """设置 NPU 设备。"""
-    import torch_npu
+    import torch_npu  # pylint: disable=redefined-outer-name
     torch.npu.set_device(device_id)
 
 
@@ -250,7 +250,7 @@ Examples:
         if args.example_id not in EXAMPLES:
             print(f"ERROR: unknown case '{args.example_id}'")
             print(f"Valid: {', '.join(sorted(EXAMPLES))}")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = [(args.example_id, EXAMPLES[args.example_id])]
     else:
         to_run = list(sorted(EXAMPLES.items()))

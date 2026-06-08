@@ -37,7 +37,7 @@ def powers_of_2(n: int) -> set[int]:
     return result
 
 
-def check_args(
+def check_args(  # pylint: disable=huawei-too-many-arguments
         gate_weight: torch.Tensor,
         hidden_states: torch.Tensor,
         top_k: int,
@@ -98,7 +98,7 @@ NZ = pypto.TileOpFormat.TILEOP_NZ
                     "stitch_function_max_num": 128},
     pass_options={"cube_l1_reuse_setting": {-1: 2}}
 )
-def moe_fusion_kernel(
+def moe_fusion_kernel(  # pylint: disable=huawei-too-many-arguments
     hidden_states: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16, format=ND),
     mm_weight: pypto.Tensor([], pypto.DT_FP32, format=ND),
     e_score_bias_input: pypto.Tensor([], pypto.DT_BF16, format=ND),
@@ -220,7 +220,7 @@ def moe_fusion_kernel(
 
 
 @allow_in_graph
-def moe_fusion(
+def moe_fusion(  # pylint: disable=huawei-too-many-arguments
         gate_weight: torch.Tensor,
         hidden_states: torch.Tensor,
         top_k: int,

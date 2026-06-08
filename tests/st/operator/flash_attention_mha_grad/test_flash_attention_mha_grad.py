@@ -153,7 +153,7 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
     return q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens
 
 
-def attention_backward_golden(q, k, v, o_input, do_t, scale):
+def attention_backward_golden(q, k, v, o_input, do_t, scale):  # pylint: disable=too-many-return-values
     """
     Golden reference: 严格模拟 kernel 内部的 dtype 转换流程。
 

@@ -25,7 +25,7 @@ from bsa_common import DEFAULT_CONFIG, _resolve_defaults, _block_ranges, _is_val
 # ===========================================================================
 # Backward
 # ===========================================================================
-def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,
+def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,  # pylint: disable=huawei-too-many-arguments
                             Q_f, K_f, V_f, dO_f, O_f, lse,
                             block_sparse_mask, dQ, dK, dV):
     """Process one Q block's backward pass across all valid KV blocks."""
@@ -53,7 +53,7 @@ def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,
         dV[b, h_kv, k_start:k_end, :] += torch.matmul(P.t(), do_block)
 
 
-def bsa_backward_golden(
+def bsa_backward_golden(  # pylint: disable=huawei-too-many-arguments
     dout, query, key, value, attention_out, softmax_lse,
     block_sparse_mask,
     block_shape_x=None, block_shape_y=None,

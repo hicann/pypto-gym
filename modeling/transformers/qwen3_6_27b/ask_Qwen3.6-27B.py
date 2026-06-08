@@ -5,7 +5,10 @@ Qwen3.6-27B 推理脚本
        [--sentence_file 提示词文件] [--output_length 长度] [--use_pypto]
 """
 
-import argparse, sys, torch, torch_npu
+import argparse
+import sys
+import torch
+import torch_npu
 
 parser = argparse.ArgumentParser(description="Qwen3.6-27B 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")

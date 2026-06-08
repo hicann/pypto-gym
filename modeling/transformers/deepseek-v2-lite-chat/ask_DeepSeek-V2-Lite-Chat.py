@@ -6,7 +6,11 @@ DeepSeek-V2-Lite-Chat 推理脚本 (with PyPTO + aclgraph integration)
        [--report-file 报告文件路径]
 """
 
-import argparse, sys, json, time, os
+import argparse
+import sys
+import json
+import time
+import os
 
 # ===== PyPTO编译环境配置（必须在任何导入前） =====
 os.environ['PTO_TILE_LIB_CODE_PATH'] = '/data/h00520348/optimize_aclgraph/pto-isa'
@@ -16,7 +20,10 @@ os.environ['ASCEND_HOME_PATH'] = '/usr/local/Ascend/cann-9.0.0'
 parser = argparse.ArgumentParser(description="DeepSeek-V2-Lite-Chat 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/data/h00520348/optimize_aclgraph/models/DeepSeek-V2-Lite-Chat", help="模型权重路径")
+parser.add_argument(
+    "--model-path",
+    default="/data/h00520348/optimize_aclgraph/models/DeepSeek-V2-Lite-Chat",
+     help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
 parser.add_argument("--use_pto", action="store_true", help="启用PyPTO融合算子（RMSNorm）")
@@ -31,21 +38,21 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # ===== PyPTO sys.modules注入（transformers导入前） =====
 pto_kernels = None
-if args.use_pto or args.use_rope or args.use_kv_fusion or args.use_acl_graph:
+if args.use_pto or args.use_rope or args.use_kv_fusion or args.use_acl_graph:  # pylint: disable=too-many-boolean-expressions
     logging.info("PyPTO mode enabled")
     sys.path.insert(0, args.model_path)
     import pto_kernels as _pto_kernels
     pto_kernels = _pto_kernels
     sys.modules["deepseek_v2_lite_chat_pto_kernels"] = pto_kernels
-    
+
     if args.use_pto:
         pto_kernels.USE_PTO_RMS_NORM = True
         logging.info("RMS_NORM_PTO_AVAILABLE = True")
-    
+
     if args.use_rope:
         pto_kernels.USE_PTO_ROPE = True
         logging.info("ROPE_PTO_AVAILABLE = True")
-    
+
     if args.use_kv_fusion:
         pto_kernels.USE_PTO_MLA_PROLOG = True
         # 设置mla_prolog模块的开关（内部wrapper使用）
@@ -53,12 +60,13 @@ if args.use_pto or args.use_rope or args.use_kv_fusion or args.use_acl_graph:
             pto_kernels.mla_prolog.USE_PTO_MLA_PROLOG = True
         logging.info("MLA_PROLOG_PTO_AVAILABLE = True")
         logging.info("MLA_PROLOG_PTO_AVAILABLE = True")
-    
+
     if args.use_acl_graph:
         pto_kernels.USE_ACL_GRAPH = True
         logging.info("ACL_GRAPH_AVAILABLE = True")
 
-import torch, torch_npu
+import torch
+import torch_npu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 metrics = {}
@@ -100,24 +108,24 @@ torch.npu.reset_peak_memory_stats()
 if pto_kernels and pto_kernels.USE_PTO_MLA_PROLOG:
     logging.info("预热KV融合算子（多场景编译缓存）...")
     warmup_start = time.perf_counter()
-    
+
     first_layer = model.model.layers[0].self_attn
     warmup_kv_a_weight = first_layer.kv_a_proj_with_mqa.weight.t().contiguous()
     warmup_kv_b_weight = first_layer.kv_b_proj.weight.t().contiguous()
     warmup_ln_weight = first_layer.kv_a_layernorm.weight
-    
+
     # 按需预热策略：只预热常见场景（seq_len=1,2）
     # 端到端推理主要调用q_len=1和q_len=2
     warmup_seq_lens = [1, 2]  # 优化：从5个场景减少到2个，预热时间减少约60%
     warmup_errors = []
-    
+
     for warmup_seq in warmup_seq_lens:
         try:
             warmup_hidden = torch.randn(1, warmup_seq, 2048, dtype=torch.float16, device=f"npu:{args.device}")
             warmup_cos = torch.randn(warmup_seq, 64, dtype=torch.float16, device=f"npu:{args.device}")
             warmup_sin = torch.randn(warmup_seq, 64, dtype=torch.float16, device=f"npu:{args.device}")
             warmup_pos_ids = torch.arange(warmup_seq, dtype=torch.long, device=f"npu:{args.device}").unsqueeze(0)
-            
+
             _ = pto_kernels.mla_mla_prolog_v2(
                 warmup_hidden, warmup_kv_a_weight, warmup_kv_b_weight,
                 warmup_ln_weight, first_layer.kv_a_layernorm.variance_epsilon,
@@ -127,10 +135,10 @@ if pto_kernels and pto_kernels.USE_PTO_MLA_PROLOG:
         except Exception as e:
             warmup_errors.append(f"seq_len={warmup_seq}: {str(e)[:50]}")
             logging.warning(f"  ⚠️ seq_len={warmup_seq} 预热失败: {str(e)[:50]}")
-    
+
     warmup_time = time.perf_counter() - warmup_start
     metrics["warmup_s"] = round(warmup_time, 3)
-    
+
     if warmup_errors:
         logging.warning(f"预热部分失败（{len(warmup_errors)}/{len(warmup_seq_lens)}），耗时: {warmup_time:.3f}s")
     else:
@@ -142,13 +150,13 @@ if pto_kernels is not None and pto_kernels.USE_ACL_GRAPH:
     try:
         import torchair as tng
         from torchair.configs.compiler_config import CompilerConfig
-        
+
         compiler_config = CompilerConfig()
         compiler_config.mode = "reduce-overhead"
         compiler_config.experimental_config.frozen_parameter = True
         compiler_config.experimental_config.tiling_schedule_optimize = True
         npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
-        
+
         t0_compile = time.perf_counter()
         model = torch.compile(model, dynamic=False, fullgraph=True, backend=npu_backend)
         compile_time = time.perf_counter() - t0_compile

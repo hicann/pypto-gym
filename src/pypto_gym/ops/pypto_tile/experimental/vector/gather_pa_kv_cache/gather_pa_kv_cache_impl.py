@@ -7,6 +7,7 @@ import pypto
 
 INT32_MAX = 2**31 - 1
 
+
 @pypto.frontend.jit(
     runtime_options={
         "run_mode": pypto.RunMode.NPU,
@@ -141,7 +142,11 @@ def _gather_pa_kv_cache_nd_large_token_kernel_npu(
             table_offset = seq_offset[q_idx] // block_size
             block_count = pypto.ceildiv(seq_len, block_size)
 
-            for block_idx in pypto.loop(block_count, name="gather_block_loop_large", idx_name="block_idx", unroll_list=[1]):
+            for block_idx in pypto.loop(
+    block_count,
+    name="gather_block_loop_large",
+    idx_name="block_idx",
+     unroll_list=[1]):
                 physical_block = block_tables[q_idx, table_offset + block_idx]
                 token_offset = block_idx * block_size
                 valid_tokens = (seq_len - token_offset).min(block_size)
@@ -220,7 +225,7 @@ def _validate_cache_pair(
     )
 
 
-def _validate_index_tensor(name: str, tensor: torch.Tensor, dim: int) -> None:
+def _validate_index_tensor(name: str, tensor: torch.Tensor, dim: int) -> None:  # pylint: disable=huawei-too-many-arguments
     _require_tensor(name, tensor)
     if tensor.dtype != torch.int32:
         raise TypeError(f"{name} must have dtype torch.int32")

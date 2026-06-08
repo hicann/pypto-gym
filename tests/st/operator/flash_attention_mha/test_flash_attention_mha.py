@@ -128,7 +128,7 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
 
 
-def attention_forward_golden(q, k, v, scale):
+def attention_forward_golden(q, k, v, scale):  # pylint: disable=too-many-return-values
     """
     Golden reference: Flash Attention (online softmax)算法实现。
 

@@ -42,11 +42,10 @@ from torch._dynamo import allow_in_graph
 from tests.ops.utils.get_format import get_format
 
 
-
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 
 
-def check_args(
+def check_args(  # pylint: disable=huawei-too-many-arguments
     hidden_states,
     residual,
     input_layernorm_weight,
@@ -235,7 +234,7 @@ def rope_data(x1, x2, cos, sin, tile_shape):
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128}
 )
-def quant_attention_pre_kernel(
+def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
     x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     residual_input: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     x_gamma: pypto.Tensor([], pypto.DT_BF16),
@@ -551,7 +550,7 @@ def test_quant_attention_pre():
 
         # matmul
         x_quant = torch_npu.npu_quantize(x_g, x_scale, x_offset, torch.qint8, -1, False)
-        mm_golden = torch_npu.npu_quant_matmul(x_quant, weight, deq_scale,\
+        mm_golden = torch_npu.npu_quant_matmul(x_quant, weight, deq_scale, \
                                                bias=quant_bias, output_dtype=torch.bfloat16)
 
         # split
@@ -587,7 +586,7 @@ def test_quant_attention_pre():
 
 
 @allow_in_graph
-def attention_pre_quant(
+def attention_pre_quant(  # pylint: disable=huawei-too-many-arguments
     hidden_states: torch.Tensor,
     residual: Optional[torch.Tensor],
     input_layernorm_weight: torch.Tensor,

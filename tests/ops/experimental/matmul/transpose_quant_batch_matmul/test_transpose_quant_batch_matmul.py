@@ -13,6 +13,7 @@ import torch_npu  # noqa: F401  # must come before pypto kernel imports
 
 import sys
 import os
+import pypto
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -24,8 +25,8 @@ from dataclasses import dataclass
 from typing import List
 from numpy.testing import assert_allclose
 
-from experimental.matmul.transpose_quant_batch_matmul.transpose_quant_batch_matmul_impl import *
-from transpose_quant_batch_matmul_golden import *
+from experimental.matmul.transpose_quant_batch_matmul.transpose_quant_batch_matmul_impl import ShapeConfig, transpose_quant_batch_mat_mul_kernel
+from transpose_quant_batch_matmul_golden import gen_golden, TqbmmGoldenInputs
 
 
 @dataclass

@@ -39,20 +39,21 @@ class FlashAttentionGradTileShapeConfig:
     v_tile_s: list
     v_tile_d: list
 
+
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 256,
         "device_sched_mode": 1,
     },
     pass_options={
-        "vec_nbuffer_setting": {-1:1, -1: 4},
+        "vec_nbuffer_setting": {-1: 1, -1: 4},
     },
     debug_options={
         "runtime_debug_mode": 1,
         "compile_debug_mode": 0
     },
 )
-def flash_attention_mha_grad_kernel_impl(
+def flash_attention_mha_grad_kernel_impl(  # pylint: disable=huawei-too-many-arguments
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     k: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     v: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),

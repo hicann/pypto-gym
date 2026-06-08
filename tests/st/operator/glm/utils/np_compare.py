@@ -11,6 +11,7 @@
 import numpy as np
 from numpy.testing import assert_allclose
 
+
 class Colors:
     RESET = '\033[0m'
     BOLD = '\033[1m'

@@ -191,7 +191,7 @@ def make_case(
         raise ValueError("block_table_cols must be positive")
     if num_blocks < 1:
         raise ValueError("num_blocks must be positive")
-    if block_size < 1 or key_num_heads < 1 or value_num_heads < 1 or key_dim < 1 or value_dim < 1:
+    if block_size < 1 or key_num_heads < 1 or value_num_heads < 1 or key_dim < 1 or value_dim < 1:  # pylint: disable=too-many-boolean-expressions
         raise ValueError("cache non-batch dimensions must be positive")
 
     generator = torch.Generator(device="cpu")

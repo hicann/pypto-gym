@@ -69,18 +69,18 @@ def moe_finalize_routing_v2_golden(
     """
     # 使用 float32 进行中间计算以保证精度
     out_dtype = torch.float32
-    
+
     # 获取基本维度
     bsk = expanded_row_idx.shape[0]
     h = expanded_x.shape[-1]
-    
+
     # 处理空 tensor 的情况
     if h == 0:
         return torch.tensor([], dtype=torch.bfloat16)
-    
+
     # 将 expanded_x reshape 为 2D (NUM_ROWS*K, H)
     expanded_x = expanded_x.reshape(-1, h)
-    
+
     # 确定 K 值和 num_rows
     # 优先从 scales 推导；若无 scales，则从 x1/x2 的行数推导 num_rows，再反推 K
     if scales is not None:
@@ -99,18 +99,18 @@ def moe_finalize_routing_v2_golden(
         # 无任何辅助信息，默认 K=1
         K = 1
         num_rows = bsk
-    
+
     # 初始化输出 tensor（在与输入相同的设备上）
     out = torch.zeros((num_rows, h), dtype=out_dtype, device=expanded_x.device)
-    
+
     # 添加残差连接 x1
     if x1 is not None:
         out = out + x1.to(out_dtype)
-    
+
     # 添加残差连接 x2
     if x2 is not None:
         out = out + x2.to(out_dtype)
-    
+
     # 主计算循环：遍历 num_rows 和 K
     for i in range(num_rows):
         for k in range(K):
@@ -121,33 +121,33 @@ def moe_finalize_routing_v2_golden(
             else:
                 # 按行排列
                 expanded_row_idx_idx = i * K + k
-            
+
             # 获取 expanded_row_idx_value
             expanded_row_idx_value = expanded_row_idx[expanded_row_idx_idx].item()
-            
+
             # drop_pad 场景：跳过 padding 位置（值为 -1）
             if expanded_row_idx_value == -1:
                 continue
-            
+
             # drop_less 场景：跳过越界索引
             if drop_pad_mode != 1 and drop_pad_mode != 3:
                 if expanded_row_idx_value >= expanded_x.shape[0]:
                     continue
-            
+
             # 从 expanded_x 中获取目标行
             dst_row = expanded_x[int(expanded_row_idx_value), :].to(out_dtype)
-            
+
             # 添加专家偏置（如果 bias 和 expert_idx 存在）
             if bias is not None and expert_idx is not None:
                 expert_id = int(expert_idx[i, k].item())
                 dst_row = dst_row + bias[expert_id, :].to(out_dtype)
-            
+
             # 应用路由权重（如果 scales 存在）
             if scales is not None:
                 dst_row = dst_row * scales[i, k].to(out_dtype)
-            
+
             # 累加到输出
             out[i, :] = out[i, :] + dst_row
-    
+
     # 返回结果（转换回 bfloat16）
     return out.to(torch.bfloat16)

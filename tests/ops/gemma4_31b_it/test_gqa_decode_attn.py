@@ -30,8 +30,7 @@ Sq = 1
 
 def load_test_cases(json_path):
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
@@ -116,7 +115,7 @@ def main():
     gqa_cases = [c for c in test_cases.get("test_cases", []) if c.get("op_name", "") == "gqa_decode_attn"]
     if not gqa_cases:
         print("ERROR: No gqa_decode_attn test cases found")
-        sys.exit(1)
+        raise RuntimeError("Test execution failed")
 
     if args.list:
         print(f"\nGQA decode attention test cases:\n")
@@ -134,7 +133,7 @@ def main():
         device = args.device
         if device.startswith("npu"):
             if "TILE_FWK_DEVICE_ID" not in os.environ:
-                sys.exit(1)
+                raise RuntimeError("Environment check failed")
             device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
             import torch_npu  # noqa: F401
             torch.npu.set_device(device_id)
@@ -142,16 +141,16 @@ def main():
 
         match = [c for c in gqa_cases if c["id"] == args.case_id]
         if not match:
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         ok = run_single_case(match[0], device)
-        sys.exit(0 if ok else 1)
+        raise SystemExit(0 if ok else 1)  # pylint: disable=avoid-using-exit
 
     # Main: run each case in a subprocess for JIT isolation
     if args.case_id:
         match = [c for c in gqa_cases if c["id"] == args.case_id]
         if not match:
             print(f"ERROR: unknown case '{args.case_id}'")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = match
     else:
         to_run = gqa_cases
@@ -166,7 +165,7 @@ def main():
             passed += 1
         else:
             print(f"\nFailed at {case_data['id']}")
-            sys.exit(1)
+            raise RuntimeError("Test failed")
 
     print("\n" + "=" * 60)
     print(f"All GQA decode attention tests passed! ({passed}/{len(to_run)} cases)")

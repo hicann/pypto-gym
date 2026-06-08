@@ -100,7 +100,14 @@ class HCPreKernelManager:
             y_shape = [t, 4096]
             post_shape = [t, 4]
             comb_shape = [t, 4, 4]
-            self.vec_all_shape[t] = [x_shape, self.hc_fn_shape, self.hc_scale_shape, self.hc_base_shape, y_shape, post_shape, comb_shape]
+            self.vec_all_shape[t] = [
+    x_shape,
+    self.hc_fn_shape,
+    self.hc_scale_shape,
+    self.hc_base_shape,
+    y_shape,
+    post_shape,
+     comb_shape]
 
     def infer_controlflow_shape(self, *args):
         if not args:
@@ -110,6 +117,7 @@ class HCPreKernelManager:
         for t in self.t_vec:
             if x_shape[0] >= t:
                 return self.vec_all_shape[t]
+        return None
 
 manager = HCPreKernelManager()
 

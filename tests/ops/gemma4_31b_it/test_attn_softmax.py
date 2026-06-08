@@ -42,8 +42,7 @@ def get_device_id():
 
 def load_test_cases(json_path):
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
@@ -106,7 +105,7 @@ def main():
     softmax_cases = [c for c in test_cases.get("test_cases", []) if c.get("op_name", "") == "attn_softmax"]
     if not softmax_cases:
         print("ERROR: No attn_softmax test cases found")
-        sys.exit(1)
+        raise RuntimeError("Test execution failed")
 
     if args.list:
         print(f"\nAttention SoftMax test cases:\n")
@@ -118,7 +117,7 @@ def main():
     if device.startswith("npu"):
         device_id = get_device_id()
         if device_id is None:
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         import torch_npu  # noqa: F401
         torch.npu.set_device(device_id)
         device = f"npu:{device_id}"
@@ -127,7 +126,7 @@ def main():
         match = [c for c in softmax_cases if c["id"] == args.case_id]
         if not match:
             print(f"ERROR: unknown case '{args.case_id}'")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = match
     else:
         to_run = softmax_cases
@@ -139,7 +138,7 @@ def main():
             passed += 1
         else:
             print(f"\nFailed at {case_data['id']}")
-            sys.exit(1)
+            raise RuntimeError("Test failed")
 
     print("\n" + "=" * 60)
     print(f"All Attention SoftMax tests passed! ({passed}/{len(to_run)} cases)")

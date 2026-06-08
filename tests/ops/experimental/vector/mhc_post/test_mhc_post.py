@@ -63,7 +63,7 @@ def get_device_id():
 
 def setup_npu(device_id):
     """设置 NPU 设备。"""
-    import torch_npu
+    import torch_npu  # pylint: disable=redefined-outer-name
     torch.npu.set_device(device_id)
 
 
@@ -169,11 +169,23 @@ def test_mhc_post_bs256_n4_d128(device_id=None, run_mode="npu"):
 
 
 def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
-    run_mhc_post_test(bs=1024, N=4, D=5120, device_id=device_id, run_mode=run_mode, test_name="B*S = 1024, N = 4, D = 5120")
+    run_mhc_post_test(
+    bs=1024,
+    N=4,
+    D=5120,
+    device_id=device_id,
+    run_mode=run_mode,
+     test_name="B*S = 1024, N = 4, D = 5120")
 
 
 def test_mhc_post_bs4096_n4_d2560(device_id=None, run_mode="npu"):
-    run_mhc_post_test(bs=4096, N=4, D=2560, device_id=device_id, run_mode=run_mode, test_name="B*S = 4096, N = 4, D = 2560")
+    run_mhc_post_test(
+    bs=4096,
+    N=4,
+    D=2560,
+    device_id=device_id,
+    run_mode=run_mode,
+     test_name="B*S = 4096, N = 4, D = 2560")
 
 
 # ─────────────────────────────────────────────
@@ -233,7 +245,7 @@ Examples:
         if args.example_id not in EXAMPLES:
             print(f"ERROR: unknown case '{args.example_id}'")
             print(f"Valid: {', '.join(sorted(EXAMPLES))}")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = [(args.example_id, EXAMPLES[args.example_id])]
     else:
         to_run = list(sorted(EXAMPLES.items()))

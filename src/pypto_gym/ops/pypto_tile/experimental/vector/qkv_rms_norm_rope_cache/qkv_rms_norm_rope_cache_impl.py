@@ -127,7 +127,7 @@ def _scatter_pa_nz_int8_contiguous_page0(
     pypto.assemble(src_pa_nz, [0, 0, 0, 0], cache_out)
 
 
-def _compute_q_grouped(
+def _compute_q_grouped(  # pylint: disable=huawei-too-many-arguments
     qkv: pypto.Tensor,
     q_gamma: pypto.Tensor,
     cos_fp32: pypto.Tensor,
@@ -154,7 +154,7 @@ def _compute_q_grouped(
         pypto.assemble(q_res, [0, head_start * dim], q_out_out)
 
 
-def _compute_quant(
+def _compute_quant(  # pylint: disable=huawei-too-many-arguments
     qkv: pypto.Tensor,
     q_gamma: pypto.Tensor,
     k_gamma: pypto.Tensor,
@@ -192,9 +192,11 @@ def _compute_quant(
     sin_fp32 = pypto.cast(sin_static, pypto.DT_FP32)  # shape: [T,128]
 
     if num_q <= 16:
-        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim, epsilon, q_group_heads, q_vec_token_tile)  # shape: [48,16,128] -> [48,2048]
+        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim,
+                           epsilon, q_group_heads, q_vec_token_tile)  # shape: [48,16,128] -> [48,2048]
     else:
-        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim, epsilon, q_group_heads, q_vec_token_tile)  # shape: [12,64,128] -> grouped heads -> [12,8192]
+        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim,
+                           epsilon, q_group_heads, q_vec_token_tile)  # shape: [12,64,128] -> grouped heads -> [12,8192]
 
     pypto.set_vec_tile_shapes(kv_vec_token_tile, k_size)  # tile shape: [2,128] or [4,512]
     k_2d_all = pypto.view(qkv, [static_tokens, k_size], [0, q_size])  # shape: [T,Nk*128]
@@ -210,8 +212,22 @@ def _compute_quant(
     pypto.set_vec_tile_shapes(kv_vec_token_tile, num_k, dim)  # tile shape: [2,Nk,128] or [4,Nk,128]
     k_quant_all = _quant_int8(k_rope_all, k_scale)  # shape: [T,Nk,128] int8
     v_quant_all = _quant_int8(v_3d_all, v_scale)  # shape: [T,Nv,128] int8
-    _scatter_pa_nz_int8_contiguous_page0(k_cache_out, k_quant_all, static_tokens, num_k, dim, c0, kv_vec_token_tile)  # dst shape: [11898,Nk*4,128,32], index=arange(T)
-    _scatter_pa_nz_int8_contiguous_page0(v_cache_out, v_quant_all, static_tokens, num_v, dim, c0, kv_vec_token_tile)  # dst shape: [11898,Nv*4,128,32], index=arange(T)
+    _scatter_pa_nz_int8_contiguous_page0(
+    k_cache_out,
+    k_quant_all,
+    static_tokens,
+    num_k,
+    dim,
+    c0,
+     kv_vec_token_tile)  # dst shape: [11898,Nk*4,128,32], index=arange(T)
+    _scatter_pa_nz_int8_contiguous_page0(
+    v_cache_out,
+    v_quant_all,
+    static_tokens,
+    num_v,
+    dim,
+    c0,
+     kv_vec_token_tile)  # dst shape: [11898,Nv*4,128,32], index=arange(T)
 
 
 @pypto.frontend.jit(
@@ -220,7 +236,7 @@ def _compute_quant(
         "device_sched_mode": TP4_TILE_CONFIG.device_sched_mode,
     },
 )
-def qkv_rms_norm_rope_cache_quant_kernel_tp4(
+def qkv_rms_norm_rope_cache_quant_kernel_tp4(  # pylint: disable=huawei-too-many-arguments
     qkv: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     q_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
     k_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
@@ -268,7 +284,7 @@ def qkv_rms_norm_rope_cache_quant_kernel_tp4(
         "device_sched_mode": TP1_TILE_CONFIG.device_sched_mode,
     },
 )
-def qkv_rms_norm_rope_cache_quant_kernel_tp1(
+def qkv_rms_norm_rope_cache_quant_kernel_tp1(  # pylint: disable=huawei-too-many-arguments
     qkv: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     q_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
     k_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
@@ -310,7 +326,7 @@ def qkv_rms_norm_rope_cache_quant_kernel_tp1(
     )
 
 
-def qkv_rms_norm_rope_cache_wrapper(
+def qkv_rms_norm_rope_cache_wrapper(  # pylint: disable=huawei-too-many-arguments
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,

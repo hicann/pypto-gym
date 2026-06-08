@@ -141,7 +141,7 @@ def main():
     if args.case is not None:
         if not 1 <= args.case <= len(TEST_CONFIGS):
             print(f"ERROR: case must be 1..{len(TEST_CONFIGS)}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         test_gmm_finalize_routing(TEST_CONFIGS[args.case - 1])
         return
 

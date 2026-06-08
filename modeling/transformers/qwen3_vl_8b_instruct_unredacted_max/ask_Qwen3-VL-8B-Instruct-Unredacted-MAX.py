@@ -24,7 +24,10 @@ from transformers import AutoTokenizer
 parser = argparse.ArgumentParser(description="Qwen3-VL-8B-Instruct-Unredacted-MAX 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/mnt/workspace/gitCode/cann/models/Qwen3-VL-8B-Instruct-Unredacted-MAX", help="模型权重路径")
+parser.add_argument(
+    "--model-path",
+    default="/mnt/workspace/gitCode/cann/models/Qwen3-VL-8B-Instruct-Unredacted-MAX",
+     help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
 parser.add_argument("--use_pypto", action="store_true", help="PyPTO融合算子模式")

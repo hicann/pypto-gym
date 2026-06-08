@@ -32,6 +32,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 MAX_S2 = 131072
 
+
 @dataclass
 class SCFATileShapeConfig:
     g_tile: int
@@ -40,7 +41,7 @@ class SCFATileShapeConfig:
     c2_tile_shape: list
 
 
-def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv, ori_block_table, 
+def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv, ori_block_table,  # pylint: disable=huawei-too-many-arguments
                                    cmp_block_table, atten_sink,
                                    seqused_kv, cmp_sparse_indices,
                                    attention_out, nq, n_kv, softmax_scale, topk,
@@ -153,7 +154,7 @@ def sparse_compress_flash_attention_compute(query, actual_seq_q, ori_kv, cmp_kv,
         "device_sched_mode": 0
     }
 )
-def sparse_compress_flash_attention_kernel(
+def sparse_compress_flash_attention_kernel(  # pylint: disable=huawei-too-many-arguments
     query: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     actual_seq_q: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32), 
     ori_kv: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 
@@ -165,7 +166,6 @@ def sparse_compress_flash_attention_kernel(
     cmp_sparse_indices: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT32),
     attention_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     nq, n_kv, softmax_scale, topk, block_size, win_size, cmp_ratio, tile_config):
-
     """JIT-compiled sparse compress flash attention for decode phase.
     """
     pypto.experimental.set_operation_options(combine_axis=True)
@@ -198,7 +198,7 @@ def check_input_output_shape_dtype(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv
 
 
 @allow_in_graph
-def npu_sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu, 
+def npu_sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu,  # pylint: disable=huawei-too-many-arguments
                                         cmp_block_table_npu, atten_sink_npu,
                                         seqused_kv_npu, cmp_sparse_indices_npu, softmax_scale, win_size, cmp_ratio):
 
@@ -240,8 +240,8 @@ pyptolib.define("sparse_compress_flash_attention(Tensor query_npu, Tensor q_act_
 @torch.library.impl(pyptolib, "sparse_compress_flash_attention", "Meta")
 def sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu, \
                                     cmp_block_table_npu, atten_sink_npu,
-                                    seqused_kv_npu, cmp_sparse_indices_npu, softmax_scale, win_size, cmp_ratio):
-    y = torch.empty([ori_block_table_npu.size(0), cmp_sparse_indices_npu.size(0) // ori_block_table_npu.size(0),\
+                                    seqused_kv_npu, cmp_sparse_indices_npu, softmax_scale, win_size, cmp_ratio):  # pylint: disable=huawei-too-many-arguments
+    y = torch.empty([ori_block_table_npu.size(0), cmp_sparse_indices_npu.size(0) // ori_block_table_npu.size(0), \
         query_npu.size(0) // cmp_sparse_indices_npu.size(0), query_npu.size(1)], \
         dtype=query_npu.dtype, device=query_npu.device)
     return y
@@ -249,7 +249,7 @@ def sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_k
 
 try:
     @torch.library.impl(pyptolib, "sparse_compress_flash_attention", "NPU")
-    def sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu, 
+    def sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu,  # pylint: disable=huawei-too-many-arguments
                                         cmp_block_table_npu, atten_sink_npu,
                                         seqused_kv_npu, cmp_sparse_indices_npu, softmax_scale, win_size, cmp_ratio):
         return npu_sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, 
@@ -262,7 +262,7 @@ except Exception as e:
         print(f"Skip: Unexpected error : {e}")
 
 
-def sparse_compress_flash_attention_graph(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, 
+def sparse_compress_flash_attention_graph(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu,  # pylint: disable=huawei-too-many-arguments
                                     ori_block_table_npu, cmp_block_table_npu, atten_sink_npu,
                                     seqused_kv_npu, cmp_sparse_indices_npu, softmax_scale, win_size, cmp_ratio):
     return torch.ops.pypto.sparse_compress_flash_attention(query_npu, q_act_seqs_npu, ori_kv_npu, 

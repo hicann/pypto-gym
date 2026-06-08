@@ -8,4 +8,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """pypto-gym: A kernel library of fused operators and model implementations built on top of PyPTO."""
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("pypto-gym")
+except Exception:
+    __version__ = "0.0.0"  # fallback for editable installs / dev mode

@@ -88,7 +88,7 @@ def gelu_activation_core(x: pypto.Tensor) -> pypto.Tensor:
     return pypto.mul(x, sigmoid)
 
 
-def sum_lstm_compute(
+def sum_lstm_compute(  # pylint: disable=huawei-too-many-arguments
     states_4d: pypto.Tensor,
     z4_4d: pypto.Tensor,
     prev_cell: pypto.Tensor,

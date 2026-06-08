@@ -14,6 +14,7 @@ import pypto
 import pytest
 import pypto._controller as controller
 
+
 def test_record_function():
     dtype = pypto.DT_FP16
     shape = (8, 8)

@@ -182,7 +182,7 @@ def flash_end(out, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype
     if attn_out_end > out.shape[1]:
         attn_out_end = out.shape[1]
         attn_out_start = attn_out_end - g_tile
-    out[bs_ofs : bs_ofs + 1, attn_out_start:attn_out_end, :] = (
+    out[bs_ofs: bs_ofs + 1, attn_out_start:attn_out_end, :] = (
         oi_upd_3d.to(dtype)
     )
 
@@ -213,17 +213,27 @@ def kv_cache_concat_bsnd(kv_cache_out, cmp_block_table, actual_seqs):
             end_idx = (s_idx + 1) * block_size
 
             kv_nope_temp_tensor[:, start_idx:end_idx, :, :] = kv_cache_out[
-                block_idx : block_idx + 1, :, :, :
+                block_idx: block_idx + 1, :, :, :
             ]
             s_idx += 1
 
-        cmp_kv[b_idx : b_idx + 1, :, :, :] = kv_nope_temp_tensor
+        cmp_kv[b_idx: b_idx + 1, :, :, :] = kv_nope_temp_tensor
 
     return cmp_kv
 
 
-def ifa_flash_torch(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, cmp_ratio=128, is_new_sink=False,
-                ori_kv=None, ori_block_table=None):
+def ifa_flash_torch(  # pylint: disable=huawei-too-many-arguments
+    q,
+    cmp_kv,
+    sinks,
+    cmp_block_table,
+    seqused_kv,
+    output_flash,
+    tmp_out,
+    cmp_ratio=128,
+    is_new_sink=False,
+    ori_kv=None,
+     ori_block_table=None):
     """
     Args:
         q: Query [batch_size * s1, num_head, head_size]
@@ -282,7 +292,7 @@ def ifa_flash_torch(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash,
                         kv_list.append(kv_block)
 
                     kv_cur = torch.cat(kv_list, axis=0)
-                    kv_cur = kv_cur[start_offset : start_offset + valid_win_len, :]
+                    kv_cur = kv_cur[start_offset: start_offset + valid_win_len, :]
 
                     mm1 = matmul_proxy(qi, kv_cur.t())
                     muls_res = mm1 * scale
@@ -332,7 +342,7 @@ def ifa_flash_torch(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash,
     return output_flash
 
 
-def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, enable_flash=True, cmp_ratio=1,
+def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, enable_flash=True, cmp_ratio=1,  # pylint: disable=huawei-too-many-arguments
                is_new_sink=True, ori_kv=None, ori_block_table=None):
     if not enable_flash:
         fp64 = torch.float64
@@ -361,7 +371,7 @@ def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_
                     seq_len = seq_end // cmp_ratio
                     q_bs = q[i * s1 + j]
                     kv_win_view = k_win_bsnd[i, max(seq_end-128, 0):seq_end, :, :].reshape(-1, d)
-                    kv_bs = kv_bsnd[i, :seq_len, n2_idx : n2_idx + 1].reshape(
+                    kv_bs = kv_bsnd[i, :seq_len, n2_idx: n2_idx + 1].reshape(
                         seq_len, d
                     )
                     kv_bs = torch.cat([kv_win_view, kv_bs], dim=0)
@@ -443,7 +453,15 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
             pypto.runtime._device_synchronize()  # 内部接口，不推荐使用
     else:
         for _ in range(10):
-            attention_out = cfa_attention(q, cmp_kv, sinks, cmp_block_table, seqused_kv, ori_kv, ori_block_table, cmp_ratio)
+            attention_out = cfa_attention(
+    q,
+    cmp_kv,
+    sinks,
+    cmp_block_table,
+    seqused_kv,
+    ori_kv,
+    ori_block_table,
+     cmp_ratio)
         # pypto.runtime._device_synchronize()  # 内部接口，不推荐使用
 
     from tests.ops.utils import compare

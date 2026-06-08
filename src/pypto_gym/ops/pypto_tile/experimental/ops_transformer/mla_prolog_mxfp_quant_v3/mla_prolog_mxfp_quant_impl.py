@@ -398,7 +398,12 @@ def pre_compute_2d(
         pypto.set_semantic_label("QuantMatmul_kva")
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                             [256, 256], [256, 256])
-        compressed_kv_tmp0 = pypto.scaled_mm(token_x_view0, w_dkv_kr_view0, pypto.DT_FP32, x_scale_view0, dequant_scale_w_dkv_kr_view0)
+        compressed_kv_tmp0 = pypto.scaled_mm(
+    token_x_view0,
+    w_dkv_kr_view0,
+    pypto.DT_FP32,
+    x_scale_view0,
+     dequant_scale_w_dkv_kr_view0)
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                             [256, 256], [128, 128])
         pypto.set_semantic_label("QuantMatmul_qa")
@@ -407,7 +412,12 @@ def pre_compute_2d(
         pypto.set_semantic_label("QuantMatmul_kva")
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                             [256, 256], [256, 256])
-        compressed_kv_tmp1 = pypto.scaled_mm(token_x_view1, w_dkv_kr_view1, pypto.DT_FP32, x_scale_view1, dequant_scale_w_dkv_kr_view1)
+        compressed_kv_tmp1 = pypto.scaled_mm(
+    token_x_view1,
+    w_dkv_kr_view1,
+    pypto.DT_FP32,
+    x_scale_view1,
+     dequant_scale_w_dkv_kr_view1)
         compressed_kv_tmp = compressed_kv_tmp0 + compressed_kv_tmp1
         compressed_kv = pypto.cast(compressed_kv_tmp, dtype)
     else:
@@ -455,7 +465,7 @@ def pre_compute_2d(
     return qkv_pre_res
 
 
-def mla_prolog_quant_compute(
+def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
     token_x: pypto.Tensor,
     x_scale: pypto.Tensor,
     w_dq: pypto.Tensor,
@@ -637,7 +647,7 @@ def mla_prolog_quant_compute(
     },
     runtime_options={"device_sched_mode": 2, "stitch_function_max_num": 128}
 )
-def mla_prolog_quant(
+def mla_prolog_quant(  # pylint: disable=huawei-too-many-arguments
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP8E4M3),
     x_scale: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP8E8M0),
     w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),

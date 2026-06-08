@@ -126,6 +126,7 @@ def gate(
     """
     if isinstance(hidden_states, FakeTensor):
         return router_logits_out
+    # pylint: disable=inconsistent-return-statements
     check_args(gate_weight, hidden_states)
 
     inputs = [hidden_states, gate_weight, router_logits_out]

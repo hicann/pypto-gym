@@ -45,7 +45,7 @@ VEC_TILE_4 = 4
 VEC_TILE_32 = 32
 
 
-def mla_indexer_prolog_quant_compute(
+def mla_indexer_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
     token_x, mla_w_dq, mla_w_uq_qr, mla_dequant_scale, mla_w_uk, mla_w_dkv_kr, mla_gamma_cq,
     mla_gamma_ckv, cos, sin, cache_index, mla_kv_cache, mla_kr_cache,
     mla_k_scale_cache, ip_w_qb_in, ip_w_qb_scale_in, ip_wk_in, ip_w_proj_in,
@@ -247,7 +247,6 @@ def mla_indexer_prolog_quant_compute(
         k_scale_4d = pypto.reshape(pypto.cast(k_res[1], pypto.DT_FP16), [tile_bs, 1, 1, 1],
                                 valid_shape=[tile_bs, 1, 1, 1])
 
-
         pypto.set_vec_tile_shapes(tile_bs, 1, 1, head_dim)
         ip_k_int8_out.move(pypto.scatter_update(ip_k_cache, SCATTER_DIM, index, k_cache_4d))
         ip_k_scale_out.move(pypto.scatter_update(ip_k_cache_scale, SCATTER_DIM, index, k_scale_4d))
@@ -272,7 +271,7 @@ def mla_indexer_prolog_quant_compute(
     runtime_options={"stitch_function_max_num": 128,
                     "device_sched_mode": 2}
 )
-def mla_indexer_prolog_quant_p(
+def mla_indexer_prolog_quant_p(  # pylint: disable=huawei-too-many-arguments
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     mla_w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ),
     mla_w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),
@@ -401,7 +400,7 @@ def mla_indexer_prolog_quant_p(
     },
     runtime_options={"device_sched_mode": 2}
 )
-def mla_indexer_prolog_quant_d(
+def mla_indexer_prolog_quant_d(  # pylint: disable=huawei-too-many-arguments
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     mla_w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ),
     mla_w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),

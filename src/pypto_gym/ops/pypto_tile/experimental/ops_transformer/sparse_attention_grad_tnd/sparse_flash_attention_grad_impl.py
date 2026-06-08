@@ -67,7 +67,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 MAX_TOTAL_KV = 128 * 1024
 
 
-def sparse_flash_attention_grad_compute(
+def sparse_flash_attention_grad_compute(  # pylint: disable=huawei-too-many-arguments
     q_nope, q_pe, k_nope, k_pe, value,
     sparse_idx,
     d_out, out, sm_max, sm_sum,
@@ -276,7 +276,7 @@ def sparse_flash_attention_grad_compute(
         "stitch_function_max_num": 256
     },
 )
-def sparse_flash_attention_grad(
+def sparse_flash_attention_grad(  # pylint: disable=huawei-too-many-arguments
     q_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_1, n_1, d
     q_pe: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_1, n_1, dr
     k_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_2, n_2, d
@@ -316,7 +316,7 @@ def sparse_flash_attention_grad(
     )
 
 
-def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
+def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,  # pylint: disable=huawei-too-many-arguments
         actual_seq_qlen, actual_seq_kvlen):
     assert actual_seq_kvlen is not None and actual_seq_kvlen.dim() == 1, \
         f"actual_seq_kvlen dim num is {actual_seq_kvlen.dim()}, expected 1"
@@ -359,7 +359,7 @@ def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx
 
 
 @allow_in_graph
-def npu_sfa_sparse_attention_grad(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
+def npu_sfa_sparse_attention_grad(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,  # pylint: disable=huawei-too-many-arguments
         actual_seq_qlen, actual_seq_kvlen, scale_value):
     assert not isinstance(q_nope, FakeTensor), f"q_nope is FakeTensor"
 

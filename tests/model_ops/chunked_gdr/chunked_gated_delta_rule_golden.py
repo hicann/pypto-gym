@@ -51,7 +51,7 @@ def _inverse_iterative(A, chunk_size):
     return attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
 
-def chunked_gated_delta_rule_golden(
+def chunked_gated_delta_rule_golden(  # pylint: disable=huawei-too-many-arguments
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -458,10 +458,12 @@ def _validate():
                 failed_items = []
                 if not attn_pass:
                     out_of_tol = (diff_attn > tolerance_attn).sum().item()
-                    failed_items.append(f"attn: {out_of_tol}/{golden_attn.numel()} out of tolerance, max_diff={max_attn_diff:.6f}")
+                    failed_items.append(
+                        f"attn: {out_of_tol}/{golden_attn.numel()} out of tolerance, max_diff={max_attn_diff:.6f}")
                 if not state_pass:
                     out_of_tol = (diff_state > tolerance_state).sum().item()
-                    failed_items.append(f"state: {out_of_tol}/{golden_state.numel()} out of tolerance, max_diff={max_state_diff:.6f}")
+                    failed_items.append(
+                        f"state: {out_of_tol}/{golden_state.numel()} out of tolerance, max_diff={max_state_diff:.6f}")
                 print(f"  {name}: B={B}, Nqk={Nqk}, Nv={Nv}, T={T} ... ✗ FAIL: {', '.join(failed_items)}")
                 all_passed = False
 

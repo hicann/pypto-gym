@@ -53,8 +53,7 @@ def load_test_cases(json_path=None):
     if json_path is None:
         json_path = os.path.join(_HERE, "test_cases.json")
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
@@ -155,7 +154,7 @@ Examples:
 
     if not cases:
         print("ERROR: No test cases found in JSON")
-        sys.exit(1)
+        raise RuntimeError("Test execution failed")
 
     if args.list:
         print(f"\nTest cases from {args.json}:\n")
@@ -177,7 +176,7 @@ Examples:
         if case_data is None:
             print(f"ERROR: unknown case '{args.case_id}'")
             print(f"Valid: {', '.join([c['id'] for c in cases])}")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = [case_data]
     else:
         to_run = cases
@@ -186,7 +185,7 @@ Examples:
     if args.run_mode == "npu":
         device_id = get_device_id()
         if device_id is None:
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         torch.npu.set_device(device_id)
 
     all_passed = True
@@ -209,13 +208,13 @@ Examples:
         print("=" * 60)
 
         if not all_passed:
-            sys.exit(1)
+            raise RuntimeError("Test failed")
 
     except Exception as e:
         print(f"\nRuntime error: {e}", file=sys.stderr)
         import traceback as _tb
         _tb.print_exc()
-        sys.exit(2)
+        raise RuntimeError("Test execution failed with critical error")
 
 
 if __name__ == "__main__":

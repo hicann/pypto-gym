@@ -102,7 +102,7 @@ def gen_input(
 
 
 @pytest.mark.soc("950", "910")
-def test_ffn_share() -> None:
+def test_ffn_share() -> None:  # pylint: disable=too-many-return-values
     x_dtype = torch.bfloat16
     s = 1
     intermediate_size = 192

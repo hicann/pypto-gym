@@ -43,7 +43,7 @@ class SaTileShapeConfig:
     v2_tile_shape: list
 
 
-def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, key_rope_2d,
+def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, key_rope_2d,  # pylint: disable=huawei-too-many-arguments
                                          k_nope_scales, topk_indices, block_table, kv_act_seqs,
                                          attention_out, nq, n_kv, softmax_scale, topk,
                                          block_size, max_blocknum_perbatch, tile_config):
@@ -233,7 +233,7 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
                                                      attention_out.shape[2], attention_out.shape[3]], inplace=True)
 
 
-def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_2d, key_rope_2d,
+def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_2d, key_rope_2d,  # pylint: disable=huawei-too-many-arguments
                                                k_nope_scales, topk_indices, block_table, kv_act_seqs,
                                                attention_out, nq, n_kv, softmax_scale, topk,
                                                block_size, max_blocknum_perbatch, tile_config):
@@ -454,7 +454,7 @@ def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_
         "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
-def sparse_flash_attention_quant_d_950(
+def sparse_flash_attention_quant_d_950(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     key_nope_2d: pypto.Tensor([pypto.STATIC, pypto.STATIC], ), # int8 or bf16
@@ -516,7 +516,7 @@ def sparse_flash_attention_quant_d_950(
         "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
-def sparse_flash_attention_quant_d(
+def sparse_flash_attention_quant_d(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     key_nope_2d: pypto.Tensor([pypto.STATIC, pypto.STATIC], ), # int8 or bf16
@@ -577,7 +577,7 @@ def sparse_flash_attention_quant_d(
         "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
-def sparse_flash_attention_quant_p(
+def sparse_flash_attention_quant_p(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     key_nope_2d: pypto.Tensor([pypto.STATIC, pypto.STATIC],), # int8 or bf16

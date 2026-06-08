@@ -188,7 +188,7 @@ def main():
         device_id = get_device_id()
         if device_id is None:
             return
-        import torch_npu
+        import torch_npu  # pylint: disable=redefined-outer-name
         torch.npu.set_device(device_id)
         logger.info("Running on NPU:%d\n", device_id)
 

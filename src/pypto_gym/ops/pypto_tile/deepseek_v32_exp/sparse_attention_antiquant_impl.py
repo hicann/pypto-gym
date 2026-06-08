@@ -42,7 +42,7 @@ class SaTileShapeConfig:
     v2_tile_shape: list
 
 
-def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_indices,
+def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_indices,  # pylint: disable=huawei-too-many-arguments
                                             block_table, kv_act_seqs, attention_out,
                                             nq, n_kv, softmax_scale, topk, block_size,
                                             max_blocknum_perbatch, tile_config):
@@ -277,7 +277,7 @@ def options_list():
     pass_options=options_list()["pass_options"],
     runtime_options=options_list()["runtime_options"],
 )
-def sparse_attention_antiquant_d(
+def sparse_attention_antiquant_d(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     nope_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
@@ -334,7 +334,7 @@ def sparse_attention_antiquant_d(
         "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     }
 )
-def sparse_attention_antiquant_p(
+def sparse_attention_antiquant_p(  # pylint: disable=huawei-too-many-arguments
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     nope_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),

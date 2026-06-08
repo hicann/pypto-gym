@@ -9,7 +9,8 @@ from torch._dynamo import allow_in_graph
 from torch._subclasses.fake_tensor import FakeTensor
 
 
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU}, debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0})
+@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},
+                    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0})
 def _rms_norm_kernel_d3072(
     x: pypto.Tensor([pypto.DYNAMIC, 3072], pypto.DT_FP16),
     gamma: pypto.Tensor([3072], pypto.DT_FP16),

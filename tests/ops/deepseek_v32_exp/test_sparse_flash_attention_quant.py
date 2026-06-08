@@ -30,7 +30,7 @@ import numpy as np
 import pypto
 
 from deepseek_v32_exp.sparse_flash_attention_quant_impl \
-    import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p,\
+    import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p, \
            sparse_flash_attention_quant_d_950, SaTileShapeConfig
 from deepseek_v32_exp.utils.compare import compare
 
@@ -425,7 +425,7 @@ def do_test_sparse_attention_func(bn1n2s1, actual_seq, input_params, input_data,
             c2_tile_shape=[128, 128, 128, 128, 128, 128],
             v2_tile_shape=[64, 256]
         )
-    
+
     if is_soc_950:
         tile_config = SaTileShapeConfig(
             g_tile=128,

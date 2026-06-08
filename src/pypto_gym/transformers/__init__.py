@@ -6,12 +6,4 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-
-from pypto_gym.transformers.qwen3_1_7b.qwen3_pto_kernels import (  # noqa: F401
-    decode_attn,
-    post_attn,
-    pre_attn_fused,
-    qk_norm_rope_k,
-    qk_norm_rope_q,
-    rmsnorm_qkv,
-)
+"""HuggingFace model structure definitions with PyPTO kernel integration adapters."""

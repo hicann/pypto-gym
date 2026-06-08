@@ -33,6 +33,7 @@ ATOL = 0.0001
 # 1. 环境工具
 # ─────────────────────────────────────────────
 
+
 def get_device_id():
     """从环境变量获取 TILE_FWK_DEVICE_ID。"""
     if "TILE_FWK_DEVICE_ID" not in os.environ:
@@ -56,7 +57,7 @@ def setup_npu(device_id):
 # 2. 测试函数
 # ─────────────────────────────────────────────
 
-def run_moe_finalize_routing_v2_test(
+def run_moe_finalize_routing_v2_test(  # pylint: disable=huawei-too-many-arguments
     num_rows, K, H, E=None,
     has_x1=False, has_x2=False, has_bias=False, has_scales=False,
     drop_pad_mode=2, seed=42,
@@ -85,14 +86,14 @@ def run_moe_finalize_routing_v2_test(
     from numpy.testing import assert_allclose
     from moe_finalize_routing_v2_golden import moe_finalize_routing_v2_golden
     from experimental.vector.moe_finalize_routing_v2.moe_finalize_routing_v2_impl import moe_finalize_routing_v2_wrapper
-    
+
     if test_name is None:
         test_name = f"num_rows={num_rows}, K={K}, H={H}"
-    
+
     print("=" * 60)
     print(f"Test: moe_finalize_routing_v2 {test_name}")
     print("=" * 60)
-    
+
     if run_mode == "npu":
         if device_id is None:
             device_id = get_device_id()
@@ -100,23 +101,23 @@ def run_moe_finalize_routing_v2_test(
         device = f"npu:{device_id}"
     else:
         device = "cpu"
-    
+
     # 固定随机种子以保证可重复性
     torch.manual_seed(seed)
-    
+
     # 准备必需输入
     expanded_x = torch.randn(num_rows * K, H, dtype=torch.bfloat16, device=device)
     expanded_row_idx = torch.randint(0, num_rows * K, (num_rows * K,), dtype=torch.int32, device=device)
-    
+
     # 准备可选输入
     x1 = None
     if has_x1:
         x1 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device)
-    
+
     x2 = None
     if has_x2:
         x2 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device)
-    
+
     bias = None
     expert_idx = None
     if has_bias:
@@ -124,18 +125,18 @@ def run_moe_finalize_routing_v2_test(
             E = 8  # 默认专家总数
         bias = torch.randn(E, H, dtype=torch.bfloat16, device=device)
         expert_idx = torch.randint(0, E, (num_rows, K), dtype=torch.int32, device=device)
-    
+
     scales = None
     if has_scales:
         scales = torch.randn(num_rows, K, dtype=torch.bfloat16, device=device)
-    
+
     # 执行 kernel wrapper
     result = moe_finalize_routing_v2_wrapper(
         expanded_x, expanded_row_idx,
         x1, x2, bias, scales, expert_idx,
         drop_pad_mode
     )
-    
+
     # 执行 golden（在 CPU 上）
     golden = moe_finalize_routing_v2_golden(
         expanded_x.cpu(), expanded_row_idx.cpu(),
@@ -146,19 +147,19 @@ def run_moe_finalize_routing_v2_test(
         expert_idx.cpu() if expert_idx is not None else None,
         drop_pad_mode
     )
-    
+
     # 精度对比
     print(f"  Input shape : expanded_x={expanded_x.shape}")
     print(f"  Output shape: {result.shape}")
-    
+
     result_np = result.cpu().float().numpy()
     golden_np = golden.cpu().float().numpy()
-    
+
     max_diff = np.abs(result_np - golden_np).max()
     mean_diff = np.abs(result_np - golden_np).mean()
     print(f"  Max diff    : {max_diff:.6e}")
     print(f"  Mean diff   : {mean_diff:.6e}")
-    
+
     # 三态判定
     if run_mode == "npu":
         try:
@@ -170,7 +171,7 @@ def run_moe_finalize_routing_v2_test(
         except Exception as e:
             print(f"Runtime error: {e}", file=sys.stderr)
             raise
-    
+
     print("  ✓ Passed\n")
 
 
@@ -210,6 +211,7 @@ def test_moe_finalize_routing_v2_8(device_id=None, run_mode="npu"):
         test_name="num_rows=8, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
 
+
 def test_moe_finalize_routing_v2_128(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，K=1。"""
     run_moe_finalize_routing_v2_test(
@@ -219,6 +221,7 @@ def test_moe_finalize_routing_v2_128(device_id=None, run_mode="npu"):
         device_id=device_id, run_mode=run_mode,
         test_name="num_rows=128, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
+
 
 def test_moe_finalize_routing_v2_8192(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，K=1。"""
@@ -230,6 +233,7 @@ def test_moe_finalize_routing_v2_8192(device_id=None, run_mode="npu"):
         test_name="num_rows=8192, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
 
+
 def test_moe_finalize_routing_v2_16384(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，K=1。"""
     run_moe_finalize_routing_v2_test(
@@ -239,7 +243,7 @@ def test_moe_finalize_routing_v2_16384(device_id=None, run_mode="npu"):
         device_id=device_id, run_mode=run_mode,
         test_name="num_rows=16384, K=8, H=7168, drop_pad_mode=2 (Level 0)",
     )
-    
+
 # ─────────────────────────────────────────────
 # 5. CLI 入口
 # ─────────────────────────────────────────────
@@ -300,7 +304,7 @@ Note: Before running, please set environment:
         help="Run mode (default: npu)",
     )
     args = parser.parse_args()
-    
+
     if args.list:
         print("\nAvailable cases:\n")
         for key, info in sorted(EXAMPLES.items()):
@@ -308,20 +312,20 @@ Note: Before running, please set environment:
         print("\nNote: Before running, please set environment:")
         print("  source /mnt/workspace/gitCode/cann/pypto/env_setup.sh")
         return
-    
+
     if args.example_id:
         if args.example_id not in EXAMPLES:
             print(f"ERROR: unknown case '{args.example_id}'")
             print(f"Valid: {', '.join(sorted(EXAMPLES))}")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
         to_run = [(args.example_id, EXAMPLES[args.example_id])]
     else:
         to_run = list(sorted(EXAMPLES.items()))
-    
+
     device_id = None
     if args.run_mode == "npu":
         device_id = get_device_id()
-    
+
     try:
         for key, info in to_run:
             print(f"\n▸ Running {key}: {info['name']}")

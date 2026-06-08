@@ -67,6 +67,7 @@ class IfaGqaConfig:
     block_size: int = 128
     softmax_scale: float = 128 ** -0.5
 
+
 @dataclass
 class BatchBlockContext:
     """Context for processing batch blocks.
@@ -351,7 +352,7 @@ def antiquant_data(data: torch.Tensor,
 def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
                              ifa_gqa_inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Golden reference implementation for IFA GQA with anti-quantization.
-    
+
     Args:
         ifa_gqa_config: IFA GQA configuration parameters.
         ifa_gqa_inputs: Dictionary containing input tensors:
@@ -395,7 +396,7 @@ def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
 
 
 def get_case_config(case_name):
-    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5 }
+    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5}
     if case_name.startswith("1b2k"):
         params = {"b": 1, "n1": 8, "s1": 1, "s2": 2 * 1024, "n2": 1}
     elif case_name.startswith("8b2kqs2"):
@@ -420,7 +421,7 @@ def get_case_config(case_name):
 
     return case_config
 
-    
+
 def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
     """Execute test for incremental flash attention GQA with anti-quantization.
 
@@ -448,7 +449,13 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
         block_table=ifa_gqa_inputs['block_table'],
     )
     pypto_atten_out = incre_flash_attention_gqa_antiquant(**pypto_kernel_inputs)
-    compare(pypto_atten_out.cpu(), gqa_antiquant_golden.cpu(), "pypto_atten_out", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
+    compare(
+    pypto_atten_out.cpu(),
+    gqa_antiquant_golden.cpu(),
+    "pypto_atten_out",
+    atol=0.0001,
+    rtol=0.0078125,
+     max_error_ratio=0.005)
     print("[PRECISION_PASS]")
 
 

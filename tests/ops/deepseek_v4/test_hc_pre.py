@@ -165,7 +165,7 @@ def gen_hc_pre_data(t=16, is_trans=False):
 
 
 class HC_PRE(torch.nn.Module):
-    def forward(self, x, hc_fn, hc_scale, hc_base):
+    def forward(self, x, hc_fn, hc_scale, hc_base):  # pylint: disable=too-many-return-values
         #### add some op here  x = torch.add(x, 0)
         return torch.ops.pypto.hc_pre(x, hc_fn, hc_scale, hc_base, 4, 20, 1e-6)
 

@@ -23,7 +23,6 @@ from pypto import pypto_impl
 from pypto.operation import op_wrapper
 
 
-
 """
 MLA Prolog Quantization Module
 
@@ -110,7 +109,7 @@ class MlaPrologV4Configs:
     chunk_size: int
 
 
-def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,
+def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,  # pylint: disable=huawei-too-many-arguments
                                     wq_b_scale, output_q_data, output_kv_data, output_qr_data, output_qr_scale_data):
     assert token_x.size(1) == 4096 and token_x.dim() == 2, \
             f"expected token_x dim num 2, token_x axis1 4096, but got {token_x.shape}"
@@ -139,7 +138,6 @@ def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin,
             f"expected output_qr_data dim num 2, output_qr_data axis1 4096, but got {output_qr_data.shape}"
     assert output_qr_scale_data.dim() == 2 and output_qr_scale_data.size(1) == 1, \
             f"expected output_qr_scale_data dim num 2, output_qr_scale_data axis1 1, but got {output_qr_scale_data.shape}"
-
 
     assert token_x.dtype == torch.bfloat16, f"token_x.dtype is {token_x.dtype}, expected torch.bfloat16"
     assert wq_a.dtype == torch.bfloat16, f"wq_a.dtype is {wq_a.dtype}, expected torch.bfloat16"
@@ -386,7 +384,7 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor, tile_configs:
 
 
 def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, cos, sin, \
-        wq_b_scale, q_out, kv_out, qr_out, qr_scale_out, attrs, configs, tile_configs):
+        wq_b_scale, q_out, kv_out, qr_out, qr_scale_out, attrs, configs, tile_configs):  # pylint: disable=huawei-too-many-arguments
     t = x.shape[0]
     h = x.shape[1]
     q_lora_rank = rmsnorm_gamma_cq.shape[0]
@@ -445,7 +443,8 @@ def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ck
         cast_sin = pypto.cast(sin_2d, pypto.DT_FP32)
 
         pypto.set_vec_tile_shapes(4, 64, 64)
-        qr2_3d_rope = pypto.view(qr2_3d_cast, [t_tile, head_num, rope_dim], [0, 0, head_dim-rope_dim], valid_shape=[t_tile, head_num, rope_dim])
+        qr2_3d_rope = pypto.view(qr2_3d_cast, [t_tile, head_num, rope_dim], [
+                                 0, 0, head_dim-rope_dim], valid_shape=[t_tile, head_num, rope_dim])
         qr2_3d_rope = rope_3d(qr2_3d_rope, cast_cos, cast_sin, tile_configs)
         pypto.assemble(qr2_3d_rope, [tIdx, 0, head_dim-rope_dim], q_out)
 
@@ -457,9 +456,11 @@ def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ck
         kv_norm = pypto.mul(kv_norm, gamma_ckv_2d_fp32)
         kv_norm_cast = pypto.cast(kv_norm, pypto.DataType.DT_BF16)
 
-        kv_norm_nope = pypto.view(kv_norm_cast, [t_tile, head_dim-rope_dim], [0, 0], valid_shape=[t_tile, head_dim-rope_dim])
+        kv_norm_nope = pypto.view(kv_norm_cast, [t_tile, head_dim-rope_dim],
+                                  [0, 0], valid_shape=[t_tile, head_dim-rope_dim])
         pypto.assemble(pypto.clone(kv_norm_nope), [tIdx, 0], kv_out)
-        kv_norm_rope = pypto.view(kv_norm_cast, [t_tile, rope_dim], [0, head_dim-rope_dim], valid_shape=[t_tile, rope_dim])
+        kv_norm_rope = pypto.view(kv_norm_cast, [t_tile, rope_dim], [
+                                  0, head_dim-rope_dim], valid_shape=[t_tile, rope_dim])
         kv_norm_rope = rope_2d(kv_norm_rope, cast_cos, cast_sin)
         pypto.assemble(kv_norm_rope, [tIdx, head_dim-rope_dim], kv_out)
 
@@ -482,11 +483,22 @@ class MLAKernelMAnager:
             kv_out_shape = [t, 512]
             qr_out_shape = [t, 1024]
             qr_scale_out_shape = [t, 1]
-            self.vec_all_shape[t] = [x_shape, self.wq_a_shape, self.wq_b_shape, self.wkv_shape, self.rmsnorm_gamma_cq_shape, self.rmsnorm_gamma_ckv_shape, \
-                                    rops_cos_shape, rops_cos_shape, self.wq_b_scale_shape, q_out_shape, \
-                                    kv_out_shape, qr_out_shape, qr_scale_out_shape]
+            self.vec_all_shape[t] = [
+    x_shape,
+    self.wq_a_shape,
+    self.wq_b_shape,
+    self.wkv_shape,
+    self.rmsnorm_gamma_cq_shape,
+    self.rmsnorm_gamma_ckv_shape,
+    rops_cos_shape,
+    rops_cos_shape,
+    self.wq_b_scale_shape,
+    q_out_shape,
+    kv_out_shape,
+    qr_out_shape,
+     qr_scale_out_shape]
 
-    def infer_controlflow_shape(self, *args):
+    def infer_controlflow_shape(self, *args):  # pylint: disable=huawei-too-many-arguments
         global vec_all_shape, t_vec
         if not args:
             return [v for v in self.vec_all_shape.values()]
@@ -494,6 +506,7 @@ class MLAKernelMAnager:
         for t in self.t_vec:
             if x_shape[0] >= t:
                 return self.vec_all_shape[t]
+        return None
 
 manager = MLAKernelMAnager()
 
@@ -524,7 +537,23 @@ def mla_prolog_v4(
     attrs, configs, tile_configs):
 
     pypto.experimental.set_operation_options(combine_axis=True)
-    mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, cos, sin, wq_b_scale, q_out, kv_out, qr_out, qr_scale_out, attrs, configs, tile_configs)
+    mla_prolog_v4_compute(
+    x,
+    wq_a,
+    wq_b,
+    wkv,
+    rmsnorm_gamma_cq,
+    rmsnorm_gamma_ckv,
+    cos,
+    sin,
+    wq_b_scale,
+    q_out,
+    kv_out,
+    qr_out,
+    qr_scale_out,
+    attrs,
+    configs,
+     tile_configs)
 
 
 @allow_in_graph
@@ -552,21 +581,35 @@ def mla_prolog_v4_in(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gam
                                 block_size=128,
                                 t_sub_tile=1,
                                 chunk_size=2)
-    params_info = [token_x, wq_a, wq_b, wkv, gamma_cq, gamma_ckv, rope_cos, rope_sin, wq_b_scale, output_q_data, output_kv_data, output_qr_data, output_qr_scale_data]
+    params_info = [
+    token_x,
+    wq_a,
+    wq_b,
+    wkv,
+    gamma_cq,
+    gamma_ckv,
+    rope_cos,
+    rope_sin,
+    wq_b_scale,
+    output_q_data,
+    output_kv_data,
+    output_qr_data,
+     output_qr_scale_data]
     mla_prolog_v4(*params_info, attrs, configs, tile_configs)
 
     return output_q_data, output_kv_data, output_qr_data, output_qr_scale_data
 
 
-
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
-pyptolib.define("mla_prolog_quant(Tensor token_x, Tensor wq_a, Tensor wq_b, Tensor wkv, Tensor rope_cos, Tensor rope_sin, \
+pyptolib.define(
+    "mla_prolog_quant(Tensor token_x, Tensor wq_a, Tensor wq_b, Tensor wkv, Tensor rope_cos, Tensor rope_sin, \
     Tensor gamma_cq, Tensor gamma_ckv, Tensor wq_b_scale) -> (Tensor, Tensor, Tensor, Tensor)")
 
 
 @torch.library.impl(pyptolib, "mla_prolog_quant", "Meta")
 def mla_prolog_quant(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv, wq_b_scale):
-    q_out = torch.empty([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=token_x.device)
+    q_out = torch.empty([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)],
+                        dtype=token_x.dtype, device=token_x.device)
     kv_out = torch.empty([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=token_x.device)
     qr_out = torch.empty([token_x.size(0), gamma_cq.size(0)], dtype=torch.int8, device=token_x.device)
     qr_scale_out = torch.empty([token_x.size(0), 1], dtype=torch.float32, device=token_x.device)
@@ -585,4 +628,5 @@ except Exception as e:
 
 
 def mla_prolog_quant_pypto(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv, wq_b_scale):
-    return torch.ops.pypto.mla_prolog_quant(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv, wq_b_scale)
+    return torch.ops.pypto.mla_prolog_quant(token_x, wq_a, wq_b, wkv, rope_cos,
+                                            rope_sin, gamma_cq, gamma_ckv, wq_b_scale)

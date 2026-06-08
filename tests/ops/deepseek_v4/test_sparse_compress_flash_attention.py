@@ -36,7 +36,7 @@ from tests.ops.utils.compare import compare
 
 
 class CompressSFA(torch.nn.Module):
-    def forward(self, query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu, 
+    def forward(self, query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu,  # pylint: disable=huawei-too-many-arguments
                 cmp_block_table_npu, atten_sink_npu, seqused_kv_npu, cmp_sparse_indices_npu, 
                 softmax_scale, win_size, cmp_ratio):
         return sparse_compress_flash_attention_graph(query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, 
@@ -98,7 +98,6 @@ def compute_attention_no_flash(input_data, params, s2_tile):
         origin_cur_k_seq = origin_actual_seq[b_idx]
         s1 = actual_seq_q[b_idx + 1] - actual_seq_q[b_idx]
 
-
         for s1_idx in range(s1):
 
             t_idx = actual_seq_q[b_idx] + s1_idx
@@ -113,7 +112,6 @@ def compute_attention_no_flash(input_data, params, s2_tile):
             end_block = valid_end_pos // block_size
 
             cur_seq = min(max(cur_k_seq - s1 + 1 + s1_idx, 0), topk)
-
 
             bn_per_batch = math.ceil(cur_seq / s2_tile)
             for s2_idx in range(bn_per_batch):
@@ -136,7 +134,7 @@ def compute_attention_no_flash(input_data, params, s2_tile):
                 for cur_s2_idx in range(s2_tile_cur):
                     slc_idx = offset[cur_s2_idx]
                     slc_compress_kv[cur_s2_idx, :] = compress_kv[slc_idx, :]
-                
+
                 # win kv_cache
                 kv_list = []
                 for block_idx in range(start_block, end_block + 1):
@@ -144,12 +142,12 @@ def compute_attention_no_flash(input_data, params, s2_tile):
                     kv_block = origin_kv[physical_block_id * block_size: (physical_block_id + 1) * block_size, :]
                     kv_list.append(kv_block)
                 kv_cur = torch.cat(kv_list, axis=0)
-                win_kv_cache = kv_cur[start_offset : start_offset + origin_cur_win_size, :]
+                win_kv_cache = kv_cur[start_offset: start_offset + origin_cur_win_size, :]
 
                 # 组装新的kv_cache
                 kj = torch.zeros([origin_cur_win_size + s2_tile_cur, d], dtype=kv_dtype)
-                kj[0 : origin_cur_win_size, :] = win_kv_cache
-                kj[origin_cur_win_size : origin_cur_win_size + s2_tile_cur, :] = slc_compress_kv
+                kj[0: origin_cur_win_size, :] = win_kv_cache
+                kj[origin_cur_win_size: origin_cur_win_size + s2_tile_cur, :] = slc_compress_kv
 
                 # C1
                 qi = q[t_idx, :, :].reshape(n1, d) # (n1, dk)
@@ -219,7 +217,7 @@ def gen_sparse_compress_attention_golden(dtype, bn1n2s1, actual_seq_q, actual_se
             raise RuntimeError("unsupported actual_seq list length")
     else:
         raise RuntimeError("unsupported actual_seq data type")
-    
+
     # 生成压缩后的seq
     actual_seq = [i // cmp_ratio for i in origin_actual_seq]
 
@@ -274,7 +272,17 @@ def gen_sparse_compress_attention_golden(dtype, bn1n2s1, actual_seq_q, actual_se
 
     # 3. 计算attention
     params = [block_size, scalar, topk, kv_lora_rank, win_size]
-    input_data = [q_tnd, compress_kv, origin_kv, topk_indices, block_table, actual_seq_q, actual_seq, origin_block_table, origin_actual_seq, atten_sink]
+    input_data = [
+    q_tnd,
+    compress_kv,
+    origin_kv,
+    topk_indices,
+    block_table,
+    actual_seq_q,
+    actual_seq,
+    origin_block_table,
+    origin_actual_seq,
+     atten_sink]
 
     s2_tile = 512
     atten_out = compute_attention_no_flash(input_data, params, s2_tile)
@@ -283,8 +291,31 @@ def gen_sparse_compress_attention_golden(dtype, bn1n2s1, actual_seq_q, actual_se
     # data split to [nope + rope]
     q = q_tnd.reshape(t * n_q, kv_lora_rank)
     # input params
-    input_params = [b, s_q, n_q, n_kv, max_kv_seq, kv_lora_rank, block_num, block_size, win_size, topk, scalar, cmp_ratio]
-    input_data_map = [q, compress_kv, origin_kv, topk_indices, block_table, origin_block_table, actual_seq_q, torch.tensor(origin_actual_seq, dtype=torch.int32), atten_sink]
+    input_params = [
+    b,
+    s_q,
+    n_q,
+    n_kv,
+    max_kv_seq,
+    kv_lora_rank,
+    block_num,
+    block_size,
+    win_size,
+    topk,
+    scalar,
+     cmp_ratio]
+    input_data_map = [
+    q,
+    compress_kv,
+    origin_kv,
+    topk_indices,
+    block_table,
+    origin_block_table,
+    actual_seq_q,
+    torch.tensor(
+        origin_actual_seq,
+        dtype=torch.int32),
+         atten_sink]
 
     return input_params, input_data_map, atten_out
 
@@ -323,7 +354,7 @@ def do_test_sparse_compress_attention_func(bn1n2s1, actual_seq, input_params, in
         c2_tile_shape=[64, 64, 128, 640, 256, 256]
     )
 
-    _, _, n_q, n_kv, max_kv_seq, kv_lora_rank, block_num, block_size, win_size, topk, scalar,\
+    _, _, n_q, n_kv, max_kv_seq, kv_lora_rank, block_num, block_size, win_size, topk, scalar, \
         cmp_ratio = input_params
     q, compress_kv, origin_kv, topk_indices, block_table, origin_block_table, act_seq_q, origin_act_seq, atten_sink = input_data
     q_act_seqs = torch.tensor(act_seq_q, dtype=torch.int32)
@@ -346,12 +377,28 @@ def do_test_sparse_compress_attention_func(bn1n2s1, actual_seq, input_params, in
 
     tensors = [q_npu, q_act_seqs_npu, origin_kv_npu, compress_kv_npu, origin_block_table_npu,
         block_table_npu, atten_sink_npu, kv_act_seqs_npu, topk_indices_npu, calc_attention_out_npu]
-            
-    sparse_compress_flash_attention_kernel(*tensors, n_q, n_kv, scalar, topk, block_size, win_size, cmp_ratio, tile_config)
+
+    sparse_compress_flash_attention_kernel(
+    *tensors,
+    n_q,
+    n_kv,
+    scalar,
+    topk,
+    block_size,
+    win_size,
+    cmp_ratio,
+     tile_config)
 
     pypto.runtime._device_synchronize()
     print("======================sfa compare====================")
-    compare(calc_attention_out_npu.cpu(), atten_out.reshape(calc_attention_out.shape), "atten_out", atol=0.0001, rtol=0.0078125, max_error_count=100)
+    compare(
+    calc_attention_out_npu.cpu(),
+    atten_out.reshape(
+        calc_attention_out.shape),
+        "atten_out",
+        atol=0.0001,
+        rtol=0.0078125,
+         max_error_count=100)
 
 
 #acl graph测试入口
@@ -382,11 +429,29 @@ def do_test_sparse_compress_attention_func_acl_graph(bn1n2s1, actual_seq, input_
     kv_act_seqs_npu = kv_act_seqs.npu()
     atten_sink_npu = atten_sink.npu()
 
-    attention_out = model(q_npu, q_act_seqs_npu, origin_kv_npu, compress_kv_npu, origin_block_table_npu, block_table_npu, atten_sink_npu,
-        kv_act_seqs_npu, topk_indices_npu, softmax_scale, win_size, cmp_ratio)
+    attention_out = model(
+    q_npu,
+    q_act_seqs_npu,
+    origin_kv_npu,
+    compress_kv_npu,
+    origin_block_table_npu,
+    block_table_npu,
+    atten_sink_npu,
+    kv_act_seqs_npu,
+    topk_indices_npu,
+    softmax_scale,
+    win_size,
+     cmp_ratio)
     pypto.runtime._device_synchronize()
 
-    compare(attention_out.cpu(), atten_out.reshape(attention_out.shape), "atten_out", atol=0.0001, rtol=0.005, max_error_count=100)
+    compare(
+    attention_out.cpu(),
+    atten_out.reshape(
+        attention_out.shape),
+        "atten_out",
+        atol=0.0001,
+        rtol=0.005,
+         max_error_count=100)
 
 
 def do_test_sfa_entry(case_name: str, is_acl_graph: bool = False):

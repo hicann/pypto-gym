@@ -87,6 +87,7 @@ def cfa_attention(
     """
     if isinstance(q, FakeTensor):
         return
+    # pylint: disable=inconsistent-return-statements
     check_args(
         q,
         cmp_kv,
@@ -189,7 +190,8 @@ def c128_decode_impl(
         for j in range(1, combine_s2_tile//blk_size):
             blk_idx = cmp_blk_tb[b_idx, j-1]
             blk_idx_valid = blk_idx.max(0)
-            kv_assemble[j * blk_size:(j+1) * blk_size, :] = pypto.view(kv_2d, [blk_size, dn], [blk_idx_valid * blk_size, 0])
+            kv_assemble[j * blk_size:(j+1) * blk_size, :] = pypto.view(kv_2d,
+                                      [blk_size, dn], [blk_idx_valid * blk_size, 0])
 
         pypto.set_pass_options(sg_set_scope=-1)
         qi = pypto.view(q_2d, [g_tile, dn], oi_ofs)
@@ -211,7 +213,7 @@ def c128_decode_impl(
         pypto.set_cube_tile_shapes(c2_tile[0], c2_tile[1], c2_tile[2])
         out_view = pypto.matmul(softmax_16, kv_assemble, dtype)
         atten_out[bs_ofs * g:, :] = out_view
-    
+
 
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
 pyptolib.define("npu_cfa_attention(Tensor q, Tensor cmp_kv, Tensor sinks, Tensor cmp_block_table,\

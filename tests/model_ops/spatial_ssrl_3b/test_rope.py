@@ -55,8 +55,7 @@ def get_device():
 def load_test_cases():
     json_path = os.path.join(os.path.dirname(__file__), "test_cases_rope.json")
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 

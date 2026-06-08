@@ -66,8 +66,20 @@ def make_inputs(case: Dict, device: torch.device):
     if cache_dtype_name != "int8":
         raise ValueError("current network cases require int8 cache_dtype")
     cache_dtype = torch.int8
-    k_cache = torch.zeros(case["block_num"], num_k * dim // c0, case["block_size"], c0, dtype=cache_dtype, device=device)
-    v_cache = torch.zeros(case["block_num"], num_v * dim // c0, case["block_size"], c0, dtype=cache_dtype, device=device)
+    k_cache = torch.zeros(
+    case["block_num"],
+    num_k * dim // c0,
+    case["block_size"],
+    c0,
+    dtype=cache_dtype,
+     device=device)
+    v_cache = torch.zeros(
+    case["block_num"],
+    num_v * dim // c0,
+    case["block_size"],
+    c0,
+    dtype=cache_dtype,
+     device=device)
     if cache_dtype == torch.int8:
         k_scale = (torch.rand(num_k, dim, dtype=torch.float32, device=device) * 0.1) + 0.1
         v_scale = (torch.rand(num_v, dim, dtype=torch.float32, device=device) * 0.1) + 0.1
@@ -77,7 +89,7 @@ def make_inputs(case: Dict, device: torch.device):
     return qkv, q_gamma, k_gamma, cos, sin, index, q_out, k_cache, v_cache, k_scale, v_scale
 
 
-def run_single_case(case: Dict):
+def run_single_case(case: Dict):  # pylint: disable=huawei-too-many-arguments
     device = npu_device()
     inputs = make_inputs(case, device)
     golden_inputs = [x.cpu() if isinstance(x, torch.Tensor) else x for x in inputs]

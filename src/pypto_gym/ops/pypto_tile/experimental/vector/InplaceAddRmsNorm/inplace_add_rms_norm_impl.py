@@ -51,12 +51,12 @@ def inplace_add_rms_norm_kernel_bf16(
     rstd_out: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_BF16), 
     eps: float,
 ):
-   
+
     BS = x1.shape[0]  
     H = x1.shape[1]   
-    
+
     mean_coeff = 1.0 / H
-    
+
     pypto.set_vec_tile_shapes(1, H)
     gamma_2d = pypto.reshape(gamma, [1, H], inplace=True)  
     gamma_fp32 = pypto.cast(gamma_2d, pypto.DT_FP32)
@@ -65,35 +65,37 @@ def inplace_add_rms_norm_kernel_bf16(
     if pypto.platform.npuarch == 'DAV_3510':
         bs_tile = 1
 
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[64, 16, 4, 2, 1]):
-      x1_row = x1[bs_idx:bs_idx+unroll_length, :]  
-      x2_row = x2[bs_idx:bs_idx+unroll_length, :]  
-     
-      pypto.set_vec_tile_shapes(bs_tile, H)
-      x1_fp32 = pypto.cast(x1_row, pypto.DT_FP32)  
-      x2_fp32 = pypto.cast(x2_row, pypto.DT_FP32) 
-      
-      x_add_fp32 = pypto.add(x1_fp32, x2_fp32)  
-      square = pypto.mul(x_add_fp32, x_add_fp32)  
-      square_sum = pypto.sum(square, dim=-1, keepdim=True)  
-      
-      pypto.set_vec_tile_shapes(bs_tile, 1)
-      mean_square = pypto.mul(square_sum, mean_coeff)  
-      
-      ms_plus_eps = pypto.add(mean_square, eps) 
-      rstd_fp32 = pypto.rsqrt(ms_plus_eps)
-      rstd_bf16 = pypto.cast(rstd_fp32, pypto.DT_BF16) 
+    for bs_idx, unroll_length in pypto.loop_unroll(
+    0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[
+        64, 16, 4, 2, 1]):
+        x1_row = x1[bs_idx:bs_idx+unroll_length, :]
+        x2_row = x2[bs_idx:bs_idx+unroll_length, :]
 
-      pypto.set_vec_tile_shapes(bs_tile, H)
-      y_fp32 = pypto.mul(x_add_fp32, rstd_fp32)
-      y_fp32_scaled = pypto.mul(y_fp32, gamma_fp32)     
-      
-      y_bf16 = pypto.cast(y_fp32_scaled, pypto.DT_BF16)  
-      x_add_bf16 = pypto.cast(x_add_fp32, pypto.DT_BF16) 
+        pypto.set_vec_tile_shapes(bs_tile, H)
+        x1_fp32 = pypto.cast(x1_row, pypto.DT_FP32)
+        x2_fp32 = pypto.cast(x2_row, pypto.DT_FP32)
 
-      pypto.assemble(y_bf16, [bs_idx, 0], y_out)
-      pypto.assemble(x_add_bf16, [bs_idx, 0], x_add_out)
-      pypto.assemble(rstd_bf16, [bs_idx, 0], rstd_out)
+        x_add_fp32 = pypto.add(x1_fp32, x2_fp32)
+        square = pypto.mul(x_add_fp32, x_add_fp32)
+        square_sum = pypto.sum(square, dim=-1, keepdim=True)
+
+        pypto.set_vec_tile_shapes(bs_tile, 1)
+        mean_square = pypto.mul(square_sum, mean_coeff)
+
+        ms_plus_eps = pypto.add(mean_square, eps)
+        rstd_fp32 = pypto.rsqrt(ms_plus_eps)
+        rstd_bf16 = pypto.cast(rstd_fp32, pypto.DT_BF16)
+
+        pypto.set_vec_tile_shapes(bs_tile, H)
+        y_fp32 = pypto.mul(x_add_fp32, rstd_fp32)
+        y_fp32_scaled = pypto.mul(y_fp32, gamma_fp32)
+
+        y_bf16 = pypto.cast(y_fp32_scaled, pypto.DT_BF16)
+        x_add_bf16 = pypto.cast(x_add_fp32, pypto.DT_BF16)
+
+        pypto.assemble(y_bf16, [bs_idx, 0], y_out)
+        pypto.assemble(x_add_bf16, [bs_idx, 0], x_add_out)
+        pypto.assemble(rstd_bf16, [bs_idx, 0], rstd_out)
 
 
 def npu_inplace_add_rms_norm(
@@ -106,7 +108,7 @@ def npu_inplace_add_rms_norm(
     assert x1.is_contiguous(), "x1 must be contiguous"
     assert x2.is_contiguous(), "x2 must be contiguous"
     assert gamma.is_contiguous(), "gamma must be contiguous"
-    
+
     B = x1.shape[0]
     S = x1.shape[1]
     H = x1.shape[2]
@@ -125,19 +127,19 @@ def npu_inplace_add_rms_norm(
     BS = B * S
     x1_reshaped = x1.view(BS, H).contiguous()
     x2_reshaped = x2.view(BS, H).contiguous()
-    
+
     y_out_reshaped = torch.empty(BS, H, dtype=torch.bfloat16, device=x1.device)
     x_add_out_reshaped = torch.empty(BS, H, dtype=torch.bfloat16, device=x1.device)
     rstd_reshaped = torch.empty(BS, 1, dtype=torch.bfloat16, device=x1.device)
-    
+
     inplace_add_rms_norm_kernel_bf16(
         x1_reshaped, x2_reshaped, gamma,
         y_out_reshaped, x_add_out_reshaped, rstd_reshaped,
         eps
     )
-    
+
     x1.copy_(y_out_reshaped.view(B, S, H))       
     x2.copy_(x_add_out_reshaped.view(B, S, H))   
     rstd = rstd_reshaped.view(B, S, 1)
-    
+
     return x1, x2, rstd

@@ -52,7 +52,7 @@ def check_args(
     assert isinstance(num_expert_group, int)
 
 
-def process_main_loop_interation(
+def process_main_loop_interation(  # pylint: disable=huawei-too-many-arguments
     bs_idx,
     logits_input,
     e_score_bias_2d,

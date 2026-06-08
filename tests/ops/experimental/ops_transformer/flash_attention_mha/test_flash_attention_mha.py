@@ -111,7 +111,7 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
 
 
-def attention_forward_golden_noflash(q, k, v, scale):
+def attention_forward_golden_noflash(q, k, v, scale):  # pylint: disable=too-many-return-values
     scores = torch.matmul(q.cpu().to(torch.float32), k.cpu().transpose(1, 0).to(torch.float32)) * scale
     m = scores.amax(dim=-1, keepdim=True)
 
@@ -194,7 +194,7 @@ def attention_forward_golden(q, k, v, scale):
                     pij_div = pij / lij
                     pij_bf16 = pij_div.to(torch.bfloat16)
                     out_bf16 = torch.matmul(pij_bf16, v_tile_view)
-                    
+
                     o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
                     l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
                     m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
@@ -217,7 +217,7 @@ def attention_forward_golden(q, k, v, scale):
                 if k_tile_idx == k_tile_count - 1:
                     out_fp32 = oi_tmp / li_new
                     out_bf16 = out_fp32.to(torch.bfloat16)
-                    
+
                     o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
                     l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
                     m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]

@@ -163,7 +163,8 @@ def _reduce_kv_heads(key_states, value_states):
     """
     k_reduced = (key_states[:, 0::4] + key_states[:, 1::4] + key_states[:, 2::4] + key_states[:, 3::4]).float() / 4.0
     k_reduced = k_reduced.to(key_states.dtype)
-    v_reduced = (value_states[:, 0::4] + value_states[:, 1::4] + value_states[:, 2::4] + value_states[:, 3::4]).float() / 4.0
+    v_reduced = (value_states[:, 0::4] + value_states[:, 1::4] + \
+                 value_states[:, 2::4] + value_states[:, 3::4]).float() / 4.0
     v_reduced = v_reduced.to(value_states.dtype)
     return k_reduced, v_reduced
 

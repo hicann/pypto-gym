@@ -6,7 +6,12 @@ spatial_ssrl_3b 推理脚本 (with benchmark instrumentation)
        [--report-file 报告文件路径]
 """
 
-import argparse, sys, json, time, torch, torch_npu
+import argparse
+import sys
+import json
+import time
+import torch
+import torch_npu
 from transformers import AutoModel, AutoProcessor
 from transformers import Qwen2_5_VLForConditionalGeneration
 
@@ -18,7 +23,8 @@ parser.add_argument("--sentence_file", type=str, default=None, help="从文件�
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
 parser.add_argument("--use_pto", action="store_true", help="PyPTO融合算子模式")
 parser.add_argument("--use_acl_graph", action="store_true", help="aclgraph图模式（torch.compile + torchair）")
-parser.add_argument("--use_partial_aclgraph", action="store_true", help="partial aclgraph模式（只编译MLP+RMSNorm，排除Attention）")
+parser.add_argument("--use_partial_aclgraph", action="store_true",
+                    help="partial aclgraph模式（只编译MLP+RMSNorm，排除Attention）")
 parser.add_argument("--report-file", type=str, default=None, help="性能报告输出文件（JSON）")
 args = parser.parse_args()
 
@@ -79,12 +85,12 @@ if args.use_acl_graph or args.use_partial_aclgraph:
     import torchair as tng
     import torchair.ge_concrete_graph.ge_converter.experimental.patch_for_hcom_allreduce
     from torchair.configs.compiler_config import CompilerConfig
-    
+
     compiler_config = CompilerConfig()
     compiler_config.experimental_config.frozen_parameter = True
     compiler_config.experimental_config.tiling_schedule_optimize = True
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
-    
+
     if args.use_acl_graph:
         # Full aclgraph (会失败，npu_fusion_attention不支持FakeTensor)
         model.model = torch.compile(model.model, dynamic=True, fullgraph=True, backend=npu_backend)
@@ -92,19 +98,24 @@ if args.use_acl_graph or args.use_partial_aclgraph:
     elif args.use_partial_aclgraph:
         # Partial aclgraph: 只编译 MLP + RMSNorm，排除 Attention
         logging.info("partial aclgraph mode: compiling MLP + RMSNorm, excluding Attention")
-        
-        for i, layer in enumerate(model.model.language_model.layers):
+
+        for _, layer in enumerate(model.model.language_model.layers):
             layer.mlp = torch.compile(layer.mlp, dynamic=True, fullgraph=False, backend=npu_backend)
-            layer.input_layernorm = torch.compile(layer.input_layernorm, dynamic=True, fullgraph=False, backend=npu_backend)
-            layer.post_attention_layernorm = torch.compile(layer.post_attention_layernorm, dynamic=True, fullgraph=False, backend=npu_backend)
-        
+            layer.input_layernorm = torch.compile(
+    layer.input_layernorm,
+    dynamic=True,
+    fullgraph=False,
+     backend=npu_backend)
+            layer.post_attention_layernorm = torch.compile(
+    layer.post_attention_layernorm, dynamic=True, fullgraph=False, backend=npu_backend)
+
         model.model.language_model.embed_tokens = torch.compile(
             model.model.language_model.embed_tokens, dynamic=True, fullgraph=False, backend=npu_backend
         )
         model.model.language_model.norm = torch.compile(
             model.model.language_model.norm, dynamic=True, fullgraph=False, backend=npu_backend
         )
-        
+
         logging.info(f"  - Compiled {len(model.model.language_model.layers)} layers (MLP + RMSNorm)")
         logging.info("  - Attention remains eager mode (npu_fusion_attention unsupported)")
 

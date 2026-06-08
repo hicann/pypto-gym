@@ -353,6 +353,7 @@ def do_test_sfa_tnd_entry(case_name: str):
 
 
 def get_data(case_name: str):
+    # pylint: disable=inconsistent-return-statements
     case_config = get_case_config(case_name)
     if not case_config:
         logging.error("Can't find test case config for Case(%s)", case_name)

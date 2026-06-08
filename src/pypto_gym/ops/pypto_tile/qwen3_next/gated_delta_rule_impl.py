@@ -353,7 +353,7 @@ def chunk_gated_delta_rule(b, nqk, nv, d, l):
             "stitch_function_max_num": 1,
         },
     )
-    def kernel(
+    def kernel(  # pylint: disable=huawei-too-many-arguments
             query: pypto.Tensor(query_shape, pypto.DT_FP32),
             key: pypto.Tensor(key_shape, pypto.DT_FP32),
             value: pypto.Tensor(value_shape, pypto.DT_FP32),
@@ -479,7 +479,7 @@ def chunk_gated_delta_rule_unaligned(b, nqk, nv, d, l):
             "stitch_function_max_num": 1,
         },
     )
-    def kernel(
+    def kernel(  # pylint: disable=huawei-too-many-arguments
             query: pypto.Tensor(query_shape, pypto.DT_FP32),
             key: pypto.Tensor(key_shape, pypto.DT_FP32),
             value: pypto.Tensor(value_shape, pypto.DT_FP32),

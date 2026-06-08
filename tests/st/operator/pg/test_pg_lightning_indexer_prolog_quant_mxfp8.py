@@ -386,7 +386,7 @@ def ascend_operator_accuracy_standard_version_2_1(pypto_out, npu_out, golden_out
 
 
 @torch.library.impl(pyptolib, "lightning_indexer_prolog_quant_mxfp8", "Meta")
-def lightning_indexer_prolog_quant_mxfp8_meta(x, q_norm, q_norm_scale, w_qb, w_qb_scale, wk, w_proj,
+def lightning_indexer_prolog_quant_mxfp8_meta(x, q_norm, q_norm_scale, w_qb, w_qb_scale, wk, w_proj,  # pylint: disable=huawei-too-many-arguments
                                             gamma_k, cos_idx_rope, sin_idx_rope, hadamard_q, hadamard_k,
                                             k_cache, k_scale_cache, k_cache_index, k_scale_cache_index):
     t = x.shape[0]
@@ -401,7 +401,7 @@ def lightning_indexer_prolog_quant_mxfp8_meta(x, q_norm, q_norm_scale, w_qb, w_q
     return q_fp8e4m3, q_scale, k_fp8e4m3, k_scale, weights
 
 
-def lightning_indexer_prolog_quant_mxfp8_pypto(x, q_norm, q_norm_scale, w_qb, w_qb_scale, wk, w_proj,
+def lightning_indexer_prolog_quant_mxfp8_pypto(x, q_norm, q_norm_scale, w_qb, w_qb_scale, wk, w_proj,  # pylint: disable=huawei-too-many-arguments
                                             gamma_k, cos_idx_rope, sin_idx_rope, hadamard_q, hadamard_k,
                                             k_cache, k_scale_cache, k_cache_index, k_scale_cache_index):
     t = x.shape[0]

@@ -46,8 +46,7 @@ def get_device():
 def load_test_cases():
     json_path = os.path.join(os.path.dirname(__file__), "test_cases.json")
     if not os.path.exists(json_path):
-        print(f"ERROR: {json_path} not found")
-        sys.exit(1)
+        raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
         return json.load(f)
 
@@ -55,39 +54,39 @@ def load_test_cases():
 def run_single_case(case_data, device):
     case_id = case_data["id"]
     description = case_data.get("description", "")
-    
+
     print("=" * 60)
     print(f"Test: {case_id} — {description}")
     print("=" * 60)
-    
+
     torch.manual_seed(case_data.get("seed", 42))
-    
+
     dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
-    
+
     inputs = case_data["input"]
     dtype = dtype_map[inputs["q"]["dtype"]]
-    
+
     q = torch.randn(inputs["q"]["shape"], dtype=dtype, device=device)
     k = torch.randn(inputs["k"]["shape"], dtype=dtype, device=device)
     cos = torch.randn(inputs["cos"]["shape"], dtype=dtype, device=device)
     sin = torch.randn(inputs["sin"]["shape"], dtype=dtype, device=device)
     mrope_section = inputs["mrope_section"]["value"]
     unsqueeze_dim = inputs["unsqueeze_dim"]["value"]
-    
+
     q_embed_golden, k_embed_golden = mrope_golden(q.cpu(), k.cpu(), cos.cpu(), sin.cpu(), mrope_section, unsqueeze_dim)
     q_embed_golden = q_embed_golden.to(device)
     k_embed_golden = k_embed_golden.to(device)
-    
+
     q_embed_impl, k_embed_impl = mrope_pto_correct(q, k, cos, sin, mrope_section, unsqueeze_dim)
-    
+
     q_diff = torch.abs(q_embed_golden - q_embed_impl).max().item()
     k_diff = torch.abs(k_embed_golden - k_embed_impl).max().item()
     print(f"  Q max diff: {q_diff:.6e}")
     print(f"  K max diff: {k_diff:.6e}")
-    
+
     rtol = case_data.get("rtol", 1e-2)
     atol = case_data.get("atol", 1e-2)
-    
+
     try:
         assert_allclose(q_embed_impl.cpu().numpy(), q_embed_golden.cpu().numpy(), rtol=rtol, atol=atol)
         assert_allclose(k_embed_impl.cpu().numpy(), k_embed_golden.cpu().numpy(), rtol=rtol, atol=atol)
@@ -95,14 +94,16 @@ def run_single_case(case_data, device):
     except AssertionError as e:
         print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
         raise
-    
+
     output = case_data["output"]
     q_expected_shape = output["q_embed"]["shape"]
     k_expected_shape = output["k_embed"]["shape"]
     expected_dtype = dtype_map[output["q_embed"]["dtype"]]
-    
-    assert q_embed_impl.shape == torch.Size(q_expected_shape), f"Q shape mismatch: {q_embed_impl.shape} vs {q_expected_shape}"
-    assert k_embed_impl.shape == torch.Size(k_expected_shape), f"K shape mismatch: {k_embed_impl.shape} vs {k_expected_shape}"
+
+    assert q_embed_impl.shape == torch.Size(
+        q_expected_shape), f"Q shape mismatch: {q_embed_impl.shape} vs {q_expected_shape}"
+    assert k_embed_impl.shape == torch.Size(
+        k_expected_shape), f"K shape mismatch: {k_embed_impl.shape} vs {k_expected_shape}"
     assert q_embed_impl.dtype == expected_dtype, f"Q dtype mismatch: {q_embed_impl.dtype} vs {expected_dtype}"
     assert k_embed_impl.dtype == expected_dtype, f"K dtype mismatch: {k_embed_impl.dtype} vs {expected_dtype}"
 
@@ -112,22 +113,22 @@ def main():
     parser.add_argument("case_id", nargs="?", help="运行单个用例")
     parser.add_argument("--list", action="store_true", help="列出所有用例")
     args = parser.parse_args()
-    
+
     test_cases = load_test_cases()
     cases = test_cases.get("test_cases", [])
-    
+
     if args.list:
         print(f"\nTest cases from test_cases.json:\n")
         for case in cases:
             print(f"  {case['id']} — {case.get('description', '')}")
         return
-    
+
     device = get_device()
     if device.startswith("npu"):
         torch.npu.set_device(int(device.split(":")[1]))
-    
+
     to_run = cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]
-    
+
     try:
         for case_data in to_run:
             run_single_case(case_data, device)

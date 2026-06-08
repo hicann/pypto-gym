@@ -214,7 +214,7 @@ def gated_delta_rule_wrapper(
     B, S, Nv, D = query.shape
     L = _L
 
-    if (initial_state is not None) or (D != _D) or (Nv != _NV) or (not use_qk_l2norm_in_kernel) or (B != 1):
+    if (initial_state is not None) or (D != _D) or (Nv != _NV) or (not use_qk_l2norm_in_kernel) or (B != 1):  # pylint: disable=too-many-boolean-expressions
         raise NotImplementedError(
             "gated_delta_rule_wrapper requires B=1, Nv=32, D=128, "
             "initial_state=None, use_qk_l2norm_in_kernel=True; "
@@ -240,7 +240,7 @@ def gated_delta_rule_wrapper(
     key_perm   = key  .to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
     value_perm = value.to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
     beta_perm  = beta .to(torch.bfloat16).permute(0, 2, 1).contiguous()
-    g_perm     = g    .to(torch.float32 ).permute(0, 2, 1).contiguous()
+    g_perm     = g    .to(torch.float32).permute(0, 2, 1).contiguous()
 
     g_cum_perm = g_perm.cumsum(dim=-1)
 

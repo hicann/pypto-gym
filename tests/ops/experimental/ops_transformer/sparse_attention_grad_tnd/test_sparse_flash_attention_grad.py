@@ -98,7 +98,7 @@ def gen_uniform_data(data_shape, min_value, max_value, dtype):
         return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
-def sfa_grad_golden_tnd(q_nope_tnd, q_pe_tnd, k_nope_tnd, k_pe_tnd, value_tnd,
+def sfa_grad_golden_tnd(q_nope_tnd, q_pe_tnd, k_nope_tnd, k_pe_tnd, value_tnd,  # pylint: disable=huawei-too-many-arguments
                         sparse_indices_tnd, d_out_tnd, out_tnd,
                         sm_max_tnd, sm_sum_tnd,
                         actual_q_lens, actual_kv_lens, scale_value):
@@ -518,24 +518,24 @@ def test_level2_medium():
                       actual_q_lens=[128], actual_kv_lens=[32768],
                       n_1=2, n_2=1, d=512, dr=64, k=2048,
                       seed=123)
-    
-    
+
+
 @pytest.mark.skip(reason="large test case")
 def test_level2_t1k():
     do_test_sfa_grad_npu("level2_b1_s4",
                       actual_q_lens=[1024], actual_kv_lens=[32768],
                       n_1=2, n_2=1, d=512, dr=64, k=2048,
                       seed=123)
-    
-    
+
+
 @pytest.mark.skip(reason="large test case")
 def test_level2_t256():
     do_test_sfa_grad_npu("level2_b1_s4",
                       actual_q_lens=[256], actual_kv_lens=[32768],
                       n_1=64, n_2=1, d=512, dr=64, k=2048,
                       seed=123)
-    
-    
+
+
 @pytest.mark.skip(reason="large test case")
 def test_level2_t128():
     do_test_sfa_grad_npu("level2_b1_s4",

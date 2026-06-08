@@ -157,7 +157,7 @@ def npu_quant_lightning_indexer_prolog(
         "device_sched_mode": 1
     },
 )
-def quant_lightning_indexer_prolog_kernel(
+def quant_lightning_indexer_prolog_kernel(  # pylint: disable=huawei-too-many-arguments
     qr: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT8),
     idx_wq_b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),

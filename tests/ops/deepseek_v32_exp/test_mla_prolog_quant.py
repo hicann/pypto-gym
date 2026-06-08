@@ -281,7 +281,7 @@ def mla_prolog_quant_v32_compute(inputs):
             kr_cache_out, kv_quant_scale_cache_out
 
 
-def gen_block_table(act_seq, block_size, s1, need_indices=False):
+def gen_block_table(act_seq, block_size, s1, need_indices=False):  # pylint: disable=too-many-return-values
     b = act_seq.shape[0]
     block_num = 0
     block_num_each = []
@@ -490,7 +490,7 @@ def convert_pypto_to_torch_type(pypto_type):
 
 
 def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, w_dtype, is_quant_a, \
-                        is_quant_b, nz, tile_config, cache_mode, is_p):
+                        is_quant_b, nz, tile_config, cache_mode, is_p):  # pylint: disable=huawei-too-many-arguments
 
     d_type = pypto.DT_FP16 if dtype == pypto.DT_FP16 else pypto.DT_BF16
     if is_quant_a and w_dtype == pypto.DT_INT8:

@@ -111,7 +111,7 @@ def _check_env():
         warnings.append("npu-smi not available")
 
     try:
-        import torch_npu  # noqa: F401
+        import torch_npu  # noqa: F401  # pylint: disable=redefined-outer-name
         print(f"[ENV] torch_npu OK")
     except ImportError:
         errors.append("torch_npu import failed")
@@ -136,7 +136,7 @@ def _check_env():
         for i, e in enumerate(errors, 1):
             print(f"\n  [{i}] {e}")
         print("\n" + "=" * 60)
-        sys.exit(1)
+        raise RuntimeError("Environment check failed: see errors above")
 
     print("[ENV] All checks passed. Starting tests...\n")
 
@@ -223,7 +223,7 @@ def _identify_kernel(output_dir):
     return "CGDR"
 
 
-def _parse_swimlane(output_dir):
+def _parse_swimlane(output_dir):  # pylint: disable=inconsistent-return-statements
     """Parse merged_swimlane.json to extract performance metrics.
 
     Returns:
@@ -611,7 +611,6 @@ def run_all_tests(device_id=0, case_id=None):
         if config is None:
             logger.error(f"unknown case '{case_id}'")
             logger.error(f"Valid cases: {', '.join([c['id'] for c in configs])}")
-            sys.exit(1)
         to_run = [config]
     else:
         to_run = configs
@@ -635,11 +634,11 @@ def run_all_tests(device_id=0, case_id=None):
     except AssertionError as e:
         logger.error(f"\n{'=' * 60}")
         logger.error(f"[PRECISION_FAIL] {e}")
-        sys.exit(1)
+        raise RuntimeError("Test failed")
 
     except Exception as e:
         logger.error(f"\nRuntime error: {e}")
-        sys.exit(2)
+        raise RuntimeError("Test execution failed with critical error")
 
 
 if __name__ == "__main__":

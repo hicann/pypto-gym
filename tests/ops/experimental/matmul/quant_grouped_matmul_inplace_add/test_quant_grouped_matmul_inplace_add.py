@@ -13,6 +13,7 @@ import torch_npu  # noqa: F401  # must come before pypto kernel imports
 
 import sys
 import os
+import pypto
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -22,8 +23,8 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 from numpy.testing import assert_allclose
 
-from experimental.matmul.quant_grouped_matmul_inplace_add.quant_grouped_matmul_inplace_add import *
-from quant_grouped_matmul_inplace_add_golden import *
+from experimental.matmul.quant_grouped_matmul_inplace_add.quant_grouped_matmul_inplace_add import scaled_matmul_kernel, ShapeConfig
+from quant_grouped_matmul_inplace_add_golden import gen_golden, GmmGoldenInputs
 
 
 @dataclass
@@ -168,18 +169,46 @@ def test_quant_grouped_matmul_inplace_add(tile_config):
     # Generate input tensor in MXFP8 format
     if a_trans:
         a = torch.randn((k, m), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_a = torch.randn((k // 64 + num_groups, m, 2), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+        scaled_a = torch.randn(
+    (k // 64 + num_groups,
+    m,
+    2),
+    dtype=torch.float32).uniform_(
+        0,
+        1).to(
+            torch.float8_e8m0fnu)
     else:
         a = torch.randn((m, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_a = torch.randn((m, k // 64 + num_groups, 2), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+        scaled_a = torch.randn(
+    (m,
+    k // 64 + num_groups,
+    2),
+    dtype=torch.float32).uniform_(
+        0,
+        1).to(
+            torch.float8_e8m0fnu)
 
     # Generate weight tensor in MXFP8 format
     if b_trans:
         b = torch.randn((n, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_b = torch.randn((n, k // 64 + num_groups, 2), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+        scaled_b = torch.randn(
+    (n,
+    k // 64 + num_groups,
+    2),
+    dtype=torch.float32).uniform_(
+        0,
+        1).to(
+            torch.float8_e8m0fnu)
     else:
         b = torch.randn((k, n), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_b = torch.randn((k // 64 + num_groups, n, 2), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+        scaled_b = torch.randn(
+    (k // 64 + num_groups,
+    n,
+    2),
+    dtype=torch.float32).uniform_(
+        0,
+        1).to(
+            torch.float8_e8m0fnu)
 
     # Initialize output tensor with random values (for inplace add)
     y_init = torch.randn((num_groups, m, n), dtype=torch.float32)

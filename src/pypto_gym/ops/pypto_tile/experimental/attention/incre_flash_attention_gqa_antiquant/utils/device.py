@@ -42,11 +42,11 @@ def get_env_device_id() -> int:
     try:
         device_id = int(os.environ['TILE_FWK_DEVICE_ID'])
         return device_id
-    except ValueError:
+    except ValueError as e:
         error_msg = (f"ERROR: TILE_FWK_DEVICE_ID must be an integer, "
                      f"got: {os.environ['TILE_FWK_DEVICE_ID']}")
         logger.error(error_msg)
-        raise ValueError(error_msg)
+        raise ValueError(error_msg) from e
 
 
 def get_device(device_id: Optional[int] = None, run_mode: str = "npu") -> str:

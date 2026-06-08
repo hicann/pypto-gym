@@ -135,7 +135,7 @@ def _resolve_defaults(query, key, block_shape_x, block_shape_y,
     return B, Hq, Hkv, Sq, Skv, D, bx, by, scale, asq, askv
 
 
-def _block_ranges(seq_len, block_size, actual_len):
+def _block_ranges(seq_len, block_size, actual_len):  # pylint: disable=too-many-return-values
     """Yield (block_index, start, end) for each block up to actual_len."""
     num_blocks = math.ceil(actual_len / block_size)
     for blk in range(num_blocks):
@@ -212,7 +212,7 @@ def _collect_valid_kv_per_qblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
     return qblock_info, max(maxSel, 1)
 
 
-def _fill_compacted_kv(qblock_info, maxSel, k_2d, v_2d, valid_mask,
+def _fill_compacted_kv(qblock_info, maxSel, k_2d, v_2d, valid_mask,  # pylint: disable=huawei-too-many-arguments
                         Hkv, Skv_pad, bx, by, D, device, total_qblocks):
     """Phase 2 of _build_sparse_kv: build compacted K/V tensors."""
     k_compact = torch.zeros(total_qblocks * maxSel * by, D,
@@ -239,7 +239,7 @@ def _fill_compacted_kv(qblock_info, maxSel, k_2d, v_2d, valid_mask,
     return k_compact, v_compact, valid_mask_new
 
 
-def _build_sparse_kv(block_sparse_mask, k_2d, v_2d,
+def _build_sparse_kv(block_sparse_mask, k_2d, v_2d,  # pylint: disable=huawei-too-many-arguments
                       B, Hq, Hkv, Sq, Skv, Sq_pad, Skv_pad, numQB, numKB,
                       bx, by, D, device):
     """Build compacted K/V + valid_mask for sparse forward and dQ kernels."""

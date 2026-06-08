@@ -335,15 +335,15 @@ def pfa(atten_cfg, tile_config):
     device = f'npu:{device_id}'
     q = torch.empty(q_shape, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     q_fp8_e4m3, q_scale = quant_fp8e4m3_per_token(q)
-    
+
     k1 = torch.empty(kv_shape_1, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     k = k1.reshape(kv_shape)
-    
+
     k_fp8_e4m3, k_scale = quant_fp8e4m3_per_token_key(k)
-    
+
     v1 = torch.empty(kv_shape_1, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     v = v1.reshape(kv_shape)
-    
+
     attention_output = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
 
     # 2. 生成block table - 传入 torch tensor
@@ -385,7 +385,7 @@ def pfa(atten_cfg, tile_config):
                     rtol=0.0078125, atol=0.0001)
 
 
-def matmul_proxy(left, right):
+def matmul_proxy(left, right):  # pylint: disable=huawei-too-many-arguments
     torch_fp32 = torch.float32
     return torch.matmul(left.to(torch_fp32), right.to(torch_fp32))
 
@@ -393,7 +393,7 @@ def matmul_proxy(left, right):
 def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, atten_cfg, tile_config):
     """
     PyTorch版本的FP8量化Flash Attention golden实现（与kernel逻辑一致）
-    
+
     参数说明：
         q: torch.Tensor, shape [b*s1, n1, d], dtype=float8_e4m3fn
         q_scale: torch.Tensor, shape [b*s1, n1, 1], dtype=float32
@@ -406,7 +406,7 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
         out: torch.Tensor, shape [b*s1, n1, d], dtype=bfloat16
     """
     torch_fp32 = torch.float32
-    
+
     q_shape = q.shape
     bs1, n1, d = q_shape[0], q_shape[1], q_shape[2]
     b = kv_act_seqs.shape[0]
@@ -425,19 +425,19 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
     q_2d_shape = (b * s1 * n1, d)
     q_scale_2d_shape = (b * s1 * n1, 1)
     v_scale_2d_shape = (b * 1, n2 * d)
-    
+
     k_2d = k.reshape(k_2d_shape)
     k_scale_2d = k_sclae_bsnd.reshape(k_scale_2d_shape)
     v_2d = v.reshape(v_2d_shape)
     q_2d = q.reshape(q_2d_shape)
     q_scale_2d = q_scale.reshape(q_scale_2d_shape)
     v_scale_2d = v_scale.reshape(v_scale_2d_shape)
-    
+
     device = q.device
     dtype_out = out.dtype
-    
+
     block_num_per_tile = s2_tile // block_size
-    
+
     for b_idx in range(b):
         for s1_idx in range(s1):
             cur_seq = kv_act_seqs[b_idx] - (s1 - 1 - s1_idx)
@@ -502,7 +502,7 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
                         if s2_idx == 0:
                             oi_tmp = mm2_res
                             oi_upd = oi_tmp.clone()
-                            
+
                             if s2_idx == s2_loop - 1:
                                 oi_upd = oi_tmp / sum_local
                                 oi_upd_3d = oi_upd.unsqueeze(0).to(dtype_out)
@@ -513,23 +513,23 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
                                 max_upd = tilda_mij.clone()
                         else:
                             max_new, _ = torch.max(torch.cat([max_upd, tilda_mij], dim=-1), dim=-1, keepdim=True)
-                            
+
                             t1 = max_upd - max_new
                             t2 = torch.exp(t1)
                             t3 = tilda_mij - max_new
                             t4 = torch.exp(t3)
-                            
+
                             t5 = t4 * sum_local
                             t6 = t2 * sum_upd
                             sum_new = t6 + t5
-                            
+
                             sum_upd = sum_new.clone()
                             max_upd = max_new.clone()
-                            
+
                             oi_last = oi_upd * t2
                             oi_flash = mm2_res * t4
                             oi_tmp_new = oi_last + oi_flash
-                            
+
                             if s2_idx == s2_loop - 1:
                                 oi_upd_final = oi_tmp_new / sum_upd
                                 oi_upd_3d = oi_upd_final.unsqueeze(0).to(dtype_out)
@@ -581,7 +581,7 @@ def test_pfa_for_950():
 
 
 @allow_in_graph
-def attention(
+def attention(  # pylint: disable=huawei-too-many-arguments
     query: torch.Tensor,
     query_scale: torch.Tensor,
     key_cache: torch.Tensor,

@@ -19,15 +19,10 @@ DeepSeek-V2-Lite MLA KV Prolog - PyPTO算子库适配层
         return deepseek_v2_lite_pto_kernels.mla_prolog_hybrid(...)
 """
 
-import os
 import sys
 
 # 全局开关（按算子粒度）
 USE_PTO_MLA_PROLOG = False
-
-# 确保环境变量已设置
-if 'PTO_TILE_LIB_CODE_PATH' not in os.environ:
-    os.environ['PTO_TILE_LIB_CODE_PATH'] = '/data/h00520348/optimize_aclgraph/pto-isa'
 
 # 导入算子实现
 try:
@@ -53,14 +48,15 @@ except Exception as e:
     print(f"[WARNING] MLA Prolog动态选择导入失败: {e}")
     DYNAMIC_SELECTION_AVAILABLE = False
 
+
 def mla_prolog_wrapper(hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids):
     """
     MLA Prolog wrapper（支持动态选择）
-    
+
     根据序列长度自动选择最优方案：
     - 短序列（≤20 tokens）: PyPTO融合算子（+5.9%优势）
     - 长序列（>20 tokens）: Baseline（+10.6%优势）
-    
+
     参数：
         hidden_states: [bsz, seq_len, hidden_size]
         kv_a_weight: [kv_lora_rank + rope_dim, hidden_size]
@@ -70,7 +66,7 @@ def mla_prolog_wrapper(hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, 
         cos: [seq_len, rope_dim]
         sin: [seq_len, rope_dim]
         pos_ids: [bsz, seq_len]
-    
+
     返回：
         k_nope: [bsz, num_heads, seq_len, qk_nope_head_dim]
         value: [bsz, num_heads, seq_len, v_head_dim]
@@ -83,7 +79,7 @@ def mla_prolog_wrapper(hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, 
                 hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids,
                 use_pypto=True
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=redefined-outer-name
             print(f"[ERROR] MLA Prolog动态选择失败，fallback到golden: {e}")
             if MLA_PROLOG_GOLDEN_AVAILABLE:
                 return mla_prolog_torch_baseline(

@@ -69,7 +69,7 @@ class AttnGolden:
         return torch.cat((o1, o2), dim=-1)
 
     @staticmethod
-    def attention_golden(
+    def attention_golden(  # pylint: disable=huawei-too-many-arguments
         hidden_states,
         residual,
         input_layernorm_weight,

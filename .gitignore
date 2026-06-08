@@ -64,6 +64,7 @@ package-lock.json
 
 # Agent local settings
 .claude/settings.local.json
+.omo/
 
 # Logs
 *.log

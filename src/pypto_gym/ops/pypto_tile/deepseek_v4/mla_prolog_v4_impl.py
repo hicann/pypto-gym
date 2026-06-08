@@ -112,7 +112,7 @@ class MlaPrologV4Configs:
     chunk_size: int
 
 
-def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,
+def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,  # pylint: disable=huawei-too-many-arguments
                                     output_q_data, output_kv_data, output_qr_data):
     assert token_x.size(1) == 4096 and token_x.dim() == 2, f"expected token_x dim num 2, token_x axis1 4096"
     assert wq_a.dim() == 2 and wq_a.size(0) == 4096 and wq_a.size(1) == 1024, \
@@ -302,7 +302,20 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor) -> pypto.Tens
     return x_embed_cast
 
 
-def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, cos, sin, q_out, kv_out, qr_out, attrs, configs):
+def mla_prolog_v4_compute(  # pylint: disable=huawei-too-many-arguments
+    x,
+    wq_a,
+    wq_b,
+    wkv,
+    rmsnorm_gamma_cq,
+    rmsnorm_gamma_ckv,
+    cos,
+    sin,
+    q_out,
+    kv_out,
+    qr_out,
+    attrs,
+     configs):
     t = x.shape[0]
     h = x.shape[1]
     q_lora_rank = rmsnorm_gamma_cq.shape[0]
@@ -341,8 +354,10 @@ def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ck
         cos_2d = pypto.view(cos, [t_tile, rope_dim], [tIdx, 0], valid_shape=[t_tile, rope_dim])
         sin_2d = pypto.view(sin, [t_tile, rope_dim], [tIdx, 0], valid_shape=[t_tile, rope_dim])
         pypto.set_vec_tile_shapes(4, 64, 64)
-        qr2_3d_nope = pypto.view(qr2_3d, [t_tile, head_num, head_dim-rope_dim], [0, 0, 0], valid_shape=[t_tile, head_num, head_dim-rope_dim])
-        qr2_3d_rope = pypto.view(qr2_3d, [t_tile, head_num, rope_dim], [0, 0, head_dim-rope_dim], valid_shape=[t_tile, head_num, rope_dim])
+        qr2_3d_nope = pypto.view(qr2_3d, [t_tile, head_num, head_dim-rope_dim],
+                                 [0, 0, 0], valid_shape=[t_tile, head_num, head_dim-rope_dim])
+        qr2_3d_rope = pypto.view(qr2_3d, [t_tile, head_num, rope_dim], [
+                                 0, 0, head_dim-rope_dim], valid_shape=[t_tile, head_num, rope_dim])
         qr2_3d_rope = rope_3d(qr2_3d_rope, cos_2d, sin_2d)
         qr2_3d = pypto.concat([qr2_3d_nope, qr2_3d_rope], -1)
         pypto.assemble(qr2_3d, [tIdx, 0, 0], q_out)
@@ -378,10 +393,20 @@ class MLAKernelMAnager:
             q_out_shape = [t, 64, 512]
             kv_out_shape = [t, 512]
             qr_out_shape = [t, 1024]
-            self.vec_all_shape[t] = [x_shape, self.wq_a_shape, self.wq_b_shape, self.wkv_shape, self.rmsnorm_gamma_cq_shape, \
-                                self.rmsnorm_gamma_ckv_shape, rops_cos_shape, rops_cos_shape, q_out_shape, kv_out_shape, qr_out_shape]
+            self.vec_all_shape[t] = [
+    x_shape,
+    self.wq_a_shape,
+    self.wq_b_shape,
+    self.wkv_shape,
+    self.rmsnorm_gamma_cq_shape,
+    self.rmsnorm_gamma_ckv_shape,
+    rops_cos_shape,
+    rops_cos_shape,
+    q_out_shape,
+    kv_out_shape,
+     qr_out_shape]
 
-    def infer_controlflow_shape(self, *args):
+    def infer_controlflow_shape(self, *args):  # pylint: disable=huawei-too-many-arguments
         global vec_all_shape, t_vec
         if not args:
             return [v for v in self.vec_all_shape.values()]
@@ -389,6 +414,7 @@ class MLAKernelMAnager:
         for t in self.t_vec:
             if x_shape[0] >= t:
                 return self.vec_all_shape[t]
+        return None
 
 manager = MLAKernelMAnager()
 
@@ -412,12 +438,26 @@ def mla_prolog_v4(
     qr_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     attrs, configs):
     pypto.experimental.set_operation_options(combine_axis=True)
-    mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, cos, sin, q_out, kv_out, qr_out, attrs, configs)
+    mla_prolog_v4_compute(
+    x,
+    wq_a,
+    wq_b,
+    wkv,
+    rmsnorm_gamma_cq,
+    rmsnorm_gamma_ckv,
+    cos,
+    sin,
+    q_out,
+    kv_out,
+    qr_out,
+    attrs,
+     configs)
 
 
 @allow_in_graph
 def mla_prolog_v4_in(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv):
-    output_q_data = torch.zeros([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
+    output_q_data = torch.zeros([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0),
+                                gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
     output_kv_data = torch.zeros([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
     output_qr_data = torch.zeros([token_x.size(0), gamma_cq.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
 
@@ -444,7 +484,8 @@ pyptolib.define("mla_prolog(Tensor token_x, Tensor wq_a, Tensor wq_b, Tensor wkv
 
 @torch.library.impl(pyptolib, "mla_prolog", "Meta")
 def mla_prolog(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv):
-    q_out = torch.empty([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=token_x.device)
+    q_out = torch.empty([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)],
+                        dtype=token_x.dtype, device=token_x.device)
     kv_out = torch.empty([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=token_x.device)
     qr_out = torch.empty([token_x.size(0), gamma_cq.size(0)], dtype=token_x.dtype, device=token_x.device)
     return q_out, kv_out, qr_out

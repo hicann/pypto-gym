@@ -55,7 +55,7 @@ class SaTileShapeConfig:
     v2_tile_shape: list
 
 
-def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,
+def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,  # pylint: disable=huawei-too-many-arguments
                             q_pe, k_pe,
                             npu_actual_q_len, npu_actual_kv_len,
                             core_attn_out, softmax_max_out, softmax_sum_out,
@@ -213,7 +213,7 @@ def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,
         "device_sched_mode": 1,
     },
 )
-def sfa_forward_tnd(
+def sfa_forward_tnd(  # pylint: disable=huawei-too-many-arguments
     q_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     compressed_kv_norm: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     topk_indices: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_INT32),

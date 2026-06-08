@@ -236,7 +236,7 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor) -> pypto.Tens
         "device_sched_mode": 1
     }
 )
-def lightning_indexer_prolog_quant(
+def lightning_indexer_prolog_quant(  # pylint: disable=huawei-too-many-arguments
     x_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_ND),
     q_norm_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_HF8, format=pypto.TileOpFormat.TILEOP_ND),
     q_norm_scale_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32, format=pypto.TileOpFormat.TILEOP_ND),

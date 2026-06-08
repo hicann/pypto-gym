@@ -159,7 +159,6 @@ def share_expert_moe_main(
     )
 
 
-
 @allow_in_graph
 def ffn_shared_expert_quant(
     hidden_states: torch.Tensor,

@@ -49,9 +49,8 @@ def mhc_post_kernel_bf16(
     h_post: pypto.Tensor([pypto.DYNAMIC, 4], pypto.DT_FP32),                # [B*S, N] FP32
     output: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),  # [B*S, N, D] BF16 (输出)
 ):
-    
     """mhc_post kernel BF16 版本。
-    
+
     实现融合计算：
     - h_post_term: h_post × h_out 广播乘法
     - h_comb_term: Σ(k=0..N-1) h_res[:,k,n] × x[:,k,d] 累加求和
@@ -71,14 +70,14 @@ def mhc_post_kernel_bf16(
     BS = x.shape[0]   # SymbolicScalar（动态轴）
     N = 4             # Python int（固定值）
     D = x.shape[2]    # SymbolicScalar（STATIC 标记的轴，返回符号值）
-    
 
     h_post1 = pypto.reshape(h_post, [BS, N, 1], inplace=True)
     h_out1 = pypto.reshape(h_out, [BS, 1, D], inplace=True)
     h_res1 = pypto.reshape(h_res, [BS, N, N, 1], inplace=True)
     x1 = pypto.reshape(x, [BS, N, 1, D], inplace=True)
 
-    for bs_idx, unroll_length in pypto.loop_unroll(0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[16, 8, 4, 2, 1]):
+    for bs_idx, unroll_length in pypto.loop_unroll(
+        0, BS, 1, name="LOOP_BS", idx_name="bs_idx", unroll_list=[16, 8, 4, 2, 1]):
         x_slice = x1[bs_idx: bs_idx + unroll_length, :, :, :]           
         h_res_slice = h_res1[bs_idx: bs_idx + unroll_length, :, :, :]   
         h_out_slice = h_out1[bs_idx: bs_idx + unroll_length, :, :]      
@@ -89,14 +88,14 @@ def mhc_post_kernel_bf16(
 
         pypto.set_vec_tile_shapes(1, N, 2048) 
         h_out_fp32 = pypto.cast(h_out_slice, pypto.DT_FP32)        
-        
+
         h_post_term = pypto.mul(h_post_slice, h_out_fp32)           
-        
+
         pypto.set_vec_tile_shapes(1, N, N, 2048)         
         weighted = pypto.mul(h_res_slice, x_fp32)                    
-        
+
         h_comb_term = pypto.sum(weighted, dim=1, keepdim=False)   
-        
+
         pypto.set_vec_tile_shapes(1, N, 2048)
         result_fp32 = pypto.add(h_post_term, h_comb_term)          
 
@@ -139,22 +138,22 @@ def mhc_post_wrapper(
     assert h_res.is_contiguous(), "h_res must be contiguous"
     assert h_out.is_contiguous(), "h_out must be contiguous"
     assert h_post.is_contiguous(), "h_post must be contiguous"
-    
+
     # 验证 shape
     B = x.shape[0]
     S = x.shape[1]
     N = x.shape[2]
     D = x.shape[3]
-    
+
     assert N == 4, f"N must be 4, got {N}"
-    
+
     assert h_res.shape == (B, S, N, N), \
         f"h_res shape mismatch: expected {(B, S, N, N)}, got {h_res.shape}"
     assert h_out.shape == (B, S, D), \
         f"h_out shape mismatch: expected {(B, S, D)}, got {h_out.shape}"
     assert h_post.shape == (B, S, N), \
         f"h_post shape mismatch: expected {(B, S, N)}, got {h_post.shape}"
-    
+
     # 验证 dtype
     assert x.dtype == torch.bfloat16, \
         f"x dtype must be bfloat16, got {x.dtype}"
@@ -164,14 +163,14 @@ def mhc_post_wrapper(
         f"h_out dtype must be bfloat16, got {h_out.dtype}"
     assert h_post.dtype == torch.float32, \
         f"h_post dtype must be float32, got {h_post.dtype}"
-    
+
     # 将输入 reshape 为 [B*S, ...]
     BS = B * S
     x_reshaped = x.view(BS, N, D).contiguous()
     h_res_reshaped = h_res.view(BS, N, N).contiguous()
     h_out_reshaped = h_out.view(BS, D).contiguous()
     h_post_reshaped = h_post.view(BS, N).contiguous()
-    
+
     # 构造输出 tensor (reshaped)
     if output is None:
         output_reshaped = torch.empty(BS, N, D, dtype=torch.bfloat16, device=x.device)
@@ -187,6 +186,6 @@ def mhc_post_wrapper(
         x_reshaped, h_res_reshaped, h_out_reshaped, h_post_reshaped,
         output_reshaped
     )
-    
+
     # 将输出 reshape 回原始格式
     return output_reshaped.view(B, S, N, D)

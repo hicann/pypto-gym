@@ -156,7 +156,7 @@ def main():
         params = get_params(args.case)
     except RuntimeError as e:
         print(e, file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("Test execution failed")
     test_gmm_mxfp8(params)
 
 

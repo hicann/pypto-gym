@@ -195,7 +195,7 @@ def main() -> None:
 
     if not args.golden_only and os.environ.get("TILE_FWK_DEVICE_ID") is None:
         print("Please set: export TILE_FWK_DEVICE_ID=0", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("Environment check failed")
 
     total = len(cases)
     print("=" * 60)

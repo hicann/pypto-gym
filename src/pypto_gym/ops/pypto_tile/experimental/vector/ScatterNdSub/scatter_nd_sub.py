@@ -183,7 +183,7 @@ Examples:
             print(f"ERROR: Invalid example ID: {args.example_id}")
             print(f"Valid example IDs are: {', '.join(map(str, sorted(examples.keys())))}")
             print("\nUse --list to see all available examples.")
-            sys.exit(1)
+            raise RuntimeError("Test execution failed")
 
     print("\n" + "=" * 60)
     print("PyPTO test_scatter_nd_sub Example")
