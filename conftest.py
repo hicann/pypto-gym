@@ -11,10 +11,11 @@
 """Pytest 配置控制
 """
 import os
-from typing import List, Optional
+import sys
 
 import pytest
-
+from typing import Optional  # 必须加在 conftest 顶部！
+import logging  # 顶部加
 
 def duration_estimate(seconds: float):
     """
@@ -195,7 +196,7 @@ def pytest_collection_modifyitems(config, items):
         return
     first_item = items[0]
     item_path = str(first_item.fspath).replace(os.sep, "/")
-    has_ut = "ut" in item_path.lower() or "/benchmark/tests/" in item_path
+    has_ut = "/tests/ut" in item_path.lower() or "/benchmark/tests/" in item_path
 
     if has_ut:
         filtered_items = items

@@ -356,7 +356,6 @@ LOG_HEAD "Python Environment:"
 LOG_DO "$PYTHON3_EXE --version"
 LOG_DO "$PYTHON3_EXE -m pip list"
 LOG_HEAD "Befor run build ci:"
-echo "HYQ common is:" "${common_params[@]}"
 run_build_ci "$PYTHON3_EXE" "Python(STest & Examples)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --stest --models "${device_params[@]}"
 
 # # 2026/1/31 增加集合通信测试用例

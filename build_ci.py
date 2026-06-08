@@ -933,7 +933,7 @@ class BuildCtrl():
         update_env = os.environ.copy()
         device_id_raw = self.auto_execute_device_id
         dev_list = device_id_raw.split(":")
-        # update_env["ASCEND_VISIBLE_DEVICES"] = dev_ids
+        update_env["ASCEND_VISIBLE_DEVICES"] = dev_ids
         update_env["PYTEST_AVAILABLE_DEVICES"] = ",".join(dev_list)
 
         # ===============================================
