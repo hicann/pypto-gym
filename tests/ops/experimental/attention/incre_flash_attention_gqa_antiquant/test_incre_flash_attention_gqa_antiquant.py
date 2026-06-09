@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Union
 import sys
+import subprocess
 
 import numpy as np
 import torch
@@ -62,65 +63,17 @@ class IfaGqaConfig:
     s1: int = 1
     q_d: int = 128
     n2: int = 1
-    s2: int = 2048
+    s2: int | list = 2048
     kv_d: int = 128
     block_size: int = 128
     softmax_scale: float = 128 ** -0.5
-
-
-@dataclass
-class BatchBlockContext:
-    """Context for processing batch blocks.
-
-    Attributes:
-        block_list: Block indices for current batch.
-        kv_num_heads: Number of KV heads.
-        kv_seqs_len: KV sequence length.
-        head_dim: Head dimension (d).
-        block_size: Size of each block.
-        dtype: Data type.
-        device: Device string.
-    """
-
-    block_list: torch.Tensor
-    kv_num_heads: int
-    kv_seqs_len: int
-    head_dim: int
-    block_size: int
-    dtype: torch.dtype
-    device: str
-
-
-def process_single_batch_blocks(cache_tensor: torch.Tensor,
-                                   ctx: BatchBlockContext) -> torch.Tensor:
-    """Process blocks for a single batch to reconstruct continuous tensor.
-
-    Args:
-        cache_tensor: KV cache tensor in block format (on CPU for float8 processing).
-        ctx: Batch block context with all metadata.
-
-    Returns:
-        Reconstructed tensor for single batch (bfloat16 on CPU).
-    """
-    temp_tensor = torch.zeros([1, ctx.kv_num_heads, ctx.kv_seqs_len, ctx.head_dim],
-                              dtype=torch.bfloat16, device=ctx.device)
-    s_idx = 0
-
-    for _, block_idx in enumerate(ctx.block_list):
-        if block_idx == -1:
-            break
-        start_idx = s_idx * ctx.block_size
-        end_idx = (s_idx + 1) * ctx.block_size
-        temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor[block_idx:block_idx + 1, :, :, :].to(torch.bfloat16)
-        s_idx += 1
-
-    return temp_tensor
 
 
 def kv_cache_concat(cache_tensor: torch.Tensor,
                     kv_actual_seqs: torch.Tensor,
                     block_table: torch.Tensor,
                     ifa_gqa_config: IfaGqaConfig,
+                    max_s2: int,
                     device: str) -> torch.Tensor:
     """Concatenate KV cache blocks into continuous tensors.
 
@@ -132,6 +85,7 @@ def kv_cache_concat(cache_tensor: torch.Tensor,
         kv_actual_seqs: Actual sequence lengths for each batch.
         block_table: Mapping from logical to physical block indices.
         ifa_gqa_config: IFA GQA configuration.
+        max_s2: max kv actual sequence length
         device: Device to create tensors on.
 
     Returns:
@@ -139,7 +93,6 @@ def kv_cache_concat(cache_tensor: torch.Tensor,
     """
     batch_size = ifa_gqa_config.b
     kv_num_heads = ifa_gqa_config.n2
-    kv_seqs_len = ifa_gqa_config.s2
     d = cache_tensor.shape[3]
 
     block_size = ifa_gqa_config.block_size
@@ -147,27 +100,37 @@ def kv_cache_concat(cache_tensor: torch.Tensor,
 
     cache_tensor_cpu = cache_tensor.cpu()
 
-    result = torch.zeros([batch_size, kv_num_heads, kv_seqs_len, d], dtype=torch.bfloat16)
+    result = torch.zeros([batch_size, kv_num_heads, max_s2, d], dtype=torch.bfloat16)
 
     for b_idx in range(batch_size):
-        ctx = BatchBlockContext(
-            block_list=block_table[b_idx].cpu(), kv_num_heads=kv_num_heads,
-            kv_seqs_len=kv_seqs_len, head_dim=d, block_size=block_size,
-            dtype=dtype, device="cpu")
-        temp_tensor = process_single_batch_blocks(cache_tensor_cpu, ctx)
-        result[b_idx:b_idx + 1, :, :, :] = temp_tensor
+        cur_kv_seq_len = kv_actual_seqs[b_idx].item()
+        block_list = block_table[b_idx].cpu()
+        temp_tensor = torch.zeros([1, kv_num_heads, cur_kv_seq_len, d], dtype=torch.bfloat16, device="cpu")
+        s_idx = 0
+
+        for _, block_idx in enumerate(block_list):
+            if block_idx == -1:
+                break
+            start_idx = s_idx * block_size
+            end_idx = min((s_idx + 1) * block_size, cur_kv_seq_len)
+            temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor_cpu[block_idx:block_idx + 1, :, :end_idx - start_idx, :].to(torch.bfloat16)
+            s_idx += 1
+
+        result[b_idx:b_idx + 1, :, :cur_kv_seq_len, :] = temp_tensor
 
     return result.to(device=device)
 
 
 def gen_block_table(ifa_gqa_config: IfaGqaConfig,
                     kv_actual_seqs: torch.Tensor,
+                    max_s2: int,
                     device: str) -> torch.Tensor:
     """Generate a block table for paged KV cache.
 
     Args:
         ifa_gqa_config: IFA GQA configuration.
         kv_actual_seqs: Actual sequence lengths for each batch.
+        max_s2: max kv actual sequence length
         device: Device to create tensors on.
 
     Returns:
@@ -178,7 +141,7 @@ def gen_block_table(ifa_gqa_config: IfaGqaConfig,
 
     block_size = ifa_gqa_config.block_size
     block_table_batch = ifa_gqa_config.b
-    max_num_blocks_per_query = math.ceil(ifa_gqa_config.s2 / block_size)
+    max_num_blocks_per_query = math.ceil(max_s2 / block_size)
     block_table_shape = [block_table_batch, max_num_blocks_per_query]
 
     # Calculate number of blocks needed for each batch element
@@ -223,17 +186,18 @@ def create_query_tensor(ifa_gqa_config: IfaGqaConfig, device: str) -> torch.Tens
     return query
 
 
-def create_kv_cache_tensors(ifa_gqa_config: IfaGqaConfig, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
+def create_kv_cache_tensors(ifa_gqa_config: IfaGqaConfig, max_s2: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
     """Create key and value cache tensors with proper initialization.
 
     Args:
         ifa_gqa_config: IFA GQA configuration.
+        max_s2: max kv actual sequence length
         device: Device to create tensors on.
 
     Returns:
         Tuple of (key_cache, value_cache) tensors.
     """
-    max_num_blocks_per_query = math.ceil(ifa_gqa_config.s2 / ifa_gqa_config.block_size)
+    max_num_blocks_per_query = math.ceil(max_s2 / ifa_gqa_config.block_size)
     kv_num_blocks = ifa_gqa_config.b * max_num_blocks_per_query
     # PA_BnNBsD format
     kv_cache_shape = [kv_num_blocks, ifa_gqa_config.n2, ifa_gqa_config.block_size, ifa_gqa_config.kv_d] 
@@ -306,13 +270,18 @@ def gen_inputs(ifa_gqa_config: IfaGqaConfig,
         Dictionary containing all input tensors.
     """
     query = create_query_tensor(ifa_gqa_config, device)
-    key_cache, value_cache = create_kv_cache_tensors(ifa_gqa_config, device)
+    if isinstance(ifa_gqa_config.s2, list):
+        max_s2 = max(ifa_gqa_config.s2)
+        kv_actual_seqs = torch.tensor(ifa_gqa_config.s2, dtype=torch.int32, device=device)
+    else:
+        max_s2 = ifa_gqa_config.s2
+        kv_actual_seqs = torch.tensor([ifa_gqa_config.s2] * ifa_gqa_config.b, dtype=torch.int32, device=device)
+    key_cache, value_cache = create_kv_cache_tensors(ifa_gqa_config, max_s2, device)
 
-    kv_actual_seqs = torch.tensor([ifa_gqa_config.s2] * ifa_gqa_config.b, dtype=torch.int32, device=device)
-    block_table = gen_block_table(ifa_gqa_config, kv_actual_seqs, device)
+    block_table = gen_block_table(ifa_gqa_config, kv_actual_seqs, max_s2, device)
 
-    key = kv_cache_concat(key_cache, kv_actual_seqs, block_table, ifa_gqa_config, device)
-    value = kv_cache_concat(value_cache, kv_actual_seqs, block_table, ifa_gqa_config, device)
+    key = kv_cache_concat(key_cache, kv_actual_seqs, block_table, ifa_gqa_config, max_s2, device)
+    value = kv_cache_concat(value_cache, kv_actual_seqs, block_table, ifa_gqa_config, max_s2, device)
 
     key_antiquant_scale, value_antiquant_scale = create_antiquant_scales(ifa_gqa_config, device)
 
@@ -352,7 +321,7 @@ def antiquant_data(data: torch.Tensor,
 def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
                              ifa_gqa_inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Golden reference implementation for IFA GQA with anti-quantization.
-
+    
     Args:
         ifa_gqa_config: IFA GQA configuration parameters.
         ifa_gqa_inputs: Dictionary containing input tensors:
@@ -368,35 +337,52 @@ def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
     softmax_scale = ifa_gqa_config.softmax_scale
     n1 = ifa_gqa_config.n1
     n2 = ifa_gqa_config.n2
+    s1 = ifa_gqa_config.s1
     group = n1 // n2
 
     query = ifa_gqa_inputs['query']
     key = antiquant_data(ifa_gqa_inputs['key'], ifa_gqa_inputs['key_antiquant_scale'])
     value = antiquant_data(ifa_gqa_inputs['value'], ifa_gqa_inputs['value_antiquant_scale'])
+    kv_actual_seqs = ifa_gqa_inputs['kv_actual_seqs']
+    b = query.shape[0]
+    kv_d = key.shape[-1]
+
     logger.info(f"query: shape {query.shape}, dtype {query.dtype}")
     logger.info(f"key: shape {key.shape}, dtype {key.dtype}")
     logger.info(f"value: shape {value.shape}, dtype {value.dtype}")
 
-    key_expanded = key.repeat_interleave(group, dim=1)
-    value_expanded = value.repeat_interleave(group, dim=1)
-    logger.info(f"key_expanded: shape {key_expanded.shape}, dtype {key_expanded.dtype}")
-    logger.info(f"value_expanded: shape {value_expanded.shape}, dtype {value_expanded.dtype}")
+    attention_out = torch.zeros([b, n1, s1, kv_d], dtype=torch.float32, device=query.device)
 
-    qk_mm_res = torch.matmul(query, key_expanded.transpose(-2, -1))
-    logger.info(f"qk_mm_res: shape: {qk_mm_res.shape}, dtype {qk_mm_res.dtype}")
-    qk_ele_res = qk_mm_res * softmax_scale
-    logger.info(f"qk_ele_res: shape{qk_ele_res.shape}, dtype {qk_ele_res.dtype}")
+    for b_idx in range(b):
+        total_kv_len = kv_actual_seqs[b_idx].item()
 
-    softmax_res = F.softmax(qk_ele_res, dim=-1)
-    logger.info(f"softmax_res: shape{softmax_res.shape}, dtype {softmax_res.dtype}")
+        for s1_idx in range(s1):
+            cur_s2 = total_kv_len - s1 + 1 + s1_idx
 
-    attention_out = torch.matmul(softmax_res, value_expanded)
+            for n2_idx in range(n2):
+                q_head_start = n2_idx * group
+                q_head_end = (n2_idx + 1) * group
+                q_cur = query[b_idx:b_idx + 1, q_head_start:q_head_end, s1_idx:s1_idx + 1, :].float()
+                k_cur = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                v_cur = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+
+                k_expanded = k_cur.repeat_interleave(group, dim=1)
+                v_expanded = v_cur.repeat_interleave(group, dim=1)
+
+                qk_mm_res = torch.matmul(q_cur, k_expanded.transpose(-2, -1))
+                qk_ele_res = qk_mm_res * softmax_scale
+                softmax_res = F.softmax(qk_ele_res, dim=-1)
+                attn_group = torch.matmul(softmax_res, v_expanded)
+
+                attention_out[b_idx, q_head_start:q_head_end, s1_idx:s1_idx + 1, :] = attn_group[0]
+
+    attention_out = attention_out.to(query.dtype)
     logger.info(f"attention_out: shape{attention_out.shape}, dtype {attention_out.dtype}")
     return attention_out
 
 
 def get_case_config(case_name):
-    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5}
+    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5 }
     if case_name.startswith("1b2k"):
         params = {"b": 1, "n1": 8, "s1": 1, "s2": 2 * 1024, "n2": 1}
     elif case_name.startswith("8b2kqs2"):
@@ -411,6 +397,24 @@ def get_case_config(case_name):
         params = {"b": 4, "n1": 64, "s1": 2, "s2": 16 * 1024, "n2": 8}
     elif case_name.startswith("64b16k"):
         params = {"b": 64, "n1": 64, "s1": 2, "s2": 16 * 1024, "n2": 8}
+    elif case_name.startswith("vary_s2_2b16k"):
+        s2 = [16383, 16385]
+        params = {"b": 2, "n1": 8, "s1": 1, "s2": s2, "n2": 1}
+    elif case_name.startswith("vary_s2_4b2k"):
+        s2 = [1024, 2048, 3072, 4096]
+        params = {"b": 4, "n1": 8, "s1": 1, "s2": s2, "n2": 1}
+    elif case_name.startswith("vary_s2_2b2k_kvn2"):
+        s2 = [1536, 2560]
+        params = {"b": 2, "n1": 8, "s1": 1, "s2": s2, "n2": 2}
+    elif case_name.startswith("vary_s2_4b8k_qs2"):
+        s2 = [4096, 6144, 10240, 12288]
+        params = {"b": 4, "n1": 8, "s1": 2, "s2": s2, "n2": 1}
+    elif case_name.startswith("vary_s2_2b4k_d256"):
+        s2 = [3072, 5120]
+        params = {"b": 2, "n1": 8, "s1": 1, "s2": s2, "n2": 1, "d": 256, "softmax_scale": 256 ** -0.5}
+    elif case_name.startswith("vary_s2_4b8k_qs3_kvn2"):
+        s2 = [2048, 4096, 8192, 16384]
+        params = {"b": 4, "n1": 8, "s1": 3, "s2": s2, "n2": 2}
 
     base_params.update(params)
 
@@ -421,7 +425,7 @@ def get_case_config(case_name):
 
     return case_config
 
-
+    
 def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
     """Execute test for incremental flash attention GQA with anti-quantization.
 
@@ -449,46 +453,8 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
         block_table=ifa_gqa_inputs['block_table'],
     )
     pypto_atten_out = incre_flash_attention_gqa_antiquant(**pypto_kernel_inputs)
-    compare(
-    pypto_atten_out.cpu(),
-    gqa_antiquant_golden.cpu(),
-    "pypto_atten_out",
-    atol=0.0001,
-    rtol=0.0078125,
-     max_error_ratio=0.005)
+    compare(pypto_atten_out.cpu(), gqa_antiquant_golden.cpu(), "pypto_atten_out", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
     print("[PRECISION_PASS]")
-
-
-def test_incre_flash_attention_gqa_antiquant_1b2k() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("1b2k")
-
-
-def test_incre_flash_attention_gqa_antiquant_8b2kqs2() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("8b2kqs2")
-
-
-def test_incre_flash_attention_gqa_antiquant_16b4kqs3() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("16b4kqs3")
-
-
-def test_incre_flash_attention_gqa_antiquant_32b8k_d256() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("32b8k_d256")
-
-
-def test_incre_flash_attention_gqa_antiquant_64b2k_kvn2() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("64b2k_kvn2")
-
-
-def test_incre_flash_attention_gqa_antiquant_72b2k() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("72b2k")
-
-
-def test_incre_flash_attention_gqa_antiquant_4b16k() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("4b16k")
-
-
-def test_incre_flash_attention_gqa_antiquant_64b16k() -> None:
-    do_test_incre_flash_attention_gqa_antiquant("64b16k")
 
 
 def main() -> None:
@@ -498,15 +464,24 @@ def main() -> None:
     logger.info("PyPTO incre_flash_attention_gqa_antiquant experimental")
     logger.info("=" * 60 + "\n")
 
-    test_incre_flash_attention_gqa_antiquant_1b2k()
-    test_incre_flash_attention_gqa_antiquant_8b2kqs2()
-    test_incre_flash_attention_gqa_antiquant_16b4kqs3()
-    test_incre_flash_attention_gqa_antiquant_32b8k_d256()
-    test_incre_flash_attention_gqa_antiquant_64b2k_kvn2()
+    case_names = [
+        "1b2k", "8b2kqs2", "16b4kqs3", "32b8k_d256", 
+        "64b2k_kvn2", "4b16k", "64b16k",
+        "vary_s2_2b16k", "vary_s2_4b2k",
+        "vary_s2_2b2k_kvn2", "vary_s2_4b8k_qs2",
+        "vary_s2_2b4k_d256", "vary_s2_4b8k_qs3_kvn2"
+    ]
 
-    # prof case
-    test_incre_flash_attention_gqa_antiquant_4b16k()
-    test_incre_flash_attention_gqa_antiquant_64b16k()
+    for case_name in case_names:
+        cmd = [
+            sys.executable, "-c",
+            f"from test_incre_flash_attention_gqa_antiquant import do_test_incre_flash_attention_gqa_antiquant; "
+            f"do_test_incre_flash_attention_gqa_antiquant('{case_name}')"
+        ]
+        result = subprocess.run(cmd, capture_output=False, text=True,
+                                cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    logger.info("All test cases passed!")
 
 
 if __name__ == "__main__":

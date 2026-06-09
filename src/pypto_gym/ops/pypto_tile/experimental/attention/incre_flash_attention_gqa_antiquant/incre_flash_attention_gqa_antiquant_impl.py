@@ -260,7 +260,8 @@ def get_ifa_tile_cfg(group):
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 256,
-        "device_sched_mode": 1
+        "device_sched_mode": 1,
+        "ready_on_host_tensors": ["block_table", "kv_actual_seqs"]
     },
     pass_options={
         "cube_l1_reuse_setting": {0: 16},
@@ -289,15 +290,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
     # Step 3: Reshape Q, K, V to 2D
     q_2d, k_2d, v_2d = reshape_qkv_to_2d(query, key, value, kernel_cfg)
 
-    loop_tensors = LoopTensor(
-    q_2d,
-    k_2d,
-    v_2d,
-    block_table,
-    kv_actual_seqs,
-    atten_out,
-    key_antiquant_scale,
-     value_antiquant_scale)
+    loop_tensors = LoopTensor(q_2d, k_2d, v_2d, block_table, kv_actual_seqs, atten_out, key_antiquant_scale, value_antiquant_scale)
 
     # Calculate number of groups to iterate
     group_loop = kernel_cfg.group // tile_cfg.g_tile
@@ -344,8 +337,8 @@ def compute_loop_b(dtype, ctx_params):
 
     # Loop over query sequence positions
     for s1_idx in pypto.loop(s1, name="LOOP_s1", idx_name="s1_idx"):
-        # Calculate effective sequence length
         cur_seq_len = kv_act_seqs[b_idx] - (s1 - 1 - s1_idx)
+        cur_seq_len.as_variable()
 
         s2_loop = pypto.ceildiv(cur_seq_len, s2_tile)
         loop_size = replace(loop_size, s2_loop=s2_loop)
@@ -540,9 +533,7 @@ def assemble_kvj(idx, actual_s2_tile, ctx_params):
         pypto.assemble(vj_view, [i * block_size, 0], vj_assemble)
 
     # Set valid shape (may be smaller than allocated size)
-    kj_assemble = pypto.view(kj_assemble, [s2_tile, d], [0, 0], valid_shape=[s2_tile, d])
-
-    # Set valid shape to actual sequence length
+    kj_assemble = pypto.view(kj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
     vj_assemble = pypto.view(vj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
     return kj_assemble, vj_assemble
 
@@ -595,7 +586,7 @@ def compute_first_tile(qi, kj_assemble, vj_assemble, dtype, ctx_params, actual_s
     tsub = pypto.sub(sij_scale, tilda_mij)
     tilda_pij = pypto.exp(tsub)
     tilda_pij_fp16 = pypto.cast(tilda_pij, dtype)
-
+    
     # Initialize sum and max for online softmax
     sum_update[:] = pypto.sum(tilda_pij, dim=-1, keepdim=True)
     max_update[:] = tilda_mij
@@ -683,8 +674,8 @@ def compute_other_tile(qi, kj_assemble, vj_assemble, dtype, ctx_params, actual_s
     # Store output
     pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
     out_update[:] = out_update * update_mul + oi_tmp
-
-
+    
+    
 def finalize_output(dtype, ctx_params):
     """
     Finalize and write attention output.
