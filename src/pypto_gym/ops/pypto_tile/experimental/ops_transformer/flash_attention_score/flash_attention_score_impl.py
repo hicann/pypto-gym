@@ -7,227 +7,175 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-
-# =============================================================================
-# flash_attention_score_impl.py — Integrated Production Kernel
-# Flash Attention Score with PSE (Positional Score Encoding) and Dropout (GQA).
-# =============================================================================
-
 import pypto
-import torch
-import torch_npu  # noqa: F401  required for NPU device init
 
 BLOCK_Q = 320
 BLOCK_KV = 320
 
-# Tile shapes from DESIGN.md §3.2.5 — first-pass minimum-viable (Stage 5 default)
-VEC_TILE = (16, 64)
-CUBE_QK = ([64, 64], [128, 128], [64, 64])   # Q@K^T: M≤64, K≤256, N≤64
-CUBE_PV = ([64, 64], [64, 64], [128, 128])   # P@V:   M≤64, K≤64, N≤256
 
-
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 1024})
+@pypto.frontend.jit(
+    runtime_options={
+        "run_mode": pypto.RunMode.NPU,
+        "stitch_function_max_num": 1024,
+    },
+    pass_options={
+        "cube_l1_reuse_setting": {-1: 8},
+        "vec_nbuffer_setting": {-1: 8},
+        "cube_nbuffer_setting": {-1: 8},
+    }
+)
 def flash_attention_score_kernel_npu(
-    query:       pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    key:         pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    value:       pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
+    query:       pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    key:         pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    value:       pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     atten_mask:  pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
-    pse:         pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
+    pse:         pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     drop_mask:   pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_BF16),
     output:      pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    softmax_max: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_FP32),
-    softmax_sum: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_FP32),
+    softmax_max: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
+    softmax_sum: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
     pse_type:    int,
     keep_prob:   float,
     scale_value: float,
-    N_kv:        int,
-    B:           int,
-    N:           int,
-    Sq:          int,
-    Skv:         int,
 ):
-    """Integrated Flash Attention Score kernel.
-
-    5 nested pypto.loop calls: batch → kv_head → group → Q-block → KV-block.
-    4D→2D flatten at entry (inplace=True); all block extraction via 2D→2D
-    pypto.view(valid_shape=...). Output via 2D→2D pypto.assemble into
-    flattened 2D output (host-side unflatten restores 4D).
-    """
-    # --- Symbolic dimensions (compile-time constants from host) ---
-    D           = query.shape[1]                                     # STATIC — safe for view/tensor shapes
-    group       = N // N_kv
-    num_blocks_q  = (Sq + BLOCK_Q - 1) // BLOCK_Q
+    B    = query.shape[0]
+    N    = query.shape[1]
+    Sq   = query.shape[2]
+    D    = query.shape[3]
+    N_kv = key.shape[1]
+    Skv  = key.shape[2]
+    group = N // N_kv
+    num_blocks_q = (Sq + BLOCK_Q - 1) // BLOCK_Q
     num_blocks_kv = (Skv + BLOCK_KV - 1) // BLOCK_KV
 
-    # =====================================================================
-    # Wrapper flattens 4D→2D on host side. Kernel works entirely in 2D.
-    # All block extraction via 2D→2D pypto.view ; output via
-    # pypto.assemble directly into 2D output parameters.
-    # =====================================================================
-    query_2d   = query
-    key_2d     = key
-    value_2d   = value
-    pse_2d     = pse
-    output_2d  = output
-    mm_2d      = softmax_max
-    ms_2d      = softmax_sum
+    total_q = B * N * Sq
+    total_kv = B * N_kv * Skv
+    total_pse = B * N * Sq
 
-    # =====================================================================
-    # 5 nested loops
-    #   - Outer loops: no unroll_list, no submit_before_loop (independent)
-    #   - Innermost KV loop: unroll_list=[1] (OL56), submit_before_loop=True
-    # =====================================================================
-    for b_idx in pypto.loop(B, name="batch_idx"):                      # loop over batch
-        for kv_h in pypto.loop(N_kv, name="kv_head_idx"):              # loop over KV heads
-            for grp in pypto.loop(group, name="group_idx"):            # loop over GQA groups
-                n_idx = kv_h * group + grp                              # GQA head mapping
+    query_2d = pypto.reshape(query, [total_q, D], inplace=True)
+    key_2d = pypto.reshape(key, [total_kv, D], inplace=True)
+    value_2d = pypto.reshape(value, [total_kv, D], inplace=True)
+    pse_2d = pypto.reshape(pse, [total_pse, Skv], inplace=True)
 
-                for qb in pypto.loop(num_blocks_q, name="q_block_idx"): # loop over Q blocks
-                    q_start = qb * BLOCK_Q                              # SymbolicScalar
-                    q_tile_len = (Sq - q_start).min(BLOCK_Q)            # tail-safe clamp
+    v1_tile = [64, 512]
 
-                    # ----- 2D view: Q block [BLOCK_Q, D] with valid_shape -----
-                    # Linear row index in flattened query_2d:
-                    #   row = b_idx*N*Sq + n_idx*Sq + q_start
+    pypto.experimental.set_operation_options(combine_axis=True)
+    pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 128])
+    pypto.set_vec_tile_shapes(64, 256)
+
+    for b_idx in pypto.loop(B, name="batch_idx"):
+        for kv_h in pypto.loop(N_kv, name="kv_head_idx"):
+            for grp in pypto.loop(group, name="group_idx"):
+                n_idx = kv_h * group + grp
+
+                for qb in pypto.loop(num_blocks_q, name="q_block_idx"):
+                    q_start = qb * BLOCK_Q
+                    q_tile_len = (Sq - q_start).min(BLOCK_Q)
+
                     q_row = b_idx * N * Sq + n_idx * Sq + q_start
                     q_tile_view = pypto.view(query_2d, [BLOCK_Q, D],
                                              [q_row, 0],
                                              valid_shape=[q_tile_len, D])
-                    # Set vec tile before cast
-                    pypto.set_vec_tile_shapes(16, 64)
 
-                    # ----- Scratch state for online-softmax (FP32, uninitialized) -----
                     mi_update = pypto.tensor([BLOCK_Q, 1], pypto.DT_FP32, "mi")
                     li_update = pypto.tensor([BLOCK_Q, 1], pypto.DT_FP32, "li")
                     oi_update = pypto.tensor([BLOCK_Q, D], pypto.DT_FP32, "oi")
 
-                    # ----- Inner KV-block loop -----
-                    for kvb in pypto.loop(num_blocks_kv, name="kv_block_idx",
-                                          unroll_list=[1], submit_before_loop=True):
-                        kv_start   = kvb * BLOCK_KV                     # SymbolicScalar
-                        k_tile_len = (Skv - kv_start).min(BLOCK_KV)     # tail-safe clamp
+                    for kvb in pypto.loop(num_blocks_kv, name="kv_block_idx"):
+                        kv_start = kvb * BLOCK_KV
+                        k_tile_len = (Skv - kv_start).min(BLOCK_KV)
 
-                        # Set vec tile at start of KV-block loop body
-                        pypto.set_vec_tile_shapes(16, 64)
-
-                        # =======================================================
-                        # === M1: Q@K^T matmul + PSE + Scale ===
-                        # =======================================================
-
-                        # 2D view: K block [BLOCK_KV, D]
                         k_row = b_idx * N_kv * Skv + kv_h * Skv + kv_start
                         k_tile_view = pypto.view(key_2d, [BLOCK_KV, D],
-                                                [k_row, 0],
-                                                valid_shape=[k_tile_len, D])
-
-                        # 2D view: PSE block [BLOCK_Q, BLOCK_KV]
-                        pse_row = b_idx * N * Sq + n_idx * Sq + q_start
-                        pse_tile_view = pypto.view(pse_2d, [BLOCK_Q, BLOCK_KV],
-                                                   [pse_row, kv_start],
-                                                   valid_shape=[q_tile_len, k_tile_len])
-
-                        # Stage V0: cast bf16 → fp32
-                        q_fp32   = pypto.cast(q_tile_view, pypto.DT_FP32)
-                        k_fp32   = pypto.cast(k_tile_view, pypto.DT_FP32)
-                        pse_fp32 = pypto.cast(pse_tile_view, pypto.DT_FP32)
-
-                        # Stage C1: Q@K^T matmul (cube — b_trans on-the-fly)
-                        pypto.set_cube_tile_shapes([64, 64], [D, D], [64, 64])
-                        scores = pypto.matmul(q_fp32, k_fp32, pypto.DT_FP32,
-                                              b_trans=True)
-
-                        # Stage V1: PSE addition + scale multiply
-                        pypto.set_vec_tile_shapes(16, 64)
-                        if pse_type == 1:
-                            scores_scaled = pypto.mul(
-                                pypto.add(scores, pse_fp32), scale_value
-                            )
-                        else:  # pse_type == 2
-                            scores_scaled = pypto.add(
-                                pypto.mul(scores, scale_value), pse_fp32
-                            )
-
-                        # =======================================================
-                        # === M2: Softmax + Dropout + PV matmul ===
-                        # =======================================================
-
-                        # 2D view: mask block [BLOCK_Q, BLOCK_KV]
-                        mask_tile = pypto.view(atten_mask, [BLOCK_Q, BLOCK_KV],
-                                              [q_start, kv_start],
-                                              valid_shape=[q_tile_len, k_tile_len])
-                        mask_fp32 = pypto.cast(mask_tile, pypto.DT_FP32)
-
-                        # 2D view: drop block [BLOCK_Q, BLOCK_KV]
-                        drop_tile = pypto.view(drop_mask, [BLOCK_Q, BLOCK_KV],
-                                              [q_start, kv_start],
-                                              valid_shape=[q_tile_len, k_tile_len])
-                        drop_fp32 = pypto.cast(drop_tile, pypto.DT_FP32)
-
-                        # valid_mask: (mask + (-1.0)) * (-1.0) → 0→1, non-0→0
-                        # Direct float literals — NOT pypto.Element
-                        valid_mask = pypto.mul(pypto.add(mask_fp32, -1.0),
-                                               -1.0)
-
-                        # Safe softmax (log-sum-exp trick)
-                        m_ij = pypto.amax(scores_scaled, dim=-1,
-                                          keepdim=True)                  # [BLOCK_Q,1] fp32
-                        s_shifted = pypto.sub(scores_scaled, m_ij)
-                        p_ij = pypto.exp(s_shifted)                      # [BLOCK_Q,BLOCK_KV] fp32
-                        p_ij = pypto.mul(p_ij, valid_mask)               # apply attn mask
-                        p_ij = pypto.mul(p_ij, drop_fp32)                # apply dropout mask
-                        l_ij = pypto.sum(p_ij, dim=-1,
-                                         keepdim=True)                   # [BLOCK_Q,1] fp32
-
-                        # 2D view: V block [BLOCK_KV, D]
+                                                 [k_row, 0],
+                                                 valid_shape=[k_tile_len, D])
                         v_row = b_idx * N_kv * Skv + kv_h * Skv + kv_start
                         v_tile_view = pypto.view(value_2d, [BLOCK_KV, D],
                                                  [v_row, 0],
                                                  valid_shape=[k_tile_len, D])
-                        v_fp32 = pypto.cast(v_tile_view, pypto.DT_FP32)
 
-                        # Stage C2: P@V matmul (cube)
-                        pypto.set_cube_tile_shapes([64, 64], [64, 64], [D, D])
-                        o_ij = pypto.matmul(p_ij, v_fp32, pypto.DT_FP32)    # [BLOCK_Q,D] fp32
+                        pse_row = b_idx * N * Sq + n_idx * Sq + q_start
+                        pse_tile_view = pypto.view(pse_2d, [BLOCK_Q, BLOCK_KV],
+                                                   [pse_row, kv_start],
+                                                   valid_shape=[q_tile_len, k_tile_len])
+                        pse_fp32 = pypto.cast(pse_tile_view, pypto.DT_FP32)
 
-                        # =======================================================
-                        # === M3: Online-softmax accumulation + output ===
-                        # =======================================================
+                        pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])
+                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
-                        pypto.set_vec_tile_shapes(16, 64)
+                        scores = pypto.matmul(q_tile_view, k_tile_view,
+                                              out_dtype=pypto.DT_FP32,
+                                              b_trans=True)
+
+                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+
+                        if pse_type == 1:
+                            scores_scaled = pypto.mul(
+                                pypto.add(scores, pse_fp32), scale_value)
+                        else:
+                            scores_scaled = pypto.add(
+                                pypto.mul(scores, scale_value), pse_fp32)
+
+                        mask_tile = pypto.view(atten_mask, [BLOCK_Q, BLOCK_KV],
+                                               [q_start, kv_start],
+                                               valid_shape=[q_tile_len, k_tile_len])
+                        mask_fp32 = pypto.cast(mask_tile, pypto.DT_FP32)
+                        valid_mask = pypto.mul(pypto.add(mask_fp32, -1.0), -1.0)
+
+                        drop_tile = pypto.view(drop_mask, [BLOCK_Q, BLOCK_KV],
+                                               [q_start, kv_start],
+                                               valid_shape=[q_tile_len, k_tile_len])
+                        drop_fp32 = pypto.cast(drop_tile, pypto.DT_FP32)
+
+                        m_ij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                        s_shifted = pypto.sub(scores_scaled, m_ij)
+                        p_ij = pypto.exp(s_shifted)
+                        p_ij = pypto.mul(p_ij, valid_mask)
+                        p_ij = pypto.mul(p_ij, drop_fp32)
+                        l_ij = pypto.sum(p_ij, dim=-1, keepdim=True)
+
+                        pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
+
+                        p_ij_bf16 = pypto.cast(p_ij, pypto.DT_BF16)
+                        o_ij = pypto.matmul(p_ij_bf16, v_tile_view,
+                                            out_dtype=pypto.DT_FP32)
+
+                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
 
                         if pypto.is_loop_begin(kvb):
-                            # ---- First KV block ----
                             if pypto.is_loop_end(kvb):
-                                # Edge case: single KV block
-                                # Normalize P → cast to bf16 → matmul in bf16 → assemble
-                                p_ij_norm = pypto.div(p_ij, l_ij)        # [BLOCK_Q,BLOCK_KV] fp32
-                                p_ij_bf16 = pypto.cast(p_ij_norm, pypto.DT_BF16)
+                                pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                                p_ij_norm = pypto.div(p_ij, l_ij,
+                                    precision_type=pypto.PrecisionType.INTRINSIC)
+                                p_ij_bf16_final = pypto.cast(p_ij_norm, pypto.DT_BF16)
 
-                                # Both matmul inputs must have same dtype
-                                pypto.set_cube_tile_shapes([64, 64], [64, 64], [D, D])
-                                o_final = pypto.matmul(p_ij_bf16, v_tile_view,
-                                                       pypto.DT_BF16)    # [BLOCK_Q,D] bf16
-                                pypto.set_vec_tile_shapes(16, 64)
+                                pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
+                                o_final = pypto.matmul(p_ij_bf16_final, v_tile_view,
+                                                       out_dtype=pypto.DT_BF16)
 
-                                 # 2D assemble: write o_final [BLOCK_Q, D] → output_2d
+                                o_v = pypto.view(o_final, [BLOCK_Q, D], [0, 0],
+                                                 valid_shape=[q_tile_len, D])
+                                m_v = pypto.view(m_ij, [BLOCK_Q, 1], [0, 0],
+                                                 valid_shape=[q_tile_len, 1])
 
                                 out_row = b_idx * N * Sq + n_idx * Sq + q_start
-                                pypto.assemble(o_final, [out_row, 0], output_2d)
-                                pypto.assemble(m_ij, [out_row, 0], mm_2d)
+                                pypto.assemble(o_v, [out_row, 0], output)
+                                pypto.assemble(m_v, [out_row, 0], softmax_max)
 
                                 if keep_prob < 1.0:
-                                    l_scaled = pypto.mul(l_ij, 1.0 / keep_prob)
+                                    l_out = pypto.mul(l_ij, 1.0 / keep_prob)
                                 else:
-                                    l_scaled = l_ij
-                                pypto.assemble(l_scaled, [out_row, 0], ms_2d)
+                                    l_out = l_ij
+                                l_v = pypto.view(l_out, [BLOCK_Q, 1], [0, 0],
+                                                 valid_shape=[q_tile_len, 1])
+                                pypto.assemble(l_v, [out_row, 0], softmax_sum)
                             else:
-                                # First of multiple KV blocks: store state directly
                                 oi_update[:] = o_ij
                                 li_update[:] = l_ij
                                 mi_update[:] = m_ij
                         else:
-                            # ---- Subsequent KV blocks: rescale & accumulate ----
-                            # Read state via pypto.view (2D→2D, valid_shape for tail Q)
+                            pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+
                             mi = pypto.view(mi_update, [BLOCK_Q, 1], [0, 0],
                                             valid_shape=[q_tile_len, 1])
                             li = pypto.view(li_update, [BLOCK_Q, 1], [0, 0],
@@ -235,76 +183,39 @@ def flash_attention_score_kernel_npu(
                             oi = pypto.view(oi_update, [BLOCK_Q, D], [0, 0],
                                             valid_shape=[q_tile_len, D])
 
-                            # Online-softmax rescale factors
-                            mi_new = pypto.maximum(mi, m_ij)             # [BLOCK_Q,1] fp32
-                            alpha  = pypto.exp(pypto.sub(mi, mi_new))    # [BLOCK_Q,1] fp32
-                            beta   = pypto.exp(pypto.sub(m_ij, mi_new))  # [BLOCK_Q,1] fp32
+                            mi_new = pypto.maximum(mi, m_ij)
+                            t1 = pypto.sub(mi, mi_new)
+                            t2 = pypto.exp(t1)
+                            t3 = pypto.sub(m_ij, mi_new)
+                            t4 = pypto.exp(t3)
 
-                            # Weighted sum accumulation
-                            li_new = pypto.add(pypto.mul(alpha, li),
-                                              pypto.mul(beta, l_ij))     # [BLOCK_Q,1] fp32
-                            oi_new = pypto.add(pypto.mul(alpha, oi),
-                                              pypto.mul(beta, o_ij))     # [BLOCK_Q,D] fp32
+                            li_new = pypto.add(pypto.mul(t2, li),
+                                               pypto.mul(t4, l_ij))
+                            oi_tmp = pypto.add(pypto.mul(oi, t2),
+                                               pypto.mul(o_ij, t4))
 
                             if pypto.is_loop_end(kvb):
-                                # ---- Last KV block: final normalize → cast → assemble ----
-                                o_final = pypto.div(oi_new, li_new)      # [BLOCK_Q,D] fp32
-                                o_bf16 = pypto.cast(o_final, pypto.DT_BF16)
+                                out_fp32 = pypto.div(oi_tmp, li_new,
+                                    precision_type=pypto.PrecisionType.INTRINSIC)
+                                out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
+
+                                o_v = pypto.view(out_bf16, [BLOCK_Q, D], [0, 0],
+                                                 valid_shape=[q_tile_len, D])
+                                m_v = pypto.view(mi_new, [BLOCK_Q, 1], [0, 0],
+                                                 valid_shape=[q_tile_len, 1])
 
                                 out_row = b_idx * N * Sq + n_idx * Sq + q_start
-                                pypto.assemble(o_bf16, [out_row, 0], output_2d)
-                                pypto.assemble(mi_new, [out_row, 0], mm_2d)
+                                pypto.assemble(o_v, [out_row, 0], output)
+                                pypto.assemble(m_v, [out_row, 0], softmax_max)
 
                                 if keep_prob < 1.0:
-                                    l_scaled = pypto.mul(li_new, 1.0 / keep_prob)
+                                    l_out = pypto.mul(li_new, 1.0 / keep_prob)
                                 else:
-                                    l_scaled = li_new
-                                pypto.assemble(l_scaled, [out_row, 0], ms_2d)
+                                    l_out = li_new
+                                l_v = pypto.view(l_out, [BLOCK_Q, 1], [0, 0],
+                                                 valid_shape=[q_tile_len, 1])
+                                pypto.assemble(l_v, [out_row, 0], softmax_sum)
                             else:
-                                # ---- Intermediate KV block: write state forward ----
-                                oi_update[:] = oi_new
+                                oi_update[:] = oi_tmp
                                 li_update[:] = li_new
                                 mi_update[:] = mi_new
-
-
-def flash_attention_score_wrapper(
-    query,       # [B, N, Sq, D]       bf16
-    key,         # [B, N_kv, Skv, D]   bf16
-    value,       # [B, N_kv, Skv, D]   bf16
-    atten_mask,  # [Sq, Skv]           bf16     (0=valid, non-zero=invalid)
-    pse,         # [B, N, Sq, Skv]     bf16
-    drop_mask,   # [Sq, Skv]           bf16
-    pse_type,    # int                          (1 or 2)
-    keep_prob,   # float
-    scale_value, # float                        (typically 1/sqrt(D))
-):
-    import torch
-    import torch_npu  # noqa: F401
-
-    device = query.device
-    B, N, Sq, D = query.shape
-    N_kv = key.shape[1]
-    Skv = key.shape[2]
-
-    query_2d = query.reshape(B * N * Sq, D)
-    key_2d = key.reshape(B * N_kv * Skv, D)
-    value_2d = value.reshape(B * N_kv * Skv, D)
-    pse_2d = pse.reshape(B * N * Sq, Skv)
-
-    output_2d = torch.zeros(B * N * Sq, D, dtype=torch.bfloat16, device=device)
-    softmax_max_2d = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
-    softmax_sum_2d = torch.zeros(B * N * Sq, 1, dtype=torch.float32, device=device)
-
-    flash_attention_score_kernel_npu(
-        query_2d, key_2d, value_2d,
-        atten_mask, pse_2d, drop_mask,
-        output_2d, softmax_max_2d, softmax_sum_2d,
-        pse_type, keep_prob, scale_value, N_kv,
-        B, N, Sq, Skv,
-    )
-
-    output = output_2d.reshape(B, N, Sq, D)
-    softmax_max = softmax_max_2d.reshape(B, N, Sq, 1)
-    softmax_sum = softmax_sum_2d.reshape(B, N, Sq, 1)
-
-    return output, softmax_max, softmax_sum

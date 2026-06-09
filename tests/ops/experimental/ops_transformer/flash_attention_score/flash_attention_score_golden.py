@@ -7,8 +7,6 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-
-
 """
 PyPTO flash_attention_score golden reference implementation.
 

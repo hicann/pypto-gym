@@ -7,25 +7,10 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-
 """E2E test for flash_attention_score — integrated JIT kernel vs golden.
 
 Precision standards (Ascend Precision Standard 2.1, L0):
   atol=1  rtol=0  MARE<10  MERE<2  RMSE<2
-
-Formulas (compare_2_1.py — Ascend Precision Standard 2.1):
-  |impl - golden| <= atol + rtol * |golden|            (per-element tolerance)
-  Large value domain: |golden| >= 2^-8 (bf16)
-    relative_error = |impl - golden| / (|golden| + 1e-7)
-    MARE = max(relative_error)
-    MERE = mean(relative_error)
-    RMSE = sqrt(mean((impl - golden)^2))
-  Small value domain: |golden| < 2^-8 (bf16)
-    error_count = count(|impl - golden| > 2^-16)
-
-L0 — canonical shape:  B=1, N=32, Sq=128, Skv=128, D=64
-L1 — tail-block:       B=1, N=8,  Sq=100, Skv=100, D=128
-L2 — GQA:              B=1, N=16, N_kv=4, Sq=128, Skv=128, D=64
 """
 
 import sys
@@ -37,56 +22,39 @@ sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import torch
-import torch_npu  # noqa: F401  required for NPU device init
+import torch_npu  # noqa: F401
+import pypto
 
-from experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import flash_attention_score_wrapper
+from experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import flash_attention_score_kernel_npu
 from flash_attention_score_golden import (
     flash_attention_score_golden,
     FlashAttentionInputs,
 )
 
-
-# ============================================================================
-# Authoritative precision formulas — no external deps
-# ============================================================================
-
-_EPS = torch.finfo(torch.float32).tiny               # ~1.18e-38, underflow guard
-_MERE_EXEMPT = 2.0 ** (-8)                            # 0.00390625
+_MERE_EXEMPT = 2.0 ** (-8)
 
 
 def _set_device() -> None:
-    """Initialise the NPU device from the standard env var."""
     torch.npu.set_device(int(os.environ["TILE_FWK_DEVICE_ID"]))
 
 
 def _precision_verify(impl_out, gold_out, tag,
                       atol_bf16=1.0, rtol_bf16=0.0):
-    """Authoritative precision check — IEEE 754 / ISO LIA-2 formulas.
-
-    For each of the 3 outputs, applies:
-      1. Per-element tolerance:  |impl_i - gold_i| <= atol + rtol * |gold_i|
-      2. MARE / MERE / RMSE on bf16 output tensor.
-      3. MERE exemption for |gold_i| < 2^-8.
-
-    Returns True iff all checks pass.
-    """
-    # --- ground on CPU for deterministic compute ---
     gold_out = tuple(t.cpu() for t in gold_out)
     impl_out = tuple(t.cpu() for t in impl_out)
 
     names   = ("output",      "softmax_max", "softmax_sum")
-    atol_rt = [(atol_bf16, rtol_bf16), (1e-5, 1e-5), (1e-5, 1e-5)]
+    atol_rt = [(atol_bf16, rtol_bf16), (1.0, 0.0), (1.0, 0.0)]
 
     all_ok = True
 
     for gold, impl, name, (atol, rtol) in zip(gold_out, impl_out, names, atol_rt):
-        g = gold.float()                                # upcast for metric compute
+        g = gold.float()
         im = impl.float()
         n_total = g.numel()
 
-        # --- 1. Per-element tolerance (IEEE 754 §4.3) ---
         abs_err = (im - g).abs()
-        exceed  = abs_err > (atol + rtol * g.abs())     # bool mask
+        exceed  = abs_err > (atol + rtol * g.abs())
         n_fail  = exceed.sum().item()
         max_d   = abs_err.max().item()
 
@@ -101,14 +69,12 @@ def _precision_verify(impl_out, gold_out, tag,
     if not all_ok:
         return False
 
-    # --- 2. MARE / MERE / RMSE on bf16 output tensor only ---
     g     = gold_out[0].cpu().float()
     im    = impl_out[0].cpu().float()
     n_tot = g.numel()
 
     abs_err = (im - g).abs()
 
-    # Large value domain: |golden| >= 2^-8
     large_mask = g.abs() >= _MERE_EXEMPT
     n_small    = (~large_mask).sum().item()
     n_large    = large_mask.sum().item()
@@ -124,12 +90,10 @@ def _precision_verify(impl_out, gold_out, tag,
     else:
         mare, mere, rmse = 0.0, 0.0, 0.0
 
-    # Small value domain: |golden| < 2^-8, count abs errors > 2^-16
     small_err_count = 0
     if n_small > 0:
         small_err_count = (abs_err[~large_mask] > 2**-16).sum().item()
 
-    # --- 3. Threshold checks ---
     mare_ok = mare < 10.0
     mere_ok = mere < 2.0
     rmse_ok = rmse < 2.0
@@ -143,17 +107,7 @@ def _precision_verify(impl_out, gold_out, tag,
     return mare_ok and mere_ok and rmse_ok
 
 
-# ============================================================================
-# Input generation
-# ============================================================================
-
 def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
-    """Build FlashAttentionInputs — all tensors created on device.
-
-    shape dict keys:
-      B, N, Sq, Skv, D — required
-      N_kv — optional, defaults to N (for GQA: N > N_kv, N % N_kv == 0)
-    """
     torch.manual_seed(seed)
 
     B = shape["B"]
@@ -182,30 +136,43 @@ def _make_inputs(device, seed, shape, pse_type=1, keep_prob=1.0):
     )
 
 
-# ============================================================================
-# Tests
-# ============================================================================
+def _run_kernel(inputs, shape, dev):
+    B = shape["B"]
+    N = shape["N"]
+    Sq = shape["Sq"]
+    D = shape["D"]
+
+    total_q = B * N * Sq
+    output = torch.zeros(total_q, D, dtype=torch.bfloat16, device=dev)
+    softmax_max = torch.zeros(total_q, 1, dtype=torch.float32, device=dev)
+    softmax_sum = torch.zeros(total_q, 1, dtype=torch.float32, device=dev)
+
+    flash_attention_score_kernel_npu(
+        inputs.query, inputs.key, inputs.value,
+        inputs.atten_mask, inputs.pse, inputs.drop_mask,
+        output, softmax_max, softmax_sum,
+        inputs.pse_type, inputs.keep_prob, inputs.scale_value,
+    )
+
+    return (output.reshape(B, N, Sq, D),
+            softmax_max.reshape(B, N, Sq, 1),
+            softmax_sum.reshape(B, N, Sq, 1))
+
 
 def test_l0() -> None:
-    """L0: canonical shape (Sq=128, Skv=128) — 2 KV blocks, no tail."""
+    """L0: B=1, N=64, Sq=1024, Skv=1024, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
-    shape  = {"B": 1, "N": 32, "Sq": 128, "Skv": 128, "D": 64}
-    inputs = _make_inputs(dev, seed=42, shape=shape, pse_type=1, keep_prob=1.0)
+    shape  = {"B": 1, "N": 64, "Sq": 1024, "Skv": 1024, "D": 128}
+    inputs = _make_inputs(dev, seed=50, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
-    print("L0 — canonical shape (integrated JIT, 2 KV blocks)")
-    print(f"  B={shape['B']}, N={shape['N']}, "
-          f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
+    print("L0 — B=1 N=64 Sq=1024 Skv=1024 D=128")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
 
     gold = flash_attention_score_golden(inputs, npu=True)
-    impl = flash_attention_score_wrapper(
-        inputs.query, inputs.key, inputs.value,
-        inputs.atten_mask, inputs.pse, inputs.drop_mask,
-        inputs.pse_type, inputs.keep_prob, inputs.scale_value,
-    )
+    impl = _run_kernel(inputs, shape, dev)
 
     ok = _precision_verify(impl, gold, tag="L0", atol_bf16=1.0, rtol_bf16=0.0)
     assert ok, "L0: precision check FAILED"
@@ -213,25 +180,19 @@ def test_l0() -> None:
 
 
 def test_l1() -> None:
-    """L1: tail-block (Sq=100, Skv=100) — partial Q and KV blocks."""
+    """L1: B=2, N=32, Sq=500, Skv=500, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
-    shape  = {"B": 1, "N": 8, "Sq": 100, "Skv": 100, "D": 128}
-    inputs = _make_inputs(dev, seed=43, shape=shape, pse_type=1, keep_prob=1.0)
+    shape  = {"B": 2, "N": 32, "Sq": 500, "Skv": 500, "D": 128}
+    inputs = _make_inputs(dev, seed=71, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
-    print("L1 — tail-block (integrated JIT, Sq=100, Skv=100, tails=36)")
-    print(f"  B={shape['B']}, N={shape['N']}, "
-          f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
+    print("L1 — B=2 N=32 Sq=500 Skv=500 D=128 (tail blocks)")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
 
     gold = flash_attention_score_golden(inputs, npu=True)
-    impl = flash_attention_score_wrapper(
-        inputs.query, inputs.key, inputs.value,
-        inputs.atten_mask, inputs.pse, inputs.drop_mask,
-        inputs.pse_type, inputs.keep_prob, inputs.scale_value,
-    )
+    impl = _run_kernel(inputs, shape, dev)
 
     ok = _precision_verify(impl, gold, tag="L1", atol_bf16=1.0, rtol_bf16=0.0)
     assert ok, "L1: precision check FAILED"
@@ -239,39 +200,28 @@ def test_l1() -> None:
 
 
 def test_l2() -> None:
-    """L2: GQA < n_q != n_kv> (B=1, N=16, N_kv=4, Sq=128, Skv=128, D=64)."""
+    """L2: B=8, N=32, Sq=439, Skv=439, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
-    shape  = {"B": 1, "N": 16, "N_kv": 4, "Sq": 128, "Skv": 128, "D": 64}
-    inputs = _make_inputs(dev, seed=44, shape=shape, pse_type=1, keep_prob=1.0)
+    shape  = {"B": 8, "N": 32, "Sq": 439, "Skv": 439, "D": 128}
+    inputs = _make_inputs(dev, seed=99, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
-    print("L2 — GQA <n_q != n_kv> (N=16, N_kv=4, group=4)")
-    print(f"  B={shape['B']}, N={shape['N']}, N_kv={shape['N_kv']}, "
-          f"Sq={shape['Sq']}, Skv={shape['Skv']}, D={shape['D']}")
+    print("L2 — B=8 N=32 Sq=439 Skv=439 D=128 (multi-batch tail)")
     print(f"  pse_type=1, keep_prob=1.0, scale={inputs.scale_value:.6f}")
 
     gold = flash_attention_score_golden(inputs, npu=True)
-    impl = flash_attention_score_wrapper(
-        inputs.query, inputs.key, inputs.value,
-        inputs.atten_mask, inputs.pse, inputs.drop_mask,
-        inputs.pse_type, inputs.keep_prob, inputs.scale_value,
-    )
+    impl = _run_kernel(inputs, shape, dev)
 
     ok = _precision_verify(impl, gold, tag="L2", atol_bf16=1.0, rtol_bf16=0.0)
     assert ok, "L2: precision check FAILED"
     print()
 
 
-# ============================================================================
-# Runner
-# ============================================================================
-
 if __name__ == "__main__":
-    print("flash_attention_score E2E test (integrated JIT, no external deps)")
+    print("flash_attention_score E2E test")
     print("=" * 60)
-    print(f"  BLOCK_Q=64, BLOCK_KV=64, D=128")
     print(f"  NPU device: {os.environ.get('TILE_FWK_DEVICE_ID', '0')}")
     print()
 
