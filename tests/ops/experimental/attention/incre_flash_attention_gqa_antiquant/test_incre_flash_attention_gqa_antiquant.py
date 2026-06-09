@@ -26,6 +26,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from numpy.testing import assert_allclose
+import pytest
 
 
 _p = os.path.dirname(__file__)
@@ -457,6 +458,73 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
     print("[PRECISION_PASS]")
 
 
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_1b2k():
+    do_test_incre_flash_attention_gqa_antiquant("1b2k")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_8b2kqs2():
+    do_test_incre_flash_attention_gqa_antiquant("8b2kqs2")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_16b4kqs3():
+    do_test_incre_flash_attention_gqa_antiquant("16b4kqs3")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_32b8k_d256():
+    do_test_incre_flash_attention_gqa_antiquant("32b8k_d256")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_64b2k_kvn2():
+    do_test_incre_flash_attention_gqa_antiquant("64b2k_kvn2")
+
+
+@pytest.mark.soc("950")
+@pytest.mark.skip(reason="perf")
+def test_incre_flash_attention_gqa_antiquant_4b16k():
+    do_test_incre_flash_attention_gqa_antiquant("4b16k")
+
+
+@pytest.mark.soc("950")
+@pytest.mark.skip(reason="perf")
+def test_incre_flash_attention_gqa_antiquant_64b16k():
+    do_test_incre_flash_attention_gqa_antiquant("64b16k")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_2b16k():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_2b16k")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_4b2k():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_4b2k")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_2b2k_kvn2():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_2b2k_kvn2")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_4b8k_qs2():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_4b8k_qs2")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_2b4k_d256():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_2b4k_d256")
+
+
+@pytest.mark.soc("950")
+def test_incre_flash_attention_gqa_antiquant_vary_s2_4b8k_qs3_kvn2():
+    do_test_incre_flash_attention_gqa_antiquant("vary_s2_4b8k_qs3_kvn2")
+
+
 def main() -> None:
     """Main entry point for IFA GQA anti-quantization experimental."""
     logger.info("\n")
@@ -464,22 +532,19 @@ def main() -> None:
     logger.info("PyPTO incre_flash_attention_gqa_antiquant experimental")
     logger.info("=" * 60 + "\n")
 
-    case_names = [
-        "1b2k", "8b2kqs2", "16b4kqs3", "32b8k_d256", 
-        "64b2k_kvn2", "4b16k", "64b16k",
-        "vary_s2_2b16k", "vary_s2_4b2k",
-        "vary_s2_2b2k_kvn2", "vary_s2_4b8k_qs2",
-        "vary_s2_2b4k_d256", "vary_s2_4b8k_qs3_kvn2"
-    ]
-
-    for case_name in case_names:
-        cmd = [
-            sys.executable, "-c",
-            f"from test_incre_flash_attention_gqa_antiquant import do_test_incre_flash_attention_gqa_antiquant; "
-            f"do_test_incre_flash_attention_gqa_antiquant('{case_name}')"
-        ]
-        result = subprocess.run(cmd, capture_output=False, text=True,
-                                cwd=os.path.dirname(os.path.abspath(__file__)))
+    test_incre_flash_attention_gqa_antiquant_1b2k()
+    test_incre_flash_attention_gqa_antiquant_8b2kqs2()
+    test_incre_flash_attention_gqa_antiquant_16b4kqs3()
+    test_incre_flash_attention_gqa_antiquant_32b8k_d256()
+    test_incre_flash_attention_gqa_antiquant_64b2k_kvn2()
+    test_incre_flash_attention_gqa_antiquant_64b16k()
+    test_incre_flash_attention_gqa_antiquant_4b16k()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_2b16k()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_4b2k()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_2b2k_kvn2()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_4b8k_qs2()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_2b4k_d256()
+    test_incre_flash_attention_gqa_antiquant_vary_s2_4b8k_qs3_kvn2()
 
     logger.info("All test cases passed!")
 

@@ -20,6 +20,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose
+import pytest
 
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
@@ -307,26 +308,86 @@ def do_test_incre_flash_attention_mla(case_name):
     print("[PRECISION_PASS]")
 
 
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_32b4k():
+    do_test_incre_flash_attention_mla("32b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_1b4k():
+    do_test_incre_flash_attention_mla("1b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_8b4k():
+    do_test_incre_flash_attention_mla("8b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_16b8k():
+    do_test_incre_flash_attention_mla("16b8k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_32b2k():
+    do_test_incre_flash_attention_mla("32b2k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_qs3_1b4k():
+    do_test_incre_flash_attention_mla("qs3_1b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_nkv2_qs3_1b4k():
+    do_test_incre_flash_attention_mla("nkv2_qs3_1b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_dn128_qs3_1b4k():
+    do_test_incre_flash_attention_mla("dn128_qs3_1b4k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_vary_s2_2b8k():
+    do_test_incre_flash_attention_mla("vary_s2_2b8k")
+
+
+@pytest.mark.soc("950", "910")
+def test_incre_flash_attention_mla_vary_s2_4b8k():
+    do_test_incre_flash_attention_mla("vary_s2_4b8k")
+
+
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="perf")
+def test_incre_flash_attention_mla_4b8k():
+    do_test_incre_flash_attention_mla("4b8k")
+
+
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="perf")
+def test_incre_flash_attention_mla_64b8k():
+    do_test_incre_flash_attention_mla("64b8k")
+
+
 def main():
     logger.info("\n")
     logger.info("=" * 60)
     logger.info("PyPTO incre_flash_attention_mla example")
     logger.info("=" * 60 + "\n")
 
-    case_names = [
-        "32b4k", "1b4k", "8b4k", "16b8k", "32b2k",
-        "qs3_1b4k", "nkv2_qs3_1b4k", "dn128_qs3_1b4k",
-        "vary_s2_2b8k", "vary_s2_4b8k", "4b8k", "64b8k",
-    ]
-
-    for case_name in case_names:
-        cmd = [
-            sys.executable, "-c",
-            f"from test_incre_flash_attention_mla import do_test_incre_flash_attention_mla; "
-            f"do_test_incre_flash_attention_mla('{case_name}')"
-        ]
-        result = subprocess.run(cmd, capture_output=False, text=True,
-                                cwd=os.path.dirname(os.path.abspath(__file__)))
+    test_incre_flash_attention_mla_1b4k()
+    test_incre_flash_attention_mla_32b4k()
+    test_incre_flash_attention_mla_8b4k()
+    test_incre_flash_attention_mla_16b8k()
+    test_incre_flash_attention_mla_32b2k()
+    test_incre_flash_attention_mla_qs3_1b4k()
+    test_incre_flash_attention_mla_nkv2_qs3_1b4k()
+    test_incre_flash_attention_mla_dn128_qs3_1b4k()
+    test_incre_flash_attention_mla_vary_s2_2b8k()
+    test_incre_flash_attention_mla_vary_s2_4b8k()
+    test_incre_flash_attention_mla_4b8k()
+    test_incre_flash_attention_mla_64b8k()
 
     logger.info("All test cases passed!")
 
