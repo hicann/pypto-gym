@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 from dataclasses import dataclass
 from typing import List
 from numpy.testing import assert_allclose
-
+import torch
 from experimental.matmul.transpose_quant_batch_matmul.transpose_quant_batch_matmul_impl import ShapeConfig, transpose_quant_batch_mat_mul_kernel
 from transpose_quant_batch_matmul_golden import gen_golden, TqbmmGoldenInputs
 
@@ -190,13 +190,6 @@ def test_transpose_quant_batch_matmul(tile_config):
     }
     torch_dtype = torch_dtype_map.get(in_dtype, torch.float8_e4m3fn)
 
-    print(f"\n{'='*60}")
-    print(f"Test: {tile_config.description}")
-    print(f"Shape: M={M}, B={B}, K={K}, N={N}")
-    print(f"permX1={permX1}, permX2={permX2}, permY={permY}")
-    print(f"in_dtype={in_dtype}, out_dtype={tile_config.out_dtype}")
-    print(f"{'='*60}")
-
     data_range = 0.05 if tile_config.out_dtype == pypto.DT_BF16 else 1.0
 
     # Generate input tensor x1 in MXFP8 format
@@ -226,7 +219,6 @@ def test_transpose_quant_batch_matmul(tile_config):
 
     # Verify results
     assert_allclose(golden.float().cpu().numpy(), result.float().cpu().numpy(), rtol=1e-3, atol=1e-3)
-    print(f"✓ {tile_config.description} PASSED")
 
 
 if __name__ == "__main__":
