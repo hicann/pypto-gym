@@ -11,7 +11,7 @@
 
 """PyPTO mhc_sinkhorn golden reference implementation.
 
-Copyright (c) 2025 Huawei Technologies Co., Ltd.
+Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 
 mhc_sinkhorn 实现 Sinkhorn-Knopp 双随机矩阵迭代归一化算法。
 该算子将矩阵通过交替行列归一化迭代转换为双随机矩阵（每行每列和为1的矩阵）。

@@ -15,7 +15,6 @@
 #
 # NOTICE: This file was modified by Huawei Technologies Co., Ltd. in 2026 to 
 # leverage pypto technology for fusing multiple small operators within the network.
-# Version 2.0.
 #
 
 from huggingface_hub.dataclasses import strict

@@ -1,2 +1,0 @@
-# Minimal ReLU benchmark config. Other fields inherit from __default__.yaml.
-cases: "level1=19_ReLU"

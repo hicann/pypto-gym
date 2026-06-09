@@ -17,7 +17,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+#
+# NOTICE: This file was modified by Huawei Technologies Co., Ltd. in 2026 to
+# leverage pypto technology for fusing multiple small operators within the network.
+#
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
