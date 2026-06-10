@@ -148,14 +148,6 @@ def compute_combined_scale(
     runtime_options={
         "stitch_function_max_num": 128,
     },
-    debug_options={
-        "runtime_debug_mode": 1,
-        "compile_debug_mode": 1,
-    },
-    host_options={
-        "compile_monitor_enable": 1,
-        "compile_monitor_print_interval": 2,
-    },
 )
 def quant_batch_matmul_kernel(
     x1: pypto.Tensor(),
