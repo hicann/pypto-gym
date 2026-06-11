@@ -17,7 +17,7 @@ Golden 参考实现与单测入口见：
 本模块提供 JIT kernel、配置数据结构与 host 侧 `gen_pypto`。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pypto
 import torch
@@ -30,7 +30,8 @@ class FinalizeRoutingConfig:
 
     Attributes:
         batch: 输出 batch 维大小（也是 shared_input 的行数基准）。
-        m: token 总数。
+        topk: 每个 batch 的 token 数。
+        m: token 总数，由 batch * topk 自动计算（不可手动指定）。
         k: matmul 的 K 维。
         n: matmul 的 N 维（输出列数）。
         num_experts: expert 数量。
@@ -50,7 +51,7 @@ class FinalizeRoutingConfig:
     """
 
     batch: int
-    m: int
+    topk: int
     k: int
     n: int
     num_experts: int
@@ -58,6 +59,7 @@ class FinalizeRoutingConfig:
     k_tile_shape: list
     n_tile_shape: list
     vector_tile_shape: list
+    m: int = field(init=False)
     in_dtype: pypto.DataType = pypto.DT_FP8E4M3
     transpose_x1: bool = False
     transpose_x2: bool = False
@@ -67,6 +69,9 @@ class FinalizeRoutingConfig:
     has_logit: bool = True
     has_shared_input: bool = True
     description: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "m", self.batch * self.topk)
 
 
 @dataclass

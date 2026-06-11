@@ -87,7 +87,6 @@ def test_gmm_finalize_routing(config):
         )
     )
 
-    pypto.set_host_options(compile_monitor_enable=True)
     result = gen_pypto(
         FinalizeRoutingInputs(
             x1=x1,
@@ -109,18 +108,18 @@ def test_gmm_finalize_routing(config):
 
 TEST_CONFIGS = [
     FinalizeRoutingConfig(
-        batch=8, m=1024, k=7168, n=4096, num_experts=8,
+        batch=1024, topk=8, k=7168, n=3072, num_experts=4,
         m_tile_shape=[128, 128], k_tile_shape=[128, 512], n_tile_shape=[128, 256],
         vector_tile_shape=[1, 4, 128, 4],
         in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
-        description="case1 m1024 k7168 n4096 e8",
+        description="case1 batch1024 topk8 k7168 n3072 e4",
     ),
     FinalizeRoutingConfig(
-        batch=8, m=32, k=7168, n=4096, num_experts=8,
+        batch=2048, topk=8, k=7168, n=4096, num_experts=8,
         m_tile_shape=[128, 128], k_tile_shape=[128, 512], n_tile_shape=[128, 256],
         vector_tile_shape=[1, 4, 128, 4],
         in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
-        description="case2 m32 k7168 n4096 e8",
+        description="case2 batch2048 topk8 k7168 n4096 e8",
     ),
 ]
 
