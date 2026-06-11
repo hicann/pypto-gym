@@ -38,13 +38,12 @@ def _set_device() -> None:
     torch.npu.set_device(int(os.environ["TILE_FWK_DEVICE_ID"]))
 
 
-def _precision_verify(impl_out, gold_out, tag,
-                      atol_bf16=1.0, rtol_bf16=0.0):
+def _precision_verify(impl_out, gold_out, tag):
     gold_out = tuple(t.cpu() for t in gold_out)
     impl_out = tuple(t.cpu() for t in impl_out)
 
     names   = ("output",      "softmax_max", "softmax_sum")
-    atol_rt = [(atol_bf16, rtol_bf16), (1.0, 0.0), (1.0, 0.0)]
+    atol_rt = [(0.0001, 0.0078125), (0.000025, 0.005), (0.000025, 0.005)]
 
     all_ok = True
 
@@ -174,7 +173,7 @@ def test_l0() -> None:
     gold = flash_attention_score_golden(inputs, npu=True)
     impl = _run_kernel(inputs, shape, dev)
 
-    ok = _precision_verify(impl, gold, tag="L0", atol_bf16=1.0, rtol_bf16=0.0)
+    ok = _precision_verify(impl, gold, tag="L0")
     assert ok, "L0: precision check FAILED"
     print()
 
@@ -194,7 +193,7 @@ def test_l1() -> None:
     gold = flash_attention_score_golden(inputs, npu=True)
     impl = _run_kernel(inputs, shape, dev)
 
-    ok = _precision_verify(impl, gold, tag="L1", atol_bf16=1.0, rtol_bf16=0.0)
+    ok = _precision_verify(impl, gold, tag="L1")
     assert ok, "L1: precision check FAILED"
     print()
 
@@ -214,7 +213,7 @@ def test_l2() -> None:
     gold = flash_attention_score_golden(inputs, npu=True)
     impl = _run_kernel(inputs, shape, dev)
 
-    ok = _precision_verify(impl, gold, tag="L2", atol_bf16=1.0, rtol_bf16=0.0)
+    ok = _precision_verify(impl, gold, tag="L2")
     assert ok, "L2: precision check FAILED"
     print()
 
