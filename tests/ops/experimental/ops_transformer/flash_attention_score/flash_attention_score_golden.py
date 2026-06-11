@@ -37,8 +37,8 @@ import torch
 from dataclasses import dataclass
 
 
-BLOCK_SIZE_Q = 64
-BLOCK_SIZE_KV = 64
+BLOCK_SIZE_Q = 320
+BLOCK_SIZE_KV = 320
 
 
 @dataclass
