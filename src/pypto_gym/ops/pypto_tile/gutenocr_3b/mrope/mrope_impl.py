@@ -130,8 +130,6 @@ def mrope_pto_correct(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
 
                 # 创建 shape（匹配 tensor 维度）
                 view_shape = [1, batch, seq_len, section_size]  # 维度0取单个batch
-
-                # offset: [batch_idx, 0, 0, head_dim_offset]
                 offsets = [i, 0, 0, offset]
 
                 cos_view = pypto.view(cos_tensor, view_shape, offsets)
@@ -185,7 +183,7 @@ def mrope_pto_correct(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
             # 使用 loop 分块处理（简化版）
             num_blocks = 1  # 简化，不分块
 
-            for block_idx in pypto.loop(num_blocks, name="LOOP_MROPE", idx_name="block_idx"):  # pylint: disable=unused-loop-variable
+            for _block_idx in pypto.loop(num_blocks, name="LOOP_MROPE", idx_name="block_idx"):
                 # 创建临时 tensor
                 tmp_q = pypto.tensor([batch, num_heads, seq_len, head_dim], dtype)
                 tmp_k = pypto.tensor([batch, num_heads, seq_len, head_dim], dtype)

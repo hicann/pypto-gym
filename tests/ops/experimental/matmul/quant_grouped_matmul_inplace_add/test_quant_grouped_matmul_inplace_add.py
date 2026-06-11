@@ -137,6 +137,36 @@ _QUANT_GMM_TEST_CONFIGS = [
 ]
 
 
+def _generate_mxfp8_a(m, k, num_groups, torch_dtype, a_trans):
+    """Generate MXFP8-format input tensor and its scale factors."""
+    if a_trans:
+        a = torch.randn((k, m), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
+        scaled_a = torch.randn(
+    (k // 64 + num_groups, m, 2),
+    dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+    else:
+        a = torch.randn((m, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
+        scaled_a = torch.randn(
+    (m, k // 64 + num_groups, 2),
+    dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+    return a, scaled_a
+
+
+def _generate_mxfp8_b(k, n, num_groups, torch_dtype, b_trans):
+    """Generate MXFP8-format weight tensor and its scale factors."""
+    if b_trans:
+        b = torch.randn((n, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
+        scaled_b = torch.randn(
+    (n, k // 64 + num_groups, 2),
+    dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+    else:
+        b = torch.randn((k, n), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
+        scaled_b = torch.randn(
+    (k // 64 + num_groups, n, 2),
+    dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
+    return b, scaled_b
+
+
 @pytest.mark.parametrize("tile_config", _QUANT_GMM_TEST_CONFIGS)
 def test_quant_grouped_matmul_inplace_add(tile_config):
     """
@@ -167,49 +197,9 @@ def test_quant_grouped_matmul_inplace_add(tile_config):
     }
     torch_dtype = torch_dtype_map.get(in_dtype, torch.float8_e4m3fn)
 
-    # Generate input tensor in MXFP8 format
-    if a_trans:
-        a = torch.randn((k, m), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_a = torch.randn(
-    (k // 64 + num_groups,
-    m,
-    2),
-    dtype=torch.float32).uniform_(
-        0,
-        1).to(
-            torch.float8_e8m0fnu)
-    else:
-        a = torch.randn((m, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_a = torch.randn(
-    (m,
-    k // 64 + num_groups,
-    2),
-    dtype=torch.float32).uniform_(
-        0,
-        1).to(
-            torch.float8_e8m0fnu)
-
-    # Generate weight tensor in MXFP8 format
-    if b_trans:
-        b = torch.randn((n, k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_b = torch.randn(
-    (n,
-    k // 64 + num_groups,
-    2),
-    dtype=torch.float32).uniform_(
-        0,
-        1).to(
-            torch.float8_e8m0fnu)
-    else:
-        b = torch.randn((k, n), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
-        scaled_b = torch.randn(
-    (k // 64 + num_groups,
-    n,
-    2),
-    dtype=torch.float32).uniform_(
-        0,
-        1).to(
-            torch.float8_e8m0fnu)
+    # Generate input and weight tensors in MXFP8 format
+    a, scaled_a = _generate_mxfp8_a(m, k, num_groups, torch_dtype, a_trans)
+    b, scaled_b = _generate_mxfp8_b(k, n, num_groups, torch_dtype, b_trans)
 
     # Initialize output tensor with random values (for inplace add)
     y_init = torch.randn((num_groups, m, n), dtype=torch.float32)

@@ -25,7 +25,7 @@ try:
     import torch_npu  # noqa: F401
 except ImportError:
     print("torch_npu not available; this test only runs on Ascend NPU.")
-    raise SystemExit(0)
+    raise RuntimeError("torch_npu not available; this test only runs on Ascend NPU.") from None
 
 import pypto
 

@@ -32,7 +32,7 @@ def test_pil_builder_list_comp():
 
         @TestParser.test
         def listcomp_two_ifs():
-            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1), Expr.int(2)]  # pylint: disable=complicate-comprehension
+            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1), Expr.int(2)]
                      if Expr.true(var_x) if var_x != 2]
 
         # --- 1 for, if with boolop ---
@@ -88,14 +88,14 @@ def test_pil_builder_list_comp():
 
         @TestParser.test
         def listcomp_two_fors_with_if():
-            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)] if Expr.true(var_x)  # pylint: disable=complicate-comprehension
+            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)] if Expr.true(var_x)
                      for var_y in [Expr.int(2), Expr.int(3)] if Expr.true(var_y)]
 
         # --- 3 for (deep nesting) ---
 
         @TestParser.test
         def listcomp_three_fors():
-            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]  # pylint: disable=complicate-comprehension
+            var_l = [Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]
                      for var_y in [Expr.int(0), Expr.int(1)]
                      for var_z in [Expr.int(0), Expr.int(1)]]
 
@@ -169,7 +169,7 @@ def test_pil_builder_set_comp():
 
         @TestParser.test
         def setcomp_three_fors():
-            var_s = {Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]  # pylint: disable=complicate-comprehension
+            var_s = {Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]
                      for var_y in [Expr.int(0), Expr.int(1)]
                      for var_z in [Expr.int(0), Expr.int(1)]}
 
@@ -246,7 +246,7 @@ def test_pil_builder_dict_comp():
 
         @TestParser.test
         def dictcomp_three_fors():
-            var_d = {Expr.int(var_x): Expr.str(var_z)  # pylint: disable=complicate-comprehension
+            var_d = {Expr.int(var_x): Expr.str(var_z)
                      for var_x in [Expr.int(0), Expr.int(1)]
                      for var_y in [Expr.int(0), Expr.int(1)]
                      for var_z in [Expr.int(0), Expr.int(1)]}
@@ -330,7 +330,7 @@ def test_pil_builder_generator_exp():
 
         @TestParser.test
         def genexp_three_fors():
-            g = (Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]  # pylint: disable=complicate-comprehension
+            g = (Expr.str(var_x) for var_x in [Expr.int(0), Expr.int(1)]
                      for var_y in [Expr.int(0), Expr.int(1)]
                      for var_z in [Expr.int(0), Expr.int(1)])
             var_l = list(g)

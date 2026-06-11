@@ -77,7 +77,9 @@ def test_bwd(device_id):
     dg_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
     dfc_out = torch.empty(m, n, dtype=torch.bfloat16, device=device)
 
-    from experimental.ops_transformer.fused_swiglu_grad.fused_swiglu_grad_impl import fused_swiglu_bwd_b_kernel, fused_swiglu_bwd_w_kernel, fused_swiglu_bwd_x_kernel
+    from experimental.ops_transformer.fused_swiglu_grad.fused_swiglu_grad_impl import (
+        fused_swiglu_bwd_b_kernel, fused_swiglu_bwd_w_kernel, fused_swiglu_bwd_x_kernel
+    )
     fused_swiglu_bwd_b_kernel(dy, g, fc, dg_out, dfc_out, db_g_out, db_fc_out)
     fused_swiglu_bwd_w_kernel(x, dg_out, dfc_out, dw_g_out, dw_fc_out)
     fused_swiglu_bwd_x_kernel(dg_out, dfc_out, w_g, w_fc, dx_out)

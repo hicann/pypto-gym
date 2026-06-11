@@ -39,7 +39,10 @@ if "default" not in ROPE_INIT_FUNCTIONS:
         partial_rotary_factor = getattr(config, "partial_rotary_factor", 1.0)
         head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
         dim = int(head_dim * partial_rotary_factor)
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim))
+        inv_freq = 1.0 / (
+            base ** (torch.arange(0, dim, 2, dtype=torch.int64)
+                     .to(device=device, dtype=torch.float) / dim)
+        )
         return inv_freq, 1.0
     ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
 
@@ -115,7 +118,6 @@ def run_benchmark():
     gen_kwargs = dict(gen_length=args.output_length, steps=args.steps,
                       block_length=args.block_length, temperature=0.0)
 
-    # Warmup (absorbs JIT compilation)
     print(f"\nWarmup ({args.warmup} iterations)...")
     for i in range(args.warmup):
         torch.npu.synchronize()

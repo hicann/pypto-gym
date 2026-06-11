@@ -18,6 +18,7 @@
 #
 """ PyTorch Phi-3 model."""
 
+import collections
 import inspect
 import math
 import warnings
@@ -54,8 +55,8 @@ from .configuration_phi3 import Phi3Config
 
 logger = logging.get_logger(__name__)
 
-# Transformers scans dependencies in the modeling file, causing issues on conditional loading. The regex only ignores try/catch blocks, but not if statements
-# if is_flash_attn_2_available():
+# Transformers scans dependencies in the modeling file, causing issues on conditional loading.
+# The regex only ignores try/catch blocks, but not if statements.
 _flash_supports_window_size = False
 try:
     from flash_attn import flash_attn_func, flash_attn_varlen_func
@@ -68,7 +69,8 @@ except ImportError as error:
     )
     if not _flash_supports_window_size:
         logger.warning(
-            "Current `flash-attention` does not support `window_size`. Either upgrade or use `attn_implementation='eager'`."
+            "Current `flash-attention` does not support `window_size`. "
+            "Either upgrade or use `attn_implementation='eager'`."
         )
 
 _CHECKPOINT_FOR_DOC = "microsoft/Phi-3-mini-4k-instruct"
@@ -129,7 +131,6 @@ class Phi3RotaryEmbedding(nn.Module):
 
     @torch.no_grad()
     def forward(self, x, position_ids, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
         if self.inv_freq is None:
             self.inv_freq = 1.0 / (
                 self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=x.device).float() / self.dim)
@@ -397,13 +398,24 @@ class Phi3FlashAttention2(Phi3Attention):
     flash attention and deal with padding tokens in case the input contains any of them.
     """
 
+    UpadInputResult = collections.namedtuple(
+        "UpadInputResult",
+        ["query_layer", "key_layer", "value_layer", "indices_q",
+         "cu_seqlens_q", "cu_seqlens_k",
+         "max_seqlen_in_batch_q", "max_seqlen_in_batch_k"],
+    )
+
     # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2.__init__
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
-        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
-        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
+        # Should be removed once Flash Attention for RoCm is bumped to 2.1.
+        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is
+        # bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used
+        # to handle this difference. Reference:
+        # https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
+        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen
+        # (except for the case q_seqlen == 1) produces a wrong mask (top-left).
         self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
 
     def forward(
@@ -420,7 +432,8 @@ class Phi3FlashAttention2(Phi3Attention):
 
         if not _flash_supports_window_size:
             logger.warning_once(
-                "The current flash attention version does not support sliding window attention. Please use `attn_implementation='eager'` or upgrade flash-attn library."
+                "The current flash attention version does not support sliding window attention. "
+                "Please use `attn_implementation='eager'` or upgrade flash-attn library."
             )
             raise ValueError("The current flash attention version does not support sliding window attention.")
 
@@ -428,7 +441,8 @@ class Phi3FlashAttention2(Phi3Attention):
 
         if "padding_mask" in kwargs:
             warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
+                "Passing `padding_mask` is deprecated and will be removed in v4.37. "
+                "Please make sure use `attention_mask` instead.`"
             )
 
             # overwrite attention_mask with padding_mask
@@ -489,7 +503,8 @@ class Phi3FlashAttention2(Phi3Attention):
 
                 if past_key.shape[-2] != self.config.sliding_window - 1:
                     raise ValueError(
-                        f"past key must have a shape of (`batch_size, num_heads, self.config.sliding_window-1, head_dim`), got"
+                        f"past key must have a shape of "
+                        f"(`batch_size, num_heads, self.config.sliding_window-1, head_dim`), got"
                         f" {past_key.shape}"
                     )
 
@@ -590,18 +605,24 @@ class Phi3FlashAttention2(Phi3Attention):
         if not self._flash_attn_uses_top_left_mask:
             causal = self.is_causal
         else:
-            # TODO: Remove the `query_length != 1` check once Flash Attention for RoCm is bumped to 2.1. For details, please see the comment in LlamaFlashAttention2 __init__.
+            # Remove the `query_length != 1` check once Flash Attention for RoCm
+            # is bumped to 2.1. For details, please see the comment in LlamaFlashAttention2 __init__.
             causal = self.is_causal and query_length != 1
 
         # Contains at least one padding token in the sequence
         if attention_mask is not None:
             batch_size = query_states.shape[0]
-            query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
+            upad_result = self._upad_input(
                 query_states, key_states, value_states, attention_mask, query_length
             )
-
-            cu_seqlens_q, cu_seqlens_k = cu_seq_lens
-            max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
+            query_states = upad_result.query_layer
+            key_states = upad_result.key_layer
+            value_states = upad_result.value_layer
+            indices_q = upad_result.indices_q
+            cu_seqlens_q = upad_result.cu_seqlens_q
+            cu_seqlens_k = upad_result.cu_seqlens_k
+            max_seqlen_in_batch_q = upad_result.max_seqlen_in_batch_q
+            max_seqlen_in_batch_k = upad_result.max_seqlen_in_batch_k
 
             if not use_sliding_windows:
                 attn_output_unpad = flash_attn_varlen_func(
@@ -689,18 +710,20 @@ class Phi3FlashAttention2(Phi3Attention):
             attention_mask = attention_mask[:, -query_length:]
             query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
 
-        return (
+        return self.UpadInputResult(
             query_layer,
             key_layer,
             value_layer,
             indices_q,
-            (cu_seqlens_q, cu_seqlens_k),
-            (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_in_batch_q,
+            max_seqlen_in_batch_k,
         )
 
 
 # copied from transformers.models.llama.modeling_llama.LlamaSdpaAttention with Llama->Phi3
-# TODO @Arthur no longer copied from LLama after static cache
+# @Arthur: no longer copied from LLama after static cache
 class Phi3SdpaAttention(Phi3Attention):
     """
     Phi3 attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
@@ -719,10 +742,15 @@ class Phi3SdpaAttention(Phi3Attention):
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
-            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+            # Improve this warning with e.g. `model.config.attn_implementation = "manual"`
+            # once this is implemented.
             logger.warning_once(
-                "Phi3Model is using Phi3SdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
-                'but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                "Phi3Model is using Phi3SdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` "
+                "does not support `output_attentions=True`. Falling back to the manual attention "
+                "implementation, "
+                'but specifying the manual implementation will be required from Transformers version '
+                'v5.0.0 onwards. This warning can be removed using the argument '
+                '`attn_implementation="eager"` when loading the model.'
             )
             return super().forward(
                 hidden_states=hidden_states,
@@ -765,7 +793,8 @@ class Phi3SdpaAttention(Phi3Attention):
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
 
-        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
+        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with
+        # non-contiguous inputs with custom attn_mask,
         # Reference: https://github.com/pytorch/pytorch/issues/112577.
         if query_states.device.type == "cuda" and attention_mask is not None:
             query_states = query_states.contiguous()
@@ -778,7 +807,8 @@ class Phi3SdpaAttention(Phi3Attention):
             value_states,
             attn_mask=attention_mask,
             dropout_p=self.attention_dropout if self.training else 0.0,
-            # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case q_len == 1.
+            # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d
+            # that does not create a causal mask in case q_len == 1.
             is_causal=self.is_causal and attention_mask is None and q_len > 1,
         )
 
@@ -823,7 +853,8 @@ class Phi3DecoderLayer(nn.Module):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         if "padding_mask" in kwargs:
             warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
+                "Passing `padding_mask` is deprecated and will be removed in v4.37. "
+                "Please make sure use `attention_mask` instead.`"
             )
         """
         Args:
@@ -1239,7 +1270,8 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
         >>> # Generate
         >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        'This is an example script .\n Certainly! Below is a sample script that demonstrates a simple task, such as calculating the sum'
+        'This is an example script .\n Certainly! Below is a sample script that demonstrates a '
+        'simple task, such as calculating the sum'
         ```"""
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1373,7 +1405,8 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
     """,
     PHI3_START_DOCSTRING,
 )
-# Copied from transformers.models.llama.modeling_llama.LlamaForSequenceClassification with Llama->Phi3, LLAMA->PHI3, self.transformer->self.model, transformer_outputs->model_outputs
+# Copied from transformers.models.llama.modeling_llama.LlamaForSequenceClassification
+# with Llama->Phi3, LLAMA->PHI3, self.transformer->self.model, transformer_outputs->model_outputs
 class Phi3ForSequenceClassification(Phi3PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1489,7 +1522,8 @@ class Phi3ForSequenceClassification(Phi3PreTrainedModel):
     """,
     PHI3_START_DOCSTRING,
 )
-# Copied from transformers.models.mpt.modeling_mpt.MptForTokenClassification with Mpt->Phi3,MPT->PHI3,self.transformer->self.model,transformer_outputs->model_outputs
+# Copied from transformers.models.mpt.modeling_mpt.MptForTokenClassification
+# with Mpt->Phi3,MPT->PHI3,self.transformer->self.model,transformer_outputs->model_outputs
 class Phi3ForTokenClassification(Phi3PreTrainedModel):
     def __init__(self, config: Phi3Config):
         super().__init__(config)

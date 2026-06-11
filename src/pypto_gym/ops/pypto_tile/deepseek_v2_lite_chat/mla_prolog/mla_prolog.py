@@ -213,7 +213,6 @@ def mla_prolog_hybrid_optimized(hidden_states, kv_a_weight, kv_b_weight, ln_weig
     # Stage 1: kv_a_proj + split + RMSNorm (torch_npu原生算子)
     hidden_2d = hidden_states.reshape(bsz * seq_len, hidden_size).contiguous()
 
-    # kv_a_proj (torch_npu matmul)
     # 调用方传入已转置的kv_a_weight [hidden_size, kv_dim]
     # 直接matmul: hidden_2d [b*s, hidden_size] @ kv_a_weight [hidden_size, kv_dim]
     compressed_kv_total = torch.matmul(hidden_2d, kv_a_weight)

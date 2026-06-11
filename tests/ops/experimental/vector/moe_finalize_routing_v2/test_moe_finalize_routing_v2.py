@@ -65,33 +65,56 @@ def setup_npu(device_id):
 # 2. 测试函数
 # ─────────────────────────────────────────────
 
-def run_moe_finalize_routing_v2_test(  # pylint: disable=huawei-too-many-arguments
+def _prepare_optional_inputs(num_rows, K, H, E, has_x1, has_x2, has_bias, has_scales, device):
+    x1 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device) if has_x1 else None
+    x2 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device) if has_x2 else None
+
+    bias = None
+    expert_idx = None
+    if has_bias:
+        if E is None:
+            E = 8
+        bias = torch.randn(E, H, dtype=torch.bfloat16, device=device)
+        expert_idx = torch.randint(0, E, (num_rows, K), dtype=torch.int32, device=device)
+
+    scales = torch.randn(num_rows, K, dtype=torch.bfloat16, device=device) if has_scales else None
+
+    return x1, x2, bias, scales, expert_idx
+
+
+def _moe_precision_compare_and_assert(result, golden, run_mode):
+    import numpy as np
+    from numpy.testing import assert_allclose
+
+    result_np = result.cpu().float().numpy()
+    golden_np = golden.cpu().float().numpy()
+
+    max_diff = np.abs(result_np - golden_np).max()
+    mean_diff = np.abs(result_np - golden_np).mean()
+    print(f"  Max diff    : {max_diff:.6e}")
+    print(f"  Mean diff   : {mean_diff:.6e}")
+
+    if run_mode == "npu":
+        try:
+            assert_allclose(result_np, golden_np, rtol=RTOL, atol=ATOL)
+            print("[PRECISION_PASS]")
+        except AssertionError as e:
+            print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
+            raise
+        except Exception as e:
+            print(f"Runtime error: {e}", file=sys.stderr)
+            raise
+
+    print("  ✓ Passed\n")
+
+
+def run_moe_finalize_routing_v2_test(
     num_rows, K, H, E=None,
     has_x1=False, has_x2=False, has_bias=False, has_scales=False,
     drop_pad_mode=2, seed=42,
     device_id=None, run_mode="npu", test_name=None
 ):
-    """通用测试函数：执行 moe_finalize_routing_v2 算子精度验证
-
-    Args:
-        num_rows: 行数
-        K: 专家数（每个样本路由到的专家数）
-        H: hidden size
-        E: 专家总数（可选，仅在 has_bias=True 时需要）
-        has_x1: 是否有残差连接1
-        has_x2: 是否有残差连接2
-        has_bias: 是否有专家偏置
-        has_scales: 是否有路由权重
-        drop_pad_mode: 索引排列方式（0-3）
-        seed: 随机种子
-        device_id: NPU 设备 ID
-        run_mode: 运行模式 ("npu" 或 "sim")
-        test_name: 测试名称（可选，用于日志输出）
-    """
-    # 延迟导入，避免在 --list 或 --help 时卡住
     import torch
-    import numpy as np
-    from numpy.testing import assert_allclose
     from moe_finalize_routing_v2_golden import moe_finalize_routing_v2_golden
     from experimental.vector.moe_finalize_routing_v2.moe_finalize_routing_v2_impl import moe_finalize_routing_v2_wrapper
 
@@ -110,42 +133,20 @@ def run_moe_finalize_routing_v2_test(  # pylint: disable=huawei-too-many-argumen
     else:
         device = "cpu"
 
-    # 固定随机种子以保证可重复性
     torch.manual_seed(seed)
 
-    # 准备必需输入
     expanded_x = torch.randn(num_rows * K, H, dtype=torch.bfloat16, device=device)
     expanded_row_idx = torch.randint(0, num_rows * K, (num_rows * K,), dtype=torch.int32, device=device)
 
-    # 准备可选输入
-    x1 = None
-    if has_x1:
-        x1 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device)
+    x1, x2, bias, scales, expert_idx = _prepare_optional_inputs(
+        num_rows, K, H, E, has_x1, has_x2, has_bias, has_scales, device)
 
-    x2 = None
-    if has_x2:
-        x2 = torch.randn(num_rows, H, dtype=torch.bfloat16, device=device)
-
-    bias = None
-    expert_idx = None
-    if has_bias:
-        if E is None:
-            E = 8  # 默认专家总数
-        bias = torch.randn(E, H, dtype=torch.bfloat16, device=device)
-        expert_idx = torch.randint(0, E, (num_rows, K), dtype=torch.int32, device=device)
-
-    scales = None
-    if has_scales:
-        scales = torch.randn(num_rows, K, dtype=torch.bfloat16, device=device)
-
-    # 执行 kernel wrapper
     result = moe_finalize_routing_v2_wrapper(
         expanded_x, expanded_row_idx,
         x1, x2, bias, scales, expert_idx,
         drop_pad_mode
     )
 
-    # 执行 golden（在 CPU 上）
     golden = moe_finalize_routing_v2_golden(
         expanded_x.cpu(), expanded_row_idx.cpu(),
         x1.cpu() if x1 is not None else None,
@@ -156,31 +157,10 @@ def run_moe_finalize_routing_v2_test(  # pylint: disable=huawei-too-many-argumen
         drop_pad_mode
     )
 
-    # 精度对比
     print(f"  Input shape : expanded_x={expanded_x.shape}")
     print(f"  Output shape: {result.shape}")
 
-    result_np = result.cpu().float().numpy()
-    golden_np = golden.cpu().float().numpy()
-
-    max_diff = np.abs(result_np - golden_np).max()
-    mean_diff = np.abs(result_np - golden_np).mean()
-    print(f"  Max diff    : {max_diff:.6e}")
-    print(f"  Mean diff   : {mean_diff:.6e}")
-
-    # 三态判定
-    if run_mode == "npu":
-        try:
-            assert_allclose(result_np, golden_np, rtol=RTOL, atol=ATOL)
-            print("[PRECISION_PASS]")
-        except AssertionError as e:
-            print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
-            raise
-        except Exception as e:
-            print(f"Runtime error: {e}", file=sys.stderr)
-            raise
-
-    print("  ✓ Passed\n")
+    _moe_precision_compare_and_assert(result, golden, run_mode)
 
 
 # ─────────────────────────────────────────────

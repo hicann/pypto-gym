@@ -99,7 +99,6 @@ def inverse_rope_3d(
     # origin calc flow: reshape(1,n_q,2,rope_dim // 2)->transpose(1,n_q,rope_dim // 2,2)->reshape(1,n_q,rope_dim)
     # new calc flow: transpose(1,n_q,rope_dim)->reshape(1,2,rope_dim //
     # 2,n_q)->transpose(1,rope_dim //
-    # 2,2,n_q)->reshape(1,rope_dim,n_q)->transpose(1,n_q,rope_dim)
     x_rotate_trs_1 = pypto.transpose(x_rotate, 1, 2)
     x_rotate_reshape_1 = pypto.reshape(
         x_rotate_trs_1,

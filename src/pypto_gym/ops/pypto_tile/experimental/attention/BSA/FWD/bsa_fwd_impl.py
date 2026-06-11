@@ -54,7 +54,7 @@ import pypto
 from torch._dynamo import allow_in_graph
 
 from bsa_common import (
-    DEFAULT_CONFIG,
+    DEFAULT_CONFIG, SparseKvBuildConfig,
     _pad_to_block_aligned, _build_sparse_kv_cached,
     _make_jit_opts,
     _VEC_TILE_LOAD, _CUBE_TILE, _CUBE_TILE_LIST,
@@ -297,10 +297,10 @@ def block_sparse_attention_forward(
     output_3d = torch.zeros(B * Hq, Sq_pad, D, dtype=cfg.torch_dtype, device=query.device)
     lse_2d = torch.full([B * Hq, Sq_pad], cfg.lse_init, dtype=cfg.accum_torch_dtype, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(
-        block_sparse_mask, k_2d, v_2d,
-        B, Hq, Hkv, Sq, Skv, Sq_pad, Skv_pad, numQB, numKB,
-        bx, by, D, query.device)
+    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+        block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
+        B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
+        numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
 
     softmax_scale = D ** -0.5
     large_neg = cfg.large_neg
@@ -378,7 +378,8 @@ def block_sparse_attention_forward_concurrent(
     extra_pass_options=None, extra_runtime_options=None,
 ):
     """Per-BH concurrent FWD: launch B*Hq kernels on separate NPU streams,
-    each using the single fwd_kernel with BH=1 slices."""
+    each using the single fwd_kernel with BH=1 slices.
+    """
     global last_forward_perf_dir
     last_forward_perf_dir = None
 
@@ -406,10 +407,10 @@ def block_sparse_attention_forward_concurrent(
     output_3d = torch.zeros(B * Hq, Sq_pad, D, dtype=cfg.torch_dtype, device=query.device)
     lse_2d = torch.full([B * Hq, Sq_pad], cfg.lse_init, dtype=cfg.accum_torch_dtype, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(
-        block_sparse_mask, k_2d, v_2d,
-        B, Hq, Hkv, Sq, Skv, Sq_pad, Skv_pad, numQB, numKB,
-        bx, by, D, query.device)
+    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+        block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
+        B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
+        numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
 
     softmax_scale = D ** -0.5
     large_neg = cfg.large_neg

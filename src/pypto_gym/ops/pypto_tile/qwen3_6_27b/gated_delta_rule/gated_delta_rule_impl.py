@@ -107,27 +107,27 @@ def _gdr_kernel(
             q_off = q_off_head + s_idx
 
             q_bf16 = pypto.view(query, [L, D], [q_off, 0])
-            k_bf16 = pypto.view(key,   [L, D], [q_off, 0])
+            k_bf16 = pypto.view(key, [L, D], [q_off, 0])
             v_bf16 = pypto.view(value, [L, D], [q_off, 0])
-            b_bf16 = pypto.view(beta,  [L, 1], [q_off, 0])
-            gc     = pypto.view(g_cum_in, [L, 1], [q_off, 0]) + 0.0
+            b_bf16 = pypto.view(beta, [L, 1], [q_off, 0])
+            gc = pypto.view(g_cum_in, [L, 1], [q_off, 0]) + 0.0
 
             q = pypto.cast(q_bf16, pypto.DT_FP32)
             k = pypto.cast(k_bf16, pypto.DT_FP32)
             v = pypto.cast(v_bf16, pypto.DT_FP32)
             bf = pypto.cast(b_bf16, pypto.DT_FP32)
 
-            q_sq  = pypto.mul(q, q)
-            q_ss  = pypto.sum(q_sq, dim=-1, keepdim=True)
-            q_se  = pypto.add(q_ss, eps)
+            q_sq = pypto.mul(q, q)
+            q_ss = pypto.sum(q_sq, dim=-1, keepdim=True)
+            q_se = pypto.add(q_ss, eps)
             q_inv = pypto.rsqrt(q_se)
-            q_n   = pypto.mul(q, q_inv) + 0.0
+            q_n = pypto.mul(q, q_inv) + 0.0
 
-            k_sq  = pypto.mul(k, k)
-            k_ss  = pypto.sum(k_sq, dim=-1, keepdim=True)
-            k_se  = pypto.add(k_ss, eps)
+            k_sq = pypto.mul(k, k)
+            k_ss = pypto.sum(k_sq, dim=-1, keepdim=True)
+            k_se = pypto.add(k_ss, eps)
             k_inv = pypto.rsqrt(k_se)
-            k_n   = pypto.mul(k, k_inv) + 0.0
+            k_n = pypto.mul(k, k_inv) + 0.0
 
             q_s = pypto.mul(q_n, inv_sqrt_D)
             v_b = pypto.mul(v, bf)
@@ -143,7 +143,7 @@ def _gdr_kernel(
             kkt = pypto.matmul(k_b, k_n, pypto.DT_FP32, b_trans=True)
             A0_pre = pypto.mul(kkt, decay_mask)
             A0_neg = pypto.mul(A0_pre, -1.0)
-            A0     = pypto.mul(A0_neg, lower_strict_LL)
+            A0 = pypto.mul(A0_neg, lower_strict_LL)
 
             # (I - A0)^-1 = I + A0 + A0^2 + ... ; A0 strict-lower-tri => series
             # converges; K=8 passes bf16-realistic gate at L=128.
@@ -214,7 +214,14 @@ def gated_delta_rule_wrapper(
     B, S, Nv, D = query.shape
     L = _L
 
-    if (initial_state is not None) or (D != _D) or (Nv != _NV) or (not use_qk_l2norm_in_kernel) or (B != 1):  # pylint: disable=too-many-boolean-expressions
+    unsupported_config = (
+        (initial_state is not None)
+        or (D != _D)
+        or (Nv != _NV)
+        or (not use_qk_l2norm_in_kernel)
+        or (B != 1)
+    )
+    if unsupported_config:
         raise NotImplementedError(
             "gated_delta_rule_wrapper requires B=1, Nv=48, D=128, "
             "initial_state=None, use_qk_l2norm_in_kernel=True; "
@@ -226,10 +233,10 @@ def gated_delta_rule_wrapper(
     pad = (L - S % L) % L
     if pad:
         query = F.pad(query, (0, 0, 0, 0, 0, pad))
-        key   = F.pad(key,   (0, 0, 0, 0, 0, pad))
+        key = F.pad(key, (0, 0, 0, 0, 0, pad))
         value = F.pad(value, (0, 0, 0, 0, 0, pad))
-        beta  = F.pad(beta,  (0, 0, 0, pad))
-        g     = F.pad(g,     (0, 0, 0, pad))
+        beta = F.pad(beta, (0, 0, 0, pad))
+        g = F.pad(g, (0, 0, 0, pad))
     S_pad = S + pad
 
     BN = B * Nv
@@ -237,24 +244,24 @@ def gated_delta_rule_wrapper(
     BND = BN * D
 
     query_perm = query.to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
-    key_perm   = key  .to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
+    key_perm = key  .to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
     value_perm = value.to(torch.bfloat16).permute(0, 2, 1, 3).contiguous()
-    beta_perm  = beta .to(torch.bfloat16).permute(0, 2, 1).contiguous()
-    g_perm     = g    .to(torch.float32).permute(0, 2, 1).contiguous()
+    beta_perm = beta .to(torch.bfloat16).permute(0, 2, 1).contiguous()
+    g_perm = g    .to(torch.float32).permute(0, 2, 1).contiguous()
 
     g_cum_perm = g_perm.cumsum(dim=-1)
 
     query_2d = query_perm.view(BNL, D)
-    key_2d   = key_perm  .view(BNL, D)
+    key_2d = key_perm  .view(BNL, D)
     value_2d = value_perm.view(BNL, D)
-    beta_2d  = beta_perm .view(BNL, 1)
+    beta_2d = beta_perm .view(BNL, 1)
     g_cum_2d = g_cum_perm.view(BNL, 1)
 
     device = query.device
     helpers = _get_helpers(device, L)
 
     core_out_2d = torch.empty([BNL, D], dtype=torch.bfloat16, device=device)
-    state_2d    = torch.empty([BND, D], dtype=torch.float32,  device=device)
+    state_2d = torch.empty([BND, D], dtype=torch.float32, device=device)
 
     _gdr_kernel(query_2d, key_2d, value_2d, beta_2d, g_cum_2d,
                 helpers["lower_strict_LL"], helpers["eye_LL"],

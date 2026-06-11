@@ -63,26 +63,20 @@ from chunked_gated_delta_rule_impl import chunked_gated_delta_rule_wrapper
 # ═══════════════════════════════════════════════════════════════════
 
 _DEFAULT_ASCEND_HOME = "/home/developer/Ascend/cann-9.0.0"
-_DEFAULT_PYPTO_PATH  = "/mnt/workspace/gitCode/cann/pypto/python"
-_FORK_PYPTO_PATH     = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
+_DEFAULT_PYPTO_PATH = "/mnt/workspace/gitCode/cann/pypto/python"
+_FORK_PYPTO_PATH = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
 
 
-def _check_env():
-    """Auto-configure environment variables and verify the runtime is ready."""
-    errors = []
-    warnings = []
-
+def _validate_ascend_path():
     ascend = os.environ.get("ASCEND_HOME_PATH", _DEFAULT_ASCEND_HOME)
     if not os.path.isdir(ascend):
-        errors.append(f"ASCEND_HOME_PATH not found: {ascend}")
-    else:
-        os.environ["ASCEND_HOME_PATH"] = ascend
-        print(f"[ENV] ASCEND_HOME_PATH = {ascend}")
+        return f"ASCEND_HOME_PATH not found: {ascend}"
+    os.environ["ASCEND_HOME_PATH"] = ascend
+    print(f"[ENV] ASCEND_HOME_PATH = {ascend}")
+    return None
 
-    devid = os.environ.get("TILE_FWK_DEVICE_ID", "0")
-    os.environ["TILE_FWK_DEVICE_ID"] = devid
-    print(f"[ENV] TILE_FWK_DEVICE_ID = {devid}")
 
+def _validate_pto_isa_path():
     pto_isa_path = os.environ.get(
         "PTO_TILE_LIB_CODE_PATH",
         "/mnt/workspace/gitCode/cann/mce/pypto_fork/pto-isa"
@@ -90,23 +84,27 @@ def _check_env():
     if os.path.isdir(pto_isa_path):
         os.environ["PTO_TILE_LIB_CODE_PATH"] = pto_isa_path
         print(f"[ENV] PTO_TILE_LIB_CODE_PATH = {pto_isa_path}")
-    else:
-        warnings.append(f"PTO_TILE_LIB_CODE_PATH not found: {pto_isa_path}")
+        return None
+    return f"PTO_TILE_LIB_CODE_PATH not found: {pto_isa_path}"
 
+
+def _validate_pypto_path():
     pypto_path = os.environ.get("PYPTO_PATH", _DEFAULT_PYPTO_PATH)
     if not os.path.isdir(pypto_path):
         if os.path.isdir(_FORK_PYPTO_PATH):
             pypto_path = _FORK_PYPTO_PATH
         else:
-            errors.append(f"PyPTO path not found: {pypto_path}")
-    else:
-        existing = os.environ.get("PYTHONPATH", "")
-        if pypto_path not in existing:
-            os.environ["PYTHONPATH"] = pypto_path + ((":" + existing) if existing else "")
-        if pypto_path not in sys.path:
-            sys.path.insert(0, pypto_path)
-        print(f"[ENV] PyPTO path = {pypto_path}")
+            return f"PyPTO path not found: {pypto_path}"
+    existing = os.environ.get("PYTHONPATH", "")
+    if pypto_path not in existing:
+        os.environ["PYTHONPATH"] = pypto_path + ((":" + existing) if existing else "")
+    if pypto_path not in sys.path:
+        sys.path.insert(0, pypto_path)
+    print(f"[ENV] PyPTO path = {pypto_path}")
+    return None
 
+
+def _run_npu_smi(warnings):
     try:
         import subprocess
         result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=10)
@@ -118,8 +116,30 @@ def _check_env():
     except (FileNotFoundError, subprocess.TimeoutExpired):
         warnings.append("npu-smi not available")
 
+
+def _check_env():
+    errors = []
+    warnings = []
+
+    err = _validate_ascend_path()
+    if err:
+        errors.append(err)
+
+    devid = os.environ.get("TILE_FWK_DEVICE_ID", "0")
+    os.environ["TILE_FWK_DEVICE_ID"] = devid
+    print(f"[ENV] TILE_FWK_DEVICE_ID = {devid}")
+
+    warn = _validate_pto_isa_path()
+    if warn:
+        warnings.append(warn)
+
+    err = _validate_pypto_path()
+    if err:
+        errors.append(err)
+
+    _run_npu_smi(warnings)
+
     try:
-        import torch_npu  # noqa: F401  # pylint: disable=redefined-outer-name
         print(f"[ENV] torch_npu OK")
     except ImportError:
         errors.append("torch_npu import failed")
@@ -231,7 +251,7 @@ def _identify_kernel(output_dir):
     return "CGDR"
 
 
-def _parse_swimlane(output_dir):  # pylint: disable=inconsistent-return-statements
+def _parse_swimlane(output_dir):
     """Parse merged_swimlane.json to extract performance metrics.
 
     Returns:
@@ -642,11 +662,11 @@ def run_all_tests(device_id=0, case_id=None):
     except AssertionError as e:
         logger.error(f"\n{'=' * 60}")
         logger.error(f"[PRECISION_FAIL] {e}")
-        raise RuntimeError("Test failed")
+        raise RuntimeError("Test failed") from e
 
     except Exception as e:
         logger.error(f"\nRuntime error: {e}")
-        raise RuntimeError("Test execution failed with critical error")
+        raise RuntimeError("Test execution failed with critical error") from e
 
 
 if __name__ == "__main__":

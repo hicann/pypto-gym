@@ -71,7 +71,7 @@ def compute_rmsnorm_rsqrt(X_flat: pypto.Tensor, N_D: int, norm_eps: float) -> py
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1}, 
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}, "cube_nbuffer_setting":{-1: 4}})
-def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
+def mhc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     phi_T: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),           # [N*D, N²+2N] 固定值
     bias_pre: pypto.Tensor([pypto.STATIC], pypto.DT_FP32),               # [N] - 已切片（Step 5 使用）
@@ -187,7 +187,6 @@ def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
         # Step 4: Split（分流为三路）
         # ─────────────────────────────────────────
         # 使用切片替代 torch.split
-        # split sizes: [N, N, N²] = [8, 8, 64]
         X_pre = X_hat_norm[:, 0:N]  # [unroll_length, N] FP32
         X_post = X_hat_norm[:, N:2*N]  # [unroll_length, N] FP32
         X_comb = X_hat_norm[:, 2*N:2*N+N*N]  # [unroll_length, N²] FP32
@@ -196,7 +195,7 @@ def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
         # ─────────────────────────────────────────
         # Step 5: Branch Pre
         # ─────────────────────────────────────────
-        # scaled_X_pre: alpha[0] * X_pre
+
         # 注意：pypto.mul 需要 (Tensor, float) 顺序，不支持 (float, Tensor)
         pypto.set_vec_tile_shapes(bs_tile, N)  # tileshape=1
         scaled_X_pre = pypto.mul(X_pre, alpha_0)  # [unroll_length, N] FP32
@@ -227,7 +226,7 @@ def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
         # ─────────────────────────────────────────
         # Step 6: Branch Post
         # ─────────────────────────────────────────
-        # Golden: h_post = 2 * sigmoid(h_post * alpha[1] + bias[N:2*N])
+
         pypto.set_vec_tile_shapes(bs_tile_2, N)  # tileshape=1
         scaled_X_post = pypto.mul(X_post, alpha_1)  # [unroll_length, N] FP32
 
@@ -240,7 +239,7 @@ def mhc_pre_kernel(  # pylint: disable=huawei-too-many-arguments
         # ─────────────────────────────────────────
         # Step 7: Branch Comb
         # ─────────────────────────────────────────
-        # Golden: h_res = h_res * alpha[2] + bias[2*N:].view(N, N)
+
         # 注意：X_comb 是 [unroll_length, N*N] 2D tensor
         # bias_comb_2d 是 [1, N*N] 2D tensor（已 reshape）
         # 先计算为 2D [unroll_length, N*N]，然后 reshape 为 3D [unroll_length, N, N]

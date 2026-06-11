@@ -24,7 +24,6 @@
 #   - level8: bf16, [2,128,8192,64], S_cs=S       (large sequence multi-head)
 #
 # Compares the PyPTO kernel output against the pure-PyTorch golden using
-# numpy.testing.assert_allclose with atol=1e-4, rtol=0.0078125.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -137,49 +136,41 @@ def _run_case(case: dict, device: str) -> bool:
 
 
 def test_level0(device: str) -> bool:
-    """level0: bf16 path, [1,1,1024,64], S_cs=S."""
     cases = [c for c in _load_cases() if c["id"] == "level0"]
     return _run_case(cases[0], device)
 
 
 def test_level1(device: str) -> bool:
-    """level1: bf16 path, [1,128,2048,64], S_cs=S."""
     cases = [c for c in _load_cases() if c["id"] == "level1"]
     return _run_case(cases[0], device)
 
 
 def test_level2(device: str) -> bool:
-    """level2: bf16 path, [2,128,4096,64], S_cs=1 broadcast."""
     cases = [c for c in _load_cases() if c["id"] == "level2"]
     return _run_case(cases[0], device)
 
 
 def test_level3(device: str) -> bool:
-    """level3: fp16 path, [1,1,1024,64], S_cs=S."""
     cases = [c for c in _load_cases() if c["id"] == "level3"]
     return _run_case(cases[0], device)
 
 
 def test_level4(device: str) -> bool:
-    """level4: bf16 path, [4,128,8192,64], S_cs=S (max)."""
     cases = [c for c in _load_cases() if c["id"] == "level4"]
     return _run_case(cases[0], device)
 
 
 def test_level5(device: str) -> bool:
-    """level5: bf16 path, [4,128,2,64], S_cs=S (short sequence)."""
     cases = [c for c in _load_cases() if c["id"] == "level5"]
     return _run_case(cases[0], device)
 
 
 def test_level6(device: str) -> bool:
-    """level6: bf16 path, [4,1,2,64], S_cs=S (short sequence N=1)."""
     cases = [c for c in _load_cases() if c["id"] == "level6"]
     return _run_case(cases[0], device)
 
 
 def test_level7(device: str) -> bool:
-    """level7: bf16 path, [2,1,8192,64], S_cs=S (large sequence N=1)."""
     cases = [c for c in _load_cases() if c["id"] == "level7"]
     return _run_case(cases[0], device)
 
@@ -198,10 +189,6 @@ def main() -> int:
         all_ok = True
         # 取消注释你要跑的 level；默认跑 level7 + level8
         for runner in (test_level7, test_level8):
-        # for runner in (test_level0, test_level1, test_level2, test_level3, test_level4):
-        # for runner in (test_level2,):
-        # for runner in (test_level3,):
-        # for runner in (test_level4,):
             try:
                 ok = runner(device)
             except Exception:

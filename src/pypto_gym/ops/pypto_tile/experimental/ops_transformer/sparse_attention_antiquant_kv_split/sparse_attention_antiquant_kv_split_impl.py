@@ -50,7 +50,7 @@ class SaTileShapeConfig:
     v2_tile_shape: list
 
 
-def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,  # pylint: disable=huawei-too-many-arguments
+def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,
                                         kn_scales, topk_indices,
                                         block_table, kv_act_seqs, attention_out,
                                         nq, n_kv, softmax_scale, topk, block_size,
@@ -229,7 +229,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, kn_quant, kr,  # 
         "device_sched_mode": 3
     }
 )
-def sparse_attention_antiquant_kv_split_d(  # pylint: disable=huawei-too-many-arguments
+def sparse_attention_antiquant_kv_split_d(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     kn_quant: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),
@@ -292,7 +292,7 @@ def sparse_attention_antiquant_kv_split_d(  # pylint: disable=huawei-too-many-ar
         "stitch_function_max_num": 128
     }
 )
-def sparse_attention_antiquant_kv_split_p(  # pylint: disable=huawei-too-many-arguments
+def sparse_attention_antiquant_kv_split_p(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     query_rope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     kn_quant: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),

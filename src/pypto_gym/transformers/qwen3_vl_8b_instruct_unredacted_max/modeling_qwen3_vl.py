@@ -591,7 +591,8 @@ class Qwen3VLTextDecoderLayer(GradientCheckpointingLayer):
 class Qwen3VLModelOutputWithPast(ModelOutput):
     r"""
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -727,7 +728,7 @@ class Qwen3VLVisionModel(Qwen3VLPreTrainedModel):
         idx_list = [[] for _ in range(4)]
         weight_list = [[] for _ in range(4)]
 
-        for t, h, w in grid_thw_list:
+        for _, h, w in grid_thw_list:
             h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
             w_idxs = torch.linspace(0, self.num_grid_per_side - 1, w)
 
@@ -1059,14 +1060,17 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Difference from Qwen2VL/Qwen2.5VL's get_rope_index:
-        - Since Qwen3.5 use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split too.
+        - Since Qwen3.5 use timestamps to seperate videos, like <t1> <vision_start> <frame1>
+        <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should
+        also be split too.
 
         Args:
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-                Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
-                it.
+                Indices of input sequence tokens in the vocabulary. Padding will be
+                ignored by default should you provide it.
             mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`):
-                Token type ids matching each modality to a different value in the input sequence, i.e. text (0), image (1), video (2).
+                Token type ids matching each modality to a different value in the input
+                sequence, i.e. text (0), image (1), video (2).
             image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
                 The temporal, height and width of feature shape of each image in LLM.
             video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
@@ -1117,14 +1121,12 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
             current_pos = 0
             llm_pos_ids_list = []
             for modality_type, start_idx, end_idx in input_type_group:
-                # text == 0
                 if modality_type == 0:
                     text_len = end_idx - start_idx
                     llm_pos_ids_list.append(
                         torch.arange(text_len, device=input_ids.device).view(1, -1).expand(3, -1) + current_pos
                     )
                     current_pos += text_len
-                # image == 1, video == 2
                 else:
                     grid_thw = next(grid_iters[modality_type])
                     vision_position_ids = self.get_vision_position_ids(
@@ -1191,8 +1193,9 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
         video_features: torch.FloatTensor | None = None,
     ):
         """
-        Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and checks that the placeholder token count is
-        equal to the length of multimodal features. If the lengths are different, an error is raised.
+        Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and
+        checks that the placeholder token count is equal to the length of multimodal
+        features. If the lengths are different, an error is raised.
         """
         if input_ids is None:
             special_image_mask = inputs_embeds == self.get_input_embeddings()(
@@ -1212,7 +1215,9 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
         if image_features is not None:
             torch_compilable_check(
                 inputs_embeds[special_image_mask].numel() == image_features.numel(),
-                f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {image_features.shape[0]}",
+                f"Image features and image tokens do not match, "
+                f"tokens: {n_image_tokens}, "
+                f"features: {image_features.shape[0]}",
             )
 
         n_video_tokens = special_video_mask.sum()
@@ -1220,7 +1225,9 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
         if video_features is not None:
             torch_compilable_check(
                 inputs_embeds[special_video_mask].numel() == video_features.numel(),
-                f"Video features and video tokens do not match, tokens: {n_video_tokens}, features: {video_features.shape[0]}",
+                f"Video features and video tokens do not match, "
+                f"tokens: {n_video_tokens}, "
+                f"features: {video_features.shape[0]}",
             )
         return special_image_mask, special_video_mask
 
@@ -1393,7 +1400,8 @@ class Qwen3VLCausalLMOutputWithPast(ModelOutput):
     logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -1501,7 +1509,11 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
                 "content": [
                     {
                         "type": "image",
-                        "image": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg",
+                        "image": (
+                            "https://huggingface.co/datasets/huggingface/"
+                            "documentation-images/resolve/main/"
+                            "pipeline-cat-chonk.jpeg"
+                        ),
                     },
                     {"type": "text", "text": "Describe the image."},
                 ],
@@ -1519,7 +1531,9 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
         >>> # Generate
         >>> generated_ids = model.generate(**inputs, max_new_tokens=1024)
         >>> generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
-        >>> output_text = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        >>> output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True,
+            clean_up_tokenization_spaces=False)[0]
         >>> print(output_text)
         ```
         """
@@ -1613,10 +1627,14 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
             inputs_tensor = model_kwargs["input_ids"]
 
         is_input_ids = len(inputs_tensor.shape) == 2 and inputs_tensor.dtype in [torch.int, torch.long]
+        has_multimodal_input = (
+            model_kwargs.get("image_grid_thw") is not None
+            or model_kwargs.get("video_grid_thw") is not None
+        )
         if (
             is_input_ids
             and model_kwargs.get("mm_token_type_ids") is not None
-            and (model_kwargs.get("image_grid_thw") is not None or model_kwargs.get("video_grid_thw") is not None)
+            and has_multimodal_input
         ):
             model_kwargs = {k: v for k, v in model_kwargs.items() if k != "input_ids"}
             vision_positions, rope_deltas = self.model.get_rope_index(inputs_tensor, **model_kwargs)
@@ -1640,7 +1658,8 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the number of images and videos for each sample to calculate the separation length of the sample tensor.
-        These parameters are not passed through the processor to avoid unpredictable impacts from interface modifications.
+        These parameters are not passed through the processor to avoid unpredictable
+        impacts from interface modifications.
 
         Args:
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
@@ -1709,15 +1728,14 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
                 input_ids, inputs_embeds=model_kwargs.get("inputs_embeds", None)
             )
 
-            # video_nums: (batch_size,)
             # since video_nums is the number of videos in the input dependent on the input_ids(vision_start),
-            # but qwen3vl append vision_start to each frame of each video, so we need to recover the real video_nums according to video_grid_thw
+            # but qwen3vl append vision_start to each frame of each video, so we need
+            # to recover the real video_nums according to video_grid_thw
             if video_grid_thw is not None:
                 cumulative_frame_counts = torch.cumsum(video_grid_thw[:, 0], dim=0)
                 cumulative_token_video_counts = torch.cumsum(video_nums, dim=0)
                 # Find video boundaries in cumulative_frame_counts
                 video_boundary_indices = torch.searchsorted(cumulative_frame_counts, cumulative_token_video_counts)
-                # example: video_boundary_indices = [3, 5] means video_nums = [4, 2]
                 video_nums = torch.diff(torch.cat([-video_boundary_indices.new_ones(1), video_boundary_indices]))
 
             def _repeat_interleave_samples(x, lengths, repeat_times):

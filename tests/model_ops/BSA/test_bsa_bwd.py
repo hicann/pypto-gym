@@ -82,39 +82,37 @@ from bsa_bwd_impl import (
 # ═══════════════════════════════════════════════════════════════════════
 
 ALL_CASES = [
-    ("S256 Sparse50",    1,  4, 2,  256,  256, 0.5),
-    ("S512 Sparse70",    1,  4, 4,  512,  512, 0.7),
-    ("S1024 Sparse30",   1,  8, 1, 1024, 1024, 0.3),
-    ("MHA Dense",        1,  4, 4,  256,  256, 1.0),
-    ("GQA",              1,  8, 2,  256,  512, 0.5),
-    ("MHA sparse0.3",    1,  4, 4,  256,  256, 0.3),
-    ("MHA sparse0.7",    1,  4, 4,  256,  256, 0.7),
-    ("MHA S512",         1,  4, 4,  512,  512, 0.7),
-    ("MHA S1024",        1,  4, 4, 1024, 1024, 0.7),
-    ("B2 MHA S256",      2,  4, 4,  256,  256, 0.5),
-    ("B2 GQA S256",      2,  8, 2,  256,  512, 0.5),
-    ("B2 Dense S256",    2,  4, 4,  256,  256, 1.0),
-    ("B2 Sparse S512",   2,  4, 4,  512,  512, 0.7),
-    ("B2 MHA S1024",     2,  4, 4, 1024, 1024, 0.7),
-    ("B4 MHA S256",      4,  4, 4,  256,  256, 0.5),
+    ("S256 Sparse50", 1, 4, 2, 256, 256, 0.5),
+    ("S512 Sparse70", 1, 4, 4, 512, 512, 0.7),
+    ("S1024 Sparse30", 1, 8, 1, 1024, 1024, 0.3),
+    ("MHA Dense", 1, 4, 4, 256, 256, 1.0),
+    ("GQA", 1, 8, 2, 256, 512, 0.5),
+    ("MHA sparse0.3", 1, 4, 4, 256, 256, 0.3),
+    ("MHA sparse0.7", 1, 4, 4, 256, 256, 0.7),
+    ("MHA S512", 1, 4, 4, 512, 512, 0.7),
+    ("MHA S1024", 1, 4, 4, 1024, 1024, 0.7),
+    ("B2 MHA S256", 2, 4, 4, 256, 256, 0.5),
+    ("B2 GQA S256", 2, 8, 2, 256, 512, 0.5),
+    ("B2 Dense S256", 2, 4, 4, 256, 256, 1.0),
+    ("B2 Sparse S512", 2, 4, 4, 512, 512, 0.7),
+    ("B2 MHA S1024", 2, 4, 4, 1024, 1024, 0.7),
+    ("B4 MHA S256", 4, 4, 4, 256, 256, 0.5),
 ]
 
 QUICK_CASES = [
-    ("S256 Sparse50",    1,  4, 2,  256,  256, 0.5),
-    ("S512 Sparse70",    1,  4, 4,  512,  512, 0.7),
-    ("B2 MHA S256",      2,  4, 4,  256,  256, 0.5),
+    ("S256 Sparse50", 1, 4, 2, 256, 256, 0.5),
+    ("S512 Sparse70", 1, 4, 4, 512, 512, 0.7),
+    ("B2 MHA S256", 2, 4, 4, 256, 256, 0.5),
 ]
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Mode: precision (baseline / baseline+concurrent)
-# ═══════════════════════════════════════════════════════════════════════
-
 def do_precision_test(name, B, Hq, Hkv, Sq, Skv, sparsity, test_concurrent=False):
     """Run forward+backward precision test for one configuration."""
     device = get_device()
     logger.info(f"  [BWD] {name}: B={B} Hq={Hq} Hkv={Hkv} Sq={Sq} Skv={Skv} sp={sparsity}")
-    Q, K, V, dO, mask, asq, askv = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    inputs = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    Q, K, V, dO, mask, asq, askv = inputs.Q, inputs.K, inputs.V, inputs.dO, inputs.mask, inputs.asq, inputs.askv
 
     # Forward pass (golden for backward reference, pypto for backward input)
     O_p, lse_p = block_sparse_attention_forward(Q, K, V, mask, asq, askv)
@@ -162,7 +160,8 @@ def do_perf_bench(name, B, Hq, Hkv, Sq, Skv, sparsity):
     """Run one BWD kernel call and collect swimlane perf data."""
     device = get_device()
     logger.info(f"  [BWD-perf] {name}: B={B} Hq={Hq} Hkv={Hkv} Sq={Sq} Skv={Skv}")
-    Q, K, V, dO, mask, asq, askv = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    inputs = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    Q, K, V, dO, mask, asq, askv = inputs.Q, inputs.K, inputs.V, inputs.dO, inputs.mask, inputs.asq, inputs.askv
 
     # FWD first (needed for BWD input)
     O, lse = block_sparse_attention_forward(Q, K, V, mask, asq, askv)
@@ -199,7 +198,8 @@ def bench_fn(fn, args, warmup=3, repeats=5):
 def do_perf_compare(name, B, Hq, Hkv, Sq, Skv, sparsity):
     """Compare baseline vs concurrent wall-clock timing for backward."""
     device = get_device()
-    Q, K, V, dO, mask, asq, askv = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    inputs = gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device)
+    Q, K, V, dO, mask, asq, askv = inputs.Q, inputs.K, inputs.V, inputs.dO, inputs.mask, inputs.asq, inputs.askv
 
     # FWD
     O_p, lse_p = block_sparse_attention_forward(Q, K, V, mask, asq, askv)
@@ -235,6 +235,50 @@ def do_perf_compare(name, B, Hq, Hkv, Sq, Skv, sparsity):
 # Main
 # ═══════════════════════════════════════════════════════════════════════
 
+def _run_cases(args, cases):
+    """Run all test cases and collect results."""
+    passed = 0
+    failed = 0
+    perf_results = {}
+
+    for name, B, Hq, Hkv, Sq, Skv, sp in cases:
+        logger.info(f"--- {name} ---")
+        try:
+            if args.mode == "precision":
+                do_precision_test(name, B, Hq, Hkv, Sq, Skv, sp, test_concurrent=False)
+                passed += 1
+            elif args.mode == "concurrent":
+                do_precision_test(name, B, Hq, Hkv, Sq, Skv, sp, test_concurrent=True)
+                passed += 1
+            elif args.mode == "perf":
+                do_perf_bench(name, B, Hq, Hkv, Sq, Skv, sp)
+            elif args.mode == "perf-compare":
+                b, c = do_perf_compare(name, B, Hq, Hkv, Sq, Skv, sp)
+                perf_results[name] = (b, c)
+                passed += 1
+            logger.info(f"  >> PASSED")
+        except Exception as e:
+            logger.error(f"  >> FAILED: {e}")
+            failed += 1
+    return passed, failed, perf_results
+
+
+def _print_summary(args, passed, failed, perf_results):
+    """Print test result summary."""
+    if args.mode in ("precision", "concurrent"):
+        logger.info("=" * 70)
+        logger.info(f"Results: {passed}/{passed + failed} PASSED")
+        logger.info("=" * 70)
+
+    if args.mode == "perf-compare" and perf_results:
+        logger.info("\n" + "=" * 70)
+        logger.info(f"{'Case':<20} {'Base(us)':>10} {'Conc(us)':>10} {'Delta':>8}")
+        logger.info("-" * 50)
+        for name, (b, c) in perf_results.items():
+            logger.info(f"  {name:<18} {b:>10.0f} {c:>10.0f} {(c-b)/b*100:>7.1f}%")
+        logger.info("=" * 70)
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="BSA Backward Unified Test & Benchmark")
@@ -259,44 +303,8 @@ def main():
     logger.info(f"  bwd atol={cfg.bwd_atol}, rtol={cfg.bwd_rtol}")
     logger.info("=" * 70 + "\n")
 
-    passed = 0
-    failed = 0
-    perf_results = {}
-
-    for name, B, Hq, Hkv, Sq, Skv, sp in cases:
-        logger.info(f"--- {name} ---")
-        try:
-            if args.mode == "precision":
-                do_precision_test(name, B, Hq, Hkv, Sq, Skv, sp, test_concurrent=False)
-                passed += 1
-            elif args.mode == "concurrent":
-                do_precision_test(name, B, Hq, Hkv, Sq, Skv, sp, test_concurrent=True)
-                passed += 1
-            elif args.mode == "perf":
-                do_perf_bench(name, B, Hq, Hkv, Sq, Skv, sp)
-            elif args.mode == "perf-compare":
-                b, c = do_perf_compare(name, B, Hq, Hkv, Sq, Skv, sp)
-                perf_results[name] = (b, c)
-                passed += 1
-            logger.info(f"  >> PASSED")
-        except Exception as e:
-            logger.error(f"  >> FAILED: {e}")
-            failed += 1
-
-    # Summary
-    if args.mode in ("precision", "concurrent"):
-        logger.info("=" * 70)
-        logger.info(f"Results: {passed}/{passed + failed} PASSED")
-        logger.info("=" * 70)
-
-    if args.mode == "perf-compare" and perf_results:
-        logger.info("\n" + "=" * 70)
-        logger.info(f"{'Case':<20} {'Base(us)':>10} {'Conc(us)':>10} {'Delta':>8}")
-        logger.info("-" * 50)
-        for name, (b, c) in perf_results.items():
-            logger.info(f"  {name:<18} {b:>10.0f} {c:>10.0f} {(c-b)/b*100:>7.1f}%")
-        logger.info("=" * 70)
-
+    passed, failed, perf_results = _run_cases(args, cases)
+    _print_summary(args, passed, failed, perf_results)
     _print_perf_summary()
     return 0 if failed == 0 else 1
 

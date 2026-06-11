@@ -57,7 +57,7 @@ def _precision_verify(impl_out, gold_out, tag):
         n_fail  = exceed.sum().item()
         max_d   = abs_err.max().item()
 
-        passed  = (n_fail == 0)
+        passed = (n_fail == 0)
         print(f"  {tag}_{name}: n={n_total}  fail={n_fail}  "
               f"max_diff={max_d:.2e}  {'PASS' if passed else 'FAIL'}  "
               f"(atol={atol}, rtol={rtol})")
@@ -75,11 +75,11 @@ def _precision_verify(impl_out, gold_out, tag):
     abs_err = (im - g).abs()
 
     large_mask = g.abs() >= _MERE_EXEMPT
-    n_small    = (~large_mask).sum().item()
-    n_large    = large_mask.sum().item()
+    n_small = (~large_mask).sum().item()
+    n_large = large_mask.sum().item()
 
     if n_large > 0:
-        g_large  = g[large_mask]
+        g_large = g[large_mask]
         im_large = im[large_mask]
         abs_diff_large = abs_err[large_mask]
         relative_error = abs_diff_large / (g_large.abs() + 1e-7)

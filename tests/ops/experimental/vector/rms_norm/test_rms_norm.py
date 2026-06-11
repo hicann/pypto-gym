@@ -122,10 +122,11 @@ def run_single_case(case_data, device_id=None, run_mode="npu"):
 
 
 # ─────────────────────────────────────────────
-# 3. CLI entry
+# 3. CLI helpers
 # ─────────────────────────────────────────────
 
-def main():
+def _build_cli_parser():
+    """Build argument parser for RMSNorm test CLI."""
     parser = argparse.ArgumentParser(
         description="PyPTO RMSNorm operator test",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -147,26 +148,23 @@ Examples:
         "--json", type=str, default="test_cases.json",
         help="Test cases JSON file (default: test_cases.json)",
     )
-    args = parser.parse_args()
+    return parser
 
-    test_cases = load_test_cases(args.json)
-    cases = test_cases.get("test_cases", [])
 
-    if not cases:
-        print("ERROR: No test cases found in JSON")
-        raise RuntimeError("Test execution failed")
+def _list_cases(args, cases):
+    """Handle --list: print all cases."""
+    print(f"\nTest cases from {args.json}:\n")
+    for case in cases:
+        case_id = case["id"]
+        desc = case.get("description", "")
+        shape = case["input"]["shape"]
+        dtype = case["input"]["dtype"]
+        eps = case.get("eps", 1e-5)
+        print(f"  {case_id}  — {desc}  [{dtype} {shape}] eps={eps}")
 
-    if args.list:
-        print(f"\nTest cases from {args.json}:\n")
-        for case in cases:
-            case_id = case["id"]
-            desc = case.get("description", "")
-            shape = case["input"]["shape"]
-            dtype = case["input"]["dtype"]
-            eps = case.get("eps", 1e-5)
-            print(f"  {case_id}  — {desc}  [{dtype} {shape}] eps={eps}")
-        return
 
+def _resolve_cases_to_run(args, cases):
+    """Determine which cases to run."""
     if args.case_id:
         case_data = None
         for case in cases:
@@ -177,44 +175,70 @@ Examples:
             print(f"ERROR: unknown case '{args.case_id}'")
             print(f"Valid: {', '.join([c['id'] for c in cases])}")
             raise RuntimeError("Test execution failed")
-        to_run = [case_data]
-    else:
-        to_run = cases
+        return [case_data]
+    return cases
 
+
+def _setup_npu_device(args):
+    """Setup NPU device if in npu mode."""
     device_id = None
     if args.run_mode == "npu":
         device_id = get_device_id()
         if device_id is None:
             raise RuntimeError("Test execution failed")
         torch.npu.set_device(device_id)
+    return device_id
 
+
+def _run_cases_and_report(to_run, device_id, args):
+    """Run all cases and print summary report."""
+    passed = 0
     all_passed = True
-    try:
-        passed = 0
-        for case_data in to_run:
-            print(f"\n▸ Running {case_data['id']}")
-            case_ok = run_single_case(case_data, device_id, args.run_mode)
-            if case_ok:
-                passed += 1
-            else:
-                all_passed = False
-
-        print("\n" + "=" * 60)
-        if all_passed:
-            print(f"All tests passed! ({passed}/{len(to_run)} cases)")
-            print("[PRECISION_PASS]")
+    for case_data in to_run:
+        print(f"\n▸ Running {case_data['id']}")
+        case_ok = run_single_case(case_data, device_id, args.run_mode)
+        if case_ok:
+            passed += 1
         else:
-            print(f"Some tests FAILED ({passed}/{len(to_run)} passed)")
-        print("=" * 60)
+            all_passed = False
 
-        if not all_passed:
-            raise RuntimeError("Test failed")
+    print("\n" + "=" * 60)
+    if all_passed:
+        print(f"All tests passed! ({passed}/{len(to_run)} cases)")
+        print("[PRECISION_PASS]")
+    else:
+        print(f"Some tests FAILED ({passed}/{len(to_run)} passed)")
+    print("=" * 60)
 
+    if not all_passed:
+        raise RuntimeError("Test failed")
+
+
+def main():
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+
+    test_cases = load_test_cases(args.json)
+    cases = test_cases.get("test_cases", [])
+
+    if not cases:
+        print("ERROR: No test cases found in JSON")
+        raise RuntimeError("Test execution failed")
+
+    if args.list:
+        _list_cases(args, cases)
+        return
+
+    to_run = _resolve_cases_to_run(args, cases)
+    device_id = _setup_npu_device(args)
+
+    try:
+        _run_cases_and_report(to_run, device_id, args)
     except Exception as e:
         print(f"\nRuntime error: {e}", file=sys.stderr)
         import traceback as _tb
         _tb.print_exc()
-        raise RuntimeError("Test execution failed with critical error")
+        raise RuntimeError("Test execution failed with critical error") from e
 
 
 if __name__ == "__main__":

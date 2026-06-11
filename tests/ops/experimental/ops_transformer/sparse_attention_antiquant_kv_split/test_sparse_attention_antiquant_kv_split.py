@@ -46,6 +46,55 @@ def gen_uniform_data(data_shape, min_value, max_value, dtype):
         return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
+def _gather_kv_slices(topk_indices, topk_indices_tmp, s2_start, s2_tile_cur,
+                       kn_quant, kr, kn_scales, block_table, block_size, b_idx,
+                       kv_lora_rank, qk_rope_dim, input_dtype):
+    """Gather KV slices for a tile: compute offsets from block_table, then fetch kn/kr/scales."""
+    offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
+    for cur_s2_idx in range(s2_tile_cur):
+        s2_idx_tmp = s2_start + cur_s2_idx
+        topk_index = topk_indices_tmp[s2_idx_tmp]
+        block_idx_in_batch = topk_index // block_size
+        slc_block_idx = block_table[b_idx, block_idx_in_batch]
+        tail = topk_index % block_size
+        offset[cur_s2_idx] = slc_block_idx * block_size + tail
+
+    kn_quant_slice = torch.zeros([s2_tile_cur, kv_lora_rank], dtype=torch.float8_e4m3fn)
+    kr_slice = torch.zeros([s2_tile_cur, qk_rope_dim], dtype=torch.bfloat16)
+    kn_scales_slice = torch.zeros([s2_tile_cur, 4], dtype=torch.float32)
+    for cur_s2_idx in range(s2_tile_cur):
+        slc_idx = offset[cur_s2_idx]
+        kn_quant_slice[cur_s2_idx, :] = kn_quant[slc_idx, :]
+        kr_slice[cur_s2_idx, :] = kr[slc_idx, :]
+        kn_scales_slice[cur_s2_idx, :] = kn_scales[slc_idx, :]
+    return kn_quant_slice, kr_slice, kn_scales_slice
+
+
+def _dequant_and_attention(qi, kn_quant_slice, kr_slice, kn_scales_slice,
+                            s2_tile_cur, kv_lora_rank, qk_rope_dim, scalar, input_dtype):
+    """Dequant KV and compute attention scores + softmax for a tile."""
+    kn_quant_fp32 = kn_quant_slice.to(torch.float32)
+    kn_quant_fp32_reshape = kn_quant_fp32.reshape(s2_tile_cur * 4, 128)
+    kn_scales_slice_reshape = kn_scales_slice.reshape(s2_tile_cur * 4, 1)
+    slc_kv = kn_quant_fp32_reshape * kn_scales_slice_reshape
+
+    slc_kv_up = torch.zeros([s2_tile_cur, kv_lora_rank + qk_rope_dim], dtype=input_dtype)
+    slc_kv_up[:, :kv_lora_rank] = slc_kv.reshape(s2_tile_cur, kv_lora_rank).to(input_dtype)
+    slc_kv_up[:, kv_lora_rank:] = kr_slice
+    slc_kv_reshape = slc_kv.reshape(s2_tile_cur, kv_lora_rank).to(input_dtype)
+
+    sij = torch.matmul(qi.to(torch.float32), slc_kv_up.transpose(1, 0).to(torch.float32)).to(torch.float32)
+    sij_scale = sij * scalar
+    tilda_mij = sij_scale.amax(dim=-1, keepdims=True)
+    t_sub = sij_scale - tilda_mij
+    tilda_pij = torch.exp(t_sub)
+    tilda_lij_reduce = tilda_pij.sum(dim=-1, keepdims=True)
+    t_softmax = tilda_pij / tilda_lij_reduce
+    tilda_pij_f16 = t_softmax.to(input_dtype)
+    q1 = torch.matmul(tilda_pij_f16.to(torch.float32), slc_kv_reshape.to(torch.float32)).to(torch.float32)
+    return q1
+
+
 def compute_attention_aq(input_data, params, s2_tile):
     """SA, 存8算16, Page nope cache, 计算流非FA, 使用PyTorch实现"""
     q_nope, q_rope, kn_quant, kr, kn_scales, topk_indices, block_table, actual_seq = input_data
@@ -79,55 +128,16 @@ def compute_attention_aq(input_data, params, s2_tile):
             for s2_idx in range(bn_per_batch):
                 s2_tile_cur = min(s2_tile, cur_seq - s2_idx * s2_tile)
                 s2_start = s2_tile * s2_idx
-                s2_end = s2_start + s2_tile_cur
 
-                topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_end]
-                slc_nope = torch.zeros([s2_tile_cur, kv_lora_rank + 2 * qk_rope_dim + 4 * 4],
-                    dtype=torch.float8_e4m3fn)
-                slc_kv_up = torch.zeros([s2_tile_cur, kv_lora_rank + qk_rope_dim], dtype=input_dtype)
-                kn_quant_slice = torch.zeros([s2_tile_cur, kv_lora_rank], dtype=torch.float8_e4m3fn)
-                kr_slice = torch.zeros([s2_tile_cur, qk_rope_dim], dtype=torch.bfloat16)
-                kn_scales_slice = torch.zeros([s2_tile_cur, 4], dtype=torch.float32)
+                topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_start + s2_tile_cur]
+                kn_quant_slice, kr_slice, kn_scales_slice = _gather_kv_slices(
+                    topk_indices, topk_indices_tmp, s2_start, s2_tile_cur,
+                    kn_quant, kr, kn_scales, block_table, block_size, b_idx,
+                    kv_lora_rank, qk_rope_dim, input_dtype)
 
-                offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
-                for cur_s2_idx in range(s2_tile_cur):
-                    s2_idx_tmp = s2_start + cur_s2_idx
-                    topk_index = topk_indices_tmp[s2_idx_tmp]
-                    block_idx_in_batch = topk_index // block_size
-                    slc_block_idx = block_table[b_idx, block_idx_in_batch]
-                    tail = topk_index % block_size
-                    offset[cur_s2_idx] = slc_block_idx * block_size + tail
-
-                for cur_s2_idx in range(s2_tile_cur):
-                    slc_idx = offset[cur_s2_idx]
-                    kn_quant_slice[cur_s2_idx, :] = kn_quant[slc_idx, :]
-                    kr_slice[cur_s2_idx, :] = kr[slc_idx, :]
-                    kn_scales_slice[cur_s2_idx, :] = kn_scales[slc_idx, :]
-
-                kn_quant_fp32 = kn_quant_slice.to(torch.float32)
-                kn_quant_fp32_reshape = kn_quant_fp32.reshape(s2_tile_cur * 4, 128)
-                kn_scales_slice_reshape = kn_scales_slice.reshape(s2_tile_cur * 4, 1)
-
-                slc_kv = kn_quant_fp32_reshape * kn_scales_slice_reshape
-                slc_kv_up[:, :kv_lora_rank] = slc_kv.reshape(s2_tile_cur, kv_lora_rank).to(input_dtype)
-                slc_kv_up[:, kv_lora_rank:] = kr_slice
-
-                slc_kv_reshape = slc_kv.reshape(s2_tile_cur, kv_lora_rank).to(input_dtype)
-
-                # C1
-                sij = torch.matmul(qi.to(torch.float32), slc_kv_up.transpose(1, 0).to(torch.float32)).to(torch.float32)
-
-                # V1
-                sij_scale = sij * scalar
-                tilda_mij = sij_scale.amax(dim=-1, keepdims=True)
-                t_sub = sij_scale - tilda_mij
-                tilda_pij = torch.exp(t_sub)
-                tilda_lij_reduce = tilda_pij.sum(dim=-1, keepdims=True)
-                t_softmax = tilda_pij / tilda_lij_reduce
-                tilda_pij_f16 = t_softmax.to(input_dtype)
-
-                # C2
-                q1 = torch.matmul(tilda_pij_f16.to(torch.float32), slc_kv_reshape.to(torch.float32)).to(torch.float32)
+                q1 = _dequant_and_attention(qi, kn_quant_slice, kr_slice, kn_scales_slice,
+                                             s2_tile_cur, kv_lora_rank, qk_rope_dim,
+                                             scalar, input_dtype)
 
             attention_output[b_idx, s1_idx, :, :] = q1.to(input_dtype)
 
@@ -174,6 +184,33 @@ def gen_block_table(act_seq, block_size, s1, need_indices=False):
     return block_num, block_table, cache_index
 
 
+def _generate_topk_indices(b, s_q, actual_seq, topk, slc_actual_seq):
+    """Generate topk_indices for golden computation."""
+    topk_indices = torch.zeros(b, s_q, topk).to(torch.int32)
+    for b_i in range(b):
+        for s_q_i in range(s_q):
+            if slc_actual_seq[b_i] < topk:
+                topk_indices[b_i, s_q_i, :slc_actual_seq[b_i]] = torch.arange(0, slc_actual_seq[b_i])
+            else:
+                perm = torch.randperm(slc_actual_seq[b_i])
+                topk_indices[b_i, s_q_i, :] = perm[:topk]
+    return topk_indices
+
+
+def _generate_quantized_kv(shape_kn, dtype, block_size, kv_lora_rank, qk_rope_dim, block_num, shape_kr):
+    """Generate quantized key/value tensors."""
+    kn_bsnd = gen_uniform_data(shape_kn, -1, 1, dtype)
+    kn_bsnd_reshape = kn_bsnd.reshape(block_num * block_size, 4, 128).to(torch.float32)
+    kn_scales = kn_bsnd_reshape.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / 127.0
+    kn_quant_fp32 = kn_bsnd.reshape(block_num * block_size, 4, 128) / kn_scales
+    kn_quant = torch.round(kn_quant_fp32).clamp(-128, 127).to(torch.float8_e4m3fn)
+    kr = gen_uniform_data(shape_kr, -1, 1, dtype)
+    kn_quant = kn_quant.reshape(block_num * block_size, kv_lora_rank)
+    kn_scales = kn_scales.reshape(block_num * block_size, 4)
+    kr = kr.reshape(block_num * block_size, qk_rope_dim).to(torch.bfloat16)
+    return kn_quant, kn_scales, kr
+
+
 def gen_gather_select_attention_golden_aq(dtype, bn1n2s1, is_kn_quant, actual_seq):
     block_size = 128
     torch.manual_seed(42)
@@ -206,34 +243,15 @@ def gen_gather_select_attention_golden_aq(dtype, bn1n2s1, is_kn_quant, actual_se
 
     max_kv_seq = max(actual_seq)
     block_num, block_table, _ = gen_block_table(torch.tensor(actual_seq), block_size, s_q, need_indices=False)
-    topk_indices = torch.zeros(b, s_q, topk).to(torch.int32)
-    slc_actual_seq = []
-    for i in range(b):
-        slc_actual_seq.append(min(actual_seq[i], topk))
+    slc_actual_seq = [min(actual_seq[i], topk) for i in range(b)]
 
-    for b_i in range(b):
-        for s_q_i in range(s_q):
-            if slc_actual_seq[b_i] < topk:
-                topk_indices[b_i, s_q_i, :slc_actual_seq[b_i]] = torch.arange(0, slc_actual_seq[b_i])
-            else:
-                perm = torch.randperm(slc_actual_seq[b_i])
-                topk_indices[b_i, s_q_i, :] = perm[:topk]
-
+    topk_indices = _generate_topk_indices(b, s_q, actual_seq, topk, slc_actual_seq)
     topk_indices = topk_indices.reshape(b * s_q, n_kv * topk)
 
     q_bsnd = gen_uniform_data(shape_q, -1, 1, dtype)
-    kn_bsnd = gen_uniform_data(shape_kn, -1, 1, dtype)
 
-    kn_bsnd_reshape = kn_bsnd.reshape(block_num * block_size, 4, 128).to(torch.float32)
-    kn_scales = kn_bsnd_reshape.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / 127.0
-    kn_quant_fp32 = kn_bsnd.reshape(block_num * block_size, 4, 128) / kn_scales
-    kn_quant = torch.round(kn_quant_fp32).clamp(-128, 127).to(torch.float8_e4m3fn)
-
-    kr = gen_uniform_data(shape_kr, -1, 1, dtype)
-
-    kn_quant = kn_quant.reshape(block_num * block_size, kv_lora_rank)
-    kn_scales = kn_scales.reshape(block_num * block_size, 4)
-    kr = kr.reshape(block_num * block_size, qk_rope_dim).to(torch.bfloat16)
+    kn_quant, kn_scales, kr = _generate_quantized_kv(
+        shape_kn, dtype, block_size, kv_lora_rank, qk_rope_dim, block_num, shape_kr)
 
     q_nope = q_bsnd[:, :, :, :kv_lora_rank]
     q_rope = q_bsnd[:, :, :, kv_lora_rank:]
@@ -285,7 +303,7 @@ def do_test_sparse_attention_func_aq(bn1n2s1, actual_seq, input_params, input_da
     kv_act_seqs_npu = kv_act_seqs.npu()
 
     pto_inputs = [q_nope_npu, q_rope_npu, kn_quant_npu, kr_npu, kn_scales_npu,
-                  topk_indices_npu, block_table_npu, kv_act_seqs_npu]
+                   topk_indices_npu, block_table_npu, kv_act_seqs_npu]
     pto_outputs = [calc_attention_out_npu]
 
     max_blocknum_perbatch = math.ceil(max_kv_seq / block_size)

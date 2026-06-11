@@ -41,7 +41,7 @@ VEC_TILE_N = 1024
         "run_mode": pypto.RunMode.NPU
     }
 )
-def apply_adam_w_v2_kernel_fp32(  # pylint: disable=huawei-too-many-arguments
+def apply_adam_w_v2_kernel_fp32(
     weight: pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),
     grad:   pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),
     m:      pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),
@@ -103,7 +103,7 @@ def apply_adam_w_v2_kernel_fp32(  # pylint: disable=huawei-too-many-arguments
 @pypto.frontend.jit(
     runtime_options={"run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 32}
 )
-def apply_adam_w_v2_kernel_bf16(  # pylint: disable=huawei-too-many-arguments
+def apply_adam_w_v2_kernel_bf16(
     weight: pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),
     grad:   pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_BF16),
     m:      pypto.Tensor([M_DIM, pypto.DYNAMIC], pypto.DT_FP32),

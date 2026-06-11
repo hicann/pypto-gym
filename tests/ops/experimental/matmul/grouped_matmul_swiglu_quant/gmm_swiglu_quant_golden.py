@@ -57,15 +57,7 @@ def quant_pertoken(swiglu_out):
     return round_data_int8, scale_tensor
 
 
-def compute_golden_result(golden_case: GoldenCaseInputs):
-    """Compute the reference result for grouped scaled matmul + SwiGLU + int8 quant."""
-    x = golden_case.x
-    weight = golden_case.weight
-    scaled_x_golden = golden_case.scaled_x_golden
-    scaled_weight_golden = golden_case.scaled_weight_golden
-    a_trans = golden_case.transpose.a_trans
-    b_trans = golden_case.transpose.b_trans
-
+def _transpose_x_golden(x, scaled_x_golden, a_trans):
     if a_trans:
         x = torch.swapaxes(x, -1, -2)
         scaled_x_golden = torch.swapaxes(scaled_x_golden, -1, -2)
@@ -81,7 +73,10 @@ def compute_golden_result(golden_case: GoldenCaseInputs):
                 scaled_x_golden.shape[0],
                 scaled_x_golden.shape[1] * scaled_x_golden.shape[2],
             )
+    return x, scaled_x_golden
 
+
+def _transpose_weight_golden(weight, scaled_weight_golden, b_trans):
     if b_trans:
         weight = torch.swapaxes(weight, -1, -2)
         if scaled_weight_golden.ndim == 3:
@@ -97,6 +92,20 @@ def compute_golden_result(golden_case: GoldenCaseInputs):
                 scaled_weight_golden.shape[0] * scaled_weight_golden.shape[1],
                 scaled_weight_golden.shape[2],
             )
+    return weight, scaled_weight_golden
+
+
+def compute_golden_result(golden_case: GoldenCaseInputs):
+    """Compute the reference result for grouped scaled matmul + SwiGLU + int8 quant."""
+    x = golden_case.x
+    weight = golden_case.weight
+    scaled_x_golden = golden_case.scaled_x_golden
+    scaled_weight_golden = golden_case.scaled_weight_golden
+    a_trans = golden_case.transpose.a_trans
+    b_trans = golden_case.transpose.b_trans
+
+    x, scaled_x_golden = _transpose_x_golden(x, scaled_x_golden, a_trans)
+    weight, scaled_weight_golden = _transpose_weight_golden(weight, scaled_weight_golden, b_trans)
 
     k_dim = x.shape[-1]
     if math.ceil(k_dim / 32) % 2 != 0:

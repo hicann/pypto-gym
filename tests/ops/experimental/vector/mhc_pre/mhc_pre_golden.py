@@ -63,8 +63,8 @@ def mhc_pre_golden(
 
     Args:
         x: 输入特征 tensor，shape [B*S, N, D]，dtype bfloat16
-           其中 B*S 为动态轴（1024/2048/4096）
-           注：B*S 是 Batch size * Sequence length 的组合轴
+            其中 B*S 为动态轴（1024/2048/4096）
+            注：B*S 是 Batch size * Sequence length 的组合轴
         phi: 权重矩阵，shape [N²+2N, N*D]，dtype float32
         alpha: 缩放系数，shape [3]，dtype float32
                alpha[0] 用于 Branch Pre, alpha[1] 用于 Branch Post, alpha[2] 用于 Branch Res
@@ -152,6 +152,101 @@ def mhc_pre_golden(
 # 验证
 # ==========================================
 
+# 定义常量
+_N = 8
+_D = 5120
+_N_SQ_P2N = 80  # N² + 2N = 64 + 16 = 80
+
+
+def _gen_validate_inputs(bs):
+    """Generate input tensors for validation at given batch size."""
+    x = torch.randn(bs, _N, _D, dtype=torch.bfloat16)
+    phi = torch.randn(_N_SQ_P2N, _N * _D, dtype=torch.float32)
+    alpha = torch.randn(3, dtype=torch.float32)
+    bias = torch.randn(_N_SQ_P2N, dtype=torch.float32)
+    return x, phi, alpha, bias
+
+
+def _verify_outputs(h_in, h_post, h_res, bs):
+    """Verify output shapes and dtypes."""
+    assert h_in.shape == (bs, _D), f"h_in shape 错误: 期望 {(bs, _D)}, 实际 {h_in.shape}"
+    assert h_post.shape == (bs, _N), f"h_post shape 错误: 期望 {(bs, _N)}, 实际 {h_post.shape}"
+    assert h_res.shape == (bs, _N, _N), f"h_res shape 错误: 期望 {(bs, _N, _N)}, 实际 {h_res.shape}"
+    assert h_in.dtype == torch.bfloat16, f"h_in dtype 错误: 期望 bfloat16, 实际 {h_in.dtype}"
+    assert h_post.dtype == torch.float32, f"h_post dtype 错误: 期望 float32, 实际 {h_post.dtype}"
+    assert h_res.dtype == torch.float32, f"h_res dtype 错误: 期望 float32, 实际 {h_res.dtype}"
+
+
+def _validate_typical_cases():
+    """Run typical case validation for bs=1024, 2048, 4096."""
+    for bs in [1024, 2048, 4096]:
+        x, phi, alpha, bias = _gen_validate_inputs(bs)
+        h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
+        _verify_outputs(h_in, h_post, h_res, bs)
+        print(f"  性能_P0 (bs={bs}): \u2713 PASS")
+
+
+def _validate_generalization_cases():
+    """Run generalization case validation."""
+    bs = 3000
+    x, phi, alpha, bias = _gen_validate_inputs(bs)
+    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
+    _verify_outputs(h_in, h_post, h_res, bs)
+    print(f"  泛化 case (bs={bs}): \u2713 PASS")
+
+
+def _validate_value_range():
+    """Check sigmoid output value range."""
+    bs = 128
+    x, phi, alpha, bias = _gen_validate_inputs(bs)
+    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias, hc_eps=1e-6)
+    assert h_post.min() >= 0, f"h_post 最小值错误: 期望 >= 0, 实际 {h_post.min()}"
+    assert h_post.max() <= 2.0, f"h_post 最大值错误: 期望 <= 2.0, 实际 {h_post.max()}"
+    print(f"  sigmoid 输出值域检查: \u2713 PASS (h_post in [{h_post.min():.6f}, {h_post.max():.6f}])")
+
+
+def _validate_numerical_stability():
+    """Check numerical stability with large and small inputs."""
+    bs = 128
+    x, phi, alpha, bias = _gen_validate_inputs(bs)
+
+    # 大值输入
+    x_big = x * 100
+    h_in, h_post, h_res = mhc_pre_golden(x_big, phi, alpha, bias)
+    assert not torch.isnan(h_in).any(), "h_in 包含 NaN"
+    assert not torch.isinf(h_in).any(), "h_in 包含 Inf"
+    assert not torch.isnan(h_post).any(), "h_post 包含 NaN"
+    assert not torch.isinf(h_post).any(), "h_post 包含 Inf"
+    assert not torch.isnan(h_res).any(), "h_res 包含 NaN"
+    assert not torch.isinf(h_res).any(), "h_res 包含 Inf"
+    print(f"  大值输入 (x*=100): \u2713 PASS (无 NaN/Inf)")
+
+    # 小值输入
+    x_small = x * 1e-6
+    h_in, h_post, h_res = mhc_pre_golden(x_small, phi, alpha, bias)
+    assert not torch.isnan(h_in).any(), "h_in 包含 NaN"
+    assert not torch.isinf(h_in).any(), "h_in 包含 Inf"
+    assert not torch.isnan(h_post).any(), "h_post 包含 NaN"
+    assert not torch.isinf(h_post).any(), "h_post 包含 Inf"
+    assert not torch.isnan(h_res).any(), "h_res 包含 NaN"
+    assert not torch.isinf(h_res).any(), "h_res 包含 Inf"
+    print(f"  小值输入 (x*=1e-6): \u2713 PASS (无 NaN/Inf)")
+
+
+def _validate_signature():
+    """Check function signature."""
+    import inspect
+    sig = inspect.signature(mhc_pre_golden)
+    params = list(sig.parameters.keys())
+    expected_params = ['x', 'phi', 'alpha', 'bias', 'norm_eps', 'hc_eps']
+    assert params == expected_params, f"函数签名错误: 期望 {expected_params}, 实际 {params}"
+    assert sig.parameters['norm_eps'].default == 1e-6, "norm_eps 默认值错误"
+    assert sig.parameters['hc_eps'].default == 1e-6, "hc_eps 默认值错误"
+    print(f"  函数签名: \u2713 PASS")
+    print(f"  参数列表: {params}")
+    print(f"  默认参数: norm_eps={sig.parameters['norm_eps'].default}, hc_eps={sig.parameters['hc_eps'].default}")
+
+
 def _validate():
     """自动生成的验证函数 - 运行时动态生成验证报告"""
 
@@ -159,168 +254,28 @@ def _validate():
     print("mhc_pre_golden 验证报告")
     print("=" * 60)
 
-    # 定义常量
-    N = 8
-    D = 5120
-    N_SQUARED_PLUS_2N = 80  # N² + 2N = 64 + 16 = 80
-
     # -- 1. 典型 case 验证（来自算子规格中的典型配置）--
     print("\n[典型 case 验证]")
-
-    # config_bs1024: P0 性能验证
-    bs = 1024
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16)
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    # 检查输出 shape
-    assert h_in.shape == (bs, D), f"h_in shape 错误: 期望 {(bs, D)}, 实际 {h_in.shape}"
-    assert h_post.shape == (bs, N), f"h_post shape 错误: 期望 {(bs, N)}, 实际 {h_post.shape}"
-    assert h_res.shape == (bs, N, N), f"h_res shape 错误: 期望 {(bs, N, N)}, 实际 {h_res.shape}"
-
-    # 检查输出 dtype
-    assert h_in.dtype == torch.bfloat16, f"h_in dtype 错误: 期望 bfloat16, 实际 {h_in.dtype}"
-    assert h_post.dtype == torch.float32, f"h_post dtype 错误: 期望 float32, 实际 {h_post.dtype}"
-    assert h_res.dtype == torch.float32, f"h_res dtype 错误: 期望 float32, 实际 {h_res.dtype}"
-
-    print(f"  性能_P0 (bs={bs}): ✓ PASS")
-
-    # config_bs2048: P0 性能验证
-    bs = 2048
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16)
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    assert h_in.shape == (bs, D), f"h_in shape 错误: 期望 {(bs, D)}, 实际 {h_in.shape}"
-    assert h_post.shape == (bs, N), f"h_post shape 错误: 期望 {(bs, N)}, 实际 {h_post.shape}"
-    assert h_res.shape == (bs, N, N), f"h_res shape 错误: 期望 {(bs, N, N)}, 实际 {h_res.shape}"
-
-    assert h_in.dtype == torch.bfloat16, f"h_in dtype 错误: 期望 bfloat16, 实际 {h_in.dtype}"
-    assert h_post.dtype == torch.float32, f"h_post dtype 错误: 期望 float32, 实际 {h_post.dtype}"
-    assert h_res.dtype == torch.float32, f"h_res dtype 错误: 期望 float32, 实际 {h_res.dtype}"
-
-    print(f"  性能_P0 (bs={bs}): ✓ PASS")
-
-    # config_bs4096: P0 性能验证
-    bs = 4096
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16)
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    assert h_in.shape == (bs, D), f"h_in shape 错误: 期望 {(bs, D)}, 实际 {h_in.shape}"
-    assert h_post.shape == (bs, N), f"h_post shape 错误: 期望 {(bs, N)}, 实际 {h_post.shape}"
-    assert h_res.shape == (bs, N, N), f"h_res shape 错误: 期望 {(bs, N, N)}, 实际 {h_res.shape}"
-
-    assert h_in.dtype == torch.bfloat16, f"h_in dtype 错误: 期望 bfloat16, 实际 {h_in.dtype}"
-    assert h_post.dtype == torch.float32, f"h_post dtype 错误: 期望 float32, 实际 {h_post.dtype}"
-    assert h_res.dtype == torch.float32, f"h_res dtype 错误: 期望 float32, 实际 {h_res.dtype}"
-
-    print(f"  性能_P0 (bs={bs}): ✓ PASS")
+    _validate_typical_cases()
 
     # -- 2. 泛化 case 验证（来自算子规格中的动态轴范围）--
     print("\n[泛化 case 验证]")
-    # 动态轴 B*S 的范围：[1024, 2048, 4096]，已在典型 case 中验证
-
-    # 测试中间值
-    bs = 3000
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16)
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    assert h_in.shape == (bs, D), f"h_in shape 错误: 期望 {(bs, D)}, 实际 {h_in.shape}"
-    assert h_post.shape == (bs, N), f"h_post shape 错误: 期望 {(bs, N)}, 实际 {h_post.shape}"
-    assert h_res.shape == (bs, N, N), f"h_res shape 错误: 期望 {(bs, N, N)}, 实际 {h_res.shape}"
-
-    print(f"  泛化 case (bs={bs}): ✓ PASS")
+    _validate_generalization_cases()
 
     # -- 3. 值域检查（从公式推导）--
     print("\n[值域检查]")
-
-    # sigmoid 输出值域: (0, 1)
-    # H_pre = sigmoid(...) + hc_eps，值域: (hc_eps, 1 + hc_eps)
-    # h_post = 2.0 * sigmoid(...)，值域: (0, 2)
-    bs = 128
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16)
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias, hc_eps=1e-6)
-
-    # h_post 应该在 [0, 2] 范围内（sigmoid 可能输出接近 0 的值）
-    assert h_post.min() >= 0, f"h_post 最小值错误: 期望 >= 0, 实际 {h_post.min()}"
-    assert h_post.max() <= 2.0, f"h_post 最大值错误: 期望 <= 2.0, 实际 {h_post.max()}"
-
-    print(f"  sigmoid 输出值域检查: ✓ PASS (h_post in [{h_post.min():.6f}, {h_post.max():.6f}])")
+    _validate_value_range()
 
     # -- 4. 数值稳定性检查 --
     print("\n[数值稳定性检查]")
-
-    # 大值输入
-    bs = 128
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16) * 100
-    phi = torch.randn(N_SQUARED_PLUS_2N, N * D, dtype=torch.float32)
-    alpha = torch.randn(3, dtype=torch.float32)
-    bias = torch.randn(N_SQUARED_PLUS_2N, dtype=torch.float32)
-
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    # 检查 NaN/Inf
-    assert not torch.isnan(h_in).any(), "h_in 包含 NaN"
-    assert not torch.isinf(h_in).any(), "h_in 包含 Inf"
-    assert not torch.isnan(h_post).any(), "h_post 包含 NaN"
-    assert not torch.isinf(h_post).any(), "h_post 包含 Inf"
-    assert not torch.isnan(h_res).any(), "h_res 包含 NaN"
-    assert not torch.isinf(h_res).any(), "h_res 包含 Inf"
-
-    print(f"  大值输入 (x*=100): ✓ PASS (无 NaN/Inf)")
-
-    # 小值输入
-    x = torch.randn(bs, N, D, dtype=torch.bfloat16) * 1e-6
-    h_in, h_post, h_res = mhc_pre_golden(x, phi, alpha, bias)
-
-    assert not torch.isnan(h_in).any(), "h_in 包含 NaN"
-    assert not torch.isinf(h_in).any(), "h_in 包含 Inf"
-    assert not torch.isnan(h_post).any(), "h_post 包含 NaN"
-    assert not torch.isinf(h_post).any(), "h_post 包含 Inf"
-    assert not torch.isnan(h_res).any(), "h_res 包含 NaN"
-    assert not torch.isinf(h_res).any(), "h_res 包含 Inf"
-
-    print(f"  小值输入 (x*=1e-6): ✓ PASS (无 NaN/Inf)")
+    _validate_numerical_stability()
 
     # -- 5. 函数签名检查 --
     print("\n[函数签名检查]")
-
-    # 检查函数参数
-    import inspect
-    sig = inspect.signature(mhc_pre_golden)
-    params = list(sig.parameters.keys())
-
-    expected_params = ['x', 'phi', 'alpha', 'bias', 'norm_eps', 'hc_eps']
-    assert params == expected_params, f"函数签名错误: 期望 {expected_params}, 实际 {params}"
-
-    # 检查默认参数
-    assert sig.parameters['norm_eps'].default == 1e-6, "norm_eps 默认值错误"
-    assert sig.parameters['hc_eps'].default == 1e-6, "hc_eps 默认值错误"
-
-    print(f"  函数签名: ✓ PASS")
-    print(f"  参数列表: {params}")
-    print(f"  默认参数: norm_eps={sig.parameters['norm_eps'].default}, hc_eps={sig.parameters['hc_eps'].default}")
+    _validate_signature()
 
     print("\n" + "=" * 60)
-    print("✅ 所有验证通过")
+    print("\u2705 所有验证通过")
     print("=" * 60)
 
 

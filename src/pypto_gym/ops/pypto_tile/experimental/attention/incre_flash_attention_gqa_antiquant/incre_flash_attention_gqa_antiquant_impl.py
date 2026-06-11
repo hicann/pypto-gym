@@ -290,7 +290,8 @@ def incre_flash_attention_gqa_antiquant_kernel(
     # Step 3: Reshape Q, K, V to 2D
     q_2d, k_2d, v_2d = reshape_qkv_to_2d(query, key, value, kernel_cfg)
 
-    loop_tensors = LoopTensor(q_2d, k_2d, v_2d, block_table, kv_actual_seqs, atten_out, key_antiquant_scale, value_antiquant_scale)
+    loop_tensors = LoopTensor(q_2d, k_2d, v_2d, block_table, kv_actual_seqs, atten_out,
+                              key_antiquant_scale, value_antiquant_scale)
 
     # Calculate number of groups to iterate
     group_loop = kernel_cfg.group // tile_cfg.g_tile

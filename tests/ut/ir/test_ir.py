@@ -149,75 +149,59 @@ def test_basic_types():
     assert str(lt) == "ir.LogicalTensor"
 
 
-def test_basic_expr():
-    span = ir.Span("test", 1, 1)
-    st = ir.ScalarType(ir.INT32)
-
-    # ConstInt
+def _test_const_var_expr(span, st):
+    """Test ConstInt, ConstFloat, ConstBool, Var, IterArg."""
     ci = ir.ConstInt(42, ir.INT32, span)
     assert str(ci) == "42"
 
-    # ConstFloat
     cf = ir.ConstFloat(3.14, ir.FP32, span)
     assert str(cf) == "3.14"
 
-    # ConstBool
     cb = ir.ConstBool(True, span)
     assert str(cb) == "True"
 
-    # Var
     var = ir.Var("x", st, span)
     assert str(var) == "x"
     assert var.name == "x"
 
-    # IterArg
     init_val = ir.ConstInt(0, ir.INT32, span)
     iter_arg = ir.IterArg("acc", st, init_val, span)
     assert str(iter_arg) == "acc"
     assert iter_arg.name == "acc"
     assert isinstance(iter_arg.initValue, ir.ConstInt)
     assert iter_arg.initValue.value == 0
+    return cb
 
-    # Binary expressions
-    for bop in [
-        (ir.Add, '+'),
-        (ir.Sub, '-'),
-        (ir.Mul, '*'),
-        (ir.FloorDiv, '//'),
-        (ir.FloatDiv, '/'),
-        (ir.FloorMod, '%'),
-        (ir.Pow, '**'),
-        (ir.Eq, '=='),
-        (ir.Ne, '!='),
-        (ir.Lt, '<'),
-        (ir.Le, '<='),
-        (ir.Gt, '>'),
-        (ir.Ge, '>='),
-        (ir.And, 'and'),
-        (ir.Or, 'or'),
-        (ir.Xor, 'xor'),
-        (ir.BitAnd, '&'),
-        (ir.BitOr, '|'),
-        (ir.BitXor, '^'),
-        (ir.BitShiftLeft, '<<'),
-        (ir.BitShiftRight, '>>'),
-    ]:
+
+def _test_binary_ops(span):
+    """Test all binary expression operators."""
+    _binary_ops = [
+        (ir.Add, '+'), (ir.Sub, '-'), (ir.Mul, '*'),
+        (ir.FloorDiv, '//'), (ir.FloatDiv, '/'), (ir.FloorMod, '%'),
+        (ir.Pow, '**'), (ir.Eq, '=='), (ir.Ne, '!='),
+        (ir.Lt, '<'), (ir.Le, '<='), (ir.Gt, '>'),
+        (ir.Ge, '>='), (ir.And, 'and'), (ir.Or, 'or'),
+        (ir.Xor, 'xor'), (ir.BitAnd, '&'), (ir.BitOr, '|'),
+        (ir.BitXor, '^'), (ir.BitShiftLeft, '<<'), (ir.BitShiftRight, '>>'),
+    ]
+    for bop in _binary_ops:
         a = ir.ConstInt(1, ir.INT32, span)
         b = ir.ConstInt(2, ir.INT32, span)
         expr = bop[0](a, b, ir.INT32, span)
         assert str(expr) == f"1 {bop[1]} 2"
 
+
+def _test_unary_misc_expr(span, cb):
+    """Test Unary, Min/Max, Tuple, Call, MemRef."""
     a = ir.ConstInt(1, ir.INT32, span)
     b = ir.ConstInt(2, ir.INT32, span)
+
     expr = ir.Min(a, b, ir.INT32, span)
     assert str(expr) == "ir.min(1, 2)"
 
-    a = ir.ConstInt(1, ir.INT32, span)
-    b = ir.ConstInt(2, ir.INT32, span)
     expr = ir.Max(a, b, ir.INT32, span)
     assert str(expr) == "ir.max(1, 2)"
 
-    # Unary expressions
     neg = ir.Neg(a, ir.INT32, span)
     assert str(neg) == "-1"
 
@@ -230,39 +214,32 @@ def test_basic_expr():
     cast = ir.Cast(a, ir.FP32, span)
     assert str(cast) == "ir.cast(1, ir.FP32)"
 
-    # MakeTuple and TupleGetItemExpr
     mt = ir.MakeTuple([a, b], span)
     assert str(mt) == "[1, 2]"
     tgi = ir.TupleGetItem(mt, 0, span)
     assert str(tgi) == "[1, 2][0]"
 
-    # Call with Op
     call = ir.Call("my_op", [a, b], span)
     assert str(call) == "ir.call @my_op(1, 2)"
 
-    # MemRef
     offset = ir.ConstInt(0, ir.INT64, span)
     memref = ir.MemRef(ir.MemorySpace.Vec, offset, 2048, span)
     assert str(memref) == "ir.MemRef(ir.MemorySpace.Vec, 0, 2048)"
 
 
-def test_basic_stmt():
+def test_basic_expr():
     span = ir.Span("test", 1, 1)
     st = ir.ScalarType(ir.INT32)
+    cb = _test_const_var_expr(span, st)
+    _test_binary_ops(span)
+    _test_unary_misc_expr(span, cb)
 
-    # Helper variables and expressions
-    x = ir.Var("x", st, span)
-    y = ir.Var("y", st, span)
-    val42 = ir.ConstInt(42, ir.INT32, span)
-    val0 = ir.ConstInt(0, ir.INT32, span)
-    val1 = ir.ConstInt(1, ir.INT32, span)
-    val10 = ir.ConstInt(10, ir.INT32, span)
 
-    # AssignStmt
+def _test_stmt_assign_seq(span, x, y, val42, val0):
+    """Test AssignStmt and SeqStmts."""
     assign = ir.AssignStmt(x, val42, span)
     assert str(assign) == "x: ir.Scalar[ir.INT32] = 42"
 
-    # SeqStmts
     assign_x = ir.AssignStmt(x, val42, span)
     assign_y = ir.AssignStmt(y, val0, span)
     seq = ir.SeqStmts([assign_x, assign_y], span)
@@ -270,15 +247,17 @@ def test_basic_stmt():
         "x: ir.Scalar[ir.INT32] = 42",
         "y: ir.Scalar[ir.INT32] = 0"
     ])
+    return assign_x, assign_y
 
-    # IfStmt
+
+def _test_stmt_if(span, assign_x, assign_y):
+    """Test IfStmt variants."""
     cond = ir.ConstBool(True, span)
     if_stmt = ir.IfStmt(cond, assign_x, None, [], span)
     assert str(if_stmt) == "\n".join([
         "if True:",
         "    x: ir.Scalar[ir.INT32] = 42"
     ])
-
     if_else = ir.IfStmt(cond, assign_x, assign_y, [], span)
     assert str(if_else) == "\n".join([
         "if True:",
@@ -286,8 +265,11 @@ def test_basic_stmt():
         "else:",
         "    y: ir.Scalar[ir.INT32] = 0"
     ])
+    return cond
 
-    # ForStmt
+
+def _test_stmt_for_while(span, st, cond, assign_x, val0, val10, val1):
+    """Test ForStmt, WhileStmt."""
     i = ir.Var("i", st, span)
     init = ir.ConstInt(0, ir.INT32, span)
     iter_arg = ir.IterArg("sum", st, init, span)
@@ -298,15 +280,15 @@ def test_basic_stmt():
         "for i, (sum,) in ir.range(0, 10, 1, init_values=(0,)):",
         "    sum_out: ir.Scalar[ir.INT32] = ir.yield_(1)"
     ])
-
-    # WhileStmt
     while_stmt = ir.WhileStmt(cond, [], assign_x, [], span)
     assert str(while_stmt) == "\n".join([
         "while True:",
         "    x: ir.Scalar[ir.INT32] = 42"
     ])
 
-    # YieldStmt and ReturnStmt
+
+def _test_stmt_yield_return_break(span, val42):
+    """Test YieldStmt, ReturnStmt, BreakStmt, ContinueStmt."""
     yield_stmt = ir.YieldStmt([val42], span)
     assert str(yield_stmt) == "ir.yield_(42)"
     empty_yield = ir.YieldStmt(span)
@@ -317,18 +299,18 @@ def test_basic_stmt():
     empty_return = ir.ReturnStmt(span)
     assert str(empty_return) == "return"
 
-    # BreakStmt and ContinueStmt
     break_stmt = ir.BreakStmt(span)
     assert str(break_stmt) == "break"
     continue_stmt = ir.ContinueStmt(span)
     assert str(continue_stmt) == "continue"
 
-    # EvalStmt
+
+def _test_stmt_eval_func_prog(span, x, st, assign_x, val42):
+    """Test EvalStmt, Function, Program."""
     call = ir.Call("some_op", [val42], span)
     eval_stmt = ir.EvalStmt(call, span)
     assert str(eval_stmt) == "ir.eval(ir.call @some_op(42))"
 
-    # Function
     func = ir.Function("test_func", [x], [st], assign_x, span)
     assert str(func) == "\n".join([
         "@ir.function",
@@ -336,7 +318,6 @@ def test_basic_stmt():
         "    x: ir.Scalar[ir.INT32] = 42"
     ])
 
-    # Program
     func2 = ir.Function("test_func2", [x], [st], assign_x, span)
     prog = ir.Program([func, func2], "test_prog", span)
     assert str(prog) == "\n".join([
@@ -349,3 +330,21 @@ def test_basic_stmt():
         "    x: ir.Scalar[ir.INT32] = 42",
     ])
     assert prog["test_func"] is not None
+
+
+def test_basic_stmt():
+    span = ir.Span("test", 1, 1)
+    st = ir.ScalarType(ir.INT32)
+
+    x = ir.Var("x", st, span)
+    y = ir.Var("y", st, span)
+    val42 = ir.ConstInt(42, ir.INT32, span)
+    val0 = ir.ConstInt(0, ir.INT32, span)
+    val1 = ir.ConstInt(1, ir.INT32, span)
+    val10 = ir.ConstInt(10, ir.INT32, span)
+
+    assign_x, assign_y = _test_stmt_assign_seq(span, x, y, val42, val0)
+    cond = _test_stmt_if(span, assign_x, assign_y)
+    _test_stmt_for_while(span, st, cond, assign_x, val0, val10, val1)
+    _test_stmt_yield_return_break(span, val42)
+    _test_stmt_eval_func_prog(span, x, st, assign_x, val42)

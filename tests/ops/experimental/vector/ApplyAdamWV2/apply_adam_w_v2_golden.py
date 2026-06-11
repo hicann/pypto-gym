@@ -137,10 +137,6 @@ def _smoke_test() -> None:
         assert torch.isfinite(v_out).all(), "v_out contains NaN/Inf"
 
         # --- analytic check at step=1, m=v=0 ---
-        # m_new = (1-b1)*g, v_new = (1-b2)*g^2
-        # m_hat = m_new / (1-b1) = g; v_hat = v_new / (1-b2) = g^2
-        # update = g / (|g| + eps) + lambda * w
-        # w_new = w - lr * update
         g_f32 = grad.to(torch.float32)
         w_f32 = weight.to(torch.float32)
         expected_update = g_f32 / (torch.sqrt(g_f32 * g_f32) + eps) + weight_decay * w_f32

@@ -33,7 +33,7 @@ import numpy as np
 import pypto
 
 from deepseek_v4.mla_prolog_v4_impl import mla_prolog_pypto, mla_prolog_v4, \
-    MlaPrologV4Attrs, MlaPrologV4Configs, check_input_output_shape_dtype
+    MlaPrologV4Attrs, MlaPrologV4Configs, check_input_output_shape_dtype, MlaCheckInputConfigV4
 from tests.ops.utils.compare import compare
 
 torch.manual_seed(5)
@@ -251,8 +251,8 @@ class MLA_MODEL(torch.nn.Module):
         return mla_prolog_pypto(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv)
 
 
-def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
-    d_type = pypto.DataType.DT_FP16 if dtype == pypto.DataType.DT_FP16 else pypto.DataType.DT_BF16
+def _get_mla_shapes(params):
+    """Extract shape definitions common to mla_prolog and mla_prolog_eager."""
     t = params['t']
     n1 = params["num_heads"]
     h = params["h"]
@@ -271,26 +271,70 @@ def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
     q_out_shape = [t, n1, head_dim]
     kv_out_shape = [t, head_dim]
     qr_out_shape = [t, q_lora_rank]
-    
+
+    return {
+        "token_x_shape": token_x_shape,
+        "wq_a_shape": wq_a_shape,
+        "wq_b_shape": wq_b_shape,
+        "wkv_shape": wkv_shape,
+        "rope_cos_shape": rope_cos_shape,
+        "rmsnorm_gamma_cq_shape": rmsnorm_gamma_cq_shape,
+        "rmsnorm_gamma_ckv_shape": rmsnorm_gamma_ckv_shape,
+        "q_out_shape": q_out_shape,
+        "kv_out_shape": kv_out_shape,
+        "qr_out_shape": qr_out_shape,
+    }
+
+
+def _prepare_mla_inputs(input_tensors, shapes, is_nz):
+    """Apply NZ format cast and reshape input tensors for MLA."""
     if is_nz:
-        wq_a_nz = torch_npu.npu_format_cast(input_tensors["wq_a"].reshape(wq_a_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        wq_b_nz = torch_npu.npu_format_cast(input_tensors["wq_b"].reshape(wq_b_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        wkv_nz = torch_npu.npu_format_cast(input_tensors["w_kv"].reshape(wkv_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
+        wq_a_nz = torch_npu.npu_format_cast(
+            input_tensors["wq_a"].reshape(shapes["wq_a_shape"]).npu().contiguous(),
+            torch_npu.Format.FRACTAL_NZ)
+        wq_b_nz = torch_npu.npu_format_cast(
+            input_tensors["wq_b"].reshape(shapes["wq_b_shape"]).npu().contiguous(),
+            torch_npu.Format.FRACTAL_NZ)
+        wkv_nz = torch_npu.npu_format_cast(
+            input_tensors["w_kv"].reshape(shapes["wkv_shape"]).npu().contiguous(),
+            torch_npu.Format.FRACTAL_NZ)
         input_tensors["wq_a"] = wq_a_nz
         input_tensors["wq_b"] = wq_b_nz
         input_tensors["w_kv"] = wkv_nz
-    
-    token_x = input_tensors["x"].reshape(token_x_shape).npu()
-    wq_a = input_tensors["wq_a"].reshape(wq_a_shape).npu()
-    wq_b = input_tensors["wq_b"].reshape(wq_b_shape).npu()
-    wkv = input_tensors["w_kv"].reshape(wkv_shape).npu()
-    rope_cos = input_tensors["cos"].reshape(rope_cos_shape).npu()
-    rope_sin = input_tensors["sin"].reshape(rope_cos_shape).npu()
-    gamma_cq = input_tensors["gamma_cq"].reshape(rmsnorm_gamma_cq_shape).npu()
-    gamma_ckv = input_tensors["gamma_ckv"].reshape(rmsnorm_gamma_ckv_shape).npu()
+
+    token_x = input_tensors["x"].reshape(shapes["token_x_shape"]).npu()
+    wq_a = input_tensors["wq_a"].reshape(shapes["wq_a_shape"]).npu()
+    wq_b = input_tensors["wq_b"].reshape(shapes["wq_b_shape"]).npu()
+    wkv = input_tensors["w_kv"].reshape(shapes["wkv_shape"]).npu()
+    rope_cos = input_tensors["cos"].reshape(shapes["rope_cos_shape"]).npu()
+    rope_sin = input_tensors["sin"].reshape(shapes["rope_cos_shape"]).npu()
+    gamma_cq = input_tensors["gamma_cq"].reshape(shapes["rmsnorm_gamma_cq_shape"]).npu()
+    gamma_ckv = input_tensors["gamma_ckv"].reshape(shapes["rmsnorm_gamma_ckv_shape"]).npu()
+
+    return token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv
+
+
+def _compare_mla_outputs(output_q_data, output_kv_data, output_qr_data,
+                         golden_tensors, shapes):
+    """Compare MLA outputs against golden data."""
+    golden1 = golden_tensors["q_golden"].reshape(shapes["q_out_shape"])
+    golden2 = golden_tensors["kv_golden"].reshape(shapes["kv_out_shape"])
+    golden3 = golden_tensors["qr_golden"].reshape(shapes["qr_out_shape"])
+
+    print("q ================")
+    compare(output_q_data.cpu(), golden1.cpu(), "qOut", 0.0001, 0.0078125, 0.005)
+    print("kv ================")
+    compare(output_kv_data.cpu(), golden2.cpu(), "kvOut", 0.0001, 0.0078125, 0.005)
+    print("qr ================")
+    compare(output_qr_data.cpu(), golden3.cpu(), "qrOut", 0.0001, 0.0078125, 0.005)
+    print("=========== pass ==========")
+
+
+def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
+    d_type = pypto.DataType.DT_FP16 if dtype == pypto.DataType.DT_FP16 else pypto.DataType.DT_BF16
+    shapes = _get_mla_shapes(params)
+    token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv = \
+        _prepare_mla_inputs(input_tensors, shapes, is_nz)
 
     import torchair as tng
     from torchair.configs.compiler_config import CompilerConfig
@@ -298,92 +342,43 @@ def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
     compiler_config.mode = "reduce-overhead"
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
     model = torch.compile(MLA_MODEL(), dynamic=False, fullgraph=True, backend=npu_backend)
-    
-    output_q_data, output_kv_data, output_qr_data = model(token_x, wq_a, wq_b, wkv, rope_cos, \
-                                                    rope_sin, gamma_cq, gamma_ckv)
+
+    output_q_data, output_kv_data, output_qr_data = model(
+        token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv)
     pypto.runtime._device_synchronize()
 
-    # golden data 
-    golden1 = golden_tensors["q_golden"].reshape(q_out_shape)
-    golden2 = golden_tensors["kv_golden"].reshape(kv_out_shape)
-    golden3 = golden_tensors["qr_golden"].reshape(qr_out_shape)
-    
-    # compare
-    print("q ================")
-    compare(output_q_data.cpu(), golden1.cpu(), "qOut", 0.0001, 0.0078125, 0.005)
-    print("kv ================")
-    compare(output_kv_data.cpu(), golden2.cpu(), "kvOut", 0.0001, 0.0078125, 0.005)
-    print("qr ================")
-    compare(output_qr_data.cpu(), golden3.cpu(), "qrOut", 0.0001, 0.0078125, 0.005)
-    print("=========== pass ==========")
+    _compare_mla_outputs(output_q_data, output_kv_data, output_qr_data,
+                         golden_tensors, shapes)
 
 
 def mla_prolog_eager(params, input_tensors, golden_tensors, dtype, is_nz, attrs, configs):
     d_type = pypto.DataType.DT_FP16 if dtype == pypto.DataType.DT_FP16 else pypto.DataType.DT_BF16
-    t = params['t']
-    n1 = params["num_heads"]
-    h = params["h"]
-    q_lora_rank = params["q_lora_rank"]
-    qk_rope_head_dim = params["qk_rope_head_dim"]
-    head_dim = params["head_dim"]
+    shapes = _get_mla_shapes(params)
+    token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv = \
+        _prepare_mla_inputs(input_tensors, shapes, is_nz)
 
-    token_x_shape = [t, h]
-    wq_a_shape = [h, q_lora_rank]
-    wq_b_shape = [q_lora_rank, n1 * head_dim]
-    wkv_shape = [h, head_dim]
-    rope_cos_shape = [t, qk_rope_head_dim]
-    rmsnorm_gamma_cq_shape = [q_lora_rank]
-    rmsnorm_gamma_ckv_shape = [head_dim]
+    output_q_data = torch.zeros(
+        [token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)],
+        dtype=token_x.dtype, device=f'{token_x.device}')
+    output_kv_data = torch.zeros(
+        [token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
+    output_qr_data = torch.zeros(
+        [token_x.size(0), gamma_cq.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
 
-    q_out_shape = [t, n1, head_dim]
-    kv_out_shape = [t, head_dim]
-    qr_out_shape = [t, q_lora_rank]
-    
-    if is_nz:
-        wq_a_nz = torch_npu.npu_format_cast(input_tensors["wq_a"].reshape(wq_a_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        wq_b_nz = torch_npu.npu_format_cast(input_tensors["wq_b"].reshape(wq_b_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        wkv_nz = torch_npu.npu_format_cast(input_tensors["w_kv"].reshape(wkv_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        input_tensors["wq_a"] = wq_a_nz
-        input_tensors["wq_b"] = wq_b_nz
-        input_tensors["w_kv"] = wkv_nz
-    
-    token_x = input_tensors["x"].reshape(token_x_shape).npu()
-    wq_a = input_tensors["wq_a"].reshape(wq_a_shape).npu()
-    wq_b = input_tensors["wq_b"].reshape(wq_b_shape).npu()
-    wkv = input_tensors["w_kv"].reshape(wkv_shape).npu()
-    rope_cos = input_tensors["cos"].reshape(rope_cos_shape).npu()
-    rope_sin = input_tensors["sin"].reshape(rope_cos_shape).npu()
-    gamma_cq = input_tensors["gamma_cq"].reshape(rmsnorm_gamma_cq_shape).npu()
-    gamma_ckv = input_tensors["gamma_ckv"].reshape(rmsnorm_gamma_ckv_shape).npu()
-
-    output_q_data = torch.zeros([token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)], \
-                    dtype=token_x.dtype, device=f'{token_x.device}')
-    output_kv_data = torch.zeros([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
-    output_qr_data = torch.zeros([token_x.size(0), gamma_cq.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
-
-    check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv, \
-                output_q_data, output_kv_data, output_qr_data)
-    params_info = [token_x, wq_a, wq_b, wkv, gamma_cq, gamma_ckv, \
-        rope_cos, rope_sin, output_q_data, output_kv_data, output_qr_data]
+    check_config = MlaCheckInputConfigV4(
+        token_x=token_x, wq_a=wq_a, wq_b=wq_b, wkv=wkv,
+        rope_cos=rope_cos, rope_sin=rope_sin,
+        gamma_cq=gamma_cq, gamma_ckv=gamma_ckv,
+        output_q_data=output_q_data, output_kv_data=output_kv_data,
+        output_qr_data=output_qr_data)
+    check_input_output_shape_dtype(check_config)
+    params_info = [token_x, wq_a, wq_b, wkv, gamma_cq, gamma_ckv,
+                   rope_cos, rope_sin, output_q_data, output_kv_data, output_qr_data]
     mla_prolog_v4(*params_info, attrs, configs)
     pypto.runtime._device_synchronize()
 
-    # golden data 
-    golden1 = golden_tensors["q_golden"].reshape(q_out_shape)
-    golden2 = golden_tensors["kv_golden"].reshape(kv_out_shape)
-    golden3 = golden_tensors["qr_golden"].reshape(qr_out_shape)
-    
-    # compare
-    print("q ================")
-    compare(output_q_data.cpu(), golden1.cpu(), "qOut", 0.0001, 0.0078125, 0.005)
-    print("kv ================")
-    compare(output_kv_data.cpu(), golden2.cpu(), "kvOut", 0.0001, 0.0078125, 0.005)
-    print("qr ================")
-    compare(output_qr_data.cpu(), golden3.cpu(), "qrOut", 0.0001, 0.0078125, 0.005)
-    print("=========== pass ==========")
+    _compare_mla_outputs(output_q_data, output_kv_data, output_qr_data,
+                         golden_tensors, shapes)
 
 
 @pytest.mark.skip(reason="large test case")

@@ -803,294 +803,236 @@ def test_pil_builder_attribute():
             Expr.str(var_x)
 
 
+def _subscript_expression_context_tests():
+    @TestParser.test
+    def subscript_binop_left():
+        var_l = [Expr.int(2), Expr.int(3)]
+        var_x = var_l[0] + Expr.int(1)
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_binop_right():
+        var_l = [Expr.int(3), Expr.int(4)]
+        var_x = Expr.int(1) + var_l[0]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_binop_both():
+        var_l = [Expr.int(2), Expr.int(3)]
+        var_x = var_l[0] + var_l[1]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_unary_neg():
+        var_l = [Expr.int(5)]
+        var_x = -var_l[0]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_unary_not():
+        var_l = [Expr.true(0)]
+        var_x = not var_l[0]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_if_true():
+        var_l = [Expr.true(0)]
+        if var_l[0]:
+            Expr.str(1)
+        else:
+            Expr.str(2)
+
+    @TestParser.test
+    def subscript_if_false():
+        var_l = [Expr.false(0)]
+        if var_l[0]:
+            Expr.str(1)
+        else:
+            Expr.str(2)
+
+    @TestParser.test
+    def subscript_for_iter():
+        var_l = [[Expr.int(0), Expr.int(1), Expr.int(2)]]
+        for var_x in var_l[0]:
+            Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_while_test():
+        var_l = [True]
+        while var_l[0]:
+            Expr.str(0)
+            var_l[0] = False
+
+    @TestParser.test
+    def subscript_call_pos_arg():
+        var_l = [Expr.int(0)]
+        Expr.str(var_l[0])
+
+    @TestParser.test
+    def subscript_call_kw_arg():
+        def func(x):
+            Expr.str(x)
+        var_l = [Expr.int(0)]
+        func(x=var_l[0])
+
+    @TestParser.test
+    def subscript_in_tuple():
+        var_l = [Expr.int(1), Expr.int(2)]
+        var_t = (var_l[0], var_l[1])
+        Expr.str(var_t[0])
+        Expr.str(var_t[1])
+
+    @TestParser.test
+    def subscript_in_list():
+        var_l = [Expr.int(1), Expr.int(2)]
+        var_r = [var_l[0], var_l[1]]
+        Expr.str(var_r[0])
+        Expr.str(var_r[1])
+
+    @TestParser.test
+    def subscript_dict_key():
+        var_keys = [Expr.int(0)]
+        var_d = {var_keys[0]: Expr.int(99)}
+        Expr.str(var_d[0])
+
+    @TestParser.test
+    def subscript_dict_value():
+        var_vals = [Expr.int(99)]
+        var_d = {Expr.int(0): var_vals[0]}
+        Expr.str(var_d[0])
+
+    @TestParser.test
+    def subscript_in_set():
+        var_l = [Expr.int(1), Expr.int(2)]
+        var_s = {var_l[0], var_l[1]}
+        Expr.str(1 in var_s)
+
+    @TestParser.test
+    def subscript_as_index():
+        var_idx = [Expr.int(0)]
+        var_arr = Expr(0)
+        var_arr[0] = Expr.int(99)
+        var_x = var_arr[var_idx[0]]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def subscript_annotation_no_value():
+        var_x: list[int]
+
+    @TestParser.test
+    def subscript_annotation_with_value():
+        var_x: list[int] = [Expr.int(0)]
+        Expr.str(var_x[0])
+
+
+def _subscript_slice_expression_tests():
+    @TestParser.test
+    def slice_index_attr():
+        var_obj = Expr(0)
+        var_obj.val = Expr.int(1)
+        var_arr = Expr(1)
+        var_arr[1] = Expr.int(99)
+        var_x = var_arr[var_obj.val]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_call():
+        def idx():
+            return Expr.int(0)
+        var_arr = Expr(0)
+        var_arr[0] = Expr.int(99)
+        var_x = var_arr[idx()]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_binop():
+        var_arr = Expr(0)
+        var_arr[2] = Expr.int(99)
+        var_x = var_arr[Expr.int(1) + Expr.int(1)]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_unary():
+        var_arr = Expr(0)
+        var_arr[-1] = Expr.int(99)
+        var_x = var_arr[-Expr.int(1)]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_subscript():
+        var_idxs = [Expr.int(0)]
+        var_arr = Expr(0)
+        var_arr[0] = Expr.int(99)
+        var_x = var_arr[var_idxs[0]]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_dict():
+        var_d = {0: Expr.int(1)}
+        var_arr = Expr(0)
+        var_arr[1] = Expr.int(99)
+        var_x = var_arr[var_d[0]]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_set():
+        var_s = {0}
+        var_arr = Expr(0)
+        var_arr[True] = Expr.int(99)
+        var_x = var_arr[0 in var_s]
+        Expr.str(var_x)
+
+    @TestParser.test
+    def slice_index_named_expr():
+        var_arr = Expr(0)
+        var_arr[0] = Expr.int(99)
+        var_x = var_arr[(var_k := Expr.int(0))]
+        Expr.str(var_x)
+        Expr.str(var_k)
+
+    @TestParser.test
+    def slice_range_attr_bounds():
+        var_lo = Expr(0)
+        var_lo.val = Expr.int(1)
+        var_hi = Expr(1)
+        var_hi.val = Expr.int(3)
+        var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
+        var_s = var_l[var_lo.val:var_hi.val]
+        Expr.str(var_s[0])
+
+    @TestParser.test
+    def slice_range_call_bounds():
+        def lo():
+            return Expr.int(1)
+        def hi():
+            return Expr.int(3)
+        var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
+        var_s = var_l[lo():hi()]
+        Expr.str(var_s[0])
+
+    @TestParser.test
+    def slice_range_binop_bounds():
+        var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
+        var_s = var_l[Expr.int(0) + 1: Expr.int(1) + 2]
+        Expr.str(var_s[0])
+
+    @TestParser.test
+    def slice_range_subscript_bounds():
+        var_bounds = [Expr.int(1), Expr.int(3)]
+        var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
+        var_s = var_l[var_bounds[0]:var_bounds[1]]
+        Expr.str(var_s[0])
+
+    @TestParser.test
+    def slice_range_dict_bounds():
+        var_d = {'lo': Expr.int(1), 'hi': Expr.int(3)}
+        var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
+        var_s = var_l[var_d['lo']:var_d['hi']]
+        Expr.str(var_s[0])
+
+
 def test_pil_builder_subscript():
 
     with TestParser():
-
-        # ================================================================
-        # Part 1: subscript result used in various expression contexts
-        # ================================================================
-
-        # --- subscript result in binop ---
-
-        @TestParser.test
-        def subscript_binop_left():
-            var_l = [Expr.int(2), Expr.int(3)]
-            var_x = var_l[0] + Expr.int(1)
-            Expr.str(var_x)
-
-        @TestParser.test
-        def subscript_binop_right():
-            var_l = [Expr.int(3), Expr.int(4)]
-            var_x = Expr.int(1) + var_l[0]
-            Expr.str(var_x)
-
-        @TestParser.test
-        def subscript_binop_both():
-            var_l = [Expr.int(2), Expr.int(3)]
-            var_x = var_l[0] + var_l[1]
-            Expr.str(var_x)
-
-        # --- subscript result in unary op ---
-
-        @TestParser.test
-        def subscript_unary_neg():
-            var_l = [Expr.int(5)]
-            var_x = -var_l[0]
-            Expr.str(var_x)
-
-        @TestParser.test
-        def subscript_unary_not():
-            var_l = [Expr.true(0)]
-            var_x = not var_l[0]
-            Expr.str(var_x)
-
-        # --- subscript result as if test ---
-
-        @TestParser.test
-        def subscript_if_true():
-            var_l = [Expr.true(0)]
-            if var_l[0]:
-                Expr.str(1)
-            else:
-                Expr.str(2)
-
-        @TestParser.test
-        def subscript_if_false():
-            var_l = [Expr.false(0)]
-            if var_l[0]:
-                Expr.str(1)
-            else:
-                Expr.str(2)
-
-        # --- subscript result as for iter ---
-
-        @TestParser.test
-        def subscript_for_iter():
-            var_l = [[Expr.int(0), Expr.int(1), Expr.int(2)]]
-            for var_x in var_l[0]:
-                Expr.str(var_x)
-
-        # --- subscript result as while test ---
-
-        @TestParser.test
-        def subscript_while_test():
-            var_l = [True]
-            while var_l[0]:
-                Expr.str(0)
-                var_l[0] = False
-
-        # --- subscript result as call positional arg ---
-
-        @TestParser.test
-        def subscript_call_pos_arg():
-            var_l = [Expr.int(0)]
-            Expr.str(var_l[0])
-
-        # --- subscript result as call keyword arg ---
-
-        @TestParser.test
-        def subscript_call_kw_arg():
-
-            def func(x):
-                Expr.str(x)
-            var_l = [Expr.int(0)]
-            func(x=var_l[0])
-
-        # --- subscript result in tuple literal ---
-
-        @TestParser.test
-        def subscript_in_tuple():
-            var_l = [Expr.int(1), Expr.int(2)]
-            var_t = (var_l[0], var_l[1])
-            Expr.str(var_t[0])
-            Expr.str(var_t[1])
-
-        # --- subscript result in list literal ---
-
-        @TestParser.test
-        def subscript_in_list():
-            var_l = [Expr.int(1), Expr.int(2)]
-            var_r = [var_l[0], var_l[1]]
-            Expr.str(var_r[0])
-            Expr.str(var_r[1])
-
-        # --- subscript result as dict key and value ---
-
-        @TestParser.test
-        def subscript_dict_key():
-            var_keys = [Expr.int(0)]
-            var_d = {var_keys[0]: Expr.int(99)}
-            Expr.str(var_d[0])
-
-        @TestParser.test
-        def subscript_dict_value():
-            var_vals = [Expr.int(99)]
-            var_d = {Expr.int(0): var_vals[0]}
-            Expr.str(var_d[0])
-
-        # --- subscript result in set literal ---
-
-        @TestParser.test
-        def subscript_in_set():
-            var_l = [Expr.int(1), Expr.int(2)]
-            var_s = {var_l[0], var_l[1]}
-            Expr.str(1 in var_s)
-
-        # --- subscript result as subscript index ---
-
-        @TestParser.test
-        def subscript_as_index():
-            var_idx = [Expr.int(0)]
-            var_arr = Expr(0)
-            var_arr[0] = Expr.int(99)
-            var_x = var_arr[var_idx[0]]
-            Expr.str(var_x)
-
-        # --- subscript result as type annotation ---
-
-        @TestParser.test
-        def subscript_annotation_no_value():
-            var_x: list[int]
-
-        @TestParser.test
-        def subscript_annotation_with_value():
-            var_x: list[int] = [Expr.int(0)]
-            Expr.str(var_x[0])
-
-        # ================================================================
-        # Part 2: slice expressions of various kinds
-        # ================================================================
-
-        # --- slice index: attr ---
-
-        @TestParser.test
-        def slice_index_attr():
-            var_obj = Expr(0)
-            var_obj.val = Expr.int(1)
-            var_arr = Expr(1)
-            var_arr[1] = Expr.int(99)
-            var_x = var_arr[var_obj.val]
-            Expr.str(var_x)
-
-        # --- slice index: call ---
-
-        @TestParser.test
-        def slice_index_call():
-
-            def idx():
-                return Expr.int(0)
-            var_arr = Expr(0)
-            var_arr[0] = Expr.int(99)
-            var_x = var_arr[idx()]
-            Expr.str(var_x)
-
-        # --- slice index: binop ---
-
-        @TestParser.test
-        def slice_index_binop():
-            var_arr = Expr(0)
-            var_arr[2] = Expr.int(99)
-            var_x = var_arr[Expr.int(1) + Expr.int(1)]
-            Expr.str(var_x)
-
-        # --- slice index: unary op ---
-
-        @TestParser.test
-        def slice_index_unary():
-            var_arr = Expr(0)
-            var_arr[-1] = Expr.int(99)
-            var_x = var_arr[-Expr.int(1)]
-            Expr.str(var_x)
-
-        # --- slice index: subscript ---
-
-        @TestParser.test
-        def slice_index_subscript():
-            var_idxs = [Expr.int(0)]
-            var_arr = Expr(0)
-            var_arr[0] = Expr.int(99)
-            var_x = var_arr[var_idxs[0]]
-            Expr.str(var_x)
-
-        # --- slice index: dict value ---
-
-        @TestParser.test
-        def slice_index_dict():
-            var_d = {0: Expr.int(1)}
-            var_arr = Expr(0)
-            var_arr[1] = Expr.int(99)
-            var_x = var_arr[var_d[0]]
-            Expr.str(var_x)
-
-        # --- slice index: set membership (bool) ---
-
-        @TestParser.test
-        def slice_index_set():
-            var_s = {0}
-            var_arr = Expr(0)
-            var_arr[True] = Expr.int(99)
-            var_x = var_arr[0 in var_s]
-            Expr.str(var_x)
-
-        # --- slice index: named expr ---
-
-        @TestParser.test
-        def slice_index_named_expr():
-            var_arr = Expr(0)
-            var_arr[0] = Expr.int(99)
-            var_x = var_arr[(var_k := Expr.int(0))]
-            Expr.str(var_x)
-            Expr.str(var_k)
-
-        # --- slice range: attr bounds ---
-
-        @TestParser.test
-        def slice_range_attr_bounds():
-            var_lo = Expr(0)
-            var_lo.val = Expr.int(1)
-            var_hi = Expr(1)
-            var_hi.val = Expr.int(3)
-            var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
-            var_s = var_l[var_lo.val:var_hi.val]
-            Expr.str(var_s[0])
-
-        # --- slice range: call bounds ---
-
-        @TestParser.test
-        def slice_range_call_bounds():
-
-            def lo():
-                return Expr.int(1)
-
-            def hi():
-                return Expr.int(3)
-            var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
-            var_s = var_l[lo():hi()]
-            Expr.str(var_s[0])
-
-        # --- slice range: binop bounds ---
-
-        @TestParser.test
-        def slice_range_binop_bounds():
-            var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
-            var_s = var_l[Expr.int(0) + 1: Expr.int(1) + 2]
-            Expr.str(var_s[0])
-
-        # --- slice range: subscript bounds ---
-
-        @TestParser.test
-        def slice_range_subscript_bounds():
-            var_bounds = [Expr.int(1), Expr.int(3)]
-            var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
-            var_s = var_l[var_bounds[0]:var_bounds[1]]
-            Expr.str(var_s[0])
-
-        # --- slice range: dict bounds ---
-
-        @TestParser.test
-        def slice_range_dict_bounds():
-            var_d = {'lo': Expr.int(1), 'hi': Expr.int(3)}
-            var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
-            var_s = var_l[var_d['lo']:var_d['hi']]
-            Expr.str(var_s[0])
+        _subscript_expression_context_tests()
+        _subscript_slice_expression_tests()

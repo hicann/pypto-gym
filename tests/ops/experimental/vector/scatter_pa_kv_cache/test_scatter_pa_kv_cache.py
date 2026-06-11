@@ -65,58 +65,14 @@ def setup_npu(device_id):
 # 2. 测试函数
 # ─────────────────────────────────────────────
 
-def run_scatter_pa_kv_cache_test(
-    num_tokens, num_blocks, block_size, num_heads, head_size,
-    seed=42,
-    device_id=None, run_mode="npu", test_name=None
-):
-    """通用测试函数：执行 scatter_pa_kv_cache 算子精度验证
-
-    Args:
-        num_tokens: 当前 step 处理的 token 数量
-        num_blocks: cache 中的总块数
-        block_size: 每个块的元素数
-        num_heads: head 数量
-        head_size: 每个 head 的维度
-        seed: 随机种子
-        device_id: NPU 设备 ID
-        run_mode: 运行模式 ("npu" 或 "sim")
-        test_name: 测试名称（可选，用于日志输出）
-    """
-    # 延迟导入，避免在 --list 或 --help 时卡住
+def _create_test_tensors(num_tokens, num_blocks, block_size, num_heads, head_size, seed, device):
+    """Create input tensors for the test."""
     import torch
-    import numpy as np
-    import gc
-    from numpy.testing import assert_allclose
-    from experimental.vector.scatter_pa_kv_cache.scatter_pa_kv_cache_impl import scatter_pa_kv_cache_wrapper
-
-    if test_name is None:
-        test_name = f"num_tokens={num_tokens}, num_blocks={num_blocks}, block_size={block_size}, num_heads={num_heads}, head_size={head_size}"
-
-    print("=" * 60)
-    print(f"Test: scatter_pa_kv_cache {test_name}")
-    print("=" * 60)
-
-    if run_mode == "npu":
-        if device_id is None:
-            device_id = get_device_id()
-        setup_npu(device_id)
-        device = f"npu:{device_id}"
-    else:
-        device = "cpu"
-
-    # 固定随机种子以保证可重复性
     torch.manual_seed(seed)
-
-    # 生成输入 tensor
     key = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16, device=device)
-
     key_cache = torch.randn(
-        num_blocks, block_size, num_heads, head_size,
-        dtype=torch.bfloat16, device=device
-    )
+        num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16, device=device)
 
-    # 确保 slot_mapping 在有效范围内且不重复（如果 tokens <= slots）
     max_slots = num_blocks * block_size
     if num_tokens <= max_slots:
         slot_mapping = torch.randperm(max_slots)[:num_tokens].to(torch.int32).to(device)
@@ -124,59 +80,69 @@ def run_scatter_pa_kv_cache_test(
         slot_mapping = torch.randint(0, max_slots, (num_tokens,), dtype=torch.int32, device=device)
 
     value = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16, device=device)
-
     value_cache = torch.randn(
-        num_blocks, block_size, num_heads, head_size,
-        dtype=torch.bfloat16, device=device
-    )
+        num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16, device=device)
 
-    # 保存原始 cache 用于 golden 对比（在 CPU 端保存副本，减少峰值内存）
-    key_cache_orig = key_cache.cpu().clone()
-    value_cache_orig = value_cache.cpu().clone()
+    return key, key_cache, slot_mapping, value, value_cache
 
-    # 执行 kernel wrapper（原地更新 key_cache 和 value_cache）
-    result_key_cache, result_value_cache = scatter_pa_kv_cache_wrapper(
-        key, key_cache, slot_mapping, value, value_cache
-    )
 
-    # 将 kernel 输入移到 CPU，释放 NPU 小 tensor 引用
+def _run_kernel(key, key_cache, slot_mapping, value, value_cache):
+    """Execute the scatter_pa_kv_cache kernel."""
+    from experimental.vector.scatter_pa_kv_cache.scatter_pa_kv_cache_impl import scatter_pa_kv_cache_wrapper
+    return scatter_pa_kv_cache_wrapper(key, key_cache, slot_mapping, value, value_cache)
+
+
+def _compute_golden(key_cache_orig, value_cache_orig, key_cpu, value_cpu,
+                    slot_mapping_cpu, block_size):
+    """Compute golden reference results for key_cache and value_cache."""
+    import gc
+
+    block_indices = slot_mapping_cpu // block_size
+    block_offsets = slot_mapping_cpu % block_size
+
+    golden_key_cache = key_cache_orig.clone()
+    golden_key_cache[block_indices, block_offsets, :, :] = key_cpu
+    del key_cache_orig, key_cpu
+    gc.collect()
+
+    golden_value_cache = value_cache_orig.clone()
+    golden_value_cache[block_indices, block_offsets, :, :] = value_cpu
+    del value_cache_orig, value_cpu, block_indices, block_offsets, slot_mapping_cpu
+    gc.collect()
+
+    return golden_key_cache, golden_value_cache
+
+
+def _move_kernel_inputs_to_cpu(key, slot_mapping, value, run_mode):
+    """Move kernel inputs to CPU and release NPU memory."""
+    import gc
     key_cpu = key.cpu()
     slot_mapping_cpu = slot_mapping.cpu()
     value_cpu = value.cpu()
     del key, slot_mapping, value
     gc.collect()
     if run_mode == "npu":
+        import torch
         torch.npu.empty_cache()
+    return key_cpu, slot_mapping_cpu, value_cpu
 
-    # 计算 golden 参考结果（向量化实现，分步处理 key/value 以降低峰值内存）
-    # 数学公式与 scatter_pa_kv_cache_golden.py 一致：
-    #   key_cache_out[block_idx, block_offset, :, :] = key[i, :, :]
-    #   value_cache_out[block_idx, block_offset, :, :] = value[i, :, :]
-    #   其中 block_idx = slot_mapping[i] // block_size, block_offset = slot_mapping[i] % block_size
-    block_indices = slot_mapping_cpu // block_size
-    block_offsets = slot_mapping_cpu % block_size
 
-    # 分步 1：key_cache golden（原地 scatter update 到 clone）
-    golden_key_cache = key_cache_orig.clone()
-    golden_key_cache[block_indices, block_offsets, :, :] = key_cpu
-    del key_cache_orig, key_cpu
-    gc.collect()
-
-    # 分步 2：value_cache golden
-    golden_value_cache = value_cache_orig.clone()
-    golden_value_cache[block_indices, block_offsets, :, :] = value_cpu
-    del value_cache_orig, value_cpu, block_indices, block_offsets, slot_mapping_cpu
-    gc.collect()
-
-    # 将 kernel 结果移到 CPU，释放 NPU 引用
+def _move_kernel_outputs_to_cpu(result_key_cache, result_value_cache, key_cache, value_cache, run_mode):
+    """Move kernel outputs to CPU and release NPU memory."""
+    import gc
     result_key_cache_cpu = result_key_cache.cpu()
     result_value_cache_cpu = result_value_cache.cpu()
     del result_key_cache, result_value_cache, key_cache, value_cache
     gc.collect()
     if run_mode == "npu":
+        import torch
         torch.npu.empty_cache()
+    return result_key_cache_cpu, result_value_cache_cpu
 
-    # 精度对比
+
+def _log_shapes(num_tokens, num_heads, head_size, num_blocks, block_size,
+                result_key_cache_cpu, result_value_cache_cpu):
+    """Log input/output shapes."""
     print(f"  Input shapes:")
     print(f"    key:           torch.Size([{num_tokens}, {num_heads}, {head_size}])")
     print(f"    key_cache:     torch.Size([{num_blocks}, {block_size}, {num_heads}, {head_size}])")
@@ -187,7 +153,15 @@ def run_scatter_pa_kv_cache_test(
     print(f"    key_cache:     {result_key_cache_cpu.shape}")
     print(f"    value_cache:   {result_value_cache_cpu.shape}")
 
-    # 分步转换：先处理 key_cache，释放后再处理 value_cache，降低内存峰值
+
+def _compare_results(result_key_cache_cpu, result_value_cache_cpu,
+                     golden_key_cache, golden_value_cache, run_mode):
+    """Compare kernel results with golden and report precision."""
+    import numpy as np
+    import gc
+    import sys
+    from numpy.testing import assert_allclose
+
     result_key_np = result_key_cache_cpu.float().numpy()
     del result_key_cache_cpu
     gc.collect()
@@ -211,7 +185,6 @@ def run_scatter_pa_kv_cache_test(
     print(f"  Max diff (value_cache):  {max_diff_value:.6e}")
     print(f"  Mean diff (value_cache): {mean_diff_value:.6e}")
 
-    # 三态判定
     if run_mode == "npu":
         try:
             assert_allclose(result_key_np, golden_key_np, rtol=RTOL, atol=ATOL)
@@ -224,7 +197,71 @@ def run_scatter_pa_kv_cache_test(
             print(f"Runtime error: {e}", file=sys.stderr)
             raise
 
-    print("  ✓ Passed\n")
+    print("  \u2713 Passed\n")
+
+
+def run_scatter_pa_kv_cache_test(
+    num_tokens, num_blocks, block_size, num_heads, head_size,
+    seed=42,
+    device_id=None, run_mode="npu", test_name=None
+):
+    """通用测试函数：执行 scatter_pa_kv_cache 算子精度验证
+
+    Args:
+        num_tokens: 当前 step 处理的 token 数量
+        num_blocks: cache 中的总块数
+        block_size: 每个块的元素数
+        num_heads: head 数量
+        head_size: 每个 head 的维度
+        seed: 随机种子
+        device_id: NPU 设备 ID
+        run_mode: 运行模式 ("npu" 或 "sim")
+        test_name: 测试名称（可选，用于日志输出）
+    """
+    import torch
+    import gc
+
+    if test_name is None:
+        test_name = (
+            f"num_tokens={num_tokens}, num_blocks={num_blocks}, "
+            f"block_size={block_size}, num_heads={num_heads}, head_size={head_size}"
+        )
+
+    print("=" * 60)
+    print(f"Test: scatter_pa_kv_cache {test_name}")
+    print("=" * 60)
+
+    if run_mode == "npu":
+        if device_id is None:
+            device_id = get_device_id()
+        setup_npu(device_id)
+        device = f"npu:{device_id}"
+    else:
+        device = "cpu"
+
+    key, key_cache, slot_mapping, value, value_cache = _create_test_tensors(
+        num_tokens, num_blocks, block_size, num_heads, head_size, seed, device)
+
+    # 保存原始 cache 用于 golden 对比（在 CPU 端保存副本，减少峰值内存）
+    key_cache_orig = key_cache.cpu().clone()
+    value_cache_orig = value_cache.cpu().clone()
+
+    result_key_cache, result_value_cache = _run_kernel(key, key_cache, slot_mapping, value, value_cache)
+
+    key_cpu, slot_mapping_cpu, value_cpu = _move_kernel_inputs_to_cpu(key, slot_mapping, value, run_mode)
+
+    golden_key_cache, golden_value_cache = _compute_golden(
+        key_cache_orig, value_cache_orig, key_cpu, value_cpu, slot_mapping_cpu, block_size)
+
+    result_key_cache_cpu, result_value_cache_cpu = _move_kernel_outputs_to_cpu(
+        result_key_cache, result_value_cache, key_cache, value_cache, run_mode)
+
+    # 日志输出形状
+    _log_shapes(num_tokens, num_heads, head_size, num_blocks, block_size,
+                result_key_cache_cpu, result_value_cache_cpu)
+
+    _compare_results(result_key_cache_cpu, result_value_cache_cpu,
+                     golden_key_cache, golden_value_cache, run_mode)
 
 
 # ─────────────────────────────────────────────

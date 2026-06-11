@@ -191,7 +191,7 @@ def test_pil_builder_named_expr():
             Expr.str(var_ann)
 
 
-def test_pil_builder_assign():
+def test_pil_builder_assign_name_attr():
 
     with TestParser():
 
@@ -207,7 +207,6 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_multi_target():
-            # e.g. a = b = expr - both names get the same value
             var_x = var_y = Expr.int(0)
 
         # --- attribute target ---
@@ -224,10 +223,14 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_attr_chain():
-            # e.g. obj.val.val += rhs - chain of attribute loads
             var_obj = Expr(0)
             var_obj.val = Expr(1)
             var_obj.val.val = Expr.int(0)
+
+
+def test_pil_builder_assign_subscript():
+
+    with TestParser():
 
         # --- subscript target ---
 
@@ -243,7 +246,6 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_attr_index():
-            # e.g. obj[other.val] = rhs - index is an attribute load
             var_obj = Expr(0)
             var_idx = Expr(1)
             var_idx.val = Expr.int(0)
@@ -251,7 +253,6 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_subscript_index():
-            # e.g. obj[idx[k]] = rhs - index is itself a subscript
             var_obj = Expr(0)
             var_idx = Expr(1)
             var_idx[0] = Expr.int(0)
@@ -259,9 +260,15 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_binop_index():
-            # e.g. obj[a + b] = rhs - index is a binop
             var_obj = Expr(0)
             var_obj[Expr.int(0) + Expr.int(1)] = Expr.int(2)
+
+
+def test_pil_builder_assign_subscript_slice():
+
+    with TestParser():
+
+        # --- slice targets ---
 
         @TestParser.test
         def assign_subscript_slice():
@@ -275,13 +282,11 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_expr_slice():
-            # slice bounds are side-effectful expressions
             var_obj = Expr(0)
             var_obj[Expr.int(0):Expr.int(1)] = Expr.int(2)
 
         @TestParser.test
         def assign_subscript_attr_slice():
-            # e.g. obj[a.val:b.val] = rhs - slice bounds are attribute loads
             var_obj = Expr(0)
             var_lo = Expr(1)
             var_lo.val = Expr.int(0)
@@ -291,7 +296,6 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_subscript_slice():
-            # e.g. obj[lo[0]:hi[0]] = rhs - slice bounds are subscripts
             var_obj = Expr(0)
             var_lo = Expr(1)
             var_lo[0] = Expr.int(0)
@@ -301,34 +305,40 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_subscript_binop_slice():
-            # e.g. obj[a+1 : b*2] = rhs - slice bounds are binops
             var_obj = Expr(0)
             var_obj[Expr.int(0) + 1: Expr.int(1) * 2] = Expr.int(2)
+
+
+def test_pil_builder_assign_nested_chains():
+
+    with TestParser():
 
         # --- nested subscript / attr chains ---
 
         @TestParser.test
         def assign_attr_subscript():
-            # e.g. obj.val[k] = rhs - subscript index is an attribute load
             var_obj = Expr(0)
             var_obj.val = Expr(1)
             var_obj.val[0] = Expr.int(1)
 
         @TestParser.test
         def assign_subscript_attr():
-            # e.g. obj[k].val = rhs - subscript index is a subscript
             var_obj = Expr(0)
             var_obj[0] = Expr(1)
             var_obj[0].val = Expr.int(1)
 
         @TestParser.test
         def assign_subscript_attr_subscript_attr():
-            # e.g. obj[k].val[k].val = rhs - assignment through a four-level access chain
             var_obj = Expr(0)
             var_obj[0] = Expr(1)
             var_obj[0].val = Expr(2)
             var_obj[0].val[0] = Expr(3)
             var_obj[0].val[0].val = Expr.int(1)
+
+
+def test_pil_builder_assign_unpack():
+
+    with TestParser():
 
         # --- tuple / list unpack ---
 
@@ -350,38 +360,35 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_unpack_to_attr_subscript():
-            # lhs elements can be attribute / subscript targets
             var_obj = Expr(0)
             var_obj.val = Expr.int(0)
             var_arr = Expr(1)
             var_arr[0] = Expr.int(0)
             var_obj.val, var_arr[0] = Expr.int(1), Expr.int(2)
 
-        # --- chained assignment ---
 
+def test_pil_builder_assign_chain_simple():
+
+    with TestParser():
 
         @TestParser.test
         def assign_chain_name_name():
-            # e.g. x = y = expr - both names bound to same value
             var_x = var_y = Expr.int(0)
 
         @TestParser.test
         def assign_chain_name_attr():
-            # e.g. x = obj.val = expr - name bound to attribute load of object
             var_obj = Expr(0)
             var_obj.val = Expr.int(0)
             var_x = var_obj.val = Expr.int(1)
 
         @TestParser.test
         def assign_chain_name_subscript():
-            # e.g. x = obj[k] = expr - name bound to subscript of object
             var_obj = Expr(0)
             var_obj[0] = Expr.int(0)
             var_x = var_obj[0] = Expr.int(1)
 
         @TestParser.test
         def assign_chain_attr_subscript():
-            # e.g. obj.val = arr[k] = expr - attribute load of object bound to subscript of array target
             var_obj = Expr(0)
             var_obj.val = Expr.int(0)
             var_arr = Expr(1)
@@ -390,7 +397,6 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_chain_three():
-            # e.g. x = obj.val = arr[k] = expr - three targets bound to same value
             var_obj = Expr(0)
             var_obj.val = Expr.int(0)
             var_arr = Expr(1)
@@ -399,51 +405,47 @@ def test_pil_builder_assign():
 
         @TestParser.test
         def assign_chain_tuple_name():
-            # e.g. (a, b) = x = expr - tuple elements bound to names
             var_x = var_a, var_b = Expr.int(0), Expr.int(1)
 
         @TestParser.test
         def assign_chain_tuple_tuple():
-            # e.g. (a, b) = (c, d) = expr - two tuple lhs targets
             var_a, var_b = var_c, var_d = Expr.int(0), Expr.int(1)
+
+
+def test_pil_builder_assign_chain_nested():
+
+    with TestParser():
 
         @TestParser.test
         def assign_chain_list_list():
-            # e.g. [a, b] = [c, d] = expr: list elements bound to names
             [var_a, var_b] = [var_c, var_d] = [Expr.int(0), Expr.int(1)]
 
         @TestParser.test
         def assign_chain_tuple_nested_2():
-            # e.g. (a, (b, c)) = x = expr - 2-level nested tuple on first target
             var_x = var_a, (var_b, var_c) = Expr.int(0), (Expr.int(1), Expr.int(2))
 
         @TestParser.test
         def assign_chain_tuple_nested_3():
-            # e.g. x = (a, (b, (c, d))) = expr - 3-level nested tuple
             var_x = var_a, (var_b, (var_c, var_d)) = \
                 Expr.int(0), (Expr.int(1), (Expr.int(2), Expr.int(3)))
 
         @TestParser.test
         def assign_chain_list_nested_3():
-            # e.g. x = [a, [b, [c, d]]] = expr - 3-level nested list
             var_x = [var_a, [var_b, [var_c, var_d]]] = \
                 [Expr.int(0), [Expr.int(1), [Expr.int(2), Expr.int(3)]]]
 
         @TestParser.test
         def assign_chain_mixed_nested_3():
-            # e.g. x = (a, [b, (c, d)]) = expr - mixed tuple/list 3-level
             var_x = var_a, [var_b, (var_c, var_d)] = \
                 Expr.int(0), [Expr.int(1), (Expr.int(2), Expr.int(3))]
 
         @TestParser.test
         def assign_chain_starred_nested():
-            # e.g. (a, *b, c) = x = expr - chained assignment with a starred unpack target
             var_x = [var_a, var_b, var_c, var_d] = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
             var_a, *var_rest, var_z = var_x = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]
 
         @TestParser.test
         def assign_chain_three_nested():
-            # e.g. (a, b) = [c, d] = x = expr - three targets, two of them are nested
             var_x = [var_c, var_d] = var_a, var_b = [Expr.int(0), Expr.int(1)]
 
 

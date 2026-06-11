@@ -50,6 +50,95 @@ def load_test_cases():
         return json.load(f)
 
 
+def _prepare_case_inputs(case_data):
+    """Parse test case JSON and create input tensors for a single case."""
+    dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
+    int_dtype_map = {"int64": torch.long, "int32": torch.int32}
+
+    inputs = case_data["input"]
+
+    hidden_dtype = dtype_map[inputs["hidden_states"]["dtype"]]
+    hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=hidden_dtype, device="cpu")
+
+    kv_a_weight = torch.randn(inputs["kv_a_weight"]["shape"],
+                              dtype=dtype_map[inputs["kv_a_weight"]["dtype"]], device="cpu")
+    kv_b_weight = torch.randn(inputs["kv_b_weight"]["shape"],
+                              dtype=dtype_map[inputs["kv_b_weight"]["dtype"]], device="cpu")
+    ln_weight = torch.randn(inputs["ln_weight"]["shape"],
+                            dtype=dtype_map[inputs["ln_weight"]["dtype"]], device="cpu")
+    eps = inputs["eps"]["value"]
+    cos = torch.randn(inputs["cos"]["shape"], dtype=dtype_map[inputs["cos"]["dtype"]], device="cpu")
+    sin = torch.randn(inputs["sin"]["shape"], dtype=dtype_map[inputs["sin"]["dtype"]], device="cpu")
+
+    pos_ids_dtype = int_dtype_map[inputs["pos_ids"]["dtype"]]
+    bsz = inputs["hidden_states"]["shape"][0]
+    seq_len = inputs["hidden_states"]["shape"][1]
+    pos_ids = torch.arange(seq_len, dtype=pos_ids_dtype, device="cpu").unsqueeze(0).expand(bsz, -1)
+
+    return hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids
+
+
+def _verify_precision(k_nope_impl, k_nope_golden, value_impl, value_golden,
+                      k_pe_impl, k_pe_golden, case_data):
+    """Verify precision of all three outputs and raise on failure."""
+    rtol = case_data.get("rtol", 1e-2)
+    atol = case_data.get("atol", 1e-2)
+
+    print("\n[精度验证 - k_nope]")
+    print(f"  Max diff: {torch.abs(k_nope_golden - k_nope_impl).max().item():.6e}")
+    try:
+        assert_allclose(k_nope_impl.cpu().numpy(), k_nope_golden.cpu().numpy(), rtol=rtol, atol=atol)
+        print(f"[PRECISION_PASS] k_nope diff < {rtol}")
+    except AssertionError as e:
+        print(f"[PRECISION_FAIL] k_nope: {e}", file=sys.stderr)
+        raise
+
+    print("\n[精度验证 - value]")
+    print(f"  Max diff: {torch.abs(value_golden - value_impl).max().item():.6e}")
+    try:
+        assert_allclose(value_impl.cpu().numpy(), value_golden.cpu().numpy(), rtol=rtol, atol=atol)
+        print(f"[PRECISION_PASS] value diff < {rtol}")
+    except AssertionError as e:
+        print(f"[PRECISION_FAIL] value: {e}", file=sys.stderr)
+        raise
+
+    print("\n[精度验证 - k_pe]")
+    print(f"  Max diff: {torch.abs(k_pe_golden - k_pe_impl).max().item():.6e}")
+    try:
+        assert_allclose(k_pe_impl.cpu().numpy(), k_pe_golden.cpu().numpy(), rtol=rtol, atol=atol)
+        print(f"[PRECISION_PASS] k_pe diff < {rtol}")
+    except AssertionError as e:
+        print(f"[PRECISION_FAIL] k_pe: {e}", file=sys.stderr)
+        raise
+
+
+def _verify_output_shapes(k_nope_impl, value_impl, k_pe_impl, case_data):
+    """Verify output tensor shapes and dtypes match spec."""
+    dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
+    outputs = case_data["output"]
+
+    expected_k_nope_shape = torch.Size(outputs["k_nope"]["shape"])
+    expected_k_nope_dtype = dtype_map[outputs["k_nope"]["dtype"]]
+    assert k_nope_impl.shape == expected_k_nope_shape, \
+        f"k_nope shape mismatch: {k_nope_impl.shape} vs {expected_k_nope_shape}"
+    assert k_nope_impl.dtype == expected_k_nope_dtype, \
+        f"k_nope dtype mismatch: {k_nope_impl.dtype} vs {expected_k_nope_dtype}"
+
+    expected_value_shape = torch.Size(outputs["value"]["shape"])
+    expected_value_dtype = dtype_map[outputs["value"]["dtype"]]
+    assert value_impl.shape == expected_value_shape, \
+        f"value shape mismatch: {value_impl.shape} vs {expected_value_shape}"
+    assert value_impl.dtype == expected_value_dtype, \
+        f"value dtype mismatch: {value_impl.dtype} vs {expected_value_dtype}"
+
+    expected_k_pe_shape = torch.Size(outputs["k_pe"]["shape"])
+    expected_k_pe_dtype = dtype_map[outputs["k_pe"]["dtype"]]
+    assert k_pe_impl.shape == expected_k_pe_shape, \
+        f"k_pe shape mismatch: {k_pe_impl.shape} vs {expected_k_pe_shape}"
+    assert k_pe_impl.dtype == expected_k_pe_dtype, \
+        f"k_pe dtype mismatch: {k_pe_impl.dtype} vs {expected_k_pe_dtype}"
+
+
 def run_single_case(case_data, device):
     case_id = case_data["id"]
     description = case_data.get("description", "")
@@ -60,96 +149,18 @@ def run_single_case(case_data, device):
 
     torch.manual_seed(case_data.get("seed", 42))
 
-    dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
-    int_dtype_map = {"int64": torch.long, "int32": torch.int32}
-
-    inputs = case_data["input"]
-
-    hidden_dtype = dtype_map[inputs["hidden_states"]["dtype"]]
-    hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=hidden_dtype, device="cpu")
-
-    kv_a_weight_dtype = dtype_map[inputs["kv_a_weight"]["dtype"]]
-    kv_a_weight = torch.randn(inputs["kv_a_weight"]["shape"], dtype=kv_a_weight_dtype, device="cpu")
-
-    kv_b_weight_dtype = dtype_map[inputs["kv_b_weight"]["dtype"]]
-    kv_b_weight = torch.randn(inputs["kv_b_weight"]["shape"], dtype=kv_b_weight_dtype, device="cpu")
-
-    ln_weight_dtype = dtype_map[inputs["ln_weight"]["dtype"]]
-    ln_weight = torch.randn(inputs["ln_weight"]["shape"], dtype=ln_weight_dtype, device="cpu")
-
-    eps = inputs["eps"]["value"]
-
-    cos_dtype = dtype_map[inputs["cos"]["dtype"]]
-    cos = torch.randn(inputs["cos"]["shape"], dtype=cos_dtype, device="cpu")
-
-    sin_dtype = dtype_map[inputs["sin"]["dtype"]]
-    sin = torch.randn(inputs["sin"]["shape"], dtype=sin_dtype, device="cpu")
-
-    pos_ids_dtype = int_dtype_map[inputs["pos_ids"]["dtype"]]
-    bsz = inputs["hidden_states"]["shape"][0]
-    seq_len = inputs["hidden_states"]["shape"][1]
-    pos_ids = torch.arange(seq_len, dtype=pos_ids_dtype, device="cpu").unsqueeze(0).expand(bsz, -1)
+    hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids = \
+        _prepare_case_inputs(case_data)
 
     k_nope_golden, value_golden, k_pe_golden = mla_prolog_golden(
-        hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids
-    )
+        hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids)
 
     k_nope_impl, value_impl, k_pe_impl = mla_prolog_hybrid_optimized(
-        hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids
-    )
+        hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids)
 
-    print("\n[精度验证 - k_nope]")
-    k_nope_diff = torch.abs(k_nope_golden - k_nope_impl).max().item()
-    print(f"  Max diff: {k_nope_diff:.6e}")
-
-    print("\n[精度验证 - value]")
-    value_diff = torch.abs(value_golden - value_impl).max().item()
-    print(f"  Max diff: {value_diff:.6e}")
-
-    print("\n[精度验证 - k_pe]")
-    k_pe_diff = torch.abs(k_pe_golden - k_pe_impl).max().item()
-    print(f"  Max diff: {k_pe_diff:.6e}")
-
-    rtol = case_data.get("rtol", 1e-2)
-    atol = case_data.get("atol", 1e-2)
-
-    try:
-        assert_allclose(k_nope_impl.cpu().numpy(), k_nope_golden.cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] k_nope diff < {rtol}")
-    except AssertionError as e:
-        print(f"[PRECISION_FAIL] k_nope: {e}", file=sys.stderr)
-        raise
-
-    try:
-        assert_allclose(value_impl.cpu().numpy(), value_golden.cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] value diff < {rtol}")
-    except AssertionError as e:
-        print(f"[PRECISION_FAIL] value: {e}", file=sys.stderr)
-        raise
-
-    try:
-        assert_allclose(k_pe_impl.cpu().numpy(), k_pe_golden.cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] k_pe diff < {rtol}")
-    except AssertionError as e:
-        print(f"[PRECISION_FAIL] k_pe: {e}", file=sys.stderr)
-        raise
-
-    outputs = case_data["output"]
-
-    expected_k_nope_shape = torch.Size(outputs["k_nope"]["shape"])
-    expected_k_nope_dtype = dtype_map[outputs["k_nope"]["dtype"]]
-    assert k_nope_impl.shape == expected_k_nope_shape, f"k_nope shape mismatch: {k_nope_impl.shape} vs {expected_k_nope_shape}"
-    assert k_nope_impl.dtype == expected_k_nope_dtype, f"k_nope dtype mismatch: {k_nope_impl.dtype} vs {expected_k_nope_dtype}"
-
-    expected_value_shape = torch.Size(outputs["value"]["shape"])
-    expected_value_dtype = dtype_map[outputs["value"]["dtype"]]
-    assert value_impl.shape == expected_value_shape, f"value shape mismatch: {value_impl.shape} vs {expected_value_shape}"
-    assert value_impl.dtype == expected_value_dtype, f"value dtype mismatch: {value_impl.dtype} vs {expected_value_dtype}"
-
-    expected_k_pe_shape = torch.Size(outputs["k_pe"]["shape"])
-    expected_k_pe_dtype = dtype_map[outputs["k_pe"]["dtype"]]
-    assert k_pe_impl.shape == expected_k_pe_shape, f"k_pe shape mismatch: {k_pe_impl.shape} vs {expected_k_pe_shape}"
-    assert k_pe_impl.dtype == expected_k_pe_dtype, f"k_pe dtype mismatch: {k_pe_impl.dtype} vs {expected_k_pe_dtype}"
+    _verify_precision(k_nope_impl, k_nope_golden, value_impl, value_golden,
+                      k_pe_impl, k_pe_golden, case_data)
+    _verify_output_shapes(k_nope_impl, value_impl, k_pe_impl, case_data)
 
 
 def main():

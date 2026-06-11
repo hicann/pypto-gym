@@ -203,87 +203,97 @@ def list_recent_root_sessions(limit: int = 10) -> List[SessionInfo]:
         return []
 
 
+def _classify_part(part_id: str, time_created: int, message_id: str,
+                   data: dict, message_roles: dict) -> tuple:
+    # Returns (category, classified_object) where category is one of:
+    #   "tool", "text_user", "text_assistant", "reasoning", "step", "other".
+    part_type = data.get("type", "unknown")
+
+    if part_type == "tool":
+        tool_call = ToolCall(
+            id=part_id,
+            tool=data.get("tool", "unknown"),
+            call_id=data.get("callID"),
+            status=data.get("state", {}).get("status", "unknown"),
+            input=data.get("state", {}).get("input", {}),
+            output=data.get("state", {}).get("output"),
+            error=data.get("state", {}).get("error"),
+            time_created=time_created
+        )
+        return ("tool", tool_call)
+    elif part_type == "text":
+        text_content = data.get("text", "")
+        role = message_roles.get(message_id)
+        text_part = TextPart(
+            id=part_id,
+            text=text_content,
+            time_created=time_created,
+            role=role
+        )
+        category = "text_user" if role == "user" else "text_assistant"
+        return (category, text_part)
+    elif part_type == "reasoning":
+        reasoning_part = ReasoningPart(
+            id=part_id,
+            text=data.get("text", ""),
+            time_created=time_created
+        )
+        return ("reasoning", reasoning_part)
+    elif part_type in ("step-start", "step-finish"):
+        return ("step", {
+            "id": part_id,
+            "time_created": time_created,
+            "type": part_type
+        })
+    else:
+        return ("other", {
+            "id": part_id,
+            "time_created": time_created,
+            "type": part_type,
+            "data": data
+        })
+
+
 def get_session_parts(session_id: str) -> SessionParts:
     """
     Get all parts from a session.
-    
+
     Uses message.role to distinguish user messages from assistant replies.
     """
     try:
         conn = get_connection()
-        
-        # First, get message roles
+
         cursor = conn.execute("""
             SELECT id, json_extract(data, '$.role') as role
             FROM message
             WHERE session_id = ?
         """, (session_id,))
-        
         message_roles = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        # Then, get all parts with message_id
+
         cursor = conn.execute("""
             SELECT id, time_created, message_id, data
             FROM part
             WHERE session_id = ?
             ORDER BY time_created ASC
         """, (session_id,))
-        
+
         parts = SessionParts(session_id=session_id)
-        
+        dispatch = {
+            "tool":             parts.tool_calls.append,
+            "text_user":        parts.user_messages.append,
+            "text_assistant":   parts.assistant_replies.append,
+            "reasoning":        parts.reasoning.append,
+            "step":             parts.step_markers.append,
+            "other":            parts.other_parts.append,
+        }
+
         for row in cursor.fetchall():
-            part_id = row[0]
-            time_created = row[1]
-            message_id = row[2]
             data = json.loads(row[3])
-            part_type = data.get("type", "unknown")
-            
-            if part_type == "tool":
-                tool_call = ToolCall(
-                    id=part_id,
-                    tool=data.get("tool", "unknown"),
-                    call_id=data.get("callID"),
-                    status=data.get("state", {}).get("status", "unknown"),
-                    input=data.get("state", {}).get("input", {}),
-                    output=data.get("state", {}).get("output"),
-                    error=data.get("state", {}).get("error"),
-                    time_created=time_created
-                )
-                parts.tool_calls.append(tool_call)
-            elif part_type == "text":
-                text_content = data.get("text", "")
-                role = message_roles.get(message_id)
-                text_part = TextPart(
-                    id=part_id,
-                    text=text_content,
-                    time_created=time_created,
-                    role=role
-                )
-                if role == "user":
-                    parts.user_messages.append(text_part)
-                else:
-                    parts.assistant_replies.append(text_part)
-            elif part_type == "reasoning":
-                reasoning_part = ReasoningPart(
-                    id=part_id,
-                    text=data.get("text", ""),
-                    time_created=time_created
-                )
-                parts.reasoning.append(reasoning_part)
-            elif part_type in ("step-start", "step-finish"):
-                parts.step_markers.append({
-                    "id": part_id,
-                    "time_created": time_created,
-                    "type": part_type
-                })
-            else:
-                parts.other_parts.append({
-                    "id": part_id,
-                    "time_created": time_created,
-                    "type": part_type,
-                    "data": data
-                })
-        
+            category, obj = _classify_part(
+                row[0], row[1], row[2], data, message_roles,
+            )
+            dispatch[category](obj)
+
         conn.close()
         return parts
     except (sqlite3.Error, RuntimeError, json.JSONDecodeError):

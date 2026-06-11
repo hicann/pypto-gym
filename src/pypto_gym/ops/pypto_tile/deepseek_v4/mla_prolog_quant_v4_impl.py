@@ -11,6 +11,7 @@
 """
 """
 from dataclasses import dataclass
+import collections
 import math
 import logging
 from typing import List, Tuple
@@ -21,6 +22,23 @@ import torch_npu
 import pypto
 from pypto import pypto_impl
 from pypto.operation import op_wrapper
+
+
+# pylint: disable-next=invalid-name
+MlaCheckInputConfig = collections.namedtuple('MlaCheckInputConfig', [
+    'token_x', 'wq_a', 'wq_b', 'wkv', 'rope_cos', 'rope_sin',
+    'gamma_cq', 'gamma_ckv', 'wq_b_scale',
+    'output_q_data', 'output_kv_data', 'output_qr_data', 'output_qr_scale_data',
+])
+
+# pylint: disable-next=invalid-name
+MlaPrologV4ComputeConfig = collections.namedtuple('MlaPrologV4ComputeConfig', [
+    'x', 'wq_a', 'wq_b', 'wkv',
+    'rmsnorm_gamma_cq', 'rmsnorm_gamma_ckv',
+    'cos', 'sin', 'wq_b_scale',
+    'q_out', 'kv_out', 'qr_out', 'qr_scale_out',
+    'attrs', 'configs', 'tile_configs',
+])
 
 
 """
@@ -109,8 +127,20 @@ class MlaPrologV4Configs:
     chunk_size: int
 
 
-def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,  # pylint: disable=huawei-too-many-arguments
-                                    wq_b_scale, output_q_data, output_kv_data, output_qr_data, output_qr_scale_data):
+def check_input_output_shape_dtype(cfg: MlaCheckInputConfig):
+    token_x = cfg.token_x
+    wq_a = cfg.wq_a
+    wq_b = cfg.wq_b
+    wkv = cfg.wkv
+    rope_cos = cfg.rope_cos
+    rope_sin = cfg.rope_sin
+    gamma_cq = cfg.gamma_cq
+    gamma_ckv = cfg.gamma_ckv
+    wq_b_scale = cfg.wq_b_scale
+    output_q_data = cfg.output_q_data
+    output_kv_data = cfg.output_kv_data
+    output_qr_data = cfg.output_qr_data
+    output_qr_scale_data = cfg.output_qr_scale_data
     assert token_x.size(1) == 4096 and token_x.dim() == 2, \
             f"expected token_x dim num 2, token_x axis1 4096, but got {token_x.shape}"
     assert wq_a.dim() == 2 and wq_a.size(0) == 4096 and wq_a.size(1) == 1024, \
@@ -136,8 +166,10 @@ def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin,
             f"expected output_kv_data dim num 2, output_kv_data axis1 512, but got {output_kv_data.shape}"
     assert output_qr_data.dim() == 2 and output_qr_data.size(1) == 1024, \
             f"expected output_qr_data dim num 2, output_qr_data axis1 4096, but got {output_qr_data.shape}"
-    assert output_qr_scale_data.dim() == 2 and output_qr_scale_data.size(1) == 1, \
-            f"expected output_qr_scale_data dim num 2, output_qr_scale_data axis1 1, but got {output_qr_scale_data.shape}"
+    assert output_qr_scale_data.dim() == 2 and output_qr_scale_data.size(1) == 1, (
+        f"expected output_qr_scale_data dim num 2, output_qr_scale_data axis1 1, "
+        f"but got {output_qr_scale_data.shape}"
+    )
 
     assert token_x.dtype == torch.bfloat16, f"token_x.dtype is {token_x.dtype}, expected torch.bfloat16"
     assert wq_a.dtype == torch.bfloat16, f"wq_a.dtype is {wq_a.dtype}, expected torch.bfloat16"
@@ -383,8 +415,23 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor, tile_configs:
     return x_embed_cast
 
 
-def mla_prolog_v4_compute(x, wq_a, wq_b, wkv, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, cos, sin, \
-        wq_b_scale, q_out, kv_out, qr_out, qr_scale_out, attrs, configs, tile_configs):  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_v4_compute(cfg: MlaPrologV4ComputeConfig):
+    x = cfg.x
+    wq_a = cfg.wq_a
+    wq_b = cfg.wq_b
+    wkv = cfg.wkv
+    rmsnorm_gamma_cq = cfg.rmsnorm_gamma_cq
+    rmsnorm_gamma_ckv = cfg.rmsnorm_gamma_ckv
+    cos = cfg.cos
+    sin = cfg.sin
+    wq_b_scale = cfg.wq_b_scale
+    q_out = cfg.q_out
+    kv_out = cfg.kv_out
+    qr_out = cfg.qr_out
+    qr_scale_out = cfg.qr_scale_out
+    attrs = cfg.attrs
+    configs = cfg.configs
+    tile_configs = cfg.tile_configs
     t = x.shape[0]
     h = x.shape[1]
     q_lora_rank = rmsnorm_gamma_cq.shape[0]
@@ -498,7 +545,7 @@ class MLAKernelMAnager:
     qr_out_shape,
      qr_scale_out_shape]
 
-    def infer_controlflow_shape(self, *args):  # pylint: disable=huawei-too-many-arguments
+    def infer_controlflow_shape(self, *args):
         global vec_all_shape, t_vec
         if not args:
             return [v for v in self.vec_all_shape.values()]
@@ -537,23 +584,15 @@ def mla_prolog_v4(
     attrs, configs, tile_configs):
 
     pypto.experimental.set_operation_options(combine_axis=True)
-    mla_prolog_v4_compute(
-    x,
-    wq_a,
-    wq_b,
-    wkv,
-    rmsnorm_gamma_cq,
-    rmsnorm_gamma_ckv,
-    cos,
-    sin,
-    wq_b_scale,
-    q_out,
-    kv_out,
-    qr_out,
-    qr_scale_out,
-    attrs,
-    configs,
-     tile_configs)
+    mla_prolog_v4_compute(MlaPrologV4ComputeConfig(
+        x=x, wq_a=wq_a, wq_b=wq_b, wkv=wkv,
+        rmsnorm_gamma_cq=rmsnorm_gamma_cq,
+        rmsnorm_gamma_ckv=rmsnorm_gamma_ckv,
+        cos=cos, sin=sin, wq_b_scale=wq_b_scale,
+        q_out=q_out, kv_out=kv_out, qr_out=qr_out,
+        qr_scale_out=qr_scale_out,
+        attrs=attrs, configs=configs, tile_configs=tile_configs,
+    ))
 
 
 @allow_in_graph
@@ -563,8 +602,14 @@ def mla_prolog_v4_in(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gam
     output_kv_data = torch.empty([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
     output_qr_data = torch.empty([token_x.size(0), gamma_cq.size(0)], dtype=torch.int8, device=f'{token_x.device}')
     output_qr_scale_data = torch.empty([token_x.size(0), 1], dtype=torch.float32, device=f'{token_x.device}')
-    check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,
-        wq_b_scale, output_q_data, output_kv_data, output_qr_data, output_qr_scale_data)
+    check_input_output_shape_dtype(MlaCheckInputConfig(
+        token_x=token_x, wq_a=wq_a, wq_b=wq_b, wkv=wkv,
+        rope_cos=rope_cos, rope_sin=rope_sin,
+        gamma_cq=gamma_cq, gamma_ckv=gamma_ckv,
+        wq_b_scale=wq_b_scale,
+        output_q_data=output_q_data, output_kv_data=output_kv_data,
+        output_qr_data=output_qr_data, output_qr_scale_data=output_qr_scale_data,
+    ))
 
     attrs = MlaPrologV4Attrs(eps=1e-6)
 

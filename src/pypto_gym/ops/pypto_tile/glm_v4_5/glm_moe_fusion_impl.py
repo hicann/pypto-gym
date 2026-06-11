@@ -15,8 +15,8 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 import pypto
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
-from pypto_gym.ops.pypto_tile.glm_v4_5.glm_ffn_common_interface import symmetric_quantization_per_token, dequant_dynamic, swiglu
+from .utils.get_format import get_format
+from .glm_ffn_common_interface import symmetric_quantization_per_token, dequant_dynamic, swiglu
 
 
 def check_cond(cond, msg):
@@ -37,7 +37,7 @@ def powers_of_2(n: int) -> set[int]:
     return result
 
 
-def check_args(  # pylint: disable=huawei-too-many-arguments
+def check_args(
         gate_weight: torch.Tensor,
         hidden_states: torch.Tensor,
         top_k: int,
@@ -98,7 +98,7 @@ NZ = pypto.TileOpFormat.TILEOP_NZ
                     "stitch_function_max_num": 128},
     pass_options={"cube_l1_reuse_setting": {-1: 2}}
 )
-def moe_fusion_kernel(  # pylint: disable=huawei-too-many-arguments
+def moe_fusion_kernel(
     hidden_states: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16, format=ND),
     mm_weight: pypto.Tensor([], pypto.DT_FP32, format=ND),
     e_score_bias_input: pypto.Tensor([], pypto.DT_BF16, format=ND),
@@ -220,7 +220,7 @@ def moe_fusion_kernel(  # pylint: disable=huawei-too-many-arguments
 
 
 @allow_in_graph
-def moe_fusion(  # pylint: disable=huawei-too-many-arguments
+def moe_fusion(
         gate_weight: torch.Tensor,
         hidden_states: torch.Tensor,
         top_k: int,

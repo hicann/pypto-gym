@@ -70,7 +70,6 @@ def flash_attention_score_kernel_npu(
                 for qb in pypto.loop(num_blocks_q, name="q_block_idx"):
                     q_start = qb * BLOCK_Q
                     q_tile_len = (Sq - q_start).min(BLOCK_Q)
-
                     q_row = b_idx * N * Sq + n_idx * Sq + q_start
                     q_tile_view = pypto.view(query_2d, [BLOCK_Q, D],
                                              [q_row, 0],
@@ -97,6 +96,7 @@ def flash_attention_score_kernel_npu(
                         pse_tile_view = pypto.view(pse_2d, [BLOCK_Q, BLOCK_KV],
                                                    [pse_row, kv_start],
                                                    valid_shape=[q_tile_len, k_tile_len])
+
                         pse_fp32 = pypto.cast(pse_tile_view, pypto.DT_FP32)
 
                         pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])

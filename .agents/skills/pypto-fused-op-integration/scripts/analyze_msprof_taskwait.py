@@ -43,15 +43,11 @@ def load_csv(path):
     return rows
 
 
-def analyse_single(rows, label=""):
-    """分析单个 op_summary"""
-    prefix = f"[{label}] " if label else ""
-
-    # 全局统计
+def _compute_op_stats(rows):
+    """Iterate rows and compute total_wait, total_dur, per-op-type stats."""
     total_wait = 0.0
     total_dur = 0.0
     op_stats = defaultdict(lambda: {"wait": 0.0, "dur": 0.0, "cnt": 0})
-
     for row in rows:
         wait = float(row.get("Task Wait Time(us)", 0) or 0)
         dur = float(row.get("Task Duration(us)", 0) or 0)
@@ -61,15 +57,16 @@ def analyse_single(rows, label=""):
         op_stats[op_type]["wait"] += wait
         op_stats[op_type]["dur"] += dur
         op_stats[op_type]["cnt"] += 1
+    return total_wait, total_dur, op_stats
 
+
+def _print_global_stats(prefix, total_wait, total_dur, op_stats, n_rows):
+    """Print global statistics and top-15 op-type ranking."""
     total = total_wait + total_dur
     wait_pct = total_wait / total * 100 if total > 0 else 0
-
     print(f"\n{'=' * 70}")
     print(f"{prefix}全局统计")
-    print(f"  总任务数: {len(rows):,}  总 Wait: {total_wait / 1e6:.2f}s  总 Duration: {total_dur / 1e6:.3f}s  Wait 占比: {wait_pct:.1f}%")
-
-    # 按算子 Wait 排行
+    print(f"  总任务数: {n_rows:,}  总 Wait: {total_wait / 1e6:.2f}s  总 Duration: {total_dur / 1e6:.3f}s  Wait 占比: {wait_pct:.1f}%")
     sorted_ops = sorted(op_stats.items(), key=lambda x: x[1]["wait"], reverse=True)
     print(f"\n{'=' * 70}")
     print(f"{prefix}Task Wait 按算子类型排行")
@@ -79,16 +76,16 @@ def analyse_single(rows, label=""):
         avg = s["wait"] / s["cnt"] if s["cnt"] > 0 else 0
         print(f"{op_type:28s} {s['cnt']:>7d} {s['wait'] / 1e6:>8.2f} {s['dur'] / 1e6:>8.3f} {avg:>8.1f}us")
 
-    # 单层延迟分析 (FlashAttentionScore 分段)
+
+def _analyse_single_layer_delay(rows, prefix):
+    """Segment analysis around FlashAttentionScore ops, return seg_stats."""
     fa_indices = [i for i, r in enumerate(rows) if "FlashAttentionScore" in r.get("OP Type", "")]
     if len(fa_indices) >= 5:
-        # 取中间稳定的 5 个 FA（跳过头尾的 prefill/收尾）
         quarter = len(fa_indices) // 4
         anchor = fa_indices[quarter*2:quarter*2+5]  # 中间区域取 5 个
         print(f"\n{'=' * 70}")
         print(f"{prefix}单层延迟分析 (FlashAttentionScore 分段, 总FA数={len(fa_indices)})")
         print(f"{'段':>4s} {'任务数':>6s} {'计算总和':>8s} {'wait avg':>8s} {'median':>8s} {'max':>8s} {'min':>8s}")
-
         seg_stats = []
         for seg_id in range(len(anchor) - 1):
             seg = rows[anchor[seg_id] + 1:anchor[seg_id + 1]]
@@ -108,23 +105,27 @@ def analyse_single(rows, label=""):
                 "wait_max": mx, "wait_min": mn,
             })
             print(f"  {seg_id+1:>2d}  {len(seg):>6d}  {total_dur_seg:>7.1f}us {avg:>8.1f}us {med:>8.1f}us {mx:>8.1f}us {mn:>8.1f}us")
-
-        # 算子类型分布（第一段）
         if seg_stats:
             first_seg = rows[anchor[0] + 1:anchor[1]]
             type_dist = defaultdict(int)
             for r in first_seg:
                 type_dist[r.get("OP Type", "?")] += 1
             print(f"\n  每层算子分布 (首段): {dict(type_dist)}")
-
         return seg_stats
-
     elif fa_indices:
         print(f"\n  FlashAttentionScore 不足 5 个 ({len(fa_indices)}), 跳过单层分析")
         return []
     else:
         print(f"\n  未找到 FlashAttentionScore, 跳过单层分析")
         return []
+
+
+def analyse_single(rows, label=""):
+    """分析单个 op_summary"""
+    prefix = f"[{label}] " if label else ""
+    total_wait, total_dur, op_stats = _compute_op_stats(rows)
+    _print_global_stats(prefix, total_wait, total_dur, op_stats, len(rows))
+    return _analyse_single_layer_delay(rows, prefix)
 
 
 def main():

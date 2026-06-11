@@ -98,35 +98,8 @@ def _make_inputs(case: dict, device: str):
     return x1, x2, gamma
 
 
-def _run_case(case: dict, device: str) -> bool:
-    case_id = case["id"]
-    rtol = case.get("rtol", 1e-2)
-    atol = case.get("atol", 1e-2)
-    eps = case.get("eps", 1.0e-6)
-
-    print("=" * 60)
-    print(f"Test: {case_id} - {case.get('description', '')}")
-    print("=" * 60)
-
-    x1, x2, gamma = _make_inputs(case, device)
-
-    # Keep CPU copies for golden (golden is itself inplace, so feed clones).
-    x1_g = x1.detach().cpu().clone()
-    x2_g = x2.detach().cpu().clone()
-    g_g = gamma.detach().cpu().clone()
-    fy_g, xa_g, rstd_g = inplace_add_rms_norm_golden(x1_g, x2_g, g_g, eps)
-
-    # Record buffers / contents prior to NPU call for inplace verification.
-    p1_before = x1.data_ptr()
-    p2_before = x2.data_ptr()
-    x1_init_cpu = x1.detach().cpu().clone()
-    x2_init_cpu = x2.detach().cpu().clone()
-
-    # PyPTO kernel runs on NPU.
-    fy_i, xa_i, rstd_i = npu_inplace_add_rms_norm(x1, x2, gamma, eps)
-    torch.npu.synchronize()
-
-    # ── inplace semantics ──
+def _verify_inplace_semantics(x1, x2, fy_i, xa_i, rstd_i, p1_before, p2_before, case,
+                              x1_init_cpu, x2_init_cpu):
     assert x1.data_ptr() == p1_before, \
         f"[INPLACE FAIL] x1 data_ptr changed ({p1_before} -> {x1.data_ptr()})"
     assert x2.data_ptr() == p2_before, \
@@ -143,35 +116,29 @@ def _run_case(case: dict, device: str) -> bool:
     assert x1.dtype == torch.bfloat16
     assert x2.dtype == torch.bfloat16
     assert rstd_i.dtype == torch.bfloat16
-
-    # Cast to fp32 numpy for comparison.
     actual_y = x1.detach().cpu().float().numpy()
     actual_xadd = x2.detach().cpu().float().numpy()
-    actual_rstd = rstd_i.detach().cpu().float().numpy()
-    expected_y = fy_g.float().numpy()
-    expected_xadd = xa_g.float().numpy()
-    expected_rstd = rstd_g.float().numpy()
-
-    # Content-overwrite check (impl outputs must differ from initial inputs).
     diff_x1 = float(np.abs(actual_y - x1_init_cpu.float().numpy()).max())
     diff_x2 = float(np.abs(actual_xadd - x2_init_cpu.float().numpy()).max())
     assert diff_x1 > 0, "[INPLACE FAIL] x1 content not overwritten"
     assert diff_x2 > 0, "[INPLACE FAIL] x2 content not overwritten"
     print(f"  [inplace] data_ptr unchanged + alias OK; overwrite diff "
           f"x1={diff_x1:.4f} x2={diff_x2:.4f}")
+    return actual_y, actual_xadd
 
+
+def _compare_and_report(actual_y, actual_xadd, actual_rstd, expected_y, expected_xadd,
+                         expected_rstd, atol, rtol):
     def _err(a, e):
         d = np.abs(a - e)
         denom = np.maximum(np.abs(e), 1e-12)
         return float(d.max()), float((d / denom).max())
-
     y_abs, y_rel = _err(actual_y, expected_y)
     xa_abs, xa_rel = _err(actual_xadd, expected_xadd)
     rstd_abs, rstd_rel = _err(actual_rstd, expected_rstd)
-    print(f"  [y]      shape={tuple(x1.shape)}    max_abs={y_abs:.6e} max_rel={y_rel:.6e}")
-    print(f"  [x_add]  shape={tuple(x2.shape)}    max_abs={xa_abs:.6e} max_rel={xa_rel:.6e}")
-    print(f"  [rstd]   shape={tuple(rstd_i.shape)} max_abs={rstd_abs:.6e} max_rel={rstd_rel:.6e}")
-
+    print(f"  [y]      max_abs={y_abs:.6e} max_rel={y_rel:.6e}")
+    print(f"  [x_add]  max_abs={xa_abs:.6e} max_rel={xa_rel:.6e}")
+    print(f"  [rstd]   max_abs={rstd_abs:.6e} max_rel={rstd_rel:.6e}")
     try:
         assert_allclose(actual_y, expected_y, atol=atol, rtol=rtol)
         assert_allclose(actual_xadd, expected_xadd, atol=atol, rtol=rtol)
@@ -182,6 +149,42 @@ def _run_case(case: dict, device: str) -> bool:
         return False
 
 
+def _run_case(case: dict, device: str) -> bool:
+    case_id = case["id"]
+    rtol = case.get("rtol", 1e-2)
+    atol = case.get("atol", 1e-2)
+    eps = case.get("eps", 1.0e-6)
+
+    print("=" * 60)
+    print(f"Test: {case_id} - {case.get('description', '')}")
+    print("=" * 60)
+
+    x1, x2, gamma = _make_inputs(case, device)
+    x1_g = x1.detach().cpu().clone()
+    x2_g = x2.detach().cpu().clone()
+    g_g = gamma.detach().cpu().clone()
+    fy_g, xa_g, rstd_g = inplace_add_rms_norm_golden(x1_g, x2_g, g_g, eps)
+
+    p1_before = x1.data_ptr()
+    p2_before = x2.data_ptr()
+    x1_init_cpu = x1.detach().cpu().clone()
+    x2_init_cpu = x2.detach().cpu().clone()
+
+    fy_i, xa_i, rstd_i = npu_inplace_add_rms_norm(x1, x2, gamma, eps)
+    torch.npu.synchronize()
+
+    actual_y, actual_xadd = _verify_inplace_semantics(
+        x1, x2, fy_i, xa_i, rstd_i, p1_before, p2_before, case, x1_init_cpu, x2_init_cpu)
+
+    actual_rstd = rstd_i.detach().cpu().float().numpy()
+    expected_y = fy_g.float().numpy()
+    expected_xadd = xa_g.float().numpy()
+    expected_rstd = rstd_g.float().numpy()
+
+    return _compare_and_report(actual_y, actual_xadd, actual_rstd,
+                               expected_y, expected_xadd, expected_rstd, atol, rtol)
+
+
 def test_level0(device: str) -> bool:
     """level0: bf16, [1,16,7168] smallest functional."""
     cases = [c for c in _load_cases() if c["id"] == "level0"]
@@ -189,31 +192,26 @@ def test_level0(device: str) -> bool:
 
 
 def test_level1(device: str) -> bool:
-    """level1: bf16, [16,128,7168] B*S=2048 P0."""
     cases = [c for c in _load_cases() if c["id"] == "level1"]
     return _run_case(cases[0], device)
 
 
 def test_level2(device: str) -> bool:
-    """level2: bf16, [32768, 1, 4096] B*S=1024 min."""
     cases = [c for c in _load_cases() if c["id"] == "level2"]
     return _run_case(cases[0], device)
 
 
 def test_level3(device: str) -> bool:
-    """level3: bf16, [64,128,7168] B*S=8192 max."""
     cases = [c for c in _load_cases() if c["id"] == "level3"]
     return _run_case(cases[0], device)
 
 
 def test_level4(device: str) -> bool:
-    """level4: bf16, [144,1,7168] S=1."""
     cases = [c for c in _load_cases() if c["id"] == "level4"]
     return _run_case(cases[0], device)
 
 
 def test_level5(device: str) -> bool:
-    """level5: bf16, [1,1024,7168] B=1 boundary."""
     cases = [c for c in _load_cases() if c["id"] == "level5"]
     return _run_case(cases[0], device)
 
@@ -226,8 +224,6 @@ def main() -> int:
         all_ok = True
         # 取消注释你要跑的 level；默认跑 level0 + level1 + level4
         for runner in (test_level0, test_level1, test_level2, test_level3):
-        # for runner in (test_level2,):
-        # for runner in (test_level3,):
             try:
                 ok = runner(device)
             except Exception:

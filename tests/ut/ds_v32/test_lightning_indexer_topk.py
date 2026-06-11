@@ -114,82 +114,35 @@ def setup_lightning_indexer_topk_config():
                          vec_nbuffer_setting={NUM_NEG1: NUM_16})
 
 
-def build_lightning_indexer_topk_args(
-    cfg: LightningIndexerBuildConfig = LightningIndexerBuildConfig(),
-):
+def _build_lightning_indexer_tensors(cfg, qk_dtype, scale_dtype, max_block_num):
+    """Allocate all pypto tensors for the lightning indexer."""
     d_bf16 = pypto.DT_FP16
     d_i32 = pypto.DT_INT32
-    d_int8 = pypto.DT_INT8
-    d_f16 = pypto.DT_FP16
-
     index_d = cfg.qk_nope + cfg.qk_rope
-    max_block_num = NUM_1024
-
-    if cfg.is_quant:
-        qk_dtype = d_int8
-        scale_dtype = d_f16
-    else:
-        qk_dtype = d_bf16
-        scale_dtype = d_f16
 
     query = pypto.tensor(
-        [cfg.b, cfg.s1, cfg.index_n1, index_d],
-        qk_dtype,
-        "query",
-    )
-
+        [cfg.b, cfg.s1, cfg.index_n1, index_d], qk_dtype, "query")
     key = pypto.tensor(
-        [cfg.block_num, cfg.block_size, cfg.n2, index_d],
-        qk_dtype,
-        "key",
-    )
-
+        [cfg.block_num, cfg.block_size, cfg.n2, index_d], qk_dtype, "key")
     weights = pypto.tensor(
-        [cfg.b, cfg.s1, cfg.index_n1],
-        d_bf16,
-        "weights",
-    )
-
-    act_seq_key = pypto.tensor(
-        [cfg.b],
-        d_i32,
-        "actSeqKey",
-    )
-
-    block_table = pypto.tensor(
-        [cfg.b, max_block_num],
-        d_i32,
-        "blockTable",
-    )
-
+        [cfg.b, cfg.s1, cfg.index_n1], d_bf16, "weights")
+    act_seq_key = pypto.tensor([cfg.b], d_i32, "actSeqKey")
+    block_table = pypto.tensor([cfg.b, max_block_num], d_i32, "blockTable")
     topk_res = pypto.tensor(
-        [cfg.b, cfg.s1, cfg.n2, cfg.selected_count],
-        d_i32,
-        "topkRes",
-    )
+        [cfg.b, cfg.s1, cfg.n2, cfg.selected_count], d_i32, "topkRes")
 
     q_scale = (
-        pypto.tensor(
-            [cfg.b, cfg.s1, cfg.index_n1, 1],
-            scale_dtype,
-            "qScale",
-        )
-        if cfg.is_quant
-        else None
-    )
+        pypto.tensor([cfg.b, cfg.s1, cfg.index_n1, 1], scale_dtype, "qScale")
+        if cfg.is_quant else None)
     k_scale = (
-        pypto.tensor(
-            [cfg.block_num, cfg.block_size, cfg.n2, 1],
-            scale_dtype,
-            "kScale",
-        )
-        if cfg.is_quant
-        else None
-    )
+        pypto.tensor([cfg.block_num, cfg.block_size, cfg.n2, 1], scale_dtype, "kScale")
+        if cfg.is_quant else None)
 
-    tmp_out = None
-    topk_value = None
+    return query, key, weights, act_seq_key, block_table, topk_res, q_scale, k_scale
 
+
+def _build_lightning_indexer_config(cfg):
+    """Build tile config, params, and unroll list."""
     tile_cfg = LightningIndexerTileConfig(
         weight_tile=[NUM_64, NUM_128],
         c1_tile=cfg.c1_tile,
@@ -197,48 +150,23 @@ def build_lightning_indexer_topk_args(
         topk_tile=cfg.topk_tile,
         adds_tile=cfg.adds_tile,
     )
-
     unroll_list: List[int] = [1, 2, 4, 8, 16, 32, 64]
-
     params = LightningIndexerParams(
-        b=cfg.b,
-        s1=cfg.s1,
-        index_n1=cfg.index_n1,
-        qk_nope=cfg.qk_nope,
-        qk_rope=cfg.qk_rope,
-        n2=cfg.n2,
-        block_size=cfg.block_size,
-        block_num=cfg.block_num,
-        selected_count=cfg.selected_count,
-        is_quant=cfg.is_quant,
+        b=cfg.b, s1=cfg.s1, index_n1=cfg.index_n1,
+        qk_nope=cfg.qk_nope, qk_rope=cfg.qk_rope, n2=cfg.n2,
+        block_size=cfg.block_size, block_num=cfg.block_num,
+        selected_count=cfg.selected_count, is_quant=cfg.is_quant,
     )
+    return tile_cfg, unroll_list, params
 
-    args = LightningIndexerInputs(
-        query=query,
-        key=key,
-        weights=weights,
-        act_seq_key=act_seq_key,
-        block_table=block_table,
-        topk_res=topk_res,
-        q_scale=q_scale,
-        k_scale=k_scale,
-        tmp_out=tmp_out,
-        topk_value=topk_value,
-        tile_config=tile_cfg,
-        unroll_list=unroll_list,
-        params=params,
-    )
 
-    meta = {
-        "B": cfg.b,
-        "S1": cfg.s1,
-        "indexN1": cfg.index_n1,
-        "indexD": index_d,
-        "N2": cfg.n2,
-        "blockSize": cfg.block_size,
-        "blockNum": cfg.block_num,
-        "maxBlockNum": max_block_num,
-        "selectedCount": cfg.selected_count,
+def _build_lightning_indexer_meta(cfg, index_d, max_block_num, tile_cfg, unroll_list):
+    """Build metadata dict for the lightning indexer test case."""
+    return {
+        "B": cfg.b, "S1": cfg.s1, "indexN1": cfg.index_n1,
+        "indexD": index_d, "N2": cfg.n2,
+        "blockSize": cfg.block_size, "blockNum": cfg.block_num,
+        "maxBlockNum": max_block_num, "selectedCount": cfg.selected_count,
         "isQuant": cfg.is_quant,
         "dims": {
             "query": [cfg.b, cfg.s1, cfg.index_n1, index_d],
@@ -248,9 +176,7 @@ def build_lightning_indexer_topk_args(
             "blockTable": [cfg.b, max_block_num],
             "topkRes": [cfg.b, cfg.s1, cfg.n2, cfg.selected_count],
             "qScale": ([cfg.b, cfg.s1, cfg.index_n1, 1] if cfg.is_quant else None),
-            "kScale": (
-                [cfg.block_num, cfg.block_size, cfg.n2, 1] if cfg.is_quant else None
-            ),
+            "kScale": ([cfg.block_num, cfg.block_size, cfg.n2, 1] if cfg.is_quant else None),
         },
         "tiles": {
             "weightTile": tile_cfg.weight_tile,
@@ -261,5 +187,35 @@ def build_lightning_indexer_topk_args(
         },
         "unrollList": sorted(list(unroll_list)),
     }
+
+
+def build_lightning_indexer_topk_args(
+    cfg: LightningIndexerBuildConfig = LightningIndexerBuildConfig(),
+):
+    index_d = cfg.qk_nope + cfg.qk_rope
+    max_block_num = NUM_1024
+
+    if cfg.is_quant:
+        qk_dtype = pypto.DT_INT8
+        scale_dtype = pypto.DT_FP16
+    else:
+        qk_dtype = pypto.DT_FP16
+        scale_dtype = pypto.DT_FP16
+
+    (query, key, weights, act_seq_key, block_table, topk_res,
+     q_scale, k_scale) = _build_lightning_indexer_tensors(
+        cfg, qk_dtype, scale_dtype, max_block_num)
+
+    tile_cfg, unroll_list, params = _build_lightning_indexer_config(cfg)
+
+    args = LightningIndexerInputs(
+        query=query, key=key, weights=weights,
+        act_seq_key=act_seq_key, block_table=block_table,
+        topk_res=topk_res, q_scale=q_scale, k_scale=k_scale,
+        tmp_out=None, topk_value=None,
+        tile_config=tile_cfg, unroll_list=unroll_list, params=params,
+    )
+
+    meta = _build_lightning_indexer_meta(cfg, index_d, max_block_num, tile_cfg, unroll_list)
 
     return args, meta

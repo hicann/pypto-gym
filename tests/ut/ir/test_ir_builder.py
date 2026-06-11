@@ -624,11 +624,6 @@ def test_builder_complex_program():
 
     # Build a function: def compute(x: int32) -> int32:
     #   for i in range(0, 10, 1):
-    #     if i < 5:
-    #       x = x + 1
-    #     else:
-    #       x = x - 1
-    #   return x
     b.begin_function("compute", sp)
     x = b.func_arg("x", st, sp)
     i = b.var("i", st, sp)

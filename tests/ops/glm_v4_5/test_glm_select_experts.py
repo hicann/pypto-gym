@@ -33,6 +33,49 @@ def gen_row_idx_gloden(hidden_states, top_k):
     return row_idx
 
 
+def _compute_select_experts_golden(router_logits, e_score_bias, bs, ne, top_k,
+                                    topk_group, num_expert_group, renormalize):
+    router_logits_fp32 = router_logits.to(torch.float)
+    original_weights = router_logits_fp32.sigmoid()
+    bias_2d = e_score_bias.unsqueeze(0)
+    topk_weights_g_add = original_weights + bias_2d
+    tw_view = topk_weights_g_add.view(bs, num_expert_group, -1)
+    grouped_weights = tw_view.max(dim=-1).values
+
+    topk_group_indices_g = torch.topk(grouped_weights.to(torch.float32),
+                                      k=topk_group,
+                                      dim=-1,
+                                      sorted=False)[1]
+    topk_group_mask = torch.zeros_like(grouped_weights)
+
+    topk_group_mask.scatter_(1, topk_group_indices_g, 1)
+    tgm_unsquee = topk_group_mask.unsqueeze(-1)
+    tgm_expand = tgm_unsquee.expand(
+        bs, num_expert_group, ne // num_expert_group)
+    topk_weight_mask = tgm_expand.reshape(bs, -1)
+    logical_not_tmp = ~topk_weight_mask.bool()
+    topk_weights_fill = topk_weights_g_add.masked_fill(
+        logical_not_tmp, 0.0)
+
+    topk_ids_int64 = torch.topk(topk_weights_fill.to(torch.float32),
+                                k=top_k,
+                                dim=-1,
+                                sorted=False)[1]
+    topk_ids_int32 = topk_ids_int64.to(torch.int32)
+
+    topk_weights_gather = original_weights.gather(1, topk_ids_int64)
+
+    if renormalize:
+        topk_weights_out = topk_weights_gather / \
+            topk_weights_gather.sum(dim=-1, keepdim=True)
+    else:
+        topk_weights_out = topk_weights_gather
+
+    golden_weights = np.array(topk_weights_out.cpu().flatten().tolist())
+    golden_ids = np.array(topk_ids_int32.cpu().flatten().tolist())
+    return golden_weights, golden_ids
+
+
 def test_select_experts():
     bs = 32
     ne = 160
@@ -59,51 +102,15 @@ def test_select_experts():
             select_experts(*inputs)
         g.replay()
 
-        router_logits_fp32 = router_logits.to(torch.float)
-        original_weights = router_logits_fp32.sigmoid()
-        bias_2d = e_score_bias.unsqueeze(0)
-        topk_weights_g_add = original_weights + bias_2d
-        tw_view = topk_weights_g_add.view(bs, num_expert_group, -1)
-        grouped_weights = tw_view.max(dim=-1).values
-
-        topk_group_indices_g = torch.topk(grouped_weights.to(torch.float32),
-                                          k=topk_group,
-                                          dim=-1,
-                                          sorted=False)[1]
-        topk_group_mask = torch.zeros_like(grouped_weights)
-
-        topk_group_mask.scatter_(1, topk_group_indices_g, 1)
-        tgm_unsquee = topk_group_mask.unsqueeze(-1)
-        tgm_expand = tgm_unsquee.expand(
-            bs, num_expert_group, ne // num_expert_group)
-        topk_weight_mask = tgm_expand.reshape(bs, -1)
-        logical_not_tmp = ~topk_weight_mask.bool()
-        topk_weights_fill = topk_weights_g_add.masked_fill(
-            logical_not_tmp, 0.0)
-
-        topk_ids_int64 = torch.topk(topk_weights_fill.to(torch.float32),
-                                    k=top_k,
-                                    dim=-1,
-                                    sorted=False)[1]
-        topk_ids_int32 = topk_ids_int64.to(torch.int32)
-
-        topk_weights_gather = original_weights.gather(1, topk_ids_int64)
-
-        if renormalize:
-            topk_weights_out = topk_weights_gather / \
-                topk_weights_gather.sum(dim=-1, keepdim=True)
-        else:
-            topk_weights_out = topk_weights_gather
-
-        topk_weight_2_tensor_list = topk_weights_out.cpu().flatten().tolist()
-        topk_ids_tensor_list = topk_ids_int32.cpu().flatten().tolist()
+        golden_weights, golden_ids = _compute_select_experts_golden(
+            router_logits, e_score_bias, bs, ne, top_k, topk_group, num_expert_group, renormalize)
 
         assert_allclose(np.array(topk_weights.cpu().flatten().tolist()),
-                        np.array(topk_weight_2_tensor_list),
+                        golden_weights,
                         rtol=5e-3, atol=5e-3)
 
         assert_allclose(np.array(topk_ids.cpu().flatten().tolist()),
-                        np.array(topk_ids_tensor_list),
+                        golden_ids,
                         rtol=5e-3, atol=5e-3)
 
 

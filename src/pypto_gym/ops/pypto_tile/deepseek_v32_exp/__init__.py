@@ -39,6 +39,7 @@ from .lightning_indexer_prolog_quant_impl import (
 )
 from .lightning_indexer_quant_impl import (
     lightning_indexer_decode,
+    LightningIndexerConfigs,
 )
 from .mla_indexer_prolog_quant_impl import (
     mla_indexer_prolog_quant_p,
@@ -71,6 +72,7 @@ __all__ = [
     'IndexerPrologQuantConfigs',
     # Lightning Indexer
     'lightning_indexer_decode',
+    'LightningIndexerConfigs',
     # MLA Indexer Prolog
     'mla_indexer_prolog_quant_p',
     'mla_indexer_prolog_quant_d',

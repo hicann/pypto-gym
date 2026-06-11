@@ -223,31 +223,21 @@ def single_rope(x, cos_in, sin_in):
     return res.to(x_dtype)
 
 
-def indexer_prolog(inputs: dict, dims: dict):
-    # input
+def _indexer_compute_q(inputs, dims):
+    """Compute query (q) path: matmul -> dequant -> rope -> hadamard -> quant."""
     b, t, n, d = dims["b"], dims["t"], dims["idx_n_heads"], dims["idx_head_dim"]
     s = t // b
-
     rope_head_dim = dims["rope_head_dim"]
-    x = inputs["token_x"]  # (b, s, h)
-    q_norm = inputs["q_norm"]  # (b, s, q_lora_rank), int8
-    q_norm_scale = inputs["q_norm_scale"]  # (b, s, 1), fp32
-    w_idx_qb = inputs["w_idx_qb"]  # (q_lora_rank, n * d), int8
-    w_idx_qb_scale = inputs["w_idx_qb_scale"]  # (n * d, 1), fp32
-    w_idx_k = inputs["w_idx_k"]  # (h, d)
-    w_idx_proj = inputs["w_idx_proj"]  # (h, n)
-    layer_norm_gamma = inputs["layer_norm_gamma"]  # (d,)
-    layer_norm_beta = inputs["layer_norm_beta"]  # (d,)
-    cos = inputs["cos_idx_rope"]  # (b, s, rope_head_dim)
-    sin = inputs["sin_idx_rope"]  # (b, s, rope_head_dim)
-    hadamard_q = inputs["hadamard_q"]  # (d, d)
-    hadamard_k = inputs["hadamard_k"]  # (d, d)
-    idx_k_cache = inputs["idx_k_cache"]  # input13, int8
-    idx_k_scale_cache = inputs["idx_k_scale_cache"]  # input14, fp16
-    cache_index = inputs["idx_k_cache_index"]  # (b, s), int32
-    x_dtype = x.dtype
+    x_dtype = inputs["token_x"].dtype
 
-    # calculate
+    q_norm = inputs["q_norm"]
+    q_norm_scale = inputs["q_norm_scale"]
+    w_idx_qb = inputs["w_idx_qb"]
+    w_idx_qb_scale = inputs["w_idx_qb_scale"]
+    cos = inputs["cos_idx_rope"]
+    sin = inputs["sin_idx_rope"]
+    hadamard_q = inputs["hadamard_q"]
+
     q = torch.matmul(q_norm.to(torch.int32), w_idx_qb.to(torch.int32))  # (b, s, n * d)
     q_fp32 = q.to(torch.float32)
     q_fp32 = q_fp32 * q_norm_scale
@@ -256,35 +246,66 @@ def indexer_prolog(inputs: dict, dims: dict):
     q_rope, q_nope = torch.split(q_bf16, [rope_head_dim, d - rope_head_dim], dim=-1)
     q_rope = single_rope(q_rope, cos, sin)
     q = torch.cat([q_rope, q_nope], dim=-1)
-    # hadamard
-    # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现跟x86不一致，通过升精度保证正确性
-    q = torch.matmul(q.to(torch.float32), hadamard_q.to(torch.float32)).to(x_dtype)  # (b, s, n, d)
-    q_int8, q_scale = quant_int8(q)  # (b, s, n, d) int8, (b, s, n, 1) fp32
-    q_scale = q_scale.to(torch.float16)
+    q = torch.matmul(q.to(torch.float32), hadamard_q.to(torch.float32)).to(x_dtype)
+    q_int8, q_scale = quant_int8(q)
+    return q_int8, q_scale.to(torch.float16)
+
+
+def _indexer_compute_k(inputs, dims):
+    """Compute key (k) path: matmul -> layernorm -> rope -> hadamard -> quant -> cache update."""
+    b, t, n, d = dims["b"], dims["t"], dims["idx_n_heads"], dims["idx_head_dim"]
+    s = t // b
+    rope_head_dim = dims["rope_head_dim"]
+    x_dtype = inputs["token_x"].dtype
+
+    x = inputs["token_x"]
+    w_idx_k = inputs["w_idx_k"]
+    cos = inputs["cos_idx_rope"]
+    sin = inputs["sin_idx_rope"]
+    layer_norm_gamma = inputs["layer_norm_gamma"]
+    layer_norm_beta = inputs["layer_norm_beta"]
+    hadamard_k = inputs["hadamard_k"]
+    idx_k_cache = inputs["idx_k_cache"]
+    idx_k_scale_cache = inputs["idx_k_scale_cache"]
+    cache_index = inputs["idx_k_cache_index"]
 
     k = torch.matmul(x.to(torch.float32), w_idx_k.to(torch.float32))  # (b, s, d)
     k = layer_norm(k, layer_norm_gamma, layer_norm_beta).to(x_dtype)
     k_rope, k_nope = torch.split(k, [rope_head_dim, d - rope_head_dim], dim=-1)
     k_rope = single_rope(k_rope.unsqueeze(2), cos, sin).squeeze(2)
     k = torch.cat([k_rope, k_nope], dim=-1)
-    # hadamard
-    # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现跟x86不一致，通过升精度保证正确性
-    k = torch.matmul(k.to(torch.float32), hadamard_k.to(torch.float32)).to(x_dtype)  # (b, s, d)
-    k_int8, k_scale = quant_int8(k)  # (b, s, d) int8, (b, s, 1) fp32
+    k = torch.matmul(k.to(torch.float32), hadamard_k.to(torch.float32)).to(x_dtype)
+    k_int8, k_scale = quant_int8(k)
     k_scale = k_scale.to(torch.float16)
-    # cache update
-    k_cache = idx_k_cache.clone()  # (block_num, block_size, n_kv, d)
-    k_scale_cache = idx_k_scale_cache.clone()  # (block_num, block_size, n_kv, 1)
+
+    k_cache = idx_k_cache.clone()
+    k_scale_cache = idx_k_scale_cache.clone()
     scatter_update_pa_bsnd(k_cache, k_int8.reshape(b, s, 1, d), cache_index, -2)
     scatter_update_pa_bsnd(k_scale_cache, k_scale.reshape(b, s, 1, 1), cache_index, -2)
+    return k_cache, k_scale_cache
 
-    # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现跟x86不一致，通过升精度保证正确性
-    weights = torch.matmul(x.to(torch.float32), \
-        w_idx_proj.to(torch.float32)).to(x_dtype).to(torch.float32)  # (b, s, n)
+
+def _indexer_compute_weights(inputs, dims):
+    """Compute attention weights path."""
+    x = inputs["token_x"]
+    w_idx_proj = inputs["w_idx_proj"]
+    n = dims["idx_n_heads"]
+    d = dims["idx_head_dim"]
+    x_dtype = x.dtype
+
+    weights = torch.matmul(x.to(torch.float32),
+                           w_idx_proj.to(torch.float32)).to(x_dtype).to(torch.float32)
     weights = weights * (n ** -0.5) * (d ** -0.5)
-    weights = weights.to(torch.float16)
+    return weights.to(torch.float16)
 
-    # output dtype: int8, fp16, int8, fp16, fp16
+
+def indexer_prolog(inputs: dict, dims: dict):
+    x_dtype = inputs["token_x"].dtype
+
+    q_int8, q_scale = _indexer_compute_q(inputs, dims)
+    k_cache, k_scale_cache = _indexer_compute_k(inputs, dims)
+    weights = _indexer_compute_weights(inputs, dims)
+
     outputs = {"query": q_int8, "query_scale": q_scale,
                "idx_k_cache_out": k_cache, "idx_k_scale_cache_out": k_scale_cache,
                "weights": weights}
@@ -338,24 +359,13 @@ def gen_zero_tensor(t):
     return torch.zeros_like(t).npu()
 
 
-def do_test_lighting_indexer_prolog_quant(case_name, configs):
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
-    torch.npu.set_device(device_id)
-
-    print(f"=== run test case: {case_name} ===")
-
-    dims, inputs_data, golden_data = gen_data(case_name)
-
+def _build_indexer_pytorch_inputs(inputs_data, dims):
+    """Build IndexerPrologQuantInput from raw data dict."""
     t = dims["t"]
     h = dims["h"]
     q_lora_rank = dims["q_lora_rank"]
-    idx_head_dim = dims["idx_head_dim"]
-    head_num = dims["idx_n_heads"]
     rope_head_dim = dims["rope_head_dim"]
-
-    torch_npu.npu.config.allow_internal_format = True
-
-    inputs = IndexerPrologQuantInput(
+    return IndexerPrologQuantInput(
         x=inputs_data["token_x"].npu().reshape(t, h),
         q_norm=inputs_data["q_norm"].npu().reshape(t, q_lora_rank),
         q_norm_scale=inputs_data["q_norm_scale"].npu().reshape(t, 1),
@@ -375,6 +385,13 @@ def do_test_lighting_indexer_prolog_quant(case_name, configs):
         k_cache_index=inputs_data["idx_k_cache_index"].npu().reshape(t)
     )
 
+
+def _build_indexer_outputs(golden_data, inputs, dims):
+    """Build IndexerPrologQuantOutput from golden data."""
+    t = dims["t"]
+    head_num = dims["idx_n_heads"]
+    idx_head_dim = dims["idx_head_dim"]
+
     q_int8_golden = golden_data["query"].reshape(t, head_num, idx_head_dim)
     q_scale_golden = golden_data["query_scale"].reshape(t, head_num, 1)
     k_cache_golden = golden_data["idx_k_cache_out"]
@@ -388,14 +405,17 @@ def do_test_lighting_indexer_prolog_quant(case_name, configs):
         k_scale=inputs.k_cache_scale,
         weights=gen_zero_tensor(weights_golden)
     )
+    return outputs, q_int8_golden, q_scale_golden, k_cache_golden, k_cache_scale_golden, weights_golden
 
-    # ---- Attrs ----
+
+def _run_and_compare(inputs, outputs, configs, q_int8_golden, q_scale_golden,
+                     k_cache_golden, k_cache_scale_golden, weights_golden):
+    """Execute kernel and compare with golden outputs."""
     attrs = IndexerPrologQuantAttr(
         eps=1e-6,
         layerout_query="TND",
         layerout_key="PA_BSND",
     )
-
     tensors = [tensor for _, tensor in vars(inputs).items()] + \
               [tensor for _, tensor in vars(outputs).items()]
     lightning_indexer_prolog_quant(*tensors, configs, attrs)
@@ -405,6 +425,24 @@ def do_test_lighting_indexer_prolog_quant(case_name, configs):
     compare(outputs.k_int8.cpu(), k_cache_golden, "k_int8", 1, 0, 0)
     compare(outputs.k_scale.cpu(), k_cache_scale_golden, "k_scale", 0.000025, 0, 0)
     compare(outputs.weights.cpu(), weights_golden, "weights", 0.000025, 0., 0)
+
+
+def do_test_lighting_indexer_prolog_quant(case_name, configs):
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+
+    print(f"=== run test case: {case_name} ===")
+
+    dims, inputs_data, golden_data = gen_data(case_name)
+
+    torch_npu.npu.config.allow_internal_format = True
+
+    inputs = _build_indexer_pytorch_inputs(inputs_data, dims)
+    outputs, q_int8_golden, q_scale_golden, k_cache_golden, k_cache_scale_golden, \
+        weights_golden = _build_indexer_outputs(golden_data, inputs, dims)
+
+    _run_and_compare(inputs, outputs, configs, q_int8_golden, q_scale_golden,
+                     k_cache_golden, k_cache_scale_golden, weights_golden)
 
     print(f"=== {case_name}: PASS ===")
 
@@ -474,7 +512,7 @@ def test_b2_s1_4k_s2_64k():
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )
-    do_test_lighting_indexer_prolog_quant("QuantLightningIndexerPrologSTest.b2_s1_4k_s2_64k", configs)
+    do_test_lighting_indexer_prolog_quant("QuantLightingIndexerPrologSTest.b2_s1_4k_s2_64k", configs)
 
 
 @pytest.mark.skip(reason="large test case")

@@ -39,7 +39,9 @@ from flash_attention_score_grad_golden import (
     ForwardDataConfig, ForwardDataResult,
     flash_attention_score_grad_golden,
 )
-from experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import flash_attention_score_grad_wrapper
+from experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import (
+    flash_attention_score_grad_wrapper
+)
 
 
 def get_device_id():
@@ -154,6 +156,36 @@ def test_level2(device_id, run_mode="npu"):
     return run_test(cfg)
 
 
+def _dispatch_tests(args, tests, device_id):
+    """Execute the requested test level(s) and return overall success."""
+    if args.list:
+        logger.info("\nAvailable test levels:")
+        for level, (desc, _) in tests.items():
+            logger.info("  %d: %s", level, desc)
+        return None
+
+    if args.level is not None:
+        if args.level not in tests:
+            logger.info(
+                "ERROR: Invalid level %d. Use --list to see available levels.",
+                args.level)
+            return None
+        _, fn = tests[args.level]
+        return fn(device_id, args.run_mode)
+
+    all_pass = True
+    for level in sorted(tests.keys()):
+        _, fn = tests.get(level)
+        if not fn(device_id, args.run_mode):
+            all_pass = False
+            break
+    if all_pass:
+        logger.info("=" * 60)
+        logger.info("All tests passed!")
+        logger.info("=" * 60)
+    return all_pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="FlashAttentionScoreGrad PyPTO Test")
@@ -173,12 +205,6 @@ def main():
         2: ("Level 2: 中等规模", test_level2),
     }
 
-    if args.list:
-        logger.info("\nAvailable test levels:")
-        for level, (desc, _) in tests.items():
-            logger.info("  %d: %s", level, desc)
-        return
-
     logger.info("\n" + "=" * 60)
     logger.info("FlashAttentionScoreGrad PyPTO Test")
     logger.info("=" * 60 + "\n")
@@ -188,31 +214,12 @@ def main():
         device_id = get_device_id()
         if device_id is None:
             return
-        import torch_npu  # pylint: disable=redefined-outer-name
         torch.npu.set_device(device_id)
         logger.info("Running on NPU:%d\n", device_id)
 
-    if args.level is not None:
-        if args.level not in tests:
-            logger.info(
-                "ERROR: Invalid level %d. Use --list to see available levels.",
-                args.level)
-            return
-        _, fn = tests[args.level]
-        success = fn(device_id, args.run_mode)
-    else:
-        all_pass = True
-        for level in sorted(tests.keys()):
-            _, fn = tests.get(level)
-            if not fn(device_id, args.run_mode):
-                all_pass = False
-                break
-
-        success = all_pass
-        if all_pass:
-            logger.info("=" * 60)
-            logger.info("All tests passed!")
-            logger.info("=" * 60)
+    success = _dispatch_tests(args, tests, device_id)
+    if success is False:
+        logger.error("Test execution failed")
 
 
 if __name__ == "__main__":

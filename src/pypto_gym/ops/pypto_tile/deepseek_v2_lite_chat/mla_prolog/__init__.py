@@ -87,8 +87,8 @@ def mla_prolog_wrapper(hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, 
                 hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids,
                 use_pypto=True
             )
-        except Exception as e:  # pylint: disable=redefined-outer-name
-            print(f"[ERROR] MLA Prolog动态选择失败，fallback到golden: {e}")
+        except Exception as exc:
+            print(f"[ERROR] MLA Prolog动态选择失败，fallback到golden: {exc}")
             if MLA_PROLOG_GOLDEN_AVAILABLE:
                 return mla_prolog_torch_baseline(
                     hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids

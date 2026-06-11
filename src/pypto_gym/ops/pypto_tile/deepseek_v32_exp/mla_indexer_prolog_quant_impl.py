@@ -29,8 +29,12 @@ from dataclasses import dataclass
 import torch
 import torch_npu
 import pypto
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_prolog_quant_impl import rope_3d, quant_layer_norm, prolog_quant, quant_rope_2d
-from pypto_gym.ops.pypto_tile.deepseek_v32_exp.mla_prolog_quant_impl import pre_compute_2d, rms_norm, rope_3d_v2, rope_v2, MlaQuantInputs, k_nope_quant
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.lightning_indexer_prolog_quant_impl import (
+    rope_3d, quant_layer_norm, prolog_quant, quant_rope_2d
+)
+from pypto_gym.ops.pypto_tile.deepseek_v32_exp.mla_prolog_quant_impl import (
+    pre_compute_2d, rms_norm, rope_3d_v2, rope_v2, MlaQuantInputs, k_nope_quant
+)
 
 
 L0M_INDEX = 0
@@ -45,7 +49,7 @@ VEC_TILE_4 = 4
 VEC_TILE_32 = 32
 
 
-def mla_indexer_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
+def mla_indexer_prolog_quant_compute(
     token_x, mla_w_dq, mla_w_uq_qr, mla_dequant_scale, mla_w_uk, mla_w_dkv_kr, mla_gamma_cq,
     mla_gamma_ckv, cos, sin, cache_index, mla_kv_cache, mla_kr_cache,
     mla_k_scale_cache, ip_w_qb_in, ip_w_qb_scale_in, ip_wk_in, ip_w_proj_in,
@@ -271,7 +275,7 @@ def mla_indexer_prolog_quant_compute(  # pylint: disable=huawei-too-many-argumen
     runtime_options={"stitch_function_max_num": 128,
                     "device_sched_mode": 2}
 )
-def mla_indexer_prolog_quant_p(  # pylint: disable=huawei-too-many-arguments
+def mla_indexer_prolog_quant_p(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     mla_w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ),
     mla_w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),
@@ -400,7 +404,7 @@ def mla_indexer_prolog_quant_p(  # pylint: disable=huawei-too-many-arguments
     },
     runtime_options={"device_sched_mode": 2}
 )
-def mla_indexer_prolog_quant_d(  # pylint: disable=huawei-too-many-arguments
+def mla_indexer_prolog_quant_d(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     mla_w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ),
     mla_w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),

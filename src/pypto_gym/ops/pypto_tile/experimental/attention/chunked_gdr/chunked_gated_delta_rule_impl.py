@@ -429,7 +429,7 @@ def chunk_gated_delta_rule_aligned(b, nqk, nv, d, l, enable_perf_debug=False,
         jit_kwargs["debug_options"] = {"runtime_debug_mode": 1}
 
     @pypto.frontend.jit(**jit_kwargs)
-    def kernel(  # pylint: disable=huawei-too-many-arguments
+    def kernel(
             query: pypto.Tensor([DYNAMIC_T, nqk, d], pypto.DT_FP32),
             key: pypto.Tensor([DYNAMIC_T, nqk, d], pypto.DT_FP32),
             value: pypto.Tensor([DYNAMIC_T, nv, d], pypto.DT_FP32),
@@ -554,7 +554,7 @@ def chunk_gated_delta_rule_unaligned(b, nqk, nv, d, l, enable_perf_debug=False,
         jit_kwargs["debug_options"] = {"runtime_debug_mode": 1}
 
     @pypto.frontend.jit(**jit_kwargs)
-    def kernel(  # pylint: disable=huawei-too-many-arguments
+    def kernel(
             query: pypto.Tensor([DYNAMIC_T, nqk, d], pypto.DT_FP32),
             key: pypto.Tensor([DYNAMIC_T, nqk, d], pypto.DT_FP32),
             value: pypto.Tensor([DYNAMIC_T, nv, d], pypto.DT_FP32),
@@ -707,7 +707,7 @@ def _select_chunk_size(max_seq_len: int) -> int:
         return 128
 
 
-def chunked_gated_delta_rule_wrapper(  # pylint: disable=huawei-too-many-arguments
+def chunked_gated_delta_rule_wrapper(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -715,7 +715,7 @@ def chunked_gated_delta_rule_wrapper(  # pylint: disable=huawei-too-many-argumen
     gate: torch.Tensor,
     states: torch.Tensor,
     act_seq_len: torch.Tensor,
-    chunk_size = "auto",
+    chunk_size="auto",
     mask: torch.Tensor = None,
     tril_mask: torch.Tensor = None,
     eye: torch.Tensor = None,

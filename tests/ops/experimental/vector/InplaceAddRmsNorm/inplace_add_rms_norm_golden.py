@@ -64,11 +64,8 @@ def inplace_add_rms_norm_golden(
 
     # 1) elementwise add
     x_add_fp32 = x1_fp32 + x2_fp32                        # [B,S,H]
-    # 2) mean(x_add^2, dim=-1)
     ms_fp32 = (x_add_fp32 * x_add_fp32).mean(dim=-1, keepdim=True)  # [B,S,1]
-    # 3) rstd = 1 / sqrt(ms + eps)
     rstd_fp32 = torch.rsqrt(ms_fp32 + eps)                # [B,S,1]
-    # 4) y = x_add * rstd * gamma  (broadcast)
     y_fp32 = x_add_fp32 * rstd_fp32 * gamma_fp32          # [B,S,H]
 
     # 写回 bf16

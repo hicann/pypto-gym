@@ -62,9 +62,9 @@ def params():
     return get_params("testcase6")
 
 
-def test_gmm_mxfp8(params):
-    """Validate the PyPTO kernel against the PyTorch reference implementation."""
-    tile_config = ShapeConfig(
+def _build_tile_config(params):
+    """Build a ShapeConfig from TestParams."""
+    return ShapeConfig(
         [params.m, params.k, params.n],
         params.tile_size,
         params.m_tile_shape,
@@ -78,6 +78,9 @@ def test_gmm_mxfp8(params):
         False,
     )
 
+
+def _build_test_tensors(params):
+    """Construct a, b, scaled_a, scaled_b tensors for the grouped matmul test."""
     a = torch.randn((params.m, params.k), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e4m3fn)
     scaled_a = torch.randn((params.m, params.k // 64, 2), dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
 
@@ -106,6 +109,14 @@ def test_gmm_mxfp8(params):
             (len(params.group_list), params.k // 64, params.n, 2),
             dtype=torch.float32,
         ).uniform_(0, 1).to(torch.float8_e8m0fnu)
+
+    return a, scaled_a, b, scaled_b
+
+
+def test_gmm_mxfp8(params):
+    """Validate the PyPTO kernel against the PyTorch reference implementation."""
+    tile_config = _build_tile_config(params)
+    a, scaled_a, b, scaled_b = _build_test_tensors(params)
 
     grouped_inputs = GroupedMatmulInputs(
         a=a,
@@ -156,7 +167,7 @@ def main():
         params = get_params(args.case)
     except RuntimeError as e:
         print(e, file=sys.stderr)
-        raise RuntimeError("Test execution failed")
+        raise RuntimeError("Test execution failed") from e
     test_gmm_mxfp8(params)
 
 

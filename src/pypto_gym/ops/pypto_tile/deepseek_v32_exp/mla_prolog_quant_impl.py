@@ -507,7 +507,7 @@ def pre_compute_2d(
     return qkv_pre_res
 
 
-def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant_compute(
     token_x: pypto.Tensor,
     w_dq: pypto.Tensor,
     w_uq_qr: pypto.Tensor,
@@ -730,7 +730,7 @@ def options_list():
         "stitch_function_max_num": 128
     }
 )
-def mla_prolog_quant_p(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant_p(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_NZ),
     w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),
@@ -804,7 +804,7 @@ def mla_prolog_quant_p(  # pylint: disable=huawei-too-many-arguments
 @pypto.frontend.jit(
     runtime_options=options_list()["runtime_options"],
 )
-def mla_prolog_quant_d(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant_d(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC]),
     w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], format=pypto.TileOpFormat.TILEOP_NZ),
     w_uq_qr: pypto.Tensor([pypto.STATIC, pypto.STATIC], format=pypto.TileOpFormat.TILEOP_NZ),

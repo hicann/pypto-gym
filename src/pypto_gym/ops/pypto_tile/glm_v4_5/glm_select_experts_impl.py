@@ -25,7 +25,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 import pypto
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
+from .utils.get_format import get_format
 
 
 def check_args(
@@ -52,7 +52,7 @@ def check_args(
     assert isinstance(num_expert_group, int)
 
 
-def process_main_loop_interation(  # pylint: disable=huawei-too-many-arguments
+def process_main_loop_interation(
     bs_idx,
     logits_input,
     e_score_bias_2d,

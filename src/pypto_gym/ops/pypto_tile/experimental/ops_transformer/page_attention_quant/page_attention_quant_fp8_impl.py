@@ -195,7 +195,7 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
         "pass_verify_save_tensor": False,
     },
 )
-def pfa_func_kernel_v2_bound(  # pylint: disable=huawei-too-many-arguments
+def pfa_func_kernel_v2_bound(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),
     q_scale: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32),
     k: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP8E4M3),

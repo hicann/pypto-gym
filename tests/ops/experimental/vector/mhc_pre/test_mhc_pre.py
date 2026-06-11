@@ -69,7 +69,6 @@ def get_device_id():
 
 def setup_npu(device_id):
     """设置 NPU 设备。"""
-    import torch_npu  # pylint: disable=redefined-outer-name
     torch.npu.set_device(device_id)
 
 
@@ -126,19 +125,16 @@ def run_mhc_pre_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     print(f"  Input shape : x {x.shape}, phi {phi.shape}")
     print(f"  Output shape: h_in {h_in_impl.shape}, h_post {h_post_impl.shape}, h_res {h_res_impl.shape}")
 
-    # h_in (BF16 → FP32)
     h_in_impl_np = h_in_impl.cpu().float().numpy()
     h_in_golden_np = h_in_golden.float().numpy()
     max_diff_h_in = np.abs(h_in_impl_np - h_in_golden_np).max()
     print(f"  h_in max diff: {max_diff_h_in:.6e}")
 
-    # h_post (FP32)
     h_post_impl_np = h_post_impl.cpu().numpy()
     h_post_golden_np = h_post_golden.numpy()
     max_diff_h_post = np.abs(h_post_impl_np - h_post_golden_np).max()
     print(f"  h_post max diff: {max_diff_h_post:.6e}")
 
-    # h_res (FP32)
     # impl 输出 h_res 现为 3D [bs, N, N]，与 golden 输出一致
     # 直接对比即可
     h_res_impl_np = h_res_impl.cpu().numpy()

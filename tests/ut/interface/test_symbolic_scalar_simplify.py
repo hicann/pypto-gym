@@ -366,7 +366,6 @@ def test_simplify_preserves_symbol():
 def test_nested_simplify():
     x = _sym("x")
     y = _sym("y")
-    # (x - y) + y => x
     result = ((x - y) + y).simplify()
     assert str(result) == "x"
 
@@ -375,6 +374,5 @@ def test_complex_cancellation():
     x = _sym("x")
     y = _sym("y")
     z = _sym("z")
-    # x*y + x*z => (y+z) * x
     result = (x * y + x * z).simplify()
     assert str(result) == "((y+z)*x)"

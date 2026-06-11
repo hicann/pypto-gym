@@ -120,172 +120,108 @@ def scatter_pa_kv_cache_golden(
 
 
 # ==========================================
-# 验证
+# 验证辅助函数
 # ==========================================
 
-def _validate():
-    """自动生成的验证函数 - 运行时动态生成验证报告"""
+def _generate_test_data(num_tokens, num_blocks, block_size, num_heads, head_size):
+    """生成测试数据 - 确保 slot_mapping 不重复"""
+    key = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16)
+    key_cache_in = torch.randn(num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16)
+    max_slots = num_blocks * block_size
+    if num_tokens <= max_slots:
+        slot_mapping = torch.randperm(max_slots)[:num_tokens].to(torch.int32)
+    else:
+        slot_mapping = torch.randint(0, max_slots, (num_tokens,), dtype=torch.int32)
+    value = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16)
+    value_cache_in = torch.randn(num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16)
+    return key, key_cache_in, slot_mapping, value, value_cache_in
 
-    print("=" * 60)
-    print("scatter_pa_kv_cache_golden 验证报告")
-    print("=" * 60)
 
-    # 辅助函数：生成随机测试数据（确保 slot_mapping 不重复）
-    def generate_test_data(num_tokens, num_blocks, block_size, num_heads, head_size):
-        """生成测试数据"""
-        key = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16)
-        key_cache_in = torch.randn(num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16)
-        # 确保所有 slot 都有效且不重复（不超过 cache 容量）
-        max_slots = num_blocks * block_size
-        # 如果 tokens 数量超过 slots 数量，则允许重复
-        if num_tokens <= max_slots:
-            slot_mapping = torch.randperm(max_slots)[:num_tokens].to(torch.int32)
-        else:
-            slot_mapping = torch.randint(0, max_slots, (num_tokens,), dtype=torch.int32)
-        value = torch.randn(num_tokens, num_heads, head_size, dtype=torch.bfloat16)
-        value_cache_in = torch.randn(num_blocks, block_size, num_heads, head_size, dtype=torch.bfloat16)
-
-        return key, key_cache_in, slot_mapping, value, value_cache_in
-
-    # 辅助函数：验证输出 shape
-    def validate_shapes(key_cache_in, value_cache_in, key_cache_out, value_cache_out, test_name):
-        """验证输出 shape 是否正确"""
-        success = True
-        errors = []
-
-        if key_cache_out.shape != key_cache_in.shape:
+def _validate_shapes(key_cache_in, value_cache_in, key_cache_out, value_cache_out, test_name):
+    """验证输出 shape 是否正确"""
+    success = True
+    errors = []
+    if key_cache_out.shape != key_cache_in.shape:
+        success = False
+        errors.append(f"key_cache_out shape 不匹配: 期望 {key_cache_in.shape}, 实际 {key_cache_out.shape}")
+    if value_cache_out is not None and value_cache_in is not None:
+        if value_cache_out.shape != value_cache_in.shape:
             success = False
-            errors.append(f"key_cache_out shape 不匹配: 期望 {key_cache_in.shape}, 实际 {key_cache_out.shape}")
+            errors.append(f"value_cache_out shape 不匹配: 期望 {value_cache_in.shape}, 实际 {value_cache_out.shape}")
+    return success, errors
 
-        if value_cache_out is not None and value_cache_in is not None:
-            if value_cache_out.shape != value_cache_in.shape:
-                success = False
-                errors.append(f"value_cache_out shape 不匹配: 期望 {value_cache_in.shape}, 实际 {value_cache_out.shape}")
 
-        return success, errors
+def _validate_scatter(key, key_cache_out, slot_mapping, block_size, test_name):
+    """验证 scatter 操作的正确性"""
+    num_tokens = key.shape[0]
+    for i in range(num_tokens):
+        block_idx = slot_mapping[i].item() // block_size
+        block_offset = slot_mapping[i].item() % block_size
+        expected = key[i, :, :]
+        actual = key_cache_out[block_idx, block_offset, :, :]
+        if not torch.allclose(expected, actual, atol=1e-4, rtol=0.0078125):
+            return False, f"token {i}: scatter 结果不正确"
+    return True, "scatter 正确"
 
-    # 辅助函数：验证 scatter 正确性
-    def validate_scatter(key, key_cache_out, slot_mapping, block_size, test_name):
-        """验证 scatter 操作的正确性"""
-        num_tokens = key.shape[0]
-        for i in range(num_tokens):
-            block_idx = slot_mapping[i].item() // block_size
-            block_offset = slot_mapping[i].item() % block_size
 
-            expected = key[i, :, :]
-            actual = key_cache_out[block_idx, block_offset, :, :]
+def _run_test_case(key, key_cache_in, slot_mapping, value, value_cache_in,
+                   block_size, test_name, all_passed):
+    """运行单个测试用例并验证 shape 和 scatter"""
+    key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
+        key, key_cache_in, slot_mapping, value, value_cache_in)
+    shape_success, shape_errors = _validate_shapes(
+        key_cache_in, value_cache_in, key_cache_out, value_cache_out, test_name)
+    scatter_success, scatter_msg = _validate_scatter(
+        key, key_cache_out, slot_mapping, block_size, test_name)
+    if shape_success and scatter_success:
+        print("✓ PASS")
+    else:
+        print("✗ FAIL")
+        all_passed = False
+        for err in shape_errors:
+            print(f"    {err}")
+        if not scatter_success:
+            print(f"    {scatter_msg}")
+    return all_passed
 
-            if not torch.allclose(expected, actual, atol=1e-4, rtol=0.0078125):
-                return False, f"token {i}: scatter 结果不正确"
 
-        return True, "scatter 正确"
+# ==========================================
+# 验证子函数
+# ==========================================
 
+def _validate_typical_cases():
+    """验证典型 case"""
     all_passed = True
-
-    # -- 1. 典型 case 验证（来自算子规格中的典型配置）--
     print("\n[典型 case 验证]")
 
-    # 配置1_性能P0: num_tokens=2633, block_size=128（缩小规模以加快验证）
-    print("  性能_P0: num_tokens=100, block_size=128, num_heads=2, head_size=256, num_blocks=100 ... ", end="")
-    try:
-        key, key_cache_in, slot_mapping, value, value_cache_in = generate_test_data(
-            num_tokens=100, num_blocks=100, block_size=128, num_heads=2, head_size=256
-        )
-        key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
+    configs = [
+        ("性能_P0: num_tokens=100, block_size=128, num_heads=2, head_size=256, num_blocks=100",
+         100, 100, 128, 2, 256),
+        ("功能_P0: num_tokens=500, block_size=128, num_heads=2, head_size=256, num_blocks=100",
+         500, 100, 128, 2, 256),
+        ("边界_P0: num_tokens=1000, block_size=128, num_heads=2, head_size=256, num_blocks=200",
+         1000, 200, 128, 2, 256),
+    ]
 
-        # 验证 shape
-        shape_success, shape_errors = validate_shapes(
-            key_cache_in, value_cache_in, key_cache_out, value_cache_out, "性能_P0"
-        )
-
-        # 验证 scatter 正确性
-        scatter_success, scatter_msg = validate_scatter(
-            key, key_cache_out, slot_mapping, 128, "性能_P0"
-        )
-
-        if shape_success and scatter_success:
-            print("✓ PASS")
-        else:
-            print("✗ FAIL")
+    for desc, num_tokens, num_blocks, block_size, num_heads, head_size in configs:
+        print(f"  {desc} ... ", end="")
+        try:
+            key, key_cache_in, slot_mapping, value, value_cache_in = _generate_test_data(
+                num_tokens, num_blocks, block_size, num_heads, head_size)
+            all_passed = _run_test_case(
+                key, key_cache_in, slot_mapping, value, value_cache_in,
+                block_size, desc, all_passed)
+        except Exception as e:
+            print(f"✗ FAIL\n    错误: {e}")
             all_passed = False
-            for err in shape_errors:
-                print(f"    {err}")
-            if not scatter_success:
-                print(f"    {scatter_msg}")
-    except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
-        all_passed = False
+    return all_passed
 
-    # 配置2_功能P0: num_tokens=7902, block_size=128（缩小规模）
-    print("  功能_P0: num_tokens=500, block_size=128, num_heads=2, head_size=256, num_blocks=100 ... ", end="")
-    try:
-        key, key_cache_in, slot_mapping, value, value_cache_in = generate_test_data(
-            num_tokens=500, num_blocks=100, block_size=128, num_heads=2, head_size=256
-        )
-        key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
 
-        shape_success, shape_errors = validate_shapes(
-            key_cache_in, value_cache_in, key_cache_out, value_cache_out, "功能_P0"
-        )
-        scatter_success, scatter_msg = validate_scatter(
-            key, key_cache_out, slot_mapping, 128, "功能_P0"
-        )
-
-        if shape_success and scatter_success:
-            print("✓ PASS")
-        else:
-            print("✗ FAIL")
-            all_passed = False
-            for err in shape_errors:
-                print(f"    {err}")
-            if not scatter_success:
-                print(f"    {scatter_msg}")
-    except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
-        all_passed = False
-
-    # 配置3_边界P0: num_tokens=16384, block_size=128（缩小规模）
-    print("  边界_P0: num_tokens=1000, block_size=128, num_heads=2, head_size=256, num_blocks=200 ... ", end="")
-    try:
-        key, key_cache_in, slot_mapping, value, value_cache_in = generate_test_data(
-            num_tokens=1000, num_blocks=200, block_size=128, num_heads=2, head_size=256
-        )
-        key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
-
-        shape_success, shape_errors = validate_shapes(
-            key_cache_in, value_cache_in, key_cache_out, value_cache_out, "边界_P0"
-        )
-        scatter_success, scatter_msg = validate_scatter(
-            key, key_cache_out, slot_mapping, 128, "边界_P0"
-        )
-
-        if shape_success and scatter_success:
-            print("✓ PASS")
-        else:
-            print("✗ FAIL")
-            all_passed = False
-            for err in shape_errors:
-                print(f"    {err}")
-            if not scatter_success:
-                print(f"    {scatter_msg}")
-    except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
-        all_passed = False
-
-    # -- 2. 泛化 case 验证（来自算子规格中的动态轴范围）--
+def _validate_generalization_cases():
+    """验证泛化 case"""
+    all_passed = True
     print("\n[泛化 case 验证]")
 
-    # num_tokens 范围: [1, 16384] -> 采样 [1, 500, 1000]（缩小以加快验证）
-    # num_blocks 范围: [100, 10000] -> 采样 [100, 500, 1000]（缩小）
     test_cases = [
         (1, 100, 128, 2, 256, "最小 tokens, 最小 blocks"),
         (500, 500, 128, 2, 256, "中间 tokens, 中间 blocks"),
@@ -295,114 +231,64 @@ def _validate():
     for num_tokens, num_blocks, block_size, num_heads, head_size, desc in test_cases:
         print(f"  {desc}: tokens={num_tokens}, blocks={num_blocks} ... ", end="")
         try:
-            key, key_cache_in, slot_mapping, value, value_cache_in = generate_test_data(
-                num_tokens, num_blocks, block_size, num_heads, head_size
-            )
-            key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-                key, key_cache_in, slot_mapping, value, value_cache_in
-            )
-
-            shape_success, shape_errors = validate_shapes(
-                key_cache_in, value_cache_in, key_cache_out, value_cache_out, desc
-            )
-            scatter_success, scatter_msg = validate_scatter(
-                key, key_cache_out, slot_mapping, block_size, desc
-            )
-
-            if shape_success and scatter_success:
-                print("✓ PASS")
-            else:
-                print("✗ FAIL")
-                all_passed = False
-                for err in shape_errors:
-                    print(f"    {err}")
-                if not scatter_success:
-                    print(f"    {scatter_msg}")
+            key, key_cache_in, slot_mapping, value, value_cache_in = _generate_test_data(
+                num_tokens, num_blocks, block_size, num_heads, head_size)
+            all_passed = _run_test_case(
+                key, key_cache_in, slot_mapping, value, value_cache_in,
+                block_size, desc, all_passed)
         except Exception as e:
-            print("✗ FAIL")
-            print(f"    错误: {e}")
+            print(f"✗ FAIL\n    错误: {e}")
             all_passed = False
+    return all_passed
 
-    # -- 3. 值域检查（从公式推导）--
+
+def _validate_value_range():
+    """值域检查 - slot_mapping 索引范围"""
+    all_passed = True
     print("\n[值域检查]")
-
-    # 检查 slot_mapping 索引范围
     print("  检查 slot_mapping 索引范围 ... ", end="")
     try:
         num_blocks, block_size = 100, 128
         num_tokens = 50
-        key, key_cache_in, slot_mapping, value, value_cache_in = generate_test_data(
-            num_tokens, num_blocks, block_size, num_heads=2, head_size=256
-        )
-
-        # 验证所有 slot 都在有效范围内
+        key, key_cache_in, slot_mapping, value, value_cache_in = _generate_test_data(
+            num_tokens, num_blocks, block_size, num_heads=2, head_size=256)
         max_slot = num_blocks * block_size - 1
         if (slot_mapping < 0).any() or (slot_mapping > max_slot).any():
-            print("✗ FAIL")
-            print("    slot_mapping 包含无效索引")
+            print("✗ FAIL\n    slot_mapping 包含无效索引")
             all_passed = False
         else:
             print("✓ PASS")
     except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
+        print(f"✗ FAIL\n    错误: {e}")
         all_passed = False
+    return all_passed
 
-    # -- 4. 数值稳定性检查 --
+
+def _validate_numerical_stability():
+    """数值稳定性检查"""
+    all_passed = True
     print("\n[数值稳定性检查]")
 
-    # 大值输入
-    print("  大值输入 (scale=100) ... ", end="")
-    try:
-        num_tokens, num_blocks, block_size = 100, 100, 128
-        key = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * 100
-        key_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * 100
-        slot_mapping = torch.randint(0, num_blocks * block_size, (num_tokens,), dtype=torch.int32)
-        value = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * 100
-        value_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * 100
-
-        key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
-
-        # 检查是否有 NaN 或 Inf
-        if torch.isnan(key_cache_out).any() or torch.isinf(key_cache_out).any():
-            print("✗ FAIL")
-            print("    输出包含 NaN 或 Inf")
+    for label, scale in [("大值输入 (scale=100)", 100), ("小值输入 (scale=1e-4)", 1e-4)]:
+        print(f"  {label} ... ", end="")
+        try:
+            num_tokens, num_blocks, block_size = 100, 100, 128
+            key = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * scale
+            key_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * scale
+            slot_mapping = torch.randint(0, num_blocks * block_size, (num_tokens,), dtype=torch.int32)
+            value = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * scale
+            value_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * scale
+            key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
+                key, key_cache_in, slot_mapping, value, value_cache_in)
+            if torch.isnan(key_cache_out).any() or torch.isinf(key_cache_out).any():
+                print("✗ FAIL\n    输出包含 NaN 或 Inf")
+                all_passed = False
+            else:
+                print("✓ PASS")
+        except Exception as e:
+            print(f"✗ FAIL\n    错误: {e}")
             all_passed = False
-        else:
-            print("✓ PASS")
-    except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
-        all_passed = False
 
-    # 小值输入
-    print("  小值输入 (scale=1e-4) ... ", end="")
-    try:
-        num_tokens, num_blocks, block_size = 100, 100, 128
-        key = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * 1e-4
-        key_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * 1e-4
-        slot_mapping = torch.randint(0, num_blocks * block_size, (num_tokens,), dtype=torch.int32)
-        value = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16) * 1e-4
-        value_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16) * 1e-4
-
-        key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
-
-        if torch.isnan(key_cache_out).any() or torch.isinf(key_cache_out).any():
-            print("✗ FAIL")
-            print("    输出包含 NaN 或 Inf")
-            all_passed = False
-        else:
-            print("✓ PASS")
-    except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
-        all_passed = False
-
-    # 零值输入
     print("  零值输入 ... ", end="")
     try:
         num_tokens, num_blocks, block_size = 100, 100, 128
@@ -411,61 +297,66 @@ def _validate():
         slot_mapping = torch.randint(0, num_blocks * block_size, (num_tokens,), dtype=torch.int32)
         value = torch.zeros(num_tokens, 2, 256, dtype=torch.bfloat16)
         value_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16)
-
         key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
-
-        # 验证 scatter 正确性
-        scatter_success, scatter_msg = validate_scatter(
-            key, key_cache_out, slot_mapping, block_size, "零值输入"
-        )
-
+            key, key_cache_in, slot_mapping, value, value_cache_in)
+        scatter_success, scatter_msg = _validate_scatter(
+            key, key_cache_out, slot_mapping, block_size, "零值输入")
         if scatter_success:
             print("✓ PASS")
         else:
-            print("✗ FAIL")
-            print(f"    {scatter_msg}")
+            print(f"✗ FAIL\n    {scatter_msg}")
             all_passed = False
     except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
+        print(f"✗ FAIL\n    错误: {e}")
         all_passed = False
+    return all_passed
 
-    # -- 5. 功能正确性检查 --
+
+def _validate_functional_correctness():
+    """功能正确性检查 - 重复 slot_mapping"""
+    all_passed = True
     print("\n[功能正确性检查]")
-
-    # 检查重复 slot_mapping
     print("  检查重复 slot_mapping（后写入覆盖前写入）... ", end="")
     try:
         num_tokens, num_blocks, block_size = 5, 10, 128
         key = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16)
         key_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16)
-        # 创建重复的 slot_mapping
         slot_mapping = torch.tensor([0, 0, 1, 1, 2], dtype=torch.int32)
         value = torch.randn(num_tokens, 2, 256, dtype=torch.bfloat16)
         value_cache_in = torch.randn(num_blocks, block_size, 2, 256, dtype=torch.bfloat16)
-
         key_cache_out, value_cache_out = scatter_pa_kv_cache_golden(
-            key, key_cache_in, slot_mapping, value, value_cache_in
-        )
-
-        # 验证后写入覆盖前写入
-        # token 0 和 token 1 都写入 slot 0，最终应该是 token 1 的值
+            key, key_cache_in, slot_mapping, value, value_cache_in)
         block_idx_0 = 0 // block_size
         block_offset_0 = 0 % block_size
-        expected = key[1, :, :]  # token 1 的值
-
+        expected = key[1, :, :]
         if torch.allclose(key_cache_out[block_idx_0, block_offset_0, :, :], expected, atol=1e-4, rtol=0.0078125):
             print("✓ PASS")
         else:
-            print("✗ FAIL")
-            print("    重复 slot_mapping 的覆盖逻辑不正确")
+            print("✗ FAIL\n    重复 slot_mapping 的覆盖逻辑不正确")
             all_passed = False
     except Exception as e:
-        print("✗ FAIL")
-        print(f"    错误: {e}")
+        print(f"✗ FAIL\n    错误: {e}")
         all_passed = False
+    return all_passed
+
+
+# ==========================================
+# 验证主函数
+# ==========================================
+
+def _validate():
+    """自动生成的验证函数 - 运行时动态生成验证报告"""
+
+    print("=" * 60)
+    print("scatter_pa_kv_cache_golden 验证报告")
+    print("=" * 60)
+
+    all_passed = True
+    all_passed &= _validate_typical_cases()
+    all_passed &= _validate_generalization_cases()
+    all_passed &= _validate_value_range()
+    all_passed &= _validate_numerical_stability()
+    all_passed &= _validate_functional_correctness()
 
     print("\n" + "=" * 60)
     if all_passed:

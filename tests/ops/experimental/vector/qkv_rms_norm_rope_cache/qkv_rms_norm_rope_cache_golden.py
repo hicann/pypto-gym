@@ -17,6 +17,7 @@ SplitVD -> RMSNorm(q, k) -> half-and-half RoPE(q, k) -> PA_NZ cache scatter.
 
 from __future__ import annotations
 
+import collections
 import importlib
 from typing import TYPE_CHECKING, Optional, Sequence, Tuple
 
@@ -24,7 +25,18 @@ if TYPE_CHECKING:
     import torch
 
 
-def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> Tuple[int, int, int, int, int, int, int]:
+QkvSizeInfo = collections.namedtuple(
+    "QkvSizeInfo",
+    ["batch", "seq", "num_qkv", "dim", "num_q", "num_k", "num_v"],
+)
+
+QkvNormRopeCacheOutput = collections.namedtuple(
+    "QkvNormRopeCacheOutput",
+    ["q_new", "k_new", "v_new", "q_extra", "k_extra", "v_extra"],
+)
+
+
+def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> QkvSizeInfo:
     if len(qkv_size) != 4:
         raise ValueError(f"qkv_size must be [B, S, Nqkv, D], got {qkv_size}")
     if len(head_nums) != 3:
@@ -37,10 +49,10 @@ def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> Tuple[
         raise ValueError(f"Nk and Nv must be equal, got {num_k} and {num_v}")
     if dim % 2 != 0:
         raise ValueError(f"RoPE head dim must be even, got {dim}")
-    return batch, seq, num_qkv, dim, num_q, num_k, num_v
+    return QkvSizeInfo(batch, seq, num_qkv, dim, num_q, num_k, num_v)
 
 
-def rms_norm_torch(x: torch.Tensor, gamma: torch.Tensor, epsilon: float) -> torch.Tensor:  # pylint: disable=too-many-return-values
+def rms_norm_torch(x: torch.Tensor, gamma: torch.Tensor, epsilon: float) -> torch.Tensor:
     import torch
 
     x_fp32 = x.to(torch.float32)
@@ -99,7 +111,7 @@ def scatter_pa_nz_torch(cache: torch.Tensor, index: torch.Tensor, src: torch.Ten
     return out
 
 
-def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments,too-many-return-values
+def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,
@@ -121,7 +133,13 @@ def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments
 ):
     if cache_mode != "PA_NZ":
         raise ValueError(f"only PA_NZ cache_mode is supported, got {cache_mode}")
-    batch, seq, _, dim, num_q, num_k, num_v = _check_qkv_size(qkv_size, head_nums)
+    result = _check_qkv_size(qkv_size, head_nums)
+    batch = result.batch
+    seq = result.seq
+    dim = result.dim
+    num_q = result.num_q
+    num_k = result.num_k
+    num_v = result.num_v
     tokens = batch * seq
     if qkv.shape != (tokens, (num_q + num_k + num_v) * dim):
         raise ValueError(f"qkv shape mismatch: got {tuple(qkv.shape)}")
@@ -150,5 +168,6 @@ def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments
     v_new = scatter_pa_nz_torch(v_cache, index, v_src)
 
     if is_output_qkv:
-        return q_new, k_new, v_new, q_new.clone(), k_rope.reshape(tokens, num_k * dim), v.reshape(tokens, num_v * dim)
-    return q_new, k_new, v_new
+        return QkvNormRopeCacheOutput(q_new, k_new, v_new, q_new.clone(),
+                                      k_rope.reshape(tokens, num_k * dim), v.reshape(tokens, num_v * dim))
+    return QkvNormRopeCacheOutput(q_new, k_new, v_new, None, None, None)

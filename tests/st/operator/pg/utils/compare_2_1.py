@@ -128,7 +128,8 @@ def precision_compare_triple(npu_data, bm_data, golden_data, thres=(2, 1.2, 1.2)
     is_mere_acceptable = mere_matrix <= thres[1]
     is_rmse_acceptable = rmse_matrix <= thres[2]
 
-    if small_value_matrix <= 2 and is_mare_acceptable and is_mere_acceptable and is_rmse_acceptable:  # pylint: disable=too-many-boolean-expressions
+    all_pass = small_value_matrix <= 2 and is_mare_acceptable and is_mere_acceptable and is_rmse_acceptable
+    if all_pass:
         result = "PASS"
     else:
         result = "FAILED"

@@ -141,12 +141,12 @@ def _make_qk_rope_kernel(N: int):
             pypto.set_vec_tile_shapes(BS_TILE, N, HALF_D)
 
             # Split into left/right halves
-            x_left  = pypto.view(normed_fp32, [BS_TILE, N, HALF_D], [0, 0, 0],
+            x_left = pypto.view(normed_fp32, [BS_TILE, N, HALF_D], [0, 0, 0],
                                  valid_shape=[cur_bs, N, HALF_D])
             x_right = pypto.view(normed_fp32, [BS_TILE, N, HALF_D], [0, 0, HALF_D],
                                  valid_shape=[cur_bs, N, HALF_D])
 
-            # Rotate: (x_left * cos - x_right * sin, x_right * cos + x_left * sin)
+
             o1 = pypto.sub(pypto.mul(x_left, cos_b), pypto.mul(x_right, sin_b))
             o2 = pypto.add(pypto.mul(x_right, cos_b), pypto.mul(x_left, sin_b))
 

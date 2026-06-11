@@ -465,7 +465,7 @@ def pre_compute_2d(
     return qkv_pre_res
 
 
-def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant_compute(
     token_x: pypto.Tensor,
     w_dq: pypto.Tensor,
     w_dq_scale: pypto.Tensor,
@@ -655,7 +655,7 @@ def options_list():
     pass_options=options_list()["pass_options"],
     runtime_options=options_list()["runtime_options"],
 )
-def mla_prolog_quant(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC]),
     w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_HF8),
     w_dq_scale: pypto.Tensor(),

@@ -56,7 +56,10 @@ def gen_inputs(mla_config: MlaConfig, device: str):
     key_cache = torch.empty(key_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
     value_cache = key_cache
 
-    key_rope_cache_shape = [kv_num_blocks, mla_config.n2, mla_config.block_size, mla_config.k_rope_d]  # PA_BnNBsD format
+    # PA_BnNBsD format
+    key_rope_cache_shape = [
+        kv_num_blocks, mla_config.n2, mla_config.block_size, mla_config.k_rope_d
+    ]
     key_rope_cache = torch.empty(key_rope_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
 
     block_table = gen_block_table(mla_config, kv_actual_seqs, device)
@@ -196,8 +199,12 @@ def ifa_mla_golden(query, key, value, query_rope, key_rope, kv_actual_seqs):
             cur_s2 = total_kv_len - s1 + 1 + s1_idx
 
             for n2_idx in range(n2):
-                q_nope = query[b_idx:b_idx + 1, s1_idx:s1_idx + 1, n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
-                q_rope_cur = query_rope[b_idx:b_idx + 1, s1_idx:s1_idx + 1, n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                q_nope = query[
+                    b_idx:b_idx + 1, s1_idx:s1_idx + 1,
+                    n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                q_rope_cur = query_rope[
+                    b_idx:b_idx + 1, s1_idx:s1_idx + 1,
+                    n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
                 q_full = torch.cat([q_nope, q_rope_cur], dim=-1)
 
                 k_nope = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
@@ -250,10 +257,10 @@ def get_case_config(case_name):
     base_params.update(params)
     group = base_params["n1"] // base_params["n2"]
 
-    case_config = MlaConfig(layout=base_params["layout"], b=base_params["b"], n1=base_params["n1"], 
-                            s1=base_params["s1"], q_d=base_params["d"], q_rope_d=base_params["dr"], 
+    case_config = MlaConfig(layout=base_params["layout"], b=base_params["b"], n1=base_params["n1"],
+                            s1=base_params["s1"], q_d=base_params["d"], q_rope_d=base_params["dr"],
                             n2=base_params["n2"], s2=base_params["s2"],
-                            kv_d=base_params["d"], k_rope_d=base_params["dr"], block_size=base_params["block_size"], 
+                            kv_d=base_params["d"], k_rope_d=base_params["dr"], block_size=base_params["block_size"],
                             softmax_scale=base_params["softmax_scale"], group=group)
     return case_config
 
@@ -304,7 +311,8 @@ def do_test_incre_flash_attention_mla(case_name):
         tile_config=tile_config
     )
     pypto_atten_out = incre_flash_attention_mla(**pypto_kernel_inputs)
-    compare(pypto_atten_out.cpu(), mla_golden.cpu(), "pypto_atten_out", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
+    compare(pypto_atten_out.cpu(), mla_golden.cpu(),
+            "pypto_atten_out", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
     print("[PRECISION_PASS]")
 
 

@@ -114,68 +114,78 @@ def test_pil_builder_lambda():
 
         @TestParser.test
         def lambda_no_args():
-            f = lambda: Expr.str(0)  # pylint: disable=lambda-assign
+            def f():
+                return Expr.str(0)
             var_r = f()
 
         # --- 单参数, body 是调用 ---
 
         @TestParser.test
         def lambda_single_arg():
-            f = lambda x: Expr.str(x)  # pylint: disable=lambda-assign
+            def f(x):
+                return Expr.str(x)
             var_r = f(Expr.int(0))
 
         # --- 多参数 ---
 
         @TestParser.test
         def lambda_multiple_args():
-            f = lambda x, y: Expr.str(x)  # pylint: disable=lambda-assign
+            def f(x, y):
+                return Expr.str(x)
             var_r = f(Expr.int(0), Expr.int(1))
 
         # --- 带默认值, default 未被覆盖 ---
 
         @TestParser.test
         def lambda_default_not_overridden():
-            f = lambda x=Expr.int(0): Expr.str(x)  # pylint: disable=lambda-assign
+            def f(x=Expr.int(0)):
+                return Expr.str(x)
             var_r = f()
 
         # --- 带默认值, default 被覆盖 ---
 
         @TestParser.test
         def lambda_default_overridden():
-            f = lambda x=Expr.int(0): Expr.str(x)  # pylint: disable=lambda-assign
-            var_r = f(Expr.int(1))  # pylint: disable=lambda-assign
+            def f(x=Expr.int(0)):
+                return Expr.str(x)
+            var_r = f(Expr.int(1))
 
         # --- *args 可变参数 ---
 
         @TestParser.test
         def lambda_vararg():
-            f = lambda *args: Expr.str(args[0])  # pylint: disable=lambda-assign
+            def f(*args):
+                return Expr.str(args[0])
             var_r = f(Expr.int(0), Expr.int(1))
 
         # --- keyword-only 参数 ---
 
         @TestParser.test
         def lambda_kwonly():
-            f = lambda *, key: Expr.str(key)  # pylint: disable=lambda-assign
+            def f(*, key):
+                return Expr.str(key)
             var_r = f(key=Expr.int(0))
 
         @TestParser.test
         def lambda_kwonly_default_not_overridden():
-            f = lambda *, key=0: Expr.str(key)  # pylint: disable=lambda-assign
+            def f(*, key=0):
+                return Expr.str(key)
             var_r = f()
 
         # --- **kwargs ---
 
         @TestParser.test
         def lambda_kwargs():
-            f = lambda **kw: Expr.str(kw['x'])  # pylint: disable=lambda-assign
+            def f(**kw):
+                return Expr.str(kw['x'])
             var_r = f(x=Expr.int(0))
 
         # --- body 是常数 ---
 
         @TestParser.test
         def lambda_body_const():
-            f = lambda: 42  # pylint: disable=lambda-assign
+            def f():
+                return 42
             var_x = f()
             Expr.str(var_x)
 
@@ -183,7 +193,8 @@ def test_pil_builder_lambda():
 
         @TestParser.test
         def lambda_body_binop():
-            f = lambda x: x + Expr.int(1)  # pylint: disable=lambda-assign
+            def f(x):
+                return x + Expr.int(1)
             var_x = f(Expr.int(0))
             Expr.str(var_x)
 
@@ -191,21 +202,26 @@ def test_pil_builder_lambda():
 
         @TestParser.test
         def lambda_body_ifexp():
-            f = lambda x: Expr.str(0) if Expr.true(x) else Expr.str(1)  # pylint: disable=lambda-assign
+            def f(x):
+                return Expr.str(0) if Expr.true(x) else Expr.str(1)
             var_r = f(Expr.int(0))
 
         # --- body 是嵌套调用 ---
 
         @TestParser.test
         def lambda_body_nested_call():
-            f = lambda x: Expr.str(Expr.int(x))  # pylint: disable=lambda-assign
+            def f(x):
+                return Expr.str(Expr.int(x))
             var_r = f(0)
 
         # --- 嵌套 lambda: outer 返回 lambda, inner 不加 var_ ---
 
         @TestParser.test
         def lambda_nested():
-            outer = lambda x: lambda y: Expr.str(x)  # pylint: disable=lambda-assign
+            def outer(x):
+                def inner(y):
+                    return Expr.str(x)
+                return inner
             inner = outer(Expr.int(0))
             var_r = inner(Expr.int(1))
 
@@ -348,276 +364,240 @@ def test_pil_builder_return():
             Expr.str(var_r)
 
 
+def _call_pos_args_tests():
+    @TestParser.test
+    def call_pos_int_const():
+        Expr.str(0)
+
+    @TestParser.test
+    def call_pos_str_const():
+        Expr.str('hello')
+
+    @TestParser.test
+    def call_pos_none_const():
+        def func(x):
+            Expr.str(x)
+        func(None)
+
+    @TestParser.test
+    def call_pos_bool_const():
+        def func(x):
+            Expr.str(x)
+        func(True)
+
+    @TestParser.test
+    def call_pos_multiple_consts():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(0, 1)
+
+    @TestParser.test
+    def call_pos_mixed_const_and_expr():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(0, Expr.int(1))
+
+
+def _call_named_arg_tests():
+    @TestParser.test
+    def call_named_arg_int_const():
+        def func(x):
+            Expr.str(x)
+        func(x=0)
+
+    @TestParser.test
+    def call_named_arg_str_const():
+        def func(x):
+            Expr.str(x)
+        func(x='hello')
+
+    @TestParser.test
+    def call_named_arg_none_const():
+        def func(x):
+            Expr.str(x)
+        func(x=None)
+
+    @TestParser.test
+    def call_named_arg_multiple_consts():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(x=0, y=1)
+
+    @TestParser.test
+    def call_named_arg_mixed_const_and_expr():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(x=0, y=Expr.int(1))
+
+
+def _call_keyword_vararg_tests():
+    @TestParser.test
+    def call_keyword_override_one_default():
+        def func(x=0, y=1):
+            Expr.str(x)
+            Expr.str(y)
+        func(x=Expr.int(0))
+
+    @TestParser.test
+    def call_keyword_override_all_defaults():
+        def func(x=0, y=0):
+            Expr.str(x)
+            Expr.str(y)
+        func(x=Expr.int(0), y=Expr.int(1))
+
+    @TestParser.test
+    def call_keyword_arg_expr_value():
+        def func(x):
+            Expr.str(x)
+        func(x=Expr.int(0))
+
+    @TestParser.test
+    def call_vararg_empty():
+        def func(*args):
+            for var_a in args:
+                Expr.str(var_a)
+        func()
+
+    @TestParser.test
+    def call_vararg_one():
+        def func(*args):
+            for var_a in args:
+                Expr.str(var_a)
+        func(Expr.int(0))
+
+    @TestParser.test
+    def call_vararg_many():
+        def func(*args):
+            for var_a in args:
+                Expr.str(var_a)
+        func(Expr.int(0), Expr.int(1), Expr.int(2))
+
+    @TestParser.test
+    def call_pos_and_vararg():
+        def func(x, *args):
+            Expr.str(x)
+            for var_a in args:
+                Expr.str(var_a)
+        func(Expr.int(0), Expr.int(1), Expr.int(2))
+
+    @TestParser.test
+    def call_kwonly_required():
+        def func(*, key):
+            Expr.str(key)
+        func(key=Expr.int(0))
+
+    @TestParser.test
+    def call_kwonly_default_not_overridden():
+        def func(*, key=0):
+            Expr.str(key)
+        func()
+
+    @TestParser.test
+    def call_kwonly_default_overridden():
+        def func(*, key=0):
+            Expr.str(key)
+        func(key=Expr.int(1))
+
+    @TestParser.test
+    def call_pos_and_kwonly():
+        def func(x, *, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(Expr.int(0), y=Expr.int(1))
+
+    @TestParser.test
+    def call_vararg_and_kwonly():
+        def func(*args, key):
+            for var_a in args:
+                Expr.str(var_a)
+            Expr.str(key)
+        func(Expr.int(0), Expr.int(1), key=Expr.int(2))
+
+
+def _call_doublestar_nested_tests():
+    @TestParser.test
+    def call_double_star_expand():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        var_d = {'x': Expr.int(0), 'y': Expr.int(1)}
+        func(**var_d)
+
+    @TestParser.test
+    def call_double_star_from_func():
+        def make():
+            return {'x': Expr.int(0), 'y': Expr.int(1)}
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(**make())
+
+    @TestParser.test
+    def call_pos_and_double_star():
+        def func(x, y, z):
+            Expr.str(x)
+            Expr.str(y)
+            Expr.str(z)
+        var_d = {'y': Expr.int(1), 'z': Expr.int(2)}
+        func(Expr.int(0), **var_d)
+
+    @TestParser.test
+    def call_keyword_and_double_star():
+        def func(x, y, z):
+            Expr.str(x)
+            Expr.str(y)
+            Expr.str(z)
+        var_d = {'z': Expr.int(2)}
+        func(Expr.int(0), y=Expr.int(1), **var_d)
+
+    @TestParser.test
+    def call_nested_pos_arg():
+        Expr.str(Expr.int(0))
+
+    @TestParser.test
+    def call_nested_multiple_pos_args():
+        def func(x, y):
+            Expr.str(x)
+            Expr.str(y)
+        func(Expr.int(0), Expr.int(1))
+
+    @TestParser.test
+    def call_nested_keyword_arg():
+        def func(key):
+            Expr.str(key)
+        func(key=Expr.int(0))
+
+    @TestParser.test
+    def call_nested_two_deep():
+        def inner():
+            return Expr.int(0)
+        Expr.str(inner())
+
+    @TestParser.test
+    def call_nested_three_deep():
+        def inner():
+            return Expr.int(0)
+        def middle(x):
+            return x
+        Expr.str(middle(inner()))
+
+    @TestParser.test
+    def call_star():
+        def inner():
+            return [Expr.int(0), Expr.int(1)]
+        def middle(a, b):
+            return a, b, Expr.int(3)
+        middle(*inner())
+
+
 def test_pil_builder_call():
 
     with TestParser():
-
-        # --- 常数: constant literals as positional call arguments ---
-
-        @TestParser.test
-        def call_pos_int_const():
-            Expr.str(0)
-
-        @TestParser.test
-        def call_pos_str_const():
-            Expr.str('hello')
-
-        @TestParser.test
-        def call_pos_none_const():
-
-            def func(x):
-                Expr.str(x)
-            func(None)
-
-        @TestParser.test
-        def call_pos_bool_const():
-
-            def func(x):
-                Expr.str(x)
-            func(True)
-
-        @TestParser.test
-        def call_pos_multiple_consts():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(0, 1)
-
-        @TestParser.test
-        def call_pos_mixed_const_and_expr():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(0, Expr.int(1))
-
-        # --- named arg 传常数: named argument with constant value ---
-
-        @TestParser.test
-        def call_named_arg_int_const():
-
-            def func(x):
-                Expr.str(x)
-            func(x=0)
-
-        @TestParser.test
-        def call_named_arg_str_const():
-
-            def func(x):
-                Expr.str(x)
-            func(x='hello')
-
-        @TestParser.test
-        def call_named_arg_none_const():
-
-            def func(x):
-                Expr.str(x)
-            func(x=None)
-
-        @TestParser.test
-        def call_named_arg_multiple_consts():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(x=0, y=1)
-
-        @TestParser.test
-        def call_named_arg_mixed_const_and_expr():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(x=0, y=Expr.int(1))
-
-        # --- 默认参数: keyword arguments overriding defaults ---
-
-        @TestParser.test
-        def call_keyword_override_one_default():
-
-            def func(x=0, y=1):
-                Expr.str(x)
-                Expr.str(y)
-            func(x=Expr.int(0))
-
-        @TestParser.test
-        def call_keyword_override_all_defaults():
-
-            def func(x=0, y=0):
-                Expr.str(x)
-                Expr.str(y)
-            func(x=Expr.int(0), y=Expr.int(1))
-
-        @TestParser.test
-        def call_keyword_arg_expr_value():
-
-            def func(x):
-                Expr.str(x)
-            func(x=Expr.int(0))
-
-        # --- 可变参数: *args parameter ---
-
-        @TestParser.test
-        def call_vararg_empty():
-
-            def func(*args):
-                for var_a in args:
-                    Expr.str(var_a)
-            func()
-
-        @TestParser.test
-        def call_vararg_one():
-
-            def func(*args):
-                for var_a in args:
-                    Expr.str(var_a)
-            func(Expr.int(0))
-
-        @TestParser.test
-        def call_vararg_many():
-
-            def func(*args):
-                for var_a in args:
-                    Expr.str(var_a)
-            func(Expr.int(0), Expr.int(1), Expr.int(2))
-
-        @TestParser.test
-        def call_pos_and_vararg():
-
-            def func(x, *args):
-                Expr.str(x)
-                for var_a in args:
-                    Expr.str(var_a)
-            func(Expr.int(0), Expr.int(1), Expr.int(2))
-
-        # --- name only 参数: keyword-only parameters ---
-
-        @TestParser.test
-        def call_kwonly_required():
-
-            def func(*, key):
-                Expr.str(key)
-            func(key=Expr.int(0))
-
-        @TestParser.test
-        def call_kwonly_default_not_overridden():
-
-            def func(*, key=0):
-                Expr.str(key)
-            func()
-
-        @TestParser.test
-        def call_kwonly_default_overridden():
-
-            def func(*, key=0):
-                Expr.str(key)
-            func(key=Expr.int(1))
-
-        @TestParser.test
-        def call_pos_and_kwonly():
-
-            def func(x, *, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(Expr.int(0), y=Expr.int(1))
-
-        @TestParser.test
-        def call_vararg_and_kwonly():
-
-            def func(*args, key):
-                for var_a in args:
-                    Expr.str(var_a)
-                Expr.str(key)
-            func(Expr.int(0), Expr.int(1), key=Expr.int(2))
-
-        # --- keyword参数: **dict expansion ---
-
-        @TestParser.test
-        def call_double_star_expand():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            var_d = {'x': Expr.int(0), 'y': Expr.int(1)}
-            func(**var_d)
-
-        @TestParser.test
-        def call_double_star_from_func():
-
-            def make():
-                return {'x': Expr.int(0), 'y': Expr.int(1)}
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(**make())
-
-        @TestParser.test
-        def call_pos_and_double_star():
-
-            def func(x, y, z):
-                Expr.str(x)
-                Expr.str(y)
-                Expr.str(z)
-            var_d = {'y': Expr.int(1), 'z': Expr.int(2)}
-            func(Expr.int(0), **var_d)
-
-        @TestParser.test
-        def call_keyword_and_double_star():
-
-            def func(x, y, z):
-                Expr.str(x)
-                Expr.str(y)
-                Expr.str(z)
-            var_d = {'z': Expr.int(2)}
-            func(Expr.int(0), y=Expr.int(1), **var_d)
-
-        # --- 函数调用嵌套场景: nested function calls as arguments ---
-
-        @TestParser.test
-        def call_nested_pos_arg():
-            Expr.str(Expr.int(0))
-
-        @TestParser.test
-        def call_nested_multiple_pos_args():
-
-            def func(x, y):
-                Expr.str(x)
-                Expr.str(y)
-            func(Expr.int(0), Expr.int(1))
-
-        @TestParser.test
-        def call_nested_keyword_arg():
-
-            def func(key):
-                Expr.str(key)
-            func(key=Expr.int(0))
-
-        @TestParser.test
-        def call_nested_two_deep():
-
-            def inner():
-                return Expr.int(0)
-            Expr.str(inner())
-
-        @TestParser.test
-        def call_nested_three_deep():
-
-            def inner():
-                return Expr.int(0)
-
-            def middle(x):
-                return x
-            Expr.str(middle(inner()))
-
-        @TestParser.test
-        def call_star():
-
-            def inner():
-                return [Expr.int(0), Expr.int(1)]
-
-            def middle(a, b):
-                return a, b, Expr.int(3)
-
-            middle(*inner())
+        _call_pos_args_tests()
+        _call_named_arg_tests()
+        _call_keyword_vararg_tests()
+        _call_doublestar_nested_tests()

@@ -19,11 +19,28 @@ arguments and dispatches.
 """
 
 from dataclasses import dataclass
+import collections
 from typing import Optional, Sequence, Tuple
 
 import torch
 
 import pypto
+
+
+# pylint: disable-next=invalid-name
+QkvGroupedConfig = collections.namedtuple('QkvGroupedConfig', [
+    'qkv', 'q_gamma', 'cos_fp32', 'sin_fp32', 'q_out_out',
+    'tokens', 'num_q', 'dim', 'epsilon', 'group_heads', 'vec_token_tile',
+])
+
+# pylint: disable-next=invalid-name
+QkvQuantConfig = collections.namedtuple('QkvQuantConfig', [
+    'qkv', 'q_gamma', 'k_gamma', 'cos', 'sin', 'index',
+    'k_cache', 'v_cache', 'k_scale', 'v_scale',
+    'q_out_out', 'k_cache_out', 'v_cache_out',
+    'qkv_size', 'head_nums', 'epsilon',
+    'q_group_heads', 'q_vec_token_tile', 'kv_vec_token_tile',
+])
 
 
 @dataclass(frozen=True)
@@ -135,19 +152,18 @@ def _scatter_pa_nz_int8_contiguous_page0(
     pypto.assemble(src_pa_nz, [0, 0, 0, 0], cache_out)
 
 
-def _compute_q_grouped(  # pylint: disable=huawei-too-many-arguments
-    qkv: pypto.Tensor,
-    q_gamma: pypto.Tensor,
-    cos_fp32: pypto.Tensor,
-    sin_fp32: pypto.Tensor,
-    q_out_out: pypto.Tensor,
-    tokens: int,
-    num_q: int,
-    dim: int,
-    epsilon: float,
-    group_heads: int,
-    vec_token_tile: int,
-):
+def _compute_q_grouped(cfg: QkvGroupedConfig):
+    qkv = cfg.qkv
+    q_gamma = cfg.q_gamma
+    cos_fp32 = cfg.cos_fp32
+    sin_fp32 = cfg.sin_fp32
+    q_out_out = cfg.q_out_out
+    tokens = cfg.tokens
+    num_q = cfg.num_q
+    dim = cfg.dim
+    epsilon = cfg.epsilon
+    group_heads = cfg.group_heads
+    vec_token_tile = cfg.vec_token_tile
     for head_start in range(0, num_q, group_heads):
         pypto.set_vec_tile_shapes(vec_token_tile, group_heads * dim)
         q_2d = pypto.view(qkv, [tokens, group_heads * dim], [0, head_start * dim])
@@ -162,27 +178,26 @@ def _compute_q_grouped(  # pylint: disable=huawei-too-many-arguments
         pypto.assemble(q_res, [0, head_start * dim], q_out_out)
 
 
-def _compute_quant(  # pylint: disable=huawei-too-many-arguments
-    qkv: pypto.Tensor,
-    q_gamma: pypto.Tensor,
-    k_gamma: pypto.Tensor,
-    cos: pypto.Tensor,
-    sin: pypto.Tensor,
-    index: pypto.Tensor,
-    k_cache: pypto.Tensor,
-    v_cache: pypto.Tensor,
-    k_scale: pypto.Tensor,
-    v_scale: pypto.Tensor,
-    q_out_out: pypto.Tensor,
-    k_cache_out: pypto.Tensor,
-    v_cache_out: pypto.Tensor,
-    qkv_size: list,
-    head_nums: list,
-    epsilon: float,
-    q_group_heads: int,
-    q_vec_token_tile: int,
-    kv_vec_token_tile: int,
-):
+def _compute_quant(cfg: QkvQuantConfig):
+    qkv = cfg.qkv
+    q_gamma = cfg.q_gamma
+    k_gamma = cfg.k_gamma
+    cos = cfg.cos
+    sin = cfg.sin
+    index = cfg.index
+    k_cache = cfg.k_cache
+    v_cache = cfg.v_cache
+    k_scale = cfg.k_scale
+    v_scale = cfg.v_scale
+    q_out_out = cfg.q_out_out
+    k_cache_out = cfg.k_cache_out
+    v_cache_out = cfg.v_cache_out
+    qkv_size = cfg.qkv_size
+    head_nums = cfg.head_nums
+    epsilon = cfg.epsilon
+    q_group_heads = cfg.q_group_heads
+    q_vec_token_tile = cfg.q_vec_token_tile
+    kv_vec_token_tile = cfg.kv_vec_token_tile
     tokens = qkv.shape[0]  # shape scalar: T=48 or 12, dynamic token axis
     static_tokens = qkv_size[0] * qkv_size[1]  # shape scalar: B*S, 48 or 12
     c0 = k_cache.shape[3]  # shape scalar: 32
@@ -200,11 +215,19 @@ def _compute_quant(  # pylint: disable=huawei-too-many-arguments
     sin_fp32 = pypto.cast(sin_static, pypto.DT_FP32)  # shape: [T,128]
 
     if num_q <= 16:
-        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim,
-                           epsilon, q_group_heads, q_vec_token_tile)  # shape: [48,16,128] -> [48,2048]
+        grouped_cfg = QkvGroupedConfig(
+            qkv=qkv, q_gamma=q_gamma, cos_fp32=cos_fp32, sin_fp32=sin_fp32,
+            q_out_out=q_out_out, tokens=static_tokens, num_q=num_q, dim=dim,
+            epsilon=epsilon, group_heads=q_group_heads, vec_token_tile=q_vec_token_tile,
+        )
+        _compute_q_grouped(grouped_cfg)  # shape: [48,16,128] -> [48,2048]
     else:
-        _compute_q_grouped(qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, static_tokens, num_q, dim,
-                           epsilon, q_group_heads, q_vec_token_tile)  # shape: [12,64,128] -> grouped heads -> [12,8192]
+        grouped_cfg = QkvGroupedConfig(
+            qkv=qkv, q_gamma=q_gamma, cos_fp32=cos_fp32, sin_fp32=sin_fp32,
+            q_out_out=q_out_out, tokens=static_tokens, num_q=num_q, dim=dim,
+            epsilon=epsilon, group_heads=q_group_heads, vec_token_tile=q_vec_token_tile,
+        )
+        _compute_q_grouped(grouped_cfg)  # shape: [12,64,128] -> grouped heads -> [12,8192]
 
     pypto.set_vec_tile_shapes(kv_vec_token_tile, k_size)  # tile shape: [2,128] or [4,512]
     k_2d_all = pypto.view(qkv, [static_tokens, k_size], [0, q_size])  # shape: [T,Nk*128]
@@ -244,7 +267,7 @@ def _compute_quant(  # pylint: disable=huawei-too-many-arguments
         "device_sched_mode": TP4_TILE_CONFIG.device_sched_mode,
     },
 )
-def qkv_rms_norm_rope_cache_quant_kernel_tp4(  # pylint: disable=huawei-too-many-arguments
+def qkv_rms_norm_rope_cache_quant_kernel_tp4(
     qkv: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     q_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
     k_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
@@ -263,27 +286,17 @@ def qkv_rms_norm_rope_cache_quant_kernel_tp4(  # pylint: disable=huawei-too-many
     epsilon: float,
 ):
     pypto.set_vec_tile_shapes(1, 128)
-    _compute_quant(
-        qkv,
-        q_gamma,
-        k_gamma,
-        cos,
-        sin,
-        index,
-        k_cache,
-        v_cache,
-        k_scale,
-        v_scale,
-        q_out_out,
-        k_cache_out,
-        v_cache_out,
-        qkv_size,
-        head_nums,
-        epsilon,
-        TP4_Q_GROUP_HEADS,
-        TP4_Q_VEC_TOKEN_TILE,
-        TP4_KV_VEC_TOKEN_TILE,
+    quant_cfg = QkvQuantConfig(
+        qkv=qkv, q_gamma=q_gamma, k_gamma=k_gamma, cos=cos, sin=sin,
+        index=index, k_cache=k_cache, v_cache=v_cache,
+        k_scale=k_scale, v_scale=v_scale,
+        q_out_out=q_out_out, k_cache_out=k_cache_out, v_cache_out=v_cache_out,
+        qkv_size=qkv_size, head_nums=head_nums, epsilon=epsilon,
+        q_group_heads=TP4_Q_GROUP_HEADS,
+        q_vec_token_tile=TP4_Q_VEC_TOKEN_TILE,
+        kv_vec_token_tile=TP4_KV_VEC_TOKEN_TILE,
     )
+    _compute_quant(quant_cfg)
 
 
 @pypto.frontend.jit(
@@ -292,7 +305,7 @@ def qkv_rms_norm_rope_cache_quant_kernel_tp4(  # pylint: disable=huawei-too-many
         "device_sched_mode": TP1_TILE_CONFIG.device_sched_mode,
     },
 )
-def qkv_rms_norm_rope_cache_quant_kernel_tp1(  # pylint: disable=huawei-too-many-arguments
+def qkv_rms_norm_rope_cache_quant_kernel_tp1(
     qkv: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     q_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
     k_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
@@ -311,30 +324,20 @@ def qkv_rms_norm_rope_cache_quant_kernel_tp1(  # pylint: disable=huawei-too-many
     epsilon: float,
 ):
     pypto.set_vec_tile_shapes(1, 128)
-    _compute_quant(
-        qkv,
-        q_gamma,
-        k_gamma,
-        cos,
-        sin,
-        index,
-        k_cache,
-        v_cache,
-        k_scale,
-        v_scale,
-        q_out_out,
-        k_cache_out,
-        v_cache_out,
-        qkv_size,
-        head_nums,
-        epsilon,
-        TP1_Q_GROUP_HEADS,
-        TP1_Q_VEC_TOKEN_TILE,
-        TP1_KV_VEC_TOKEN_TILE,
+    quant_cfg = QkvQuantConfig(
+        qkv=qkv, q_gamma=q_gamma, k_gamma=k_gamma, cos=cos, sin=sin,
+        index=index, k_cache=k_cache, v_cache=v_cache,
+        k_scale=k_scale, v_scale=v_scale,
+        q_out_out=q_out_out, k_cache_out=k_cache_out, v_cache_out=v_cache_out,
+        qkv_size=qkv_size, head_nums=head_nums, epsilon=epsilon,
+        q_group_heads=TP1_Q_GROUP_HEADS,
+        q_vec_token_tile=TP1_Q_VEC_TOKEN_TILE,
+        kv_vec_token_tile=TP1_KV_VEC_TOKEN_TILE,
     )
+    _compute_quant(quant_cfg)
 
 
-def qkv_rms_norm_rope_cache_wrapper(  # pylint: disable=huawei-too-many-arguments
+def qkv_rms_norm_rope_cache_wrapper(
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,
@@ -377,7 +380,11 @@ def qkv_rms_norm_rope_cache_wrapper(  # pylint: disable=huawei-too-many-argument
         raise ValueError("k_scale and v_scale are required for int8 cache")
     if k_offset is not None or v_offset is not None:
         raise NotImplementedError("asymmetric quantization is not supported yet")
-    kernel = qkv_rms_norm_rope_cache_quant_kernel_tp4 if head_nums[0] <= 16 else qkv_rms_norm_rope_cache_quant_kernel_tp1
+    kernel = (
+        qkv_rms_norm_rope_cache_quant_kernel_tp4
+        if head_nums[0] <= 16
+        else qkv_rms_norm_rope_cache_quant_kernel_tp1
+    )
     kernel(
         qkv,
         q_gamma,

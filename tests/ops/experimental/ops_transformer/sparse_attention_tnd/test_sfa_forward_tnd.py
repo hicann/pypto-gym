@@ -100,7 +100,7 @@ def compute_attention_tnd_golden(q_nope, compressed_kv_norm, value, topk_indices
             qi_nope = q_nope[t_idx, q_head_start:q_head_end, :]  # (group, D)
             qi_pe = q_pe[t_idx, q_head_start:q_head_end, :]      # (group, d_rope)
 
-            # S = Q_nope @ KV^T + Q_pe @ K_pe^T
+            # Q_nope @ KV^T + Q_pe @ K_pe^T
             s_nope = torch.matmul(qi_nope.to(torch.float32), kv_sel.transpose(0, 1).to(torch.float32))
             s_rope = torch.matmul(qi_pe.to(torch.float32), k_pe_sel.transpose(0, 1).to(torch.float32))
             sij = s_nope + s_rope
@@ -117,7 +117,7 @@ def compute_attention_tnd_golden(q_nope, compressed_kv_norm, value, topk_indices
             softmax_max_out[kv_head_idx, t_idx, :] = tilda_mij.squeeze(-1).to(torch.float32)
             softmax_sum_out[kv_head_idx, t_idx, :] = tilda_lij.squeeze(-1).to(torch.float32)
 
-            # Out = Softmax @ V
+            # Softmax @ V
             vj = kv_sel
             atten_part = torch.matmul(tmp_softmax.to(torch.float32), vj.to(torch.float32))
             core_attn_out[t_idx, q_head_start:q_head_end, :] = atten_part.to(input_dtype)
@@ -215,19 +215,10 @@ def gen_sfa_tnd_golden(dtype, b, nq, n_kv, npu_actual_q_len_list, npu_actual_kv_
     return input_params, input_tensors, core_attn_golden, sm_max_golden, sm_sum_golden
 
 
-def do_test_sfa_tnd(input_params, input_tensors, core_attn_golden,
-                    sm_max_golden, sm_sum_golden):
-    """Run SFA TND v2 kernel on NPU and compare with golden."""
-
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
-    torch.npu.set_device(device_id)
-    logging.info(f"device_id:{device_id}")
+def _run_sfa_kernel_on_npu(input_params, input_tensors):
+    """Move inputs to NPU, run SFA kernel, return outputs."""
     p = input_params
     t = input_tensors
-
-    # max_total_kv must be >= T2 * N2, use actual T2 * N2 to minimize memory
-    max_total_kv = p['T2'] * p['n_kv']
-
     tile_config = SaTileShapeConfig(
         s_kv_tile=2048,
         c1_tile_shape=[128, 128, 128, 256, 256, 256],
@@ -235,9 +226,7 @@ def do_test_sfa_tnd(input_params, input_tensors, core_attn_golden,
         c2_tile_shape=[128, 128, 128, 256, 128, 128],
         v2_tile_shape=[64, 128]
     )
-
-    # Move inputs to NPU (original shapes, no padding needed)
-    q_nope_npu = t['q_nope'].npu()
+    q_npe_npu = t['q_nope'].npu()
     compressed_kv_norm_npu = t['compressed_kv_norm'].npu()
     topk_indices_npu = t['topk_indices'].npu()
     q_pe_npu = t['q_pe'].npu()
@@ -245,50 +234,55 @@ def do_test_sfa_tnd(input_params, input_tensors, core_attn_golden,
     npu_actual_q_len_npu = t['npu_actual_q_len'].npu()
     npu_actual_kv_len_npu = t['npu_actual_kv_len'].npu()
 
-    t1 = p['T1']
-    nq = p['nq']
-    n_kv = p['n_kv']
-    group = p['group']
-    kv_lora_rank = p['kv_lora_rank']
+    t1, nq, n_kv = p['T1'], p['nq'], p['n_kv']
+    kv_lora_rank, group = p['kv_lora_rank'], p['group']
     core_attn_out = torch.empty([t1, nq, kv_lora_rank], dtype=t['q_nope'].dtype).npu()
     softmax_max_out = torch.empty([n_kv, t1, group], dtype=torch.float32).npu()
     softmax_sum_out = torch.empty([n_kv, t1, group], dtype=torch.float32).npu()
 
     pto_inputs = [
-        q_nope_npu, compressed_kv_norm_npu, topk_indices_npu,
+        q_npe_npu, compressed_kv_norm_npu, topk_indices_npu,
         q_pe_npu, k_pe_npu,
         npu_actual_q_len_npu, npu_actual_kv_len_npu,
         core_attn_out, softmax_max_out, softmax_sum_out
     ]
-
     logging.info("Running SFA Forward TND v2 kernel on NPU...")
-    sfa_forward_tnd(*pto_inputs, 
-        nq=p['nq'],
-        n_kv=p['n_kv'],
-        scale=p['scale'],
-        sparse_size=p['sparse_size'],
-        tile_config=tile_config,
-    )
+    sfa_forward_tnd(*pto_inputs,
+        nq=p['nq'], n_kv=p['n_kv'], scale=p['scale'],
+        sparse_size=p['sparse_size'], tile_config=tile_config)
     torch_npu.npu.synchronize()
+    return core_attn_out, softmax_max_out, softmax_sum_out
 
-    # Compare
+
+def _compare_sfa_vs_golden(core_attn_out, softmax_max_out, softmax_sum_out,
+                           core_attn_golden, sm_max_golden, sm_sum_golden):
+    """Compare NPU outputs against golden reference."""
     compare(core_attn_out.cpu(), core_attn_golden, "core_attn_out",
             atol=0.0001, rtol=0.005, max_error_count=100)
     logging.info("core_attn_out comparison PASSED!")
-
     compare(softmax_max_out.cpu(), sm_max_golden, "softmax_max",
             atol=0.001, rtol=0.01, max_error_count=100)
     logging.info("softmax_max comparison PASSED!")
-
     compare(softmax_sum_out.cpu(), sm_sum_golden, "softmax_sum",
             atol=0.001, rtol=0.01, max_error_count=100)
     logging.info("softmax_sum comparison PASSED!")
-
     logging.info("All comparisons PASSED!")
 
 
+def do_test_sfa_tnd(input_params, input_tensors, core_attn_golden,
+                    sm_max_golden, sm_sum_golden):
+    """Run SFA TND v2 kernel on NPU and compare with golden."""
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+    logging.info(f"device_id:{device_id}")
+
+    core_attn_out, softmax_max_out, softmax_sum_out = \
+        _run_sfa_kernel_on_npu(input_params, input_tensors)
+    _compare_sfa_vs_golden(core_attn_out, softmax_max_out, softmax_sum_out,
+                           core_attn_golden, sm_max_golden, sm_sum_golden)
+
+
 def get_case_config(case_name: str):
-    # (b, nq, n_kv, q_len_list, kv_len_list, sparse_size)
     test_case_config = {
         "sfa_tnd_v2_bf16_b1_s2_seq4K": (
             1, 128, 1, [2], [4096], 2048
@@ -353,11 +347,10 @@ def do_test_sfa_tnd_entry(case_name: str):
 
 
 def get_data(case_name: str):
-    # pylint: disable=inconsistent-return-statements
     case_config = get_case_config(case_name)
     if not case_config:
         logging.error("Can't find test case config for Case(%s)", case_name)
-        return False
+        return None, None, None, None, None
 
     b, nq, n_kv, npu_actual_q_len_list, npu_actual_kv_len_list, sparse_size = case_config
 

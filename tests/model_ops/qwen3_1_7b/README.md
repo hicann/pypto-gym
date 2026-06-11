@@ -85,6 +85,7 @@ python test_rms_norm.py rms_norm_001
 ### RoPE Golden (rope_golden.py)
 
 部分融合算子，包含：
+
 1. Per-head RMSNorm: `x [S,N,D] -> norm(x)`
 2. RoPE: `norm(x) * cos + rotate_half(norm(x)) * sin`
 

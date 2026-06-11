@@ -14,7 +14,10 @@
 算子名称: moe_finalize_routing_v2
 数学公式: 
   expertid = expertIdx[i,k]
-  out(i,j) = x1_{i,j} + x2_{i,j} + Σ_{k=0}^{K}(scales_{i,k} * (expandedX_{expandedRowIdx_{i+k*num_rows},j} + bias_{expertid,j}))
+  out(i,j) = x1_{i,j} + x2_{i,j} + Σ_{k=0}^{K}
+    (scales_{i,k} * (
+        expandedX_{expandedRowIdx_{i+k*num_rows},j} + bias_{expertid,j}
+    ))
 
 功能说明:
   该算子用于 MoE（Mixture of Experts）模型的最终路由聚合阶段。

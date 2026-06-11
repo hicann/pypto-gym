@@ -17,7 +17,6 @@
 #   - level1: bf16 path, shape [7168, 2048]
 #
 # Compares the PyPTO kernel output against the pure-PyTorch golden using
-# numpy.testing.assert_allclose with atol=1e-4, rtol=0.0078125.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -186,7 +185,6 @@ def main() -> int:
         print(f"Using device: {device}")
 
         all_ok = True
-        # for runner in (test_level0, test_level1, test_level2, test_level3, test_level4):
         for runner in (test_level4,):
             try:
                 ok = runner(device)

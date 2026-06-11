@@ -9,6 +9,8 @@
 
 
 
+import collections
+
 import torch
 import pypto
 
@@ -193,6 +195,13 @@ def _require_tensor(name: str, tensor: torch.Tensor) -> None:
         raise TypeError(f"{name} must be a torch.Tensor")
 
 
+CachePairValidation = collections.namedtuple(
+    "CachePairValidation",
+    ["key_num_blocks", "key_block_size", "key_num_heads", "key_dim",
+     "value_num_heads", "value_dim", "device"],
+)
+
+
 def _validate_cache_pair(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
@@ -222,7 +231,7 @@ def _validate_cache_pair(
         raise ValueError("num_heads must be positive")
     if key_dim <= 0 or value_dim <= 0:
         raise ValueError("head dimensions must be positive")
-    return (
+    return CachePairValidation(
         int(key_num_blocks),
         int(key_block_size),
         int(key_num_heads),
@@ -233,7 +242,7 @@ def _validate_cache_pair(
     )
 
 
-def _validate_index_tensor(name: str, tensor: torch.Tensor, dim: int) -> None:  # pylint: disable=huawei-too-many-arguments
+def _validate_index_tensor(name: str, tensor: torch.Tensor, dim: int) -> None:
     _require_tensor(name, tensor)
     if tensor.dtype != torch.int32:
         raise TypeError(f"{name} must have dtype torch.int32")

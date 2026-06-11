@@ -20,6 +20,7 @@
 - 算子在运行异常时会退出进程并打印报错信息，建议根据报错提示定位具体错误原因，包括设定算子同步执行、查看日志文件等方式。
 
 ## 公网地址声明
+
 本项目代码中包含的公网地址声明如下所示：
 
 |      类型      |                                           开源代码地址                                           |                            文件名                             |             公网IP地址/公网URL地址/域名/邮箱地址/压缩文件地址             |                   用途说明                    |
@@ -27,9 +28,11 @@
 |  依赖  | 不涉及  | cmake/third_party/json.cmake | https://gitcode.com/cann-src-third-party/json/releases/download/v3.11.3/json-3.11.3.tar.gz | 从gitcode下载JSON源码，作用编译依赖 |
 |  依赖  | 不涉及  | cmake/third_party/gtest.cmake | https://gitcode.com/cann-src-third-party/googletest/releases/download/v1.14.0/googletest-1.14.0.tar.gz | 从gitcode下载googletest源码，作用编译依赖 |
 |  依赖  | 不涉及  | cmake/third_party/secure_c.cmake | https://gitcode.com/cann-src-third-party/libboundscheck/releases/download/v1.1.16/libboundscheck-v1.1.16.tar.gz | 从gitcode下载libboundscheck源码，作用编译依赖 |
+
 ---
 
 ## 漏洞机制说明
+
 [漏洞管理](https://gitcode.com/cann/community/blob/master/security/security.md)
 
 ## 附录

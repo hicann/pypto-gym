@@ -406,7 +406,7 @@ class LLaDA2MoeSparseMoeBlock(nn.Module):
             outputs.append(expert_out.to(x.device))
             start_idx = end_idx
 
-        outs = torch.cat(outputs, dim=0) if len(outputs) else sorted_tokens.new_empty(0)
+        outs = torch.cat(outputs, dim=0) if outputs else sorted_tokens.new_empty(0)
         new_x = torch.empty_like(outs)
         new_x[idxs] = outs
         final_out = (
@@ -682,8 +682,8 @@ class LLaDA2MoeDecoderLayer(nn.Module):
                 attention mask of size `(batch_size, sequence_length)` if flash attention is used or `(batch_size, 1,
                 query_sequence_length, key_sequence_length)` if default attention is used.
             position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
-                config.n_positions - 1]`.
+                Indices of positions of each input sequence tokens in the position embeddings.
+                Selected in the range `[0, config.n_positions - 1]`.
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*):
                 cached past key and value projection states
             output_attentions (`bool`, *optional*):
@@ -941,7 +941,8 @@ class LLaDA2MoeModel(LLaDA2MoePreTrainedModel):
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`transformers."
+                    "`use_cache=True` is incompatible with gradient checkpointing. "
+                    "Setting `use_cache=False`transformers."
                 )
                 use_cache = False
 
@@ -971,7 +972,9 @@ class LLaDA2MoeModel(LLaDA2MoePreTrainedModel):
             )
         else:
             raise ValueError(
-                f"LLaDA2.0 only support block attention mask with shape: {(batch_size, 1, seq_length, seq_length)}, the input attention with shape {attention_mask.size()=}!"
+                f"LLaDA2.0 only support block attention mask with shape: "
+                f"{(batch_size, 1, seq_length, seq_length)}, "
+                f"the input attention with shape {attention_mask.size()=}!"
             )
         # embed positions
         hidden_states = inputs_embeds
@@ -1033,17 +1036,17 @@ class LLaDA2MoeModel(LLaDA2MoePreTrainedModel):
         if use_cache:
             next_cache = next_decoder_cache
         if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_cache,
-                    all_hidden_states,
-                    all_self_attns,
-                    all_router_logits,
-                ]
-                if v is not None
-            )
+            result = []
+            for v in (
+                hidden_states,
+                next_cache,
+                all_hidden_states,
+                all_self_attns,
+                all_router_logits,
+            ):
+                if v is not None:
+                    result.append(v)
+            return tuple(result)
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -1309,7 +1312,7 @@ class LLaDA2MoeModelLM(LLaDA2MoePreTrainedModel, GenerationMixin):
         orig_shape = logits.shape[:-1]
         vocab_size = logits.shape[-1]
         logits = logits.reshape(-1, vocab_size)
-        if temperature > 0 and temperature != 1.0:
+        if temperature > 0 and not math.isclose(temperature, 1.0):
             logits = logits / temperature
         logits = self._top_k_logits(logits, top_k)
         logits = self._top_p_logits(logits, top_p)
@@ -1355,9 +1358,10 @@ class LLaDA2MoeModelLM(LLaDA2MoePreTrainedModel, GenerationMixin):
 
         <Tip warning={true}>
 
-        This is a specialized generation method. The quality and speed of the output are highly dependent on the interplay
-        between `block_length`, `steps`, and `threshold`. It aims to achieve faster generation through parallel
-        decoding within blocks, which is a departure from the token-by-token generation of standard `.generate()` methods.
+        This is a specialized generation method. The quality and speed of the output are
+        highly dependent on the interplay between `block_length`, `steps`, and `threshold`.
+        It aims to achieve faster generation through parallel decoding within blocks, which
+        is a departure from the token-by-token generation of standard `.generate()` methods.
 
         </Tip>
 

@@ -41,7 +41,9 @@ from numpy.testing import assert_allclose
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 
-from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import get_case_config, build_pfa_config, pfa_func_kernel_v2_bound
+from experimental.ops_transformer.page_attention_quant.page_attention_quant_fp8_impl import (
+    get_case_config, build_pfa_config, pfa_func_kernel_v2_bound
+)
 import pypto
 
 np.random.seed(0)
@@ -310,103 +312,143 @@ def fp8_bsnd_to_pa_format(tensor_bsnd, block_table, actual_seq, block_size, devi
     return pa_tensor.to(device)
 
 
-def pfa(atten_cfg, tile_config):
-    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+def _prepare_kv_data_for_pfa(atten_cfg, device, block_table_shape):
+    """Prepare Q, K, V tensors for page flash attention."""
     torch_dtype = torch.bfloat16
-    torch.npu.set_device(int(device_id))
     b = atten_cfg.b
     s1 = atten_cfg.s1
     d = atten_cfg.qd
     nq = atten_cfg.nq
     nkv = atten_cfg.nkv
-
     block_size = atten_cfg.block_size
-    max_num_blocks_per_query = atten_cfg.max_num_blocks_per_query
-
-    # 获取 torch tensor 类型的 actual_seq
-    kv_cache_actual_seq = atten_cfg.actual_seq
+    kv_actual_seq = atten_cfg.actual_seq
 
     q_shape = [b * s1, nq, d]
     kv_shape_1 = [atten_cfg.kv_num_blocks * block_size * nkv * d]
     kv_shape = [atten_cfg.kv_num_blocks, block_size, nkv, d]
-    block_table_shape = [atten_cfg.block_table_batch, max_num_blocks_per_query]
 
-    # 使用 torch 生成数据
-    device = f'npu:{device_id}'
     q = torch.empty(q_shape, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     q_fp8_e4m3, q_scale = quant_fp8e4m3_per_token(q)
-
     k1 = torch.empty(kv_shape_1, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     k = k1.reshape(kv_shape)
-
     k_fp8_e4m3, k_scale = quant_fp8e4m3_per_token_key(k)
-
     v1 = torch.empty(kv_shape_1, dtype=torch_dtype).uniform_(-1, 1).to(device=device)
     v = v1.reshape(kv_shape)
 
-    attention_output = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
-
-    # 2. 生成block table - 传入 torch tensor
-    block_table = gen_block_table(kv_cache_actual_seq, block_size, block_table_shape)
-
-    # # 3. 根据block table 将pa格式的数据转换成
+    block_table = gen_block_table(kv_actual_seq, block_size, block_table_shape)
     k_cache_bsnd, v_cache_bsnd, k_sclae_bsnd = kv_cache_concat_bsnd(k_fp8_e4m3, v, k_scale, block_table, atten_cfg)
     v_fp8_e4m3_bsnd, v_scale = quant_fp8e4m3_per_channel_value(v_cache_bsnd)
-    v_fp8_e4m3 = fp8_bsnd_to_pa_format(v_fp8_e4m3_bsnd, block_table, kv_cache_actual_seq,
-                                       atten_cfg.block_size, device)
+    v_fp8_e4m3 = fp8_bsnd_to_pa_format(v_fp8_e4m3_bsnd, block_table, kv_actual_seq, block_size, device)
     v_scale = v_scale.reshape(b * 1, nkv, d)
 
-    # 4. 准备测试数据 - 直接使用 torch 张量
     block_table_torch = block_table.to(dtype=torch.int32, device=device)
-    act_seq_torch = kv_cache_actual_seq.to(dtype=torch.int32, device=device)
+    act_seq_torch = kv_actual_seq.to(dtype=torch.int32, device=device)
+    return q_fp8_e4m3, q_scale, k_fp8_e4m3, k_scale, v_fp8_e4m3, v_scale, block_table_torch, act_seq_torch
+
+
+def pfa(atten_cfg, tile_config):
+    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+    torch_dtype = torch.bfloat16
+    torch.npu.set_device(int(device_id))
+    block_size = atten_cfg.block_size
+    max_num_blocks_per_query = atten_cfg.max_num_blocks_per_query
+    block_table_shape = [atten_cfg.block_table_batch, max_num_blocks_per_query]
+    q_shape = [atten_cfg.b * atten_cfg.s1, atten_cfg.nq, atten_cfg.qd]
+    device = f'npu:{device_id}'
+
+    q_fp8_e4m3, q_scale, k_fp8_e4m3, k_scale, v_fp8_e4m3, v_scale, block_table_torch, act_seq_torch = \
+        _prepare_kv_data_for_pfa(atten_cfg, device, block_table_shape)
+
+    attention_output = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
     out_torch = torch.zeros(q_shape, dtype=torch_dtype).to(device=device)
 
     pfa_flash_torch(q=q_fp8_e4m3, q_scale=q_scale, k=k_fp8_e4m3, k_sclae_bsnd=k_scale, v=v_fp8_e4m3,
                     v_scale=v_scale, block_table=block_table_torch, kv_act_seqs=act_seq_torch,
                     out=attention_output, atten_cfg=atten_cfg, tile_config=tile_config)
 
-    inputs = [
-        q_fp8_e4m3,
-        q_scale,
-        k_fp8_e4m3,
-        k_scale,
-        v_fp8_e4m3,
-        v_scale,
-        block_table_torch,
-        act_seq_torch,
-        out_torch
-    ]
-    # 5. 执行kernel并获取结果
+    inputs = [q_fp8_e4m3, q_scale, k_fp8_e4m3, k_scale, v_fp8_e4m3, v_scale, block_table_torch, act_seq_torch, out_torch]
     attention(*inputs, atten_cfg.softmax_scale, tile_config)
 
-    # 6. 与PyTorch参考实现对比
     assert_allclose(np.array(attention_output.cpu().flatten().tolist()),
                     np.array(out_torch.cpu().flatten().tolist()),
                     rtol=0.0078125, atol=0.0001)
 
 
-def matmul_proxy(left, right):  # pylint: disable=huawei-too-many-arguments
+def matmul_proxy(left, right):
     torch_fp32 = torch.float32
     return torch.matmul(left.to(torch_fp32), right.to(torch_fp32))
 
 
-def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, atten_cfg, tile_config):
-    """
-    PyTorch版本的FP8量化Flash Attention golden实现（与kernel逻辑一致）
+def _assemble_kv_for_s2_tile(k_2d, k_scale_2d, v_2d, block_table, b_idx, idx,
+                              actual_block_num, s2_tile, block_size, n2_idx, d):
+    """Assemble K, K-scale, and V tensors for an S2 tile in the attention loop."""
+    kj_assemble = torch.zeros((s2_tile, d), dtype=k_2d.dtype, device=k_2d.device)
+    kj_scale_assemble = torch.zeros((s2_tile, 1), dtype=k_scale_2d.dtype, device=k_scale_2d.device)
+    vj_assemble = torch.zeros((s2_tile, d), dtype=v_2d.dtype, device=v_2d.device)
+    for i in range(actual_block_num):
+        block_idx = block_table[b_idx, idx + i].item()
+        block_idx_valid = max(block_idx, 0)
+        kj_assemble[i * block_size:(i + 1) * block_size, :] = \
+            k_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size,
+                 n2_idx * d:(n2_idx + 1) * d]
+        kj_scale_assemble[i * block_size:(i + 1) * block_size, :] = \
+            k_scale_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size,
+                       n2_idx * 1:(n2_idx + 1) * 1]
+        vj_assemble[i * block_size:(i + 1) * block_size, :] = \
+            v_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size,
+                 n2_idx * d:(n2_idx + 1) * d]
+    return kj_assemble, kj_scale_assemble, vj_assemble
 
-    参数说明：
-        q: torch.Tensor, shape [b*s1, n1, d], dtype=float8_e4m3fn
-        q_scale: torch.Tensor, shape [b*s1, n1, 1], dtype=float32
-        k: torch.Tensor, shape [block_num, block_size, n2, d], dtype=float8_e4m3fn
-        k_sclae_bsnd: torch.Tensor, shape [block_num, block_size, n2, 1], dtype=float32
-        v: torch.Tensor, shape [block_num, block_size, n2, d], dtype=float8_e4m3fn
-        v_scale: torch.Tensor, shape [b*1, n2, d], dtype=float32
-        block_table: torch.Tensor, shape [b, max_block], dtype=int32
-        kv_act_seqs: torch.Tensor, shape [b], dtype=int32
-        out: torch.Tensor, shape [b*s1, n1, d], dtype=bfloat16
-    """
+
+def _process_s2_tile(qi, qi_scale, kj_assemble, kj_scale_assemble, vj_assemble,
+                      v_scale_2d, b_idx, n2_idx, d, softmax_scale, actual_s2_tile):
+    """Process a single S2 tile: matmul -> softmax -> matmul."""
     torch_fp32 = torch.float32
+    mm1_quant = matmul_proxy(qi, kj_assemble.t()).to(torch_fp32)
+    mm1_fp32 = mm1_quant * qi_scale * kj_scale_assemble.t()
+    sij_scale = mm1_fp32 * softmax_scale
+    tilda_mij, _ = torch.max(sij_scale, dim=-1, keepdim=True)
+    tsub = sij_scale - tilda_mij
+    vec1_res = torch.exp(tsub)
+    sum_local = torch.sum(vec1_res, dim=-1, keepdim=True)
+    tilda_pij_fp8, tilda_pij_scale = quant_fp8e4m3_per_token(vec1_res)
+    v_scale_bs = v_scale_2d[b_idx, n2_idx * d:(n2_idx + 1) * d].reshape(1, d)
+    mm2_quant = matmul_proxy(tilda_pij_fp8, vj_assemble).to(torch_fp32)
+    mm2_res = mm2_quant * tilda_pij_scale * v_scale_bs
+    return mm2_res, sum_local, tilda_mij
 
+
+def _flash_update_state(oi_upd, sum_upd, max_upd, mm2_res, sum_local, tilda_mij,
+                         s2_idx, s2_loop, dtype_out, out, bs_ofs, n1g_ofs, g_tile):
+    """Update flash attention running state for current S2 tile."""
+    if s2_idx == 0:
+        oi_tmp = mm2_res
+        if s2_idx == s2_loop - 1:
+            oi_upd = oi_tmp / sum_local
+            out[bs_ofs:bs_ofs + 1, n1g_ofs:n1g_ofs + g_tile, :] = oi_upd.unsqueeze(0).to(dtype_out)
+        else:
+            oi_upd = oi_tmp.clone()
+            sum_upd = sum_local.clone()
+            max_upd = tilda_mij.clone()
+        oi_tmp_out = oi_tmp
+    else:
+        max_new, _ = torch.max(torch.cat([max_upd, tilda_mij], dim=-1), dim=-1, keepdim=True)
+        t2 = torch.exp(max_upd - max_new)
+        t4 = torch.exp(tilda_mij - max_new)
+        sum_upd = (t4 * sum_local + t2 * sum_upd).clone()
+        max_upd = max_new.clone()
+        oi_tmp = oi_upd * t2 + mm2_res * t4
+        if s2_idx == s2_loop - 1:
+            oi_upd = oi_tmp / sum_upd
+            out[bs_ofs:bs_ofs + 1, n1g_ofs:n1g_ofs + g_tile, :] = oi_upd.unsqueeze(0).to(dtype_out)
+        else:
+            oi_upd = oi_tmp.clone()
+        oi_tmp_out = oi_tmp
+    return oi_tmp_out, oi_upd, sum_upd, max_upd
+
+
+def _init_pfa_2d_tensors(q, q_scale, k, k_sclae_bsnd, v, v_scale, kv_act_seqs):
+    """Initialize 2D tensors and compute shapes for pfa_flash_torch."""
     q_shape = q.shape
     bs1, n1, d = q_shape[0], q_shape[1], q_shape[2]
     b = kv_act_seqs.shape[0]
@@ -414,28 +456,27 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
     k_shape = k.shape
     block_num, block_size, n2, _ = k_shape
     g = n1 // n2
-    g_tile = g
-
     softmax_scale = d ** -0.5
+    k_2d = k.reshape((block_num * block_size, n2 * d))
+    k_scale_2d = k_sclae_bsnd.reshape((block_num * block_size, n2 * 1))
+    v_2d = v.reshape((block_num * block_size, n2 * d))
+    q_2d = q.reshape((b * s1 * n1, d))
+    q_scale_2d = q_scale.reshape((b * s1 * n1, 1))
+    v_scale_2d = v_scale.reshape((b * 1, n2 * d))
+    return (b, s1, n1, n2, d, g, block_size, softmax_scale,
+            k_2d, k_scale_2d, v_2d, q_2d, q_scale_2d, v_scale_2d)
+
+
+def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act_seqs, out, atten_cfg, tile_config):
+    """PyTorch FP8 quant flash attention golden: q[b*s1,n1,d], k/v[block_num,bs,n2,d], out[b*s1,n1,d]."""
+    torch_fp32 = torch.float32
+    (b, s1, n1, n2, d, g, block_size, softmax_scale,
+     k_2d, k_scale_2d, v_2d, q_2d, q_scale_2d, v_scale_2d) = \
+        _init_pfa_2d_tensors(q, q_scale, k, k_sclae_bsnd, v, v_scale, kv_act_seqs)
+    g_tile = g
     s2_tile = tile_config.s2_tile
-
-    k_2d_shape = (block_num * block_size, n2 * d)
-    k_scale_2d_shape = (block_num * block_size, n2 * 1)
-    v_2d_shape = (block_num * block_size, n2 * d)
-    q_2d_shape = (b * s1 * n1, d)
-    q_scale_2d_shape = (b * s1 * n1, 1)
-    v_scale_2d_shape = (b * 1, n2 * d)
-
-    k_2d = k.reshape(k_2d_shape)
-    k_scale_2d = k_sclae_bsnd.reshape(k_scale_2d_shape)
-    v_2d = v.reshape(v_2d_shape)
-    q_2d = q.reshape(q_2d_shape)
-    q_scale_2d = q_scale.reshape(q_scale_2d_shape)
-    v_scale_2d = v_scale.reshape(v_scale_2d_shape)
-
     device = q.device
     dtype_out = out.dtype
-
     block_num_per_tile = s2_tile // block_size
 
     for b_idx in range(b):
@@ -453,89 +494,25 @@ def pfa_flash_torch(q, q_scale, k, k_sclae_bsnd, v, v_scale, block_table, kv_act
                         bs_ofs = b_idx * s1 + s1_idx
                         n1g_ofs = n2_idx * g + g_idx * g_tile
                         actual_s2_tile = min(cur_seq - s2_idx * s2_tile, s2_tile)
-
                         qi_start = bs_ofs * n1 + n1g_ofs
-                        qi_end = qi_start + g_tile
-                        qi = q_2d[qi_start:qi_end, :]
-                        qi_scale = q_scale_2d[qi_start:qi_end, :]
-
-                        kj_assemble = torch.zeros((s2_tile, d), dtype=k_2d.dtype, device=device)
-                        kj_scale_assemble = torch.zeros((s2_tile, 1), dtype=k_scale_2d.dtype, device=device)
+                        qi = q_2d[qi_start:qi_start + g_tile, :]
+                        qi_scale = q_scale_2d[qi_start:qi_start + g_tile, :]
 
                         actual_block_num = (actual_s2_tile + block_size - 1) // block_size
-                        for i in range(actual_block_num):
-                            block_idx = block_table[b_idx, idx + i].item()
-                            block_idx_valid = max(block_idx, 0)
-                            kj_assemble[i * block_size:(i + 1) * block_size, :] = \
-                                k_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size, \
-                                n2_idx * d:(n2_idx + 1) * d]
-                            kj_scale_assemble[i * block_size:(i + 1) * block_size, :] = \
-                                k_scale_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size, \
-                                n2_idx * 1:(n2_idx + 1) * 1]
-
+                        kj_assemble, kj_scale_assemble, vj_assemble = _assemble_kv_for_s2_tile(
+                            k_2d, k_scale_2d, v_2d, block_table, b_idx, idx,
+                            actual_block_num, s2_tile, block_size, n2_idx, d)
                         kj_assemble = kj_assemble[:actual_s2_tile, :]
                         kj_scale_assemble = kj_scale_assemble[:actual_s2_tile, :]
-
-                        mm1_quant = matmul_proxy(qi, kj_assemble.t()).to(torch_fp32)
-                        mm1_fp32 = mm1_quant * qi_scale * kj_scale_assemble.t()
-                        sij_scale = mm1_fp32 * softmax_scale
-
-                        tilda_mij, _ = torch.max(sij_scale, dim=-1, keepdim=True)
-                        tsub = sij_scale - tilda_mij
-                        vec1_res = torch.exp(tsub)
-                        sum_local = torch.sum(vec1_res, dim=-1, keepdim=True)
-
-                        tilda_pij_fp8, tilda_pij_scale = quant_fp8e4m3_per_token(vec1_res)
-                        vj_assemble = torch.zeros((s2_tile, d), dtype=v_2d.dtype, device=device)
-
-                        for i in range(actual_block_num):
-                            block_idx = block_table[b_idx, idx + i].item()
-                            block_idx_valid = max(block_idx, 0)
-                            vj_assemble[i * block_size:(i + 1) * block_size, :] = \
-                                v_2d[block_idx_valid * block_size:(block_idx_valid + 1) * block_size, \
-                                n2_idx * d:(n2_idx + 1) * d]
                         vj_assemble = vj_assemble[:actual_s2_tile, :]
-                        v_scale_bs = v_scale_2d[b_idx, n2_idx * d:(n2_idx + 1) * d].reshape(1, d)
-                        mm2_quant = matmul_proxy(tilda_pij_fp8, vj_assemble).to(torch_fp32)
-                        mm2_res = mm2_quant * tilda_pij_scale * v_scale_bs
 
-                        if s2_idx == 0:
-                            oi_tmp = mm2_res
-                            oi_upd = oi_tmp.clone()
+                        mm2_res, sum_local, tilda_mij = _process_s2_tile(
+                            qi, qi_scale, kj_assemble, kj_scale_assemble, vj_assemble,
+                            v_scale_2d, b_idx, n2_idx, d, softmax_scale, actual_s2_tile)
 
-                            if s2_idx == s2_loop - 1:
-                                oi_upd = oi_tmp / sum_local
-                                oi_upd_3d = oi_upd.unsqueeze(0).to(dtype_out)
-                                out[bs_ofs:bs_ofs + 1, n1g_ofs:n1g_ofs + g_tile, :] = oi_upd_3d
-                            else:
-                                oi_upd = oi_tmp.clone()
-                                sum_upd = sum_local.clone()
-                                max_upd = tilda_mij.clone()
-                        else:
-                            max_new, _ = torch.max(torch.cat([max_upd, tilda_mij], dim=-1), dim=-1, keepdim=True)
-
-                            t1 = max_upd - max_new
-                            t2 = torch.exp(t1)
-                            t3 = tilda_mij - max_new
-                            t4 = torch.exp(t3)
-
-                            t5 = t4 * sum_local
-                            t6 = t2 * sum_upd
-                            sum_new = t6 + t5
-
-                            sum_upd = sum_new.clone()
-                            max_upd = max_new.clone()
-
-                            oi_last = oi_upd * t2
-                            oi_flash = mm2_res * t4
-                            oi_tmp_new = oi_last + oi_flash
-
-                            if s2_idx == s2_loop - 1:
-                                oi_upd_final = oi_tmp_new / sum_upd
-                                oi_upd_3d = oi_upd_final.unsqueeze(0).to(dtype_out)
-                                out[bs_ofs:bs_ofs + 1, n1g_ofs:n1g_ofs + g_tile, :] = oi_upd_3d
-                            else:
-                                oi_upd = oi_tmp_new.clone()
+                        _, oi_upd, sum_upd, max_upd = _flash_update_state(
+                            oi_upd, sum_upd, max_upd, mm2_res, sum_local, tilda_mij,
+                            s2_idx, s2_loop, dtype_out, out, bs_ofs, n1g_ofs, g_tile)
     return out
 
 
@@ -581,7 +558,7 @@ def test_pfa_for_950():
 
 
 @allow_in_graph
-def attention(  # pylint: disable=huawei-too-many-arguments
+def attention(
     query: torch.Tensor,
     query_scale: torch.Tensor,
     key_cache: torch.Tensor,

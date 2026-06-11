@@ -76,7 +76,9 @@ if args.use_pypto:
     patched_count = 0
     for module in model.modules():
         if type(module).__name__ == "Qwen3_5GatedDeltaNet":
+
             orig_forward = module.forward
+
             def new_forward(self, *fwd_args, _orig=orig_forward, _pk=pto_kernels, **fwd_kwargs):
                 _orig_chunk = self.chunk_gated_delta_rule
                 if getattr(_pk, "USE_PTO_GATED_DELTA_RULE", False):

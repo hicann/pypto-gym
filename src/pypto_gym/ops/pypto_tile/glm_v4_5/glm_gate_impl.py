@@ -24,7 +24,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
 import pypto
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
+from .utils.get_format import get_format
 
 
 def check_args(
@@ -126,8 +126,8 @@ def gate(
     """
     if isinstance(hidden_states, FakeTensor):
         return router_logits_out
-    # pylint: disable=inconsistent-return-statements
     check_args(gate_weight, hidden_states)
 
     inputs = [hidden_states, gate_weight, router_logits_out]
     select_experts_mm_kernel(*inputs)
+    return router_logits_out

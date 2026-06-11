@@ -30,7 +30,8 @@ class MlaConfig:
         q_d: Query head dimension
         q_rope_d: Query rope dimension
         n2: Number of key/value heads (for grouped query attention)
-        s2: Key/Value sequence length. int means all batches share the same length; list means per-batch KV sequence lengths (s2 must contain the max value).
+        s2: Key/Value sequence length. int means all batches share the same length;
+            list means per-batch KV sequence lengths (s2 must contain the max value).
         kv_d: Key/Value head dimension
         k_rope_d: Key rope dimension
         block_size: Size of each block in paged KV cache (default: 128)
@@ -182,7 +183,7 @@ def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     kv_d = kp.kv_d
     k_rope_d = kp.k_rope_d
 
-    qnope_2d_shape = (b * s1 * n1 , q_d)
+    qnope_2d_shape = (b * s1 * n1, q_d)
     qrope_2d_shape = (b * s1 * n1, q_rope_d)
     knope_2d_shape = (block_num * block_size * n2, kv_d)
     krope_2d_shape = (block_num * block_size * n2, k_rope_d)

@@ -33,6 +33,8 @@ test_configs = [
     # 当前脚本不支持多batch，先用单batch不同输出长度测试
 ]
 
+
+
 def run_test(use_kv_fusion, output_length, prompt, device=7):
     """
     运行单次测试
@@ -96,8 +98,11 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
         return {
             'success': False,
             'mode': mode_name,
+
+
             'error': 'Failed to parse metrics',
         }
+
 
 def main():
     print("\n" + "="*80)

@@ -58,6 +58,7 @@ import os
 import math
 import logging
 from dataclasses import dataclass
+import collections
 import numpy as np
 import pypto
 import torch
@@ -66,8 +67,13 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 MAX_TOTAL_KV = 128 * 1024
 
+SfaGradComputeOutput = collections.namedtuple(
+    "SfaGradComputeOutput",
+    ["dq_nope_2d", "dq_pe_2d", "dk_nope_2d", "dk_pe_2d", "dv_2d", "dk_out"],
+)
 
-def sparse_flash_attention_grad_compute(  # pylint: disable=huawei-too-many-arguments
+
+def sparse_flash_attention_grad_compute(
     q_nope, q_pe, k_nope, k_pe, value,
     sparse_idx,
     d_out, out, sm_max, sm_sum,
@@ -178,7 +184,6 @@ def sparse_flash_attention_grad_compute(  # pylint: disable=huawei-too-many-argu
                 pypto.assemble(qn_slice, [0, 0], q_group)
                 pypto.assemble(qr_slice, [0, d], q_group)
 
-                # sm_max/sm_sum: reshaped to (n_2*t_1, group), row = kv_head_idx*t_1 + t_idx
                 sm_row = kv_head_idx * t1_sym + t_idx
 
                 # ======== Step 4: S = Q_full @ sel_k^T * scale ========
@@ -263,7 +268,7 @@ def sparse_flash_attention_grad_compute(  # pylint: disable=huawei-too-many-argu
                 dk_2d_view = pypto.view(dk_2d, [MAX_TOTAL_KV, d + dr], [0, 0], valid_shape=[t2_sym, d + dr])
                 dk_out[:] = pypto.index_add_(dk_2d_view, -2, cur_indices_1d, dk_all)
 
-    return dq_nope_2d, dq_pe_2d, dk_nope_2d, dk_pe_2d, dv_2d, dk_out
+    return SfaGradComputeOutput(dq_nope_2d, dq_pe_2d, dk_nope_2d, dk_pe_2d, dv_2d, dk_out)
 
 
 @pypto.frontend.jit(
@@ -276,7 +281,7 @@ def sparse_flash_attention_grad_compute(  # pylint: disable=huawei-too-many-argu
         "stitch_function_max_num": 256
     },
 )
-def sparse_flash_attention_grad(  # pylint: disable=huawei-too-many-arguments
+def sparse_flash_attention_grad(
     q_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_1, n_1, d
     q_pe: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_1, n_1, dr
     k_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16), # t_2, n_2, d
@@ -316,7 +321,7 @@ def sparse_flash_attention_grad(  # pylint: disable=huawei-too-many-arguments
     )
 
 
-def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,  # pylint: disable=huawei-too-many-arguments
+def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
         actual_seq_qlen, actual_seq_kvlen):
     assert actual_seq_kvlen is not None and actual_seq_kvlen.dim() == 1, \
         f"actual_seq_kvlen dim num is {actual_seq_kvlen.dim()}, expected 1"
@@ -359,7 +364,7 @@ def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx
 
 
 @allow_in_graph
-def npu_sfa_sparse_attention_grad(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,  # pylint: disable=huawei-too-many-arguments
+def npu_sfa_sparse_attention_grad(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
         actual_seq_qlen, actual_seq_kvlen, scale_value):
     assert not isinstance(q_nope, FakeTensor), f"q_nope is FakeTensor"
 

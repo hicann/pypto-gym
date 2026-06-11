@@ -26,7 +26,32 @@ import torch
 from pypto.operation import op_wrapper
 import pypto
 from pypto import pypto_impl
-from test_lightning_indexer_quant import LightningIndexerConfigs
+from dataclasses import dataclass
+
+
+@dataclass
+class LightningIndexerConfigs:
+    # graph optimization params
+    # used for copy in merge graph
+    mg_copy_in_upper_bound = 2 * 1024 * 1024
+    # l1 reuse merge params
+    cube_l1_reuse_setting = {
+        0: 16
+    }
+    # vector graph fuse optimization
+    vec_merge_mode = 2
+    vec_nbuffer_setting = {
+        -1: 16
+    }
+    # tile params
+    s1_tile = 2
+    topk_tile = 8192
+    # set the tileshape size in cube computation
+    c1_tile = [64, 64, 128, 128, 128, 128]  # (m, M), (k, K), (n, N)
+    c2_tile = [128, 128, 64, 64, 128, 128]  # (m, M), (k, K), (n, N)
+    # matmul relu fuse params
+    extend_param = {'scale': 1 / 2048.0, 'relu_type': pypto.ReLuType.RELU}
+
 
 MAX_LI_S1 = 4
 MAX_LI_S2 = 128 * 1024

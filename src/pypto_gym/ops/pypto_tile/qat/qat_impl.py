@@ -126,7 +126,7 @@ def ai_infra_qat_asymmetric_per_group(weight, scale, offset, group_size=128, bit
         "stitch_function_max_num": 64
         },
 )
-def ai_infra_qat_asymmetric_per_group_backward_kernel(  # pylint: disable=huawei-too-many-arguments
+def ai_infra_qat_asymmetric_per_group_backward_kernel(
     grad_output: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     weight: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     scale: pypto.Tensor([pypto.DYNAMIC, 1], pypto.DT_BF16),

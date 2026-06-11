@@ -20,7 +20,7 @@ try:
     import torch_npu  # noqa: F401
 except ImportError:
     print("torch_npu not available; this test only runs on Ascend NPU.")
-    raise SystemExit(0)
+    raise RuntimeError("torch_npu not available; this test only runs on Ascend NPU.") from None
 
 import pypto
 
@@ -31,7 +31,6 @@ from llada2_expert_ffn_impl import llada2_expert_ffn
 
 
 def reference(x, w13, w2):
-    """y = down(silu(gate(x)) * up(x)) where gate||up = W13."""
     I = w13.shape[-1] // 2
     gate_up = x.float() @ w13.float()
     gate, up = gate_up[..., :I], gate_up[..., I:]

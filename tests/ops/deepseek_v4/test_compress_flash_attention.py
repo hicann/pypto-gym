@@ -222,7 +222,109 @@ def kv_cache_concat_bsnd(kv_cache_out, cmp_block_table, actual_seqs):
     return cmp_kv
 
 
-def ifa_flash_torch(  # pylint: disable=huawei-too-many-arguments
+def _flash_ori_window(qi, kv_win_2d, ori_block_table, b_idx, s1, s1_idx, win, block_size,
+                       seqused_kv, dtype, scale, d):
+    """Compute attention for the original window (ori_kv) portion in ifa_flash_torch."""
+    fp32 = torch.float32
+    valid_len = seqused_kv[b_idx] - (s1 - s1_idx - 1)
+    valid_win_len = min(valid_len, win)
+    valid_start_pos = valid_len - valid_win_len
+    valid_end_pos = valid_len - 1
+    start_offset = valid_start_pos % block_size
+
+    start_block = valid_start_pos // block_size
+    end_block = valid_end_pos // block_size
+    kv_list = []
+
+    for block_idx in range(start_block, end_block + 1):
+        block_idx_valid = max(ori_block_table[b_idx, block_idx], 0)
+        block_offset = block_idx_valid * block_size
+        kv_block = kv_win_2d[block_offset: block_offset + block_size, :]
+        kv_list.append(kv_block)
+
+    kv_cur = torch.cat(kv_list, axis=0)
+    kv_cur = kv_cur[start_offset: start_offset + valid_win_len, :]
+
+    mm1 = matmul_proxy(qi, kv_cur.t())
+    muls_res = mm1 * scale
+    tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
+    tsub = muls_res - tilda_mij
+    tilda_pij = torch.exp(tsub)
+    tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
+    oi_tmp = matmul_proxy(tilda_pij.to(dtype), kv_cur)
+    oi_upd = oi_tmp
+    li_upd = tilda_lij.squeeze(-1)
+    mi_upd = tilda_mij.squeeze(-1)
+    return oi_upd, li_upd, mi_upd
+
+
+def _flash_first_kv(qi, kvj, scale, dtype):
+    """First KV tile: initialize accumulators."""
+    mm1 = matmul_proxy(qi, kvj.t())
+    muls_res = mm1 * scale
+    tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
+    tsub = muls_res - tilda_mij
+    tilda_pij = torch.exp(tsub)
+    tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
+    oi_tmp = matmul_proxy(tilda_pij.to(dtype), kvj)
+    return oi_tmp, tilda_lij.squeeze(-1), tilda_mij.squeeze(-1)
+
+
+def _flash_subsequent_kv(qi, kvj, oi_upd, li_upd, mi_upd, scale, dtype):
+    """Subsequent KV tile: online softmax update."""
+    mi = mi_upd.unsqueeze(-1)
+    mm1 = matmul_proxy(qi, kvj.t())
+    muls_res = mm1 * scale
+    tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
+    max_new, _ = torch.max(torch.cat([mi, tilda_mij], dim=-1), dim=-1, keepdim=True)
+    tsub = muls_res - max_new
+    tilda_pij = torch.exp(tsub)
+    tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
+    tsub2 = torch.sub(mi, max_new)
+    mi_upd = max_new.squeeze(-1)
+    update_mul = torch.exp(tsub2)
+    li = li_upd.unsqueeze(-1)
+    sum_new = li * update_mul + tilda_lij
+    li_upd = sum_new.squeeze(-1)
+    q1 = matmul_proxy(tilda_pij.to(dtype), kvj)
+    oi_upd = oi_upd * update_mul + q1
+    return oi_upd, li_upd, mi_upd
+
+
+def _process_group_block(b_idx, s1_idx, g_idx, g_tile, d, device, fp32, n1,
+                         q_2d, kv_2d, cmp_block_table, block_size, seqused_kv,
+                         s1, s2_loop, cur_seq, scale, dtype, win,
+                         ori_kv, ori_block_table, sinks, output_flash,
+                         is_new_sink):
+    """Process one group-block: init accumulators, run ori window + s2 loop."""
+    oi_upd = torch.zeros((g_tile, d), device=device, dtype=fp32)
+    li_upd = torch.zeros(g_tile, device=device, dtype=fp32)
+    mi_upd = torch.zeros(g_tile, device=device, dtype=fp32)
+    bs_ofs = b_idx * s1 + s1_idx
+    n2g_ofs = g_idx * g_tile
+    qi_start = bs_ofs * n1 + n2g_ofs
+    qi_end = qi_start + g_tile
+    qi = q_2d[qi_start:qi_end, :]
+    if ori_kv is not None and ori_block_table is not None:
+        kv_win_2d = ori_kv.reshape(-1, d)
+        oi_upd, li_upd, mi_upd = _flash_ori_window(
+            qi, kv_win_2d, ori_block_table, b_idx, s1, s1_idx, win, block_size,
+            seqused_kv, dtype, scale, d)
+        if s2_loop == 0:
+            flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype,
+                    is_new_sink=is_new_sink)
+    for s2_idx in range(s2_loop):
+        kvj = get_block_kv(kv_2d, cmp_block_table, b_idx, s2_idx, block_size, cur_seq)
+        if s2_idx == 0 and ori_kv is None:
+            oi_upd, li_upd, mi_upd = _flash_first_kv(qi, kvj, scale, dtype)
+        else:
+            oi_upd, li_upd, mi_upd = _flash_subsequent_kv(qi, kvj, oi_upd, li_upd, mi_upd, scale, dtype)
+        if s2_idx == s2_loop - 1:
+            flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype,
+                    is_new_sink=is_new_sink)
+
+
+def ifa_flash_torch(
     q,
     cmp_kv,
     sinks,
@@ -244,9 +346,9 @@ def ifa_flash_torch(  # pylint: disable=huawei-too-many-arguments
         out: Output [batch_size * s1, num_head, head_size]
     """
     fp32 = torch.float32
-    q_shape = q.shape
     device = q.device
     dtype = q.dtype
+    q_shape = q.shape
     bs1, n1, d = q_shape[0], q_shape[1], q_shape[2]
     b = seqused_kv.shape[0]
     s1 = bs1 // b
@@ -265,150 +367,73 @@ def ifa_flash_torch(  # pylint: disable=huawei-too-many-arguments
             cur_seq = max(cur_seq, 0)
             s2_loop = math.ceil(cur_seq / block_size)
             for g_idx in range(g // g_tile):
-                oi_upd = torch.zeros((g_tile, d), device=device, dtype=fp32)
-                li_upd = torch.zeros(g_tile, device=device, dtype=fp32)
-                mi_upd = torch.zeros(g_tile, device=device, dtype=fp32)
-                bs_ofs = b_idx * s1 + s1_idx
-                n2g_ofs = g_idx * g_tile
-                qi_start = bs_ofs * n1 + n2g_ofs
-                qi_end = qi_start + g_tile
-                qi = q_2d[qi_start:qi_end, :]
-                if ori_kv is not None and ori_block_table is not None:
-                    kv_win_2d = ori_kv.reshape(-1, d)
-                    valid_len = seqused_kv[b_idx] - (s1 - s1_idx - 1)
-                    valid_win_len = min(valid_len, win)
-                    valid_start_pos = valid_len - valid_win_len
-                    valid_end_pos = valid_len - 1
-                    start_offset = valid_start_pos % block_size
-
-                    start_block = valid_start_pos // block_size
-                    end_block = valid_end_pos // block_size
-                    kv_list = []
-
-                    for block_idx in range(start_block, end_block + 1):
-                        block_idx_valid = max(ori_block_table[b_idx, block_idx], 0)
-                        block_offset = block_idx_valid * block_size
-                        kv_block = kv_win_2d[block_offset: block_offset + block_size, :]
-                        kv_list.append(kv_block)
-
-                    kv_cur = torch.cat(kv_list, axis=0)
-                    kv_cur = kv_cur[start_offset: start_offset + valid_win_len, :]
-
-                    mm1 = matmul_proxy(qi, kv_cur.t())
-                    muls_res = mm1 * scale
-                    tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
-                    tsub = muls_res - tilda_mij
-                    tilda_pij = torch.exp(tsub)
-                    tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
-                    oi_tmp = matmul_proxy(tilda_pij.to(dtype), kv_cur)
-                    oi_upd = oi_tmp
-                    li_upd = tilda_lij.squeeze(-1)
-                    mi_upd = tilda_mij.squeeze(-1)
-                    if s2_loop == 0:
-                        flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype, \
-                                is_new_sink=is_new_sink)
-                for s2_idx in range(s2_loop):
-                    kvj = get_block_kv(kv_2d, cmp_block_table, b_idx, s2_idx, block_size, cur_seq)
-                    mm1 = matmul_proxy(qi, kvj.t())
-                    muls_res = mm1 * scale
-                    tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
-                    if s2_idx == 0 and ori_kv is None:
-                        tsub = muls_res - tilda_mij
-                        tilda_pij = torch.exp(tsub)
-                        tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
-                        oi_tmp = matmul_proxy(tilda_pij.to(dtype), kvj)
-                        oi_upd = oi_tmp
-                        li_upd = tilda_lij.squeeze(-1)
-                        mi_upd = tilda_mij.squeeze(-1)
-                    else:
-                        mi = mi_upd.unsqueeze(-1)
-                        max_new, _ = torch.max(
-                            torch.cat([mi, tilda_mij], dim=-1), dim=-1, keepdim=True
-                        )
-                        tsub = muls_res - max_new
-                        tilda_pij = torch.exp(tsub)
-                        tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
-                        tsub2 = torch.sub(mi, max_new)
-                        mi_upd = max_new.squeeze(-1)
-                        update_mul = torch.exp(tsub2)
-                        li = li_upd.unsqueeze(-1)
-                        sum_new = li * update_mul + tilda_lij
-                        li_upd = sum_new.squeeze(-1)
-                        q1 = matmul_proxy(tilda_pij.to(dtype), kvj)
-                        oi_upd = oi_upd * update_mul + q1
-                    if s2_idx == s2_loop - 1:
-                        flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype, \
-                                is_new_sink=is_new_sink)
+                _process_group_block(
+                    b_idx, s1_idx, g_idx, g_tile, d, device, fp32, n1,
+                    q_2d, kv_2d, cmp_block_table, block_size, seqused_kv,
+                    s1, s2_loop, cur_seq, scale, dtype, win,
+                    ori_kv, ori_block_table, sinks, output_flash,
+                    is_new_sink)
     return output_flash
 
 
-def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, enable_flash=True, cmp_ratio=1,  # pylint: disable=huawei-too-many-arguments
+def _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, cmp_ratio, is_new_sink,
+                     ori_kv, ori_block_table):
+    """Golden no-flash path: per-batch per-head full attention compute."""
+    fp64 = torch.float64
+    b = seqused_kv.shape[0]
+    bs = q.shape[0]
+    s1 = bs // b
+    nkv = cmp_kv.shape[2]
+    d = cmp_kv.shape[3]
+    softmax_scale = d**-0.5
+    compress_actual_seqs = seqused_kv // cmp_ratio
+    kv_bsnd = kv_cache_concat_bsnd(cmp_kv, cmp_block_table, compress_actual_seqs)
+    if ori_kv is not None and ori_block_table is not None:
+        k_cfa_bsnd = kv_cache_concat_bsnd(cmp_kv, cmp_block_table, compress_actual_seqs)
+        k_win_bsnd = kv_cache_concat_bsnd(ori_kv, ori_block_table, seqused_kv)
+        kv_bsnd = torch.cat([k_cfa_bsnd], dim=1)
+    for i in range(b):
+        for j in range(s1):
+            for n2_idx in range(nkv):
+                seq_end = seqused_kv[i] - (s1 - 1 - j)
+                seq_len = seq_end // cmp_ratio
+                q_bs = q[i * s1 + j]
+                kv_win_view = k_win_bsnd[i, max(seq_end-128, 0):seq_end, :, :].reshape(-1, d)
+                kv_bs = kv_bsnd[i, :seq_len, n2_idx: n2_idx + 1].reshape(seq_len, d)
+                kv_bs = torch.cat([kv_win_view, kv_bs], dim=0)
+                q_bs = q_bs.to(fp64)
+                kv_bs_64 = kv_bs.to(fp64)
+                qk_bmm_res = matmul_proxy(q_bs, kv_bs_64.transpose(1, 0))
+                qk_ele_res = qk_bmm_res * softmax_scale
+                softmax_res, _, _ = softmax(qk_ele_res, sinks, True, is_new_sink=is_new_sink)
+                bmm2_res = matmul_proxy(softmax_res.to(output_flash.dtype), kv_bs.to(output_flash.dtype))
+                output_flash[i * s1 + j] = bmm2_res.to(output_flash.dtype)
+    return output_flash, kv_bs
+
+
+def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, enable_flash=True, cmp_ratio=1,
                is_new_sink=True, ori_kv=None, ori_block_table=None):
     if not enable_flash:
-        fp64 = torch.float64
-        b = seqused_kv.shape[0]
-        bs = q.shape[0]
-        s1 = bs // b
-        nkv = cmp_kv.shape[2]
-        d = cmp_kv.shape[3]
-        softmax_scale = d**-0.5
-        compress_actual_seqs = seqused_kv // cmp_ratio
-        kv_bsnd = kv_cache_concat_bsnd(
-            cmp_kv, cmp_block_table, compress_actual_seqs
-        )
-        if ori_kv is not None and ori_block_table is not None:
-            k_cfa_bsnd = kv_cache_concat_bsnd(
-                    cmp_kv, cmp_block_table, compress_actual_seqs
-                )
-            k_win_bsnd = kv_cache_concat_bsnd(
-                    ori_kv, ori_block_table, seqused_kv
-                )
-            kv_bsnd = torch.cat([k_cfa_bsnd], dim=1)
-        for i in range(b):
-            for j in range(s1):
-                for n2_idx in range(nkv):
-                    seq_end = seqused_kv[i] - (s1 - 1 - j)
-                    seq_len = seq_end // cmp_ratio
-                    q_bs = q[i * s1 + j]
-                    kv_win_view = k_win_bsnd[i, max(seq_end-128, 0):seq_end, :, :].reshape(-1, d)
-                    kv_bs = kv_bsnd[i, :seq_len, n2_idx: n2_idx + 1].reshape(
-                        seq_len, d
-                    )
-                    kv_bs = torch.cat([kv_win_view, kv_bs], dim=0)
-                    q_bs = q_bs.to(fp64)
-                    kv_bs_64 = kv_bs.to(fp64)
-                    qk_bmm_res = matmul_proxy(q_bs, kv_bs_64.transpose(1, 0))
-                    qk_ele_res = qk_bmm_res * softmax_scale
-                    softmax_res, _, _ = softmax(qk_ele_res, sinks, True, is_new_sink=is_new_sink)
-                    bmm2_res = matmul_proxy(softmax_res.to(output_flash.dtype), kv_bs.to(output_flash.dtype))
-                    output_flash[i * s1 + j] = bmm2_res.to(output_flash.dtype)
-        return output_flash, kv_bs
+        return _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv,
+                                 output_flash, cmp_ratio, is_new_sink, ori_kv, ori_block_table)
     else:
         output_flash = ifa_flash_torch(
-            q=q,
-            cmp_kv=cmp_kv,
-            sinks=sinks,
-            cmp_block_table=cmp_block_table,
-            seqused_kv=seqused_kv,
-            output_flash=output_flash,
-            tmp_out=tmp_out,
-            cmp_ratio=cmp_ratio,
-            is_new_sink=is_new_sink,
-            ori_kv=ori_kv,
-            ori_block_table=ori_block_table,
+            q=q, cmp_kv=cmp_kv, sinks=sinks, cmp_block_table=cmp_block_table,
+            seqused_kv=seqused_kv, output_flash=output_flash, tmp_out=tmp_out,
+            cmp_ratio=cmp_ratio, is_new_sink=is_new_sink,
+            ori_kv=ori_kv, ori_block_table=ori_block_table,
         )
         return output_flash
 
 
-def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device: str, attn_cfg: AttentionConfig):
-    torch_dtype = torch.bfloat16
+def _c128_create_tensors(attn_cfg, torch_dtype, device):
+    """Create all tensors needed for the c128 test."""
     b = attn_cfg.b
     s1 = attn_cfg.s1
     d = attn_cfg.q_d
     nq = attn_cfg.n1
     nkv = attn_cfg.n2
     cmp_ratio = attn_cfg.cmp_ratio
-
     block_size = attn_cfg.block_size
     max_blocks = attn_cfg.max_blocks
     seqused_kv = attn_cfg.actual_seq
@@ -427,17 +452,28 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
     cmp_kv = torch.empty(cmp_kv_shape, **empty_kwargs).uniform_(-1, 1)
     sinks = torch.empty(nq, dtype=torch.float32, device=device).uniform_(-1, 1)
     ori_kv = torch.empty(ori_kv_shape, **empty_kwargs).uniform_(-1, 1)
-    ori_block_table = gen_block_table(seqused_kv, block_size, ori_blk_tbl_shape, cmp_ratio=cmp_ratio, \
-                                        enable_win=True)
+    ori_block_table = gen_block_table(seqused_kv, block_size, ori_blk_tbl_shape, cmp_ratio=cmp_ratio, enable_win=True)
 
     tmp_out_golden = torch.zeros((b * s1 * 2 * block_size, q_shape[2]), **empty_kwargs) + 1
-
     output_flash = torch.zeros(q_shape, **empty_kwargs)
 
-    cmp_block_table = gen_block_table(seqused_kv, block_size, cmp_blk_tbl_shape, cmp_ratio=cmp_ratio)
-    attention_out = torch.zeros(q_shape, **empty_kwargs)
+    return q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash
 
-    ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out_golden, enable_flash=False, \
+
+def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device: str, attn_cfg: AttentionConfig):
+    torch_dtype = torch.bfloat16
+    cmp_ratio = attn_cfg.cmp_ratio
+    seqused_kv = attn_cfg.actual_seq
+    q_shape = [attn_cfg.b * attn_cfg.s1, attn_cfg.n1, attn_cfg.q_d]
+
+    q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash = \
+        _c128_create_tensors(attn_cfg, torch_dtype, device)
+
+    cmp_block_table = gen_block_table(seqused_kv, attn_cfg.block_size,
+        [attn_cfg.block_table_batch, attn_cfg.max_blocks], cmp_ratio=cmp_ratio)
+    attention_out = torch.zeros(q_shape, **{"dtype": torch_dtype, "device": device})
+
+    ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out_golden, enable_flash=False,
         cmp_ratio=cmp_ratio, is_new_sink=True, ori_kv=ori_kv, ori_block_table=ori_block_table)
 
     # acl graph
@@ -453,16 +489,8 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
             pypto.runtime._device_synchronize()  # 内部接口，不推荐使用
     else:
         for _ in range(10):
-            attention_out = cfa_attention(
-    q,
-    cmp_kv,
-    sinks,
-    cmp_block_table,
-    seqused_kv,
-    ori_kv,
-    ori_block_table,
-     cmp_ratio)
-        # pypto.runtime._device_synchronize()  # 内部接口，不推荐使用
+            attention_out = cfa_attention(q, cmp_kv, sinks, cmp_block_table, seqused_kv, ori_kv,
+                ori_block_table, cmp_ratio)
 
     from tests.ops.utils import compare
     compare.compare(output_flash, attention_out, "golden vs npu", rtol=0.0078125, atol=0.0001)

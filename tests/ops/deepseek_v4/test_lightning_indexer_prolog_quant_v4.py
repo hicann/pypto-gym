@@ -58,7 +58,6 @@ def apply_rotary_pos_emb(q, cos, sin):
     q_re = q_new.reshape(t, n, d // 2, 2)
     q_rotary = rotate_half(q_re).reshape(t, n, d)
 
-    # (t, n_q, rope_dim), (t, 1, rope_dim) = (t, n_q, rope_dim)
     q_embed = (q_new * cos) + (q_rotary * -sin)
 
     if input_dtype != torch.float32:
@@ -138,7 +137,6 @@ def compute_quant_lightning_indexer_prolog(inputs, params):
     q_hadamard = torch.matmul(
         q.to(torch.float32), hadamard.reshape(1, head_dim, head_dim).to(torch.float32)
     ).to(calc_dtype)
-    # (t, idx_nq, head_dim), (t, idx_nq, 1)
     q_int8, q_scale = quant_golden(q_hadamard)
     q_scale = q_scale.to(torch.float16).reshape(t, idx_nq)
 

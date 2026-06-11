@@ -24,36 +24,8 @@ import os
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 
-def fix_imports(file_path):
-    """修复导入语句"""
-
-    with open(file_path, "r") as f:
-        content = f.read()
-
-    # 处理单行导入: from ...xxx import yyy 或 from ...xxx.yyy import zzz
-    # 转换为: from transformers.xxx import yyy 或 from transformers.xxx.yyy import zzz
-    content = re.sub(
-        r"from\s+\.\.\.([\w\.]+)\s+import", r"from transformers.\1 import", content
-    )
-
-    # 处理多行导入块中的 from ...xxx ( 或 from ...xxx.yyy (
-    # 例如: from ...modeling_outputs import (
-    # 转换为: from transformers.modeling_outputs import (
-    content = re.sub(
-        r"from\s+\.\.\.([\w\.]+)\s+import\s*\(",
-        r"from transformers.\1 import (",
-        content,
-    )
-
-    # 处理 from ..xxx 或 from ..xxx.yyy (两层相对导入)
-    content = re.sub(
-        r"from\s+\.\.([\w\.]+)\s+import", r"from transformers.\1 import", content
-    )
-
-    # 处理单独的 import 行（非 from ... 导入）
-    # 例如: ...modeling_outputs import (
-    # 这些是上一行 from ... 的续行，需要修复
-    # 匹配模式: 行首有空格，然后是模块名 import
+def _fix_residual_imports(content):
+    """修复残缺的导入行（缺少 from 关键字的 transformers 内部模块导入）"""
     lines = content.split("\n")
     fixed_lines = []
     i = 0
@@ -95,7 +67,36 @@ def fix_imports(file_path):
         fixed_lines.append(line)
         i += 1
 
-    content = "\n".join(fixed_lines)
+    return "\n".join(fixed_lines)
+
+
+def fix_imports(file_path):
+    """修复导入语句"""
+
+    with open(file_path, "r") as f:
+        content = f.read()
+
+    # 处理单行导入: from ...xxx import yyy 或 from ...xxx.yyy import zzz
+    # 转换为: from transformers.xxx import yyy 或 from transformers.xxx.yyy import zzz
+    content = re.sub(
+        r"from\s+\.\.\.([\w\.]+)\s+import", r"from transformers.\1 import", content
+    )
+
+    # 处理多行导入块中的 from ...xxx ( 或 from ...xxx.yyy (
+    # 例如: from ...modeling_outputs import (
+    # 转换为: from transformers.modeling_outputs import (
+    content = re.sub(
+        r"from\s+\.\.\.([\w\.]+)\s+import\s*\(",
+        r"from transformers.\1 import (",
+        content,
+    )
+
+    # 处理 from ..xxx 或 from ..xxx.yyy (两层相对导入)
+    content = re.sub(
+        r"from\s+\.\.([\w\.]+)\s+import", r"from transformers.\1 import", content
+    )
+
+    content = _fix_residual_imports(content)
 
     # 保持同一目录下的相对导入不变
     # from .configuration_xxx 保持原样

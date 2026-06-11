@@ -39,7 +39,6 @@ ND = pypto.TileOpFormat.TILEOP_ND
 
 
 def _swiglu_silu(gate_up):
-    """SiLU(gate) * up.  SiLU(x) = x / (1 + exp(-x))."""
     half = gate_up.shape[1] // 2
     gate = pypto.view(gate_up, [gate_up.shape[0], half], [0, 0])
     up = pypto.view(gate_up, [gate_up.shape[0], half], [0, half])
@@ -119,7 +118,6 @@ def llada2_moe_grouped_gemm_kernel(
                 [e_start + tok_idx, 0],
             )
 
-            # mm1: gate_up = tile_x @ w13_e  -> [tile_batch, 2*I] in FP32
             gate_up = pypto.matmul(tile_x, w13_e, pypto.DT_FP32)
 
             # SwiGLU activation in FP32, cast I-wide result to BF16
@@ -128,7 +126,6 @@ def llada2_moe_grouped_gemm_kernel(
             sw_fp32 = _swiglu_silu(gate_up)
             sw = pypto.cast(sw_fp32, pypto.DT_BF16)
 
-            # mm2: down = sw @ w2_e  -> [tile_batch, H] in FP32
             pypto.set_cube_tile_shapes(
                 [tile_batch, tile_batch],
                 [mm2_cube[1], mm2_cube[1] * 2],

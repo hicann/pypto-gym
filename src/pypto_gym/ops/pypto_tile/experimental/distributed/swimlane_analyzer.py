@@ -181,7 +181,6 @@ class SwimlaneAnalyzer:
 
     def _parse_swimlane_file(self, file_path: str) -> Optional[Tuple[str, float]]:
         """解析单个 swimlane 文件并返回时间信息"""
-        # pylint: disable=inconsistent-return-statements
         try:
             with open(file_path, 'r') as f:
                 data = json.load(f)

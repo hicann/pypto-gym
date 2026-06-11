@@ -93,10 +93,16 @@ def check_input_shape_dtype(
         == sin.dtype
         == hadamard.dtype
         == torch.bfloat16
-    ), f"expected x, weights_proj, cos, sin and hadamard dtype to be torch.bfloat16 but got: f{x.dtype}, f{weights_proj.dtype}, f{cos.dtype}, f{sin.dtype} and f{hadamard.dtype}"
+    ), (
+        f"expected x, weights_proj, cos, sin and hadamard dtype to be torch.bfloat16 but got: "
+        f"f{x.dtype}, f{weights_proj.dtype}, f{cos.dtype}, f{sin.dtype} and f{hadamard.dtype}"
+    )
     assert (
         qr_scale.dtype == idx_wq_b_scale.dtype == torch.float32
-    ), f"expected qr_scale and idx_wq_b_scale dtype to be torch.float32, but got: f{qr_scale.dtype} and f{idx_wq_b_scale.dtype}"
+    ), (
+        f"expected qr_scale and idx_wq_b_scale dtype to be torch.float32, but got: "
+        f"f{qr_scale.dtype} and f{idx_wq_b_scale.dtype}"
+    )
 
 
 @allow_in_graph
@@ -157,7 +163,7 @@ def npu_quant_lightning_indexer_prolog(
         "device_sched_mode": 1
     },
 )
-def quant_lightning_indexer_prolog_kernel(  # pylint: disable=huawei-too-many-arguments
+def quant_lightning_indexer_prolog_kernel(
     qr: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_INT8),
     idx_wq_b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8, format=pypto.TileOpFormat.TILEOP_NZ),
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
@@ -239,7 +245,6 @@ def quant_lightning_indexer_prolog_kernel(  # pylint: disable=huawei-too-many-ar
 
         pypto.set_semantic_label("Query-Dequant")
         pypto.set_vec_tile_shapes(1, idx_nq * head_dim)
-        # (t_tile, idx_nq * head_dim), fp32
         q_f32 = pypto.cast(q_s32, pypto.DT_FP32)
         # (t_tile, idx_nq * head_dim), fp32, last dim brc
         q_f32 = q_f32 * qs_in
@@ -273,7 +278,6 @@ def quant_lightning_indexer_prolog_kernel(  # pylint: disable=huawei-too-many-ar
             q_assemble, hadamard_q, x_dtype
         )  # (t_tile, idx_nq, head_dim)
         pypto.set_vec_tile_shapes(1, idx_nq, head_dim)
-        # (t_tile, idx_nq, head_dim), (t_tile, idx_nq, 1)
         q_res, q_scale_res = quant_tensor(q_hadamard)
         q_scale_out = pypto.reshape(q_scale_res, [t_tile, idx_nq])
         pypto.set_vec_tile_shapes(t_tile, idx_nq)
@@ -303,7 +307,11 @@ def quant_lightning_indexer_prolog_kernel(  # pylint: disable=huawei-too-many-ar
 
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
 pyptolib.define(
-    "quant_lightning_indexer_prolog(Tensor qr, Tensor idx_wq_b, Tensor x, Tensor weights_proj, Tensor cos, Tensor sin, Tensor hadamard, Tensor qr_scale, Tensor idx_wq_b_scale) -> (Tensor, Tensor, Tensor)"
+    "quant_lightning_indexer_prolog("
+    "Tensor qr, Tensor idx_wq_b, Tensor x, Tensor weights_proj, "
+    "Tensor cos, Tensor sin, Tensor hadamard, "
+    "Tensor qr_scale, Tensor idx_wq_b_scale"
+    ") -> (Tensor, Tensor, Tensor)"
 )
 
 

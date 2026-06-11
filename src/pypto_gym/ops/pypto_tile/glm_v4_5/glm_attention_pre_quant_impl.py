@@ -34,10 +34,10 @@ import torch
 import pypto
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
-from pypto_gym.ops.pypto_tile.glm_v4_5.utils.get_format import get_format
+from .utils.get_format import get_format
 
 
-def check_args(  # pylint: disable=huawei-too-many-arguments
+def check_args(
     hidden_states,
     residual,
     input_layernorm_weight,
@@ -158,7 +158,7 @@ def rope_data(x1, x2, cos, sin, tile_shape):
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128}
 )
-def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
+def quant_attention_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     residual_input: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     x_gamma: pypto.Tensor([], pypto.DT_BF16),
@@ -377,7 +377,7 @@ def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
 
 
 @allow_in_graph
-def attention_pre_quant(  # pylint: disable=huawei-too-many-arguments
+def attention_pre_quant(
     hidden_states: torch.Tensor,
     residual: Optional[torch.Tensor],
     input_layernorm_weight: torch.Tensor,

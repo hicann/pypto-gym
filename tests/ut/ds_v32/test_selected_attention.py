@@ -75,6 +75,35 @@ class SABuildConfig:
     v2_tile: List[int] = field(default_factory=lambda: [64, 128])
 
 
+def _build_selected_meta(cfg, q_nope_shape, q_rope_shape, k_slc_shape, v_slc_shape,
+                         kv_slc_act_seqs_shape, attention_out_shape):
+    """Construct the metadata dictionary for selected attention inputs."""
+    return {
+        "b": cfg.b,
+        "s1": cfg.s1,
+        "nQ": cfg.n_q,
+        "nKv": cfg.n_kv,
+        "dims": {
+            "qNope": q_nope_shape,
+            "qRope": q_rope_shape,
+            "kSlc": k_slc_shape,
+            "vSlc": v_slc_shape,
+            "kvSlcActSeqs": kv_slc_act_seqs_shape,
+            "attentionOut": attention_out_shape,
+        },
+        "topk": cfg.topk,
+        "softmaxScale": cfg.softmax_scale,
+        "tiles": {
+            "gTile": cfg.g_tile,
+            "s2Tile": cfg.s2_tile,
+            "c1Tile": cfg.c1_tile,
+            "v1Tile": cfg.v1_tile,
+            "c2Tile": cfg.c2_tile,
+            "v2Tile": cfg.v2_tile,
+        },
+    }
+
+
 def build_selected_args(cfg: SABuildConfig = SABuildConfig()):
     d_type = pypto.DT_FP16
     i32 = pypto.DT_INT32
@@ -123,28 +152,6 @@ def build_selected_args(cfg: SABuildConfig = SABuildConfig()):
         params=params,
     )
 
-    meta = {
-        "b": cfg.b,
-        "s1": cfg.s1,
-        "nQ": cfg.n_q,
-        "nKv": cfg.n_kv,
-        "dims": {
-            "qNope": q_nope_shape,
-            "qRope": q_rope_shape,
-            "kSlc": k_slc_shape,
-            "vSlc": v_slc_shape,
-            "kvSlcActSeqs": kv_slc_act_seqs_shape,
-            "attentionOut": attention_out_shape,
-        },
-        "topk": cfg.topk,
-        "softmaxScale": cfg.softmax_scale,
-        "tiles": {
-            "gTile": cfg.g_tile,
-            "s2Tile": cfg.s2_tile,
-            "c1Tile": cfg.c1_tile,
-            "v1Tile": cfg.v1_tile,
-            "c2Tile": cfg.c2_tile,
-            "v2Tile": cfg.v2_tile,
-        },
-    }
+    meta = _build_selected_meta(cfg, q_nope_shape, q_rope_shape, k_slc_shape, v_slc_shape,
+                                kv_slc_act_seqs_shape, attention_out_shape)
     return args, meta

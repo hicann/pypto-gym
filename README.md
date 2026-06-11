@@ -42,7 +42,6 @@ export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
 
-
 ## 快速上手
 
 ### 1. 运行单个模型的测试
@@ -65,6 +64,7 @@ pytest -v
 ```
 
 `pytest.ini` 已配置：
+
 - `testpaths`：`src/pypto_gym/ops`、`tests/ops`
 - `norecursedirs`：自动排除 `experimental/` 目录
 - `python_files`：匹配 `test_*.py`

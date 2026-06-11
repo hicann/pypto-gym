@@ -66,6 +66,8 @@ from typing import Optional, List, Dict, Tuple, Any
 from importlib import metadata
 from packaging import requirements
 
+
+
 @dataclasses.dataclass
 class FeatureParam():
     """特性控制相关参数
@@ -133,8 +135,11 @@ class FeatureParam():
                             choices=["manylinux2014", "manylinux_2_24", "manylinux_2_28"],
                             help="whl plat_name, such as manylinux2014/manylinux_2_24/manylinux_2_28 etc.")
         parser.add_argument("-b", "--backend", nargs="?", type=str, default="npu",
+
+
                             choices=["npu", "cost_model"],
                             help="backend, such as npu/cost_model etc.")
+
 
 @dataclasses.dataclass
 class TestsExecuteParam():
@@ -398,10 +403,13 @@ class BuildParam():
                 cmd += f" -j {self.job_num}" if self.job_num else ""
                 cmd_list.append(cmd)
         else:
+
+
             cmd = f"{cmake} --build {binary_path}"
             cmd += f" -j {self.job_num}" if self.job_num else ""
             cmd_list.append(cmd)
         return cmd_list
+
 
 @dataclasses.dataclass
 class TestsFilterParam():
@@ -571,7 +579,6 @@ class BuildCtrl():
                                                                       raise_err=False, log_err=False)
         devs = ["0"]
         if args.device is not None:
-            # devs = [str(d) for d in list(set(args.device)) if d is not None and str(d) != ""]
             devs = [str(d) for d in args.device if d is not None]
         self.auto_execute_device_id = ":".join(devs)
 
@@ -708,7 +715,6 @@ class BuildCtrl():
         logging.info("%s", ctrl)
         logging.info("Front-end(python3), start process")
         ctrl.py_clean()
-        # ctrl.py_build()
         ctrl.py_tests()
 
     def run_build_cmd(self, cmd: str, update_env: Optional[Dict[str, str]] = None,
@@ -813,7 +819,6 @@ class BuildCtrl():
 
         清理包括 CMake 构建目录, Python 缓存文件, 输出目录等. 仅在 clean 标记为 True 时执行额外清理.
         """
-        # pkg_src = Path(self.src_root, "python/pypto")
         pkg_src = Path(self.src_root)
         print(f"========pkg_src is {pkg_src}=======")
         path_lst = [
@@ -839,8 +844,6 @@ class BuildCtrl():
     def py_build(self):
         # 重装 whl 包
         dist = self.install_root
-        # self.pip_uninstall(name=self.feature.whl_name, path=dist)
-        # self.pip_install(whl=self.src_root, dest=dist)
 
     def py_tests(self):
         """执行 Python 前端测试
@@ -851,7 +854,6 @@ class BuildCtrl():
         tests_enable = self.tests.utest.enable or self.tests.stest.enable
         if not tests_enable and not self.tests.models.enable:
             return
-        # dist = self._get_pip_install_dist()
         dist = None
         print(f"==========pip list is {dist}=========")
         # 执行用例, UTest

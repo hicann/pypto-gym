@@ -226,6 +226,104 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor) -> pypto.Tens
     return res
 
 
+def _prolog_quant_query_path(t_tile, q_lora_rank, head_num, head_dim, rope_head_dim,
+                              x_dtype, t_idx,
+                              q_norm_in, q_norm_scale_in,
+                              w_qb_in, w_qb_scale_in,
+                              cos_idx_rope_in, sin_idx_rope_in,
+                              hadamard_q_in,
+                              q_quant_out, q_scale_out):
+    pypto.set_semantic_label("Query-Linear")
+    q_norm = pypto.view(q_norm_in, [t_tile, q_lora_rank], [t_idx, 0])
+    q_norm_scale = pypto.view(q_norm_scale_in, [t_tile, 1], [t_idx, 0])
+    pypto.set_cube_tile_shapes([128, 128], [256, 1024], [128, 128])
+    q_proj = pypto.matmul(q_norm, w_qb_in, pypto.DT_FP32)
+
+    pypto.set_semantic_label("Query-Dequant")
+    pypto.set_vec_tile_shapes(8, head_num * head_dim)
+    q_proj = q_proj * q_norm_scale
+    q_proj = q_proj * w_qb_scale_in
+    q_bf16 = pypto.cast(q_proj, x_dtype)
+
+    pypto.set_semantic_label("Query-Rope")
+    q_bf16 = pypto.reshape(q_bf16, [t_tile, head_num, head_dim])
+    q_rope = pypto.view(q_bf16, [t_tile, head_num, rope_head_dim], [0, 0, 0])
+    q_nope = pypto.view(q_bf16, [t_tile, head_num, head_dim - rope_head_dim], [0, 0, rope_head_dim])
+    rope_cos = pypto.view(cos_idx_rope_in, [t_tile, rope_head_dim], [t_idx, 0])
+    rope_sin = pypto.view(sin_idx_rope_in, [t_tile, rope_head_dim], [t_idx, 0])
+    q_roped = rope_3d(q_rope, rope_cos, rope_sin)
+    q_cat = pypto.concat([q_roped, q_nope], -1)
+    pypto.set_vec_tile_shapes(8, head_num, head_dim)
+    q_cat_2d = pypto.reshape(q_cat, [t_tile * head_num, head_dim])
+
+    pypto.set_semantic_label("Query-Hadamard")
+    pypto.set_cube_tile_shapes([256, 256], [128, 128], [128, 128])
+    q_hadamard = pypto.matmul(q_cat_2d, hadamard_q_in, x_dtype)
+
+    pypto.set_semantic_label("Query-Quant")
+    pypto.set_vec_tile_shapes(128, head_dim)
+    q_res = prolog_quant(q_hadamard)
+    pypto.assemble(q_res[0], [t_idx * head_num, 0], q_quant_out)
+    pypto.assemble(q_res[1], [t_idx * head_num, 0], q_scale_out)
+    return rope_cos, rope_sin
+
+
+def _prolog_quant_key_path(t_tile, h, head_dim, rope_head_dim,
+                            x_dtype, t_idx,
+                            x_in, wk_in,
+                            gamma_k_in,
+                            rope_cos, rope_sin,
+                            hadamard_k_in,
+                            k_quant_in, k_scale_in,
+                            k_cache_index_in, k_scale_cache_index_in,
+                            k_quant_out, k_scale_out):
+    pypto.set_semantic_label("Key-Linear")
+    pypto.set_cube_tile_shapes([128, 128], [256, 1024], [128, 128])
+    x = pypto.view(x_in, [t_tile, h], [t_idx, 0])
+    k_proj = pypto.matmul(x, wk_in, x_dtype)
+
+    pypto.set_semantic_label("Key-RmsNorm")
+    pypto.set_vec_tile_shapes(128, head_dim)
+    k_rms_norm = quant_rms_norm(k_proj, gamma_k_in, -1, 1e-6)
+
+    pypto.set_semantic_label("Key-Rope")
+    k_rope = pypto.view(k_rms_norm, [t_tile, rope_head_dim], [0, 0])
+    k_nope = pypto.view(k_rms_norm, [t_tile, head_dim - rope_head_dim], [0, rope_head_dim])
+    k_roped = quant_rope_2d(k_rope, rope_cos, rope_sin)
+    pypto.set_vec_tile_shapes(128, head_dim)
+    k_concat = pypto.concat([k_roped, k_nope], -1)
+
+    pypto.set_semantic_label("Key-Hadamard")
+    pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128])
+    hadamard_k = pypto.matmul(k_concat, hadamard_k_in, x_dtype)
+
+    pypto.set_semantic_label("Key-Quant")
+    pypto.set_vec_tile_shapes(128, head_dim)
+    k_res = prolog_quant(hadamard_k)
+    k_cache_4d = pypto.reshape(k_res[0], [t_tile, 1, 1, head_dim])
+    k_scale_4d = pypto.reshape(k_res[1], [t_tile, 1, 1, 1])
+
+    index = pypto.view(k_cache_index_in, [t_tile, 1], [t_idx, 0])
+    scale_index = pypto.view(k_scale_cache_index_in, [t_tile, 1], [t_idx, 0])
+    pypto.set_vec_tile_shapes(128, 1, 1, head_dim)
+    k_quant_out.move(pypto.scatter_update(k_quant_in, SCATTER_DIM, index, k_cache_4d))
+    k_scale_out.move(pypto.scatter_update(k_scale_in, SCATTER_DIM, scale_index, k_scale_4d))
+    return x
+
+
+def _prolog_quant_weights_path(t_tile, head_num, head_dim,
+                                x_dtype, t_idx,
+                                x, w_proj_in,
+                                weights_out):
+    pypto.set_semantic_label("Weight-Linear")
+    pypto.set_cube_tile_shapes([32, 32], [1024, 1024], [32, 32])
+    pypto.set_vec_tile_shapes(128, head_num)
+    weights = pypto.cast(pypto.matmul(x, w_proj_in, x_dtype), pypto.DT_FP32)
+    weights = pypto.cast(pypto.cast(weights * (head_num ** -0.5), pypto.DT_BF16), pypto.DT_FP32)
+    weights = pypto.cast(weights * (head_dim ** -0.5), pypto.DT_BF16)
+    pypto.assemble(weights, [t_idx, 0], weights_out)
+
+
 @pypto.frontend.jit(
     pass_options={
         # 0 cast_cos/sin, 1 q_dequant, 6 q_quant
@@ -236,7 +334,7 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor) -> pypto.Tens
         "device_sched_mode": 1
     }
 )
-def lightning_indexer_prolog_quant(  # pylint: disable=huawei-too-many-arguments
+def lightning_indexer_prolog_quant(
     x_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_ND),
     q_norm_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_HF8, format=pypto.TileOpFormat.TILEOP_ND),
     q_norm_scale_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32, format=pypto.TileOpFormat.TILEOP_ND),
@@ -266,62 +364,7 @@ def lightning_indexer_prolog_quant(  # pylint: disable=huawei-too-many-arguments
         pypto.DT_FP32, format=pypto.TileOpFormat.TILEOP_ND),
     weights_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16, format=pypto.TileOpFormat.TILEOP_ND),
 ):
-    """Compute Lightning Indexer Prolog with quantization.
-
-    Main computation function for Lightning Indexer Prolog quantization.
-    This function processes input tokens to generate quantized query, key, and weights
-    for the indexer attention mechanism. The computation includes:
-
-    1. Query Path:
-       - Dequantize q_norm (HIF8) to FP32
-       - Apply linear transformation with w_qb
-       - Apply RoPE (Rotary Position Embedding)
-       - Apply Hadamard transformation
-       - Quantize to HIF8 with per-token-head scale
-
-    2. Key Path:
-       - Linear transformation with wk
-       - RmsNorm normalization
-       - Apply RoPE
-       - Apply Hadamard transformation
-       - Quantize to HIF8 with per-token-head scale
-       - Update key cache using scatter_update
-
-    3. Weights Path:
-       - Linear transformation with w_proj
-       - Normalize by sqrt(head_num * head_dim)
-       - Convert to BF16
-
-    Args:
-        x_in: Input hidden states tensor, shape (t, h), dtype BF16
-        q_norm_in: Quantized query norm tensor, shape (t, q_lora_rank), dtype HIF8
-        q_norm_scale_in: Query norm dequantization scale, shape (t, 1), dtype FP32
-        w_qb_in: Query projection weight matrix, HIF8 format with ND layout
-        w_qb_scale_in: Query weight dequantization scale, shape (1, head_num * head_dim), dtype FP32
-        wk_in: Key projection weight matrix, BF16 format with ND layout
-        w_proj_in: Weight projection matrix, BF16 format with ND layout
-        gamma_k_in: RmsNorm scale parameter for key, shape (1, head_dim), dtype BF16
-        cos_idx_rope_in: Cosine values for RoPE, shape (t, rope_head_dim), dtype BF16
-        sin_idx_rope_in: Sine values for RoPE, shape (t, rope_head_dim), dtype BF16
-        hadamard_q_in: Hadamard transformation matrix for query, shape (head_dim, head_dim), dtype BF16
-        hadamard_k_in: Hadamard transformation matrix for key, shape (head_dim, head_dim), dtype BF16
-        k_quant_in: Input key cache, shape (block_num, block_size, n_kv, head_dim), dtype HIF8
-        k_scale_in: Key cache scale, shape (block_num, block_size, n_kv, 1), dtype FP32
-        k_cache_index_in: Cache index for scatter update, shape (t, 1), dtype INT64
-        k_scale_cache_index_in: Cache index for scatter update, shape (t, 1), dtype INT64
-        q_quant_out: Output quantized query tensor, shape (t, head_num, head_dim), dtype HIF8
-        q_scale_out: Output query quantization scale, shape (t, head_num, 1), dtype FP32
-        k_quant_out: Output key cache (updated in-place), shape (block_num, block_size, n_kv, head_dim), dtype HIF8
-        k_scale_out: Output key cache scale (updated in-place), shape (block_num, block_size, n_kv, 1), dtype FP32
-        weights_out: Output weights tensor, shape (t, head_num), dtype BF16
-
-    Note:
-        - The function processes tokens in tiles using loop_unroll for optimization
-        - All outputs are written in-place using pypto.assemble or scatter_update
-        - The computation uses dynamic tiling based on unroll_list
-    """
     x_dtype = x_in.dtype
-    # 动态轴
     t = x_in.shape[0]
     h = x_in.shape[1]
     q_lora_rank = q_norm_in.shape[1]
@@ -331,78 +374,30 @@ def lightning_indexer_prolog_quant(  # pylint: disable=huawei-too-many-arguments
 
     unroll_list = [128, 64, 32, 16, 8, 4, 2, 1]
     for t_idx, unroll_length in pypto.loop_unroll(0, t, 1, name="IndexerPrologQuantQuantLoop", idx_name="tIdx",
-                                                  unroll_list=unroll_list):
+                                                   unroll_list=unroll_list):
         t_tile = unroll_length
-        # 多分档内会将t_tile作为档位，offset无需乘t_tile
-        pypto.set_semantic_label("Query-Linear")
-        q_norm = pypto.view(q_norm_in, [t_tile, q_lora_rank], [t_idx, 0])
-        q_norm_scale = pypto.view(q_norm_scale_in, [t_tile, 1], [t_idx, 0])
-        pypto.set_cube_tile_shapes([128, 128], [256, 1024], [128, 128])
-        q_proj = pypto.matmul(q_norm, w_qb_in, pypto.DT_FP32)
+        rope_cos, rope_sin = _prolog_quant_query_path(
+            t_tile, q_lora_rank, head_num, head_dim, rope_head_dim,
+            x_dtype, t_idx,
+            q_norm_in, q_norm_scale_in,
+            w_qb_in, w_qb_scale_in,
+            cos_idx_rope_in, sin_idx_rope_in,
+            hadamard_q_in,
+            q_quant_out, q_scale_out)
 
-        pypto.set_semantic_label("Query-Dequant")
-        pypto.set_vec_tile_shapes(8, head_num * head_dim)
-        q_proj = q_proj * q_norm_scale
-        q_proj = q_proj * w_qb_scale_in
-        q_bf16 = pypto.cast(q_proj, x_dtype)
+        x = _prolog_quant_key_path(
+            t_tile, h, head_dim, rope_head_dim,
+            x_dtype, t_idx,
+            x_in, wk_in,
+            gamma_k_in,
+            rope_cos, rope_sin,
+            hadamard_k_in,
+            k_quant_in, k_scale_in,
+            k_cache_index_in, k_scale_cache_index_in,
+            k_quant_out, k_scale_out)
 
-        pypto.set_semantic_label("Query-Rope")
-        q_bf16 = pypto.reshape(q_bf16, [t_tile, head_num, head_dim])
-        q_rope = pypto.view(q_bf16, [t_tile, head_num, rope_head_dim], [0, 0, 0])
-        q_nope = pypto.view(q_bf16, [t_tile, head_num, head_dim - rope_head_dim], [0, 0, rope_head_dim])
-        rope_cos = pypto.view(cos_idx_rope_in, [t_tile, rope_head_dim], [t_idx, 0])
-        rope_sin = pypto.view(sin_idx_rope_in, [t_tile, rope_head_dim], [t_idx, 0])
-        q_roped = rope_3d(q_rope, rope_cos, rope_sin)
-        q_cat = pypto.concat([q_roped, q_nope], -1)
-        pypto.set_vec_tile_shapes(8, head_num, head_dim)
-        q_cat_2d = pypto.reshape(q_cat, [t_tile * head_num, head_dim])
-
-        pypto.set_semantic_label("Query-Hadamard")
-        pypto.set_cube_tile_shapes([256, 256], [128, 128], [128, 128])
-        q_hadamard = pypto.matmul(q_cat_2d, hadamard_q_in, x_dtype)
-
-        pypto.set_semantic_label("Query-Quant")
-        pypto.set_vec_tile_shapes(128, head_dim)
-        q_res = prolog_quant(q_hadamard)
-        pypto.assemble(q_res[0], [t_idx * head_num, 0], q_quant_out)
-        pypto.assemble(q_res[1], [t_idx * head_num, 0], q_scale_out)
-
-        pypto.set_semantic_label("Key-Linear")
-        pypto.set_cube_tile_shapes([128, 128], [256, 1024], [128, 128])
-        x = pypto.view(x_in, [t_tile, h], [t_idx, 0])
-        k_proj = pypto.matmul(x, wk_in, x_dtype)
-
-        pypto.set_semantic_label("Key-RmsNorm")
-        pypto.set_vec_tile_shapes(128, head_dim)
-        k_rms_norm = quant_rms_norm(k_proj, gamma_k_in, -1, 1e-6)
-
-        pypto.set_semantic_label("Key-Rope")
-        k_rope = pypto.view(k_rms_norm, [t_tile, rope_head_dim], [0, 0])
-        k_nope = pypto.view(k_rms_norm, [t_tile, head_dim - rope_head_dim], [0, rope_head_dim])
-        k_roped = quant_rope_2d(k_rope, rope_cos, rope_sin)
-        pypto.set_vec_tile_shapes(128, head_dim)
-        k_concat = pypto.concat([k_roped, k_nope], -1)
-
-        pypto.set_semantic_label("Key-Hadamard")
-        pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128])
-        hadamard_k = pypto.matmul(k_concat, hadamard_k_in, x_dtype)
-
-        pypto.set_semantic_label("Key-Quant")
-        pypto.set_vec_tile_shapes(128, head_dim)
-        k_res = prolog_quant(hadamard_k)
-        k_cache_4d = pypto.reshape(k_res[0], [t_tile, 1, 1, head_dim])
-        k_scale_4d = pypto.reshape(k_res[1], [t_tile, 1, 1, 1])
-
-        index = pypto.view(k_cache_index_in, [t_tile, 1], [t_idx, 0])
-        scale_index = pypto.view(k_scale_cache_index_in, [t_tile, 1], [t_idx, 0])
-        pypto.set_vec_tile_shapes(128, 1, 1, head_dim)
-        k_quant_out.move(pypto.scatter_update(k_quant_in, SCATTER_DIM, index, k_cache_4d))
-        k_scale_out.move(pypto.scatter_update(k_scale_in, SCATTER_DIM, scale_index, k_scale_4d))
-
-        pypto.set_semantic_label("Weight-Linear")
-        pypto.set_cube_tile_shapes([32, 32], [1024, 1024], [32, 32])
-        pypto.set_vec_tile_shapes(128, head_num)
-        weights = pypto.cast(pypto.matmul(x, w_proj_in, x_dtype), pypto.DT_FP32)
-        weights = pypto.cast(pypto.cast(weights * (head_num ** -0.5), pypto.DT_BF16), pypto.DT_FP32)
-        weights = pypto.cast(weights * (head_dim ** -0.5), pypto.DT_BF16)
-        pypto.assemble(weights, [t_idx, 0], weights_out)
+        _prolog_quant_weights_path(
+            t_tile, head_num, head_dim,
+            x_dtype, t_idx,
+            x, w_proj_in,
+            weights_out)

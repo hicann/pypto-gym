@@ -26,6 +26,7 @@ dK and dV are accumulated across kv tiles.
 import sys
 import os
 
+import collections
 import logging
 from dataclasses import dataclass
 
@@ -48,6 +49,9 @@ HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 # KV 序列维度的分块大小 (全局配置常量)
 S1_TILE = 1024
 S2_TILE = 1024
+
+MhaGradInputs = collections.namedtuple("MhaGradInputs", ["q", "k", "v", "actual_q", "actual_kv", "q_seqlens", "kv_seqlens"])
+AttentionBackwardOutput = collections.namedtuple("AttentionBackwardOutput", ["dq", "dk", "dv"])
 
 
 def get_device_id():
@@ -90,7 +94,7 @@ class TileConfig:
 
 
 def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
-                  q_seqlens=None, kv_seqlens=None):
+                   q_seqlens=None, kv_seqlens=None):
     """
     创建 varlen 布局的输入张量。
 
@@ -150,10 +154,10 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
     for skv in kv_seqlens:
         kv_cumsum.append(kv_cumsum[-1] + skv)
     actual_kv = torch.tensor(kv_cumsum, dtype=torch.int32, device=device)
-    return q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens
+    return MhaGradInputs(q=q, k=k, v=v, actual_q=actual_q, actual_kv=actual_kv, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
 
-def attention_backward_golden(q, k, v, o_input, do_t, scale):  # pylint: disable=too-many-return-values
+def attention_backward_golden(q, k, v, o_input, do_t, scale):
     """
     Golden reference: 严格模拟 kernel 内部的 dtype 转换流程。
 
@@ -220,7 +224,7 @@ def attention_backward_golden(q, k, v, o_input, do_t, scale):  # pylint: disable
     dq_fp32 = torch.matmul(ds_half.float(), k.float()) * scale
     dq = dq_fp32.to(torch.float32)
 
-    return dq, dk, dv
+    return AttentionBackwardOutput(dq, dk, dv)
 
 
 def compute_l_m_o(q, k, v, scale):
@@ -259,64 +263,8 @@ def compute_l_m_o(q, k, v, scale):
     return l_val, m, o.to(torch.bfloat16)
 
 
-def run_test(batch_size=None, num_heads=None, s1_size=None,
-             s2_size=None, dim=None, tile_config=None,
-             q_seqlens=None, kv_seqlens=None):
-    """
-    运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
-
-    参数语义 (Q: s1_size, KV: s2_size):
-      - batch_size: 批次数量              (默认 1)
-      - num_heads:  注意力头数            (默认 NUM_HEADS=8)
-      - s1_size:    Q 序列长度            (默认 320)
-      - s2_size:    KV 序列长度           (默认 = s1_size, 自注意力时相等)
-      - dim:        每个头的维度 head_dim (默认 HEAD_DIM=64)
-      - tile_config: TileConfig 分块配置  (默认使用全局 S2_TILE)
-
-    输入张量布局:
-      - Q/O/dO/L/M/dQ: [batch_size * s1_size, hidden_dim]  — Q 侧
-      - K/V/dK/dV:      [batch_size * s2_size, hidden_dim]  — KV 侧
-      - actual_q:        [batch_size + 1] — Q seqlen 前缀累加,
-                          s1_i = actual_q[i+1] - actual_q[i]
-      - actual_kv:       [batch_size + 1] — KV seqlen 前缀累加,
-                          s2_i = actual_kv[i+1] - actual_kv[i]
-
-    数据类型严格对应 kernel 签名:
-      ┌────────────┬──────────────────────────────────────────┬─────────────┐
-      │ 张量       │ kernel 签名                              │ host dtype  │
-      ├────────────┼──────────────────────────────────────────┼─────────────┤
-      │ q/k/v/o/do │ pypto.Tensor([DYN, HIDDEN_DIM], DT_BF16) │ bfloat16    │
-      │ l/m        │ pypto.Tensor([DYN, HIDDEN_DIM], DT_FP32) │ float32     │
-      │ dq/dk/dv   │ pypto.Tensor([DYN, HIDDEN_DIM], DT_BF16) │ bfloat16    │
-      │ actual_seq │ pypto.Tensor([DYN],            DT_INT32) │ int32       │
-      └────────────┴──────────────────────────────────────────┴─────────────┘
-
-    Kernel 内部 dtype 转换流程:
-      1. O, dO: BF16 → cast → FP32 (计算 D = sum(O*dO))
-      2. matmul 输出: 大部分 out_dtype=FP32，仅 dV 的 matmul 直接输出 BF16
-      3. P, dS: FP32 → cast → BF16 (作为后续 matmul 的输入，减少带宽)
-      4. dQ/dK 输出: FP32 → cast → BF16 后 assemble 写回
-
-    Args:
-        batch_size:  批次数量 (可选)
-        num_heads:   注意力头数 (可选)
-        s1_size:     Q 序列长度 (可选)
-        s2_size:     KV 序列长度 (可选, 默认 = s1_size)
-        dim:         每个头的维度 head_dim (可选)
-        tile_config: TileConfig 分块配置 (可选)
-        q_seqlens:   每个 batch 的 Q seqlen 列表 (可选, varlen 场景)
-        kv_seqlens:  每个 batch 的 KV seqlen 列表 (可选, varlen 场景)
-    Returns:
-        passed: 是否通过精度校验
-    """
-    device_id = get_device_id()
-    if device_id is None:
-        return None
-
-    torch.npu.set_device(device_id)
-    device = f'npu:{device_id}'
-
-    # ---- 参数默认值，未传则使用全局常量 ----
+def _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens):
+    """Resolve and normalize test parameters with defaults."""
     if batch_size is None:
         batch_size = 1
     if num_heads is None:
@@ -324,31 +272,41 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if s1_size is None:
         s1_size = 320
     if s2_size is None:
-        # 默认自注意力: KV seqlen = Q seqlen
         s2_size = s1_size
     if dim is None:
         dim = HEAD_DIM
-    if tile_config is None:
-        tile_config = FlashAttentionGradTileShapeConfig(
-            s1_tile = S2_TILE,
-            s2_tile = S2_TILE,
-            c_tile = [[256, 512], [128, 256], [128, 512]],
-            v_tile_s = [64, 256],
-            v_tile_d = [64, 256],
-        )
-
-    # varlen: 若显式传入 q_seqlens / kv_seqlens, 则覆盖 batch_size 与 s1_size/s2_size
     if q_seqlens is not None:
         batch_size = len(q_seqlens)
         s1_size = max(q_seqlens)
     if kv_seqlens is not None:
         assert len(kv_seqlens) == batch_size, "kv_seqlens must match batch_size"
         s2_size = max(kv_seqlens)
+    return batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens
 
-    # 派生常量 (全部从输入参数计算，不直接引用全局变量)
-    hidden_dim = num_heads * dim
-    scale = 1.0 / (dim ** 0.5)
 
+def _default_tile_config():
+    """Create default FlashAttentionGradTileShapeConfig."""
+    return FlashAttentionGradTileShapeConfig(
+        s1_tile=S2_TILE,
+        s2_tile=S2_TILE,
+        c_tile=[[256, 512], [128, 256], [128, 512]],
+        v_tile_s=[64, 256],
+        v_tile_d=[64, 256],
+    )
+
+
+def _setup_device():
+    """Set up NPU device from environment. Returns (device_str, device_id) or (None, None)."""
+    device_id = get_device_id()
+    if device_id is None:
+        return None, None
+    torch.npu.set_device(device_id)
+    return f'npu:{device_id}', device_id
+
+
+def _log_case(batch_size, num_heads, s1_size, s2_size, dim, hidden_dim, scale,
+              tile_config, q_seqlens, kv_seqlens):
+    """Log test case configuration."""
     logging.info("=" * 60)
     logging.info(f"Test Case: batch={batch_size}, heads={num_heads}, "
                  f"Q:s1_size={s1_size}, KV:s2_size={s2_size}, dim={dim}")
@@ -358,72 +316,32 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
                  f"s2_tile={tile_config.s2_tile}")
     logging.info("=" * 60)
 
-    # ---- 构造输入张量，dtype 严格匹配 kernel 签名 ----
-    # Q: [batch * s1_size, num_heads, dim], KV: [batch * s2_size, num_heads, dim]
-    # kernel 签名为三维 [DYNAMIC, N, D]
-    torch.manual_seed(2026)
-    q, k, v, actual_q, actual_kv, q_seqlens, kv_seqlens = create_inputs(
-        batch_size, s1_size, s2_size, num_heads, dim, device,
-        q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
-    # 从 actual_q / actual_kv (cumsum) 中派生 host 侧 offset/seqlen
-    # 描述： actual_q / actual_kv shape=[batch_size + 1], offset_i = actual_q[i], seq_i = actual_q[i+1] - actual_q[i]
-    q_cumsum = actual_q.cpu().tolist()
-    kv_cumsum = actual_kv.cpu().tolist()
-    total_q = q_cumsum[-1]
-    total_kv = kv_cumsum[-1]
-
-    # 注意: 此处使用与 create_inputs 不同的种子，避免 do_t 与 q 数值完全相同，
-    # 否则会掩盖 dQ/dK/dV 计算路径中与 dO 相关的错误。
-    # dO: Q 侧, shape=[batch * s1_size, num_heads, dim], dtype=BF16
-    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.1
-
-    # L, M: Q 侧, shape=[batch * s1_size, num_heads, 1], dtype=FP32
-    l_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
-    m_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
-    # O: Q 侧, shape=[batch * s1_size, num_heads, dim], dtype=BF16
-    o_out = torch.empty(total_q, num_heads, dim, dtype=torch.bfloat16, device=device)
-
-    # 预计算每个 (batch, head) 的 L, M, O
-    # 三维张量按 [seq, head, dim] 索引: tensor[q_off:q_off+sq, h, :]
-    # offset/seqlen 从 actual_q / actual_kv (cumsum) 派生, 支持每 batch 不等长
+def _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum,
+                       l_out, m_out, o_out, scale):
+    """Precompute L, M, O for all batch/head slices."""
     for b in range(batch_size):
         q_off = q_cumsum[b]
         kv_off = kv_cumsum[b]
-        sq = q_cumsum[b + 1] - q_off      # Q seqlen for this batch
-        skv = kv_cumsum[b + 1] - kv_off   # KV seqlen for this batch
+        sq = q_cumsum[b + 1] - q_off
+        skv = kv_cumsum[b + 1] - kv_off
         for h in range(num_heads):
             l_h, m_h, o_h = compute_l_m_o(
                 q[q_off: q_off + sq, h, :],
                 k[kv_off: kv_off + skv, h, :],
                 v[kv_off: kv_off + skv, h, :],
                 scale)
-            # l_h, m_h: [sq, 1], o_h: [sq, dim]
             l_out[q_off: q_off + sq, h, :] = l_h
             m_out[q_off: q_off + sq, h, :] = m_h
             o_out[q_off: q_off + sq, h, :] = o_h
 
-    # dQ: Q 侧, shape=[batch * s1_size, hidden_dim] (二维), dtype=BF16
-    # 使用 zeros 预初始化，kernel 内不再做 assemble 清零
-    dq_out = torch.zeros(total_q, hidden_dim, dtype=torch.float32, device=device)
-    # dK, dV: KV 侧, shape=[batch * s2_size, hidden_dim] (二维), dtype=BF16
-    dk_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
-    dv_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
 
-    # ---- 工作空间: kernel 内部用 pypto.assemble 固定 UB 分配, 防止 JIT 复叠导致精度退化 ----
-    # _ws: 用于 s_ij / ds_ij 的 UB fix, shape=[num_heads * S_TILE_2, S_TILE_2]
-    s2_tile = tile_config.s2_tile
-    ws_rows = num_heads * s2_tile
-    ws = torch.zeros(ws_rows, s2_tile, dtype=torch.float32, device=device)
-    # _ws_dq: 专门用于 dq_final 的 UB fix, shape=[num_heads * S_TILE_2, dim]
-    ws_dq = torch.zeros(ws_rows, dim, dtype=torch.float32, device=device)
-
-    # ---- Golden 计算: 先完整计算所有 batch/head 的 golden dQ/dK/dV ----
-    # golden dQ/dK/dV 与 kernel 输出同 shape: [total, hidden_dim], dtype=BF16
-    dq_golden = torch.empty(total_q, hidden_dim, dtype=torch.float32, device=device)
-    dk_golden = torch.empty(total_kv, hidden_dim, dtype=torch.float32, device=device)
-    dv_golden = torch.empty(total_kv, hidden_dim, dtype=torch.float32, device=device)
-
+def _compute_golden(batch_size, num_heads, dim, q, k, v, o_out, do_t,
+                     q_cumsum, kv_cumsum, total_q, total_kv, device, scale):
+    """Compute golden dQ/dK/dV for all batch/head slices."""
+    dq_golden = torch.empty(total_q, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dk_golden = torch.empty(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dv_golden = torch.empty(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
     for b in range(batch_size):
         q_off = q_cumsum[b]
         kv_off = kv_cumsum[b]
@@ -438,15 +356,17 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
                 o_out[q_off: q_off + sq, h, :],
                 do_t[q_off: q_off + sq, h, :],
                 scale)
-            # golden 返回 [seq, dim] BF16, 写入对应 [total, hidden_dim] 位置
             dq_golden[q_off: q_off + sq, h_off: h_off + dim] = dq_g
             dk_golden[kv_off: kv_off + skv, h_off: h_off + dim] = dk_g
             dv_golden[kv_off: kv_off + skv, h_off: h_off + dim] = dv_g
+    return dq_golden, dk_golden, dv_golden
 
-    # ---- 调用 kernel ----
+
+def _run_kernel(q, k, v, o_out, do_t, l_out, m_out, dq_out, dk_out, dv_out,
+                actual_q, actual_kv, ws, ws_dq, tile_config):
+    """Run the kernel and return elapsed time."""
     logging.info("  Running kernel...")
     import time
-    # perf run
     start_time = time.time()
     flash_attention_mha_grad_kernel_impl(
         q, k, v, o_out, do_t, l_out, m_out,
@@ -455,10 +375,12 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
         ws, ws_dq, tile_config)
     elapsed = time.time() - start_time
     logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
-    # ---- 精度校验: kernel 输出 vs golden 输出, 使用 numpy assert_allclose ----
+
+
+def _verify_precision(dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden):
+    """Verify kernel outputs against golden with BF16 tolerance."""
     rtol = 0.0078125  # 1/128, 约 BF16 精度
     atol = 0.0001
-
     passed = True
     for name, npu_tensor, golden_tensor in [
         ("dQ", dq_out, dq_golden),
@@ -475,9 +397,84 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
             logging.info(f"  {name}: FAILED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")
             logging.info(f"    {e}")
             passed = False
-
     logging.info(f"  {'PASSED' if passed else 'FAILED'}")
     return passed
+
+
+def _prepare_grad_inputs_and_outputs(batch_size, num_heads, dim, s2_tile, device,
+                                      q, k, v, actual_q, actual_kv, do_t,
+                                      l_out, m_out, o_out):
+    """Setup grad output tensors and golden reference."""
+    total_q = do_t.shape[0]
+    total_kv = k.shape[0]
+    scale = 1.0 / (dim ** 0.5)
+    dq_out = torch.zeros(total_q, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dk_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dv_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    ws_rows = num_heads * s2_tile
+    ws = torch.zeros(ws_rows, s2_tile, dtype=torch.float32, device=device)
+    ws_dq = torch.zeros(ws_rows, dim, dtype=torch.float32, device=device)
+    dq_golden, dk_golden, dv_golden = _compute_golden(
+        batch_size, num_heads, dim, q, k, v, o_out, do_t,
+        [0] + [q.shape[0]] if batch_size == 1 else list(range(batch_size + 1)),
+        [0] + [k.shape[0]] if batch_size == 1 else list(range(batch_size + 1)),
+        total_q, total_kv, device, scale)
+    return dq_out, dk_out, dv_out, ws, ws_dq, dq_golden, dk_golden, dv_golden
+
+
+def _run_test_setup_and_compute(device, batch_size, num_heads, s1_size, s2_size, dim,
+                                 tile_config, q_seqlens, kv_seqlens):
+    """Setup tensors and run kernel computation, returning outputs and goldens."""
+    hidden_dim = num_heads * dim
+    scale = 1.0 / (dim ** 0.5)
+    _log_case(batch_size, num_heads, s1_size, s2_size, dim, hidden_dim, scale,
+              tile_config, q_seqlens, kv_seqlens)
+    torch.manual_seed(2026)
+    inputs = create_inputs(batch_size, s1_size, s2_size, num_heads, dim, device,
+                           q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
+    q, k, v = inputs.q, inputs.k, inputs.v
+    actual_q, actual_kv = inputs.actual_q, inputs.actual_kv
+    q_seqlens, kv_seqlens = inputs.q_seqlens, inputs.kv_seqlens
+    q_cumsum = actual_q.cpu().tolist()
+    kv_cumsum = actual_kv.cpu().tolist()
+    total_q = q_cumsum[-1]
+    total_kv = kv_cumsum[-1]
+    do_t = torch.randn(total_q, num_heads, dim, dtype=torch.bfloat16, device=device) * 0.1
+    l_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
+    m_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
+    o_out = torch.empty(total_q, num_heads, dim, dtype=torch.bfloat16, device=device)
+    _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum, l_out, m_out, o_out, scale)
+    dq_out = torch.zeros(total_q, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dk_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dv_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    s2_tile = tile_config.s2_tile
+    ws_rows = num_heads * s2_tile
+    ws = torch.zeros(ws_rows, s2_tile, dtype=torch.float32, device=device)
+    ws_dq = torch.zeros(ws_rows, dim, dtype=torch.float32, device=device)
+    dq_golden, dk_golden, dv_golden = _compute_golden(
+        batch_size, num_heads, dim, q, k, v, o_out, do_t,
+        q_cumsum, kv_cumsum, total_q, total_kv, device, scale)
+    _run_kernel(q, k, v, o_out, do_t, l_out, m_out, dq_out, dk_out, dv_out,
+                actual_q, actual_kv, ws, ws_dq, tile_config)
+    return dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden
+
+
+def run_test(batch_size=None, num_heads=None, s1_size=None,
+             s2_size=None, dim=None, tile_config=None,
+             q_seqlens=None, kv_seqlens=None):
+    """运行单个测试用例：构造输入 → 调用 kernel → 与 golden 对比。"""
+    device, device_id = _setup_device()
+    if device is None:
+        return None
+    batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens = \
+        _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens)
+    if tile_config is None:
+        tile_config = _default_tile_config()
+
+    dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden = \
+        _run_test_setup_and_compute(device, batch_size, num_heads, s1_size, s2_size, dim,
+                                     tile_config, q_seqlens, kv_seqlens)
+    return _verify_precision(dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden)
 
 
 ########################################################################

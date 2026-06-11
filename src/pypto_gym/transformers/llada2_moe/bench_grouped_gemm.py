@@ -12,6 +12,7 @@ Usage:
     python src/pypto_gym/transformers/llada2_moe/bench_grouped_gemm.py
 """
 
+import collections
 import os
 import sys
 import time
@@ -31,7 +32,7 @@ try:
     import torch_npu  # noqa: F401
 except ImportError:
     print("torch_npu not available; this benchmark only runs on Ascend NPU.")
-    sys.exit(0)
+    raise RuntimeError("torch_npu not available; this benchmark only runs on Ascend NPU.") from None
 
 import pypto
 
@@ -56,31 +57,40 @@ ITERS = 200
 WARMUP = 20
 
 
-def make_data(E, N_total):
-    tpe = [N_total // E] * E
-    for i in range(N_total - sum(tpe)):
-        tpe[i] += 1
+GroupedGemmData = collections.namedtuple(
+    "GroupedGemmData",
+    ["states_data", "w13_data", "w2_data", "cs_data", "res_data",
+     "tokens_per_exp"],
+)
+
+
+def make_data(n_experts, n_tokens):
+    tokens_per_exp = [n_tokens // n_experts] * n_experts
+    for i in range(n_tokens - sum(tokens_per_exp)):
+        tokens_per_exp[i] += 1
     cumsum = [0]
-    for c in tpe:
+    for c in tokens_per_exp:
         cumsum.append(cumsum[-1] + c)
-    st = torch.randn(N_total, H, dtype=torch.bfloat16, device=DEV) * 0.02
-    w13f = torch.randn(E * H, 2 * I, dtype=torch.bfloat16, device=DEV) * 0.02
-    w2f = torch.randn(E * I, H, dtype=torch.bfloat16, device=DEV) * 0.02
-    cs = torch.tensor(cumsum, dtype=torch.int32, device=DEV)
-    res = torch.zeros(N_total, H, dtype=torch.bfloat16, device=DEV)
-    return st, w13f, w2f, cs, res, tpe
+    states_data = torch.randn(n_tokens, H, dtype=torch.bfloat16, device=DEV) * 0.02
+    w13_data = torch.randn(n_experts * H, 2 * I, dtype=torch.bfloat16, device=DEV) * 0.02
+    w2_data = torch.randn(n_experts * I, H, dtype=torch.bfloat16, device=DEV) * 0.02
+    cs_data = torch.tensor(cumsum, dtype=torch.int32, device=DEV)
+    res_data = torch.zeros(n_tokens, H, dtype=torch.bfloat16, device=DEV)
+    return GroupedGemmData(
+        states_data, w13_data, w2_data, cs_data, res_data, tokens_per_exp
+    )
 
 
-def eager_grouped_prealloc(st, w13f, w2f, tpe, E, result_buf):
+def eager_grouped_prealloc(states_data, w13_data, w2_data, tokens_per_exp, n_experts, result_buf):
     """Eager with pre-allocated output buffer (fair comparison)."""
     offset = 0
-    for e in range(E):
-        n_e = tpe[e]
+    for e in range(n_experts):
+        n_e = tokens_per_exp[e]
         if n_e == 0:
             continue
-        x_e = st[offset : offset + n_e]
-        w13_e = w13f[e * H : (e + 1) * H, :]
-        w2_e = w2f[e * I : (e + 1) * I, :]
+        x_e = states_data[offset : offset + n_e]
+        w13_e = w13_data[e * H : (e + 1) * H, :]
+        w2_e = w2_data[e * I : (e + 1) * I, :]
         gu = x_e @ w13_e
         sw = F.silu(gu[..., :I]) * gu[..., I:]
         result_buf[offset : offset + n_e] = (sw @ w2_e).to(torch.bfloat16)
@@ -104,7 +114,13 @@ print("-" * 60)
 
 torch.manual_seed(42)
 for E, N_total in configs:
-    st, w13f, w2f, cs, res, tpe = make_data(E, N_total)
+    data = make_data(E, N_total)
+    st = data.states_data
+    w13f = data.w13_data
+    w2f = data.w2_data
+    cs = data.cs_data
+    res = data.res_data
+    tpe = data.tokens_per_exp
     res_eager = torch.zeros(N_total, H, dtype=torch.bfloat16, device=DEV)
 
     # Warmup

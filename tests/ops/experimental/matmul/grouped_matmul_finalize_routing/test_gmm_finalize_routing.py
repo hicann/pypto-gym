@@ -47,15 +47,8 @@ RTOL = 1e-3
 ATOL = 1e-3
 
 
-def test_gmm_finalize_routing(config):
-    """单配置测试：构造数据、运行 golden 与 PyPTO，并执行数值对齐校验。"""
-    torch_dtype_map = {
-        pypto.DT_FP8E4M3: torch.float8_e4m3fn,
-        pypto.DT_FP8E5M2: torch.float8_e5m2,
-    }
-    torch_dtype = torch_dtype_map.get(config.in_dtype, torch.float8_e4m3fn)
-    scale_k = (config.k + 63) // 64
-
+def _build_finalize_routing_tensors(config, torch_dtype, scale_k):
+    """构造 grouped_matmul_finalize_routing 的输入张量。"""
     x1 = torch.randn((config.m, config.k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
     if config.transpose_x2:
         x2 = torch.randn((config.num_experts, config.n, config.k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
@@ -71,6 +64,20 @@ def test_gmm_finalize_routing(config):
     logit = torch.randn((config.m,), dtype=torch.float32).uniform_(0, 1)
     row_index = torch.arange(config.m, dtype=torch.int64) % config.batch
     out = torch.zeros((config.batch, config.n), dtype=torch.float32)
+    return x1, x2, scale, pertoken_scale, group_list, shared_input, logit, row_index, out
+
+
+def test_gmm_finalize_routing(config):
+    """单配置测试：构造数据、运行 golden 与 PyPTO，并执行数值对齐校验。"""
+    torch_dtype_map = {
+        pypto.DT_FP8E4M3: torch.float8_e4m3fn,
+        pypto.DT_FP8E5M2: torch.float8_e5m2,
+    }
+    torch_dtype = torch_dtype_map.get(config.in_dtype, torch.float8_e4m3fn)
+    scale_k = (config.k + 63) // 64
+
+    x1, x2, scale, pertoken_scale, group_list, shared_input, logit, row_index, out = \
+        _build_finalize_routing_tensors(config, torch_dtype, scale_k)
 
     golden = gen_golden(
         FinalizeRoutingGoldenInputs(

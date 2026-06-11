@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import numpy as np
 from numpy.testing import assert_allclose
 
-from deepseek_v4.compressor_impl import compressor_pypto, npu_compressor
+from deepseek_v4.compressor_impl import compressor_pypto, npu_compressor, CompressorArgs
 
 
 np.random.seed(0)
@@ -83,7 +83,79 @@ def apply_rotary_pos_emb_v2(
     return x_embed
 
 
-def golden_compress(  # pylint: disable=huawei-too-many-arguments
+def _compress_overlap_step(
+    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
+    kv_state, score_state, kv_block_table, score_block_table,
+    block_size, ratio, d, kv, score,
+):
+    """Overlap-mode (ratio==4) compression step for one token position."""
+    kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
+    score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
+    cur_pos = (start_pos_dy[b_idx] + i) % block_size
+    kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
+    score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
+    should_compress = (start_pos_dy[b_idx] + i + 1) % ratio == 0
+    if should_compress:
+        pre_kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i - 2 * ratio + 1) // block_size]
+        pre_score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i - 2 * ratio + 1) // block_size]
+        pre_start = (start_pos_dy[b_idx] + i - 2 * ratio + 1) % block_size
+        pre_end = pre_start + ratio
+        cur_start = (start_pos_dy[b_idx] + i - ratio + 1) % block_size
+        cur_end = cur_start + ratio
+        if start_pos_dy[b_idx] < ratio:
+            kv_state_tmp = torch.cat([
+                kv_state[pre_kv_block_idx, pre_start:pre_end, :d] * 0,
+                kv_state[kv_block_idx, cur_start:cur_end, d:]], dim=0)
+            score_state_tmp = torch.cat([
+                score_state[pre_score_block_idx, pre_start:pre_end, :d] - float("inf"),
+                score_state[score_block_idx, cur_start:cur_end, d:]], dim=0)
+        else:
+            kv_state_tmp = torch.cat([
+                kv_state[pre_kv_block_idx, pre_start:pre_end, :d],
+                kv_state[kv_block_idx, cur_start:cur_end, d:]], dim=0)
+            score_state_tmp = torch.cat([
+                score_state[pre_score_block_idx, pre_start:pre_end, :d],
+                score_state[score_block_idx, cur_start:cur_end, d:]], dim=0)
+        kv_new = (kv_state_tmp * score_state_tmp.softmax(dim=0)).sum(dim=0, keepdim=False)
+    else:
+        kv_new = None
+    return kv_new, should_compress
+
+
+def _compress_non_overlap_step(
+    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
+    kv_state, score_state, kv_block_table, score_block_table,
+    block_size, ratio, d, kv, score,
+):
+    """Non-overlap-mode compression step for one token position."""
+    kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
+    score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
+    cur_pos = (start_pos_dy[b_idx] + i) % block_size
+    kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
+    score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
+    should_compress = (start_pos_dy[b_idx] + i + 1) % ratio == 0
+    if should_compress:
+        kv_tmp = torch.cat((kv_state[kv_block_idx, :-1, :], kv), dim=0)
+        score_tmp = torch.cat((score_state[score_block_idx, :-1, :], score), dim=0)
+        kv_new = (kv_tmp * score_tmp.softmax(dim=0)).sum(dim=0, keepdim=False)
+    else:
+        kv_new = None
+    return kv_new, should_compress
+
+
+def _compress_post_process(kv_new, dtype, eps, weight, rope_head_dim, sin, cos, b_idx, hadamard, rotate):
+    """Apply RMSNorm, RoPE, and optional Hadamard to a compressed KV token."""
+    kv = rms_norm_golden(kv_new.to(dtype), eps, weight)
+    kv_rope = kv[..., -rope_head_dim:].clone()
+    kv_new = kv.clone()
+    kv_new[..., -rope_head_dim:] = apply_rotary_pos_emb_v2(
+        kv_rope, sin[b_idx, ...], cos[b_idx, ...], "interleave")
+    if rotate:
+        return torch.matmul(kv_new, hadamard)
+    return kv_new
+
+
+def golden_compress(
     x,
     sin,
     cos,
@@ -105,108 +177,38 @@ def golden_compress(  # pylint: disable=huawei-too-many-arguments
     bsz, s1, _ = x.size()
     overlap = ratio == 4
     dtype = x.dtype
-    x = x.float()  # b,s,h
+    x = x.float()
 
     wkv = wkv.transpose(-2, -1).to(torch.float32)
     wgate = wgate.transpose(-2, -1).to(torch.float32)
     d = wkv.size(1) // (1 + overlap)
 
-    kv_total = torch.matmul(x, wkv)  # b,s,2d
-    score_total = torch.matmul(x, wgate)  # b,s,2d
+    kv_total = torch.matmul(x, wkv)
+    score_total = torch.matmul(x, wgate)
 
     block_size = kv_state.shape[1]
     kv_output = torch.zeros(
         (min(bsz * s1, bsz * s1 // ratio + bsz), d),
-        dtype=torch.bfloat16,
-        device=x.device,
-    )
+        dtype=torch.bfloat16, device=x.device)
     for b_idx in range(bsz):
         for i in range(s1):
-            start_pos = start_pos_dy[b_idx]
-            should_compress = (start_pos + i + 1) % ratio == 0
-            pos = (start_pos + i) % ratio
-            kv = kv_total[b_idx, i : i + 1, :].clone()
-            score = score_total[b_idx, i : i + 1, :].clone()
+            pos = (start_pos_dy[b_idx] + i) % ratio
+            kv = kv_total[b_idx, i:i + 1, :].clone()
+            score = score_total[b_idx, i:i + 1, :].clone()
             score += ape[pos]
             if overlap:
-                kv_block_idx = kv_block_table[b_idx, (start_pos + i) // block_size]
-                score_block_idx = score_block_table[
-                    b_idx, (start_pos + i) // block_size
-                ]
-                cur_pos = (start_pos + i) % block_size
-                kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
-                score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
-                if should_compress:
-                    pre_kv_block_idx = kv_block_table[
-                        b_idx, (start_pos + i - 2 * ratio + 1) // block_size
-                    ]
-                    pre_score_block_idx = score_block_table[
-                        b_idx, (start_pos + i - 2 * ratio + 1) // block_size
-                    ]
-                    pre_start = (start_pos + i - 2 * ratio + 1) % block_size
-                    pre_end = pre_start + ratio
-                    cur_start = (start_pos + i - ratio + 1) % block_size
-                    cur_end = cur_start + ratio
-                    if start_pos < ratio:
-                        kv_state_tmp = torch.cat(
-                            [
-                                kv_state[pre_kv_block_idx, pre_start:pre_end, :d] * 0,
-                                kv_state[kv_block_idx, cur_start:cur_end, d:],
-                            ],
-                            dim=0,
-                        )
-                        score_state_tmp = torch.cat(
-                            [
-                                score_state[pre_score_block_idx, pre_start:pre_end, :d]
-                                - float("inf"),
-                                score_state[score_block_idx, cur_start:cur_end, d:],
-                            ],
-                            dim=0,
-                        )
-                    else:
-                        kv_state_tmp = torch.cat(
-                            [
-                                kv_state[pre_kv_block_idx, pre_start:pre_end, :d],
-                                kv_state[kv_block_idx, cur_start:cur_end, d:],
-                            ],
-                            dim=0,
-                        )  # 8,d
-                        score_state_tmp = torch.cat(
-                            [
-                                score_state[pre_score_block_idx, pre_start:pre_end, :d],
-                                score_state[score_block_idx, cur_start:cur_end, d:],
-                            ],
-                            dim=0,
-                        )  # 8,d
-                    kv = (kv_state_tmp * score_state_tmp.softmax(dim=0)).sum(
-                        dim=0, keepdim=False
-                    )  # 1,d
+                kv_new, should_compress = _compress_overlap_step(
+                    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
+                    kv_state, score_state, kv_block_table, score_block_table,
+                    block_size, ratio, d, kv, score)
             else:
-                kv_block_idx = kv_block_table[b_idx, (start_pos + i) // block_size]
-                score_block_idx = score_block_table[
-                    b_idx, (start_pos + i) // block_size
-                ]
-                cur_pos = (start_pos + i) % block_size
-                kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
-                score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
-                if should_compress:
-                    kv_tmp = torch.cat((kv_state[kv_block_idx, :-1, :], kv), dim=0)
-                    score_tmp = torch.cat(
-                        (score_state[score_block_idx, :-1, :], score), dim=0
-                    )
-                    kv = (kv_tmp * score_tmp.softmax(dim=0)).sum(dim=0, keepdim=False)
-
+                kv_new, should_compress = _compress_non_overlap_step(
+                    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
+                    kv_state, score_state, kv_block_table, score_block_table,
+                    block_size, ratio, d, kv, score)
             if should_compress:
-                kv = rms_norm_golden(kv.to(dtype), eps, weight)  # 1,d
-                kv_rope = kv[..., -rope_head_dim:].clone()
-                kv_new = kv.clone()
-                kv_new[..., -rope_head_dim:] = apply_rotary_pos_emb_v2(
-                    kv_rope, sin[b_idx, ...], cos[b_idx, ...], "interleave"
-                )
-                if rotate:
-                    kv_output[b_idx, :] = torch.matmul(kv_new, hadamard)  # 1,d
-                else:
-                    kv_output[b_idx, :] = kv_new  # b,1,d
+                kv_output[b_idx, :] = _compress_post_process(
+                    kv_new, dtype, eps, weight, rope_head_dim, sin, cos, b_idx, hadamard, rotate)
     return kv_output
 
 
@@ -248,31 +250,25 @@ def gen_inputs(
         (block_table.max() + 1, 128, coff * d), dtype=torch.float32, device=device
     )
     hadamard = torch.rand((d, d), dtype=torch.bfloat16, device=device) * (d**-0.5)
-    return (
-        x,
-        sin,
-        cos,
-        wkv,
-        wgate,
-        ape,
-        weight,
-        kv_state,
-        score_state,
-        block_table,
-        hadamard,
-    )
+    return (x, sin, cos, wkv, wgate, ape, weight,
+            kv_state, score_state, block_table, hadamard)
 
 
 class Compressor(nn.Module):
-    def __init__(self):  # pylint: disable=huawei-too-many-arguments
+    def __init__(self):
         super().__init__()
 
     def forward(
         self, x, kv_state, score_state, kv_block_table, score_block_table, sin, cos, wkv, wgate,
         ape, weight, hadamard, st, ra, rope_head_dim, ro
     ):
-        return compressor_pypto(x, kv_state, score_state, kv_block_table, score_block_table, 
-            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
+        args = CompressorArgs(
+            x=x, kv_state=kv_state, score_state=score_state,
+            kv_block_table=kv_block_table, score_block_table=score_block_table,
+            sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
+            hadamard=hadamard, start_pos=st, ratio=ra,
+            rope_head_dim=rope_head_dim, rotate=ro)
+        return compressor_pypto(args)
 
 
 def compile_model(model):
@@ -281,9 +277,65 @@ def compile_model(model):
         "frozen_parameter": True,
         "static_kernel_compile": False,
     }
-    compile_model = torch.compile(model, dynamic=False, fullgraph=True, backend="npugraph_ex", options=compile_options)  # pylint: disable=redefined-outer-name
+    compiled_model = torch.compile(model, dynamic=False, fullgraph=True, backend="npugraph_ex", options=compile_options)
 
-    return compile_model
+    return compiled_model
+
+
+def _run_compressor_test(ra, ro, bsz, seq, h, d, rope_head_dim, device, enable_acl_graph=False):
+    """Common test runner for compressor tests."""
+    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
+    print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
+
+    x, sin, cos, wkv, wgate, ape, weight, kv_state, score_state, block_table, hadamard = \
+        gen_inputs(bsz, seq, h, d, rope_head_dim, ra, device)
+
+    if enable_acl_graph:
+        compressor_model = Compressor().npu()
+        compressor_model = compile_model(compressor_model)
+        out, kv_state_out, score_state_out = compressor_model(
+            x, kv_state, score_state, block_table, block_table,
+            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
+        torch_npu.npu.synchronize()
+    elif ra == 128:
+        args = CompressorArgs(
+            x=x, kv_state=kv_state, score_state=score_state,
+            kv_block_table=block_table, score_block_table=block_table,
+            sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
+            hadamard=hadamard, start_pos=st, ratio=ra,
+            rope_head_dim=rope_head_dim, rotate=ro)
+        out, kv_state_out, score_state_out = npu_compressor(args)
+    else:
+        args = CompressorArgs(
+            x=x, kv_state=kv_state, score_state=score_state,
+            kv_block_table=block_table, score_block_table=block_table,
+            sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
+            hadamard=hadamard, start_pos=st, ratio=ra,
+            rope_head_dim=rope_head_dim, rotate=ro)
+        out, kv_state_out, score_state_out = compressor_pypto(args)
+
+    kv = golden_compress(x, sin, cos, wkv, wgate, ape, weight,
+                         kv_state, score_state, block_table, block_table,
+                         hadamard, ra, st, rope_head_dim, ro)
+    _assert_compressor_outputs(kv_state_out, kv_state, score_state_out, score_state, out, kv)
+    print("test_compressor_decode passed!")
+
+
+def _assert_compressor_outputs(kv_state_out, kv_state, score_state_out, score_state, out, kv):
+    """Assert compressor outputs match goldens."""
+    assert_allclose(kv_state_out.cpu().float().numpy(), kv_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
+    assert_allclose(score_state_out.cpu().float().numpy(), score_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
+    if kv is not None:
+        assert_allclose(out.cpu().float().numpy(), kv.cpu().float().numpy(), rtol=0.0078125, atol=1e-4)
+
+
+def _compressor_prep():
+    """Common setup for compressor tests: get device and configure."""
+    device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
+    device = f"npu:{device_id}"
+    torch.npu.set_device(device_id)
+    torch_npu.npu.config.allow_internal_format = True
+    return device
 
 
 def test_comp_128(enable_acl_graph=False):
@@ -291,49 +343,9 @@ def test_comp_128(enable_acl_graph=False):
     print("=" * 60)
     print("Test: Compressor")
     print("=" * 60)
-
-    device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
-    device = f"npu:{device_id}"
-    torch.npu.set_device(device_id)
-    torch_npu.npu.config.allow_internal_format = True
-
-    ra = 128
-    ro = False
-
-    bsz = 64
-    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
-    print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
-    seq = 2
-    h = 4096
-    d = 512
-    rope_head_dim = 64
-    x, sin, cos, wkv, wgate, ape, weight, kv_state, score_state, \
-        block_table, hadamard = gen_inputs(bsz, seq, h, d, rope_head_dim, ra, device)
-
-    if enable_acl_graph:
-        compressor_model = Compressor().npu()
-        compressor_model = compile_model(compressor_model)  # 使能aclgraph
-
-        out, kv_state_out, score_state_out = compressor_model(x, kv_state, score_state, block_table, block_table, \
-            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-        torch_npu.npu.synchronize()
-    else:
-        out, kv_state_out, score_state_out = npu_compressor(x, kv_state, score_state, block_table, block_table, \
-                           sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-
-    kv = golden_compress(x, sin, cos, wkv, wgate, ape, weight, \
-                         kv_state, score_state, block_table, block_table, hadamard, ra, st, rope_head_dim, ro)
-    assert_allclose(kv_state_out.cpu().float().numpy(), kv_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
-    assert_allclose(score_state_out.cpu().float().numpy(), score_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
-    if kv is not None:
-        assert_allclose(
-            out.cpu().float().numpy(),
-            kv.cpu().float().numpy(),
-            rtol=0.0078125,
-            atol=1e-4,
-        )
-
-    print("test_compressor_decode passed!")
+    device = _compressor_prep()
+    _run_compressor_test(ra=128, ro=False, bsz=64, seq=2, h=4096, d=512, rope_head_dim=64,
+                         device=device, enable_acl_graph=enable_acl_graph)
 
 
 @pytest.mark.skip(reason="large test case")
@@ -341,50 +353,9 @@ def test_comp_4(enable_acl_graph=False):
     """Test Compressor"""
     print("Test: Compressor")
     print("=" * 60)
-
-    device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
-    device = f"npu:{device_id}"
-    torch.npu.set_device(device_id)
-    torch_npu.npu.config.allow_internal_format = True
-
-    ra = 4
-    ro = False
-
-    bsz = 64
-    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
-    print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
-    seq = 2
-    h = 4096
-    d = 512
-    rope_head_dim = 64
-    x, sin, cos, wkv, wgate, ape, weight, kv_state, score_state, block_table, hadamard = gen_inputs(
-        bsz, seq, h, d, rope_head_dim, ra, device
-    )
-
-    if enable_acl_graph:
-        compressor_model = Compressor().npu()
-        compressor_model = compile_model(compressor_model)  # 使能aclgraph
-
-        out, kv_state_out, score_state_out = compressor_model(x, kv_state, score_state, block_table, block_table, \
-            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-        torch_npu.npu.synchronize()
-    else:
-        out, kv_state_out, score_state_out = compressor_pypto(x, kv_state, score_state, block_table, block_table, \
-                           sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-
-    kv = golden_compress(x, sin, cos, wkv, wgate, ape, weight, \
-                         kv_state, score_state, block_table, block_table, hadamard, ra, st, rope_head_dim, ro)
-    assert_allclose(kv_state_out.cpu().float().numpy(), kv_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
-    assert_allclose(score_state_out.cpu().float().numpy(), score_state.cpu().float().numpy(), rtol=1e-3, atol=1e-3)
-    if kv is not None:
-        assert_allclose(
-            out.cpu().float().numpy(),
-            kv.cpu().float().numpy(),
-            rtol=0.0078125,
-            atol=1e-4,
-        )
-
-    print("test_compressor_decode passed!")
+    device = _compressor_prep()
+    _run_compressor_test(ra=4, ro=False, bsz=64, seq=2, h=4096, d=512, rope_head_dim=64,
+                         device=device, enable_acl_graph=enable_acl_graph)
 
 
 @pytest.mark.skip(reason="large test case")
@@ -393,62 +364,9 @@ def test_comp_indexer(enable_acl_graph=False):
     print("=" * 60)
     print("Test: Compressor")
     print("=" * 60)
-
-    device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
-    device = f"npu:{device_id}"
-    torch.npu.set_device(device_id)
-    torch_npu.npu.config.allow_internal_format = True
-
-    ra = 4
-    ro = True
-
-    bsz = 64
-    st = torch.tensor([8192] * bsz, dtype=torch.int32, device=device)
-    print(f"test_compressor_decode (ratio: {ra}, rotate: {ro}) begin!")
-    seq = 2
-    h = 4096
-    d = 128
-    rope_head_dim = 64
-    x, sin, cos, wkv, wgate, ape, weight, kv_state, score_state, block_table, hadamard = gen_inputs(
-        bsz, seq, h, d, rope_head_dim, ra, device
-    )
-
-    if enable_acl_graph:
-        compressor_model = Compressor().npu()
-        compressor_model = compile_model(compressor_model)  # 使能aclgraph
-
-        out, kv_state_out, score_state_out = compressor_model(x, kv_state, score_state, block_table, block_table, \
-            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-        torch_npu.npu.synchronize()
-    else:
-        out, kv_state_out, score_state_out = compressor_pypto(x, kv_state, score_state, block_table, block_table, \
-                           sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
-
-    kv = golden_compress(
-        x, sin, cos, wkv, wgate, ape, weight, kv_state, score_state, block_table, block_table,
-        hadamard, ra, st, rope_head_dim, ro
-    )
-    assert_allclose(
-        kv_state_out.cpu().float().numpy(),
-        kv_state.cpu().float().numpy(),
-        rtol=1e-3,
-        atol=1e-3,
-    )
-    assert_allclose(
-        score_state_out.cpu().float().numpy(),
-        score_state.cpu().float().numpy(),
-        rtol=1e-3,
-        atol=1e-3,
-    )
-    if kv is not None:
-        assert_allclose(
-            out.cpu().float().numpy(),
-            kv.cpu().float().numpy(),
-            rtol=0.0078125,
-            atol=1e-4,
-        )
-
-    print("test_compressor_decode passed!")
+    device = _compressor_prep()
+    _run_compressor_test(ra=4, ro=True, bsz=64, seq=2, h=4096, d=128, rope_head_dim=64,
+                         device=device, enable_acl_graph=enable_acl_graph)
 
 
 if __name__ == "__main__":

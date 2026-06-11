@@ -104,7 +104,7 @@ def rope_data(x1, x2, cos, sin, tile_shape):
 
 
 @allow_in_graph
-def attention(  # pylint: disable=huawei-too-many-arguments
+def attention(
         hidden_states: torch.Tensor,
         residual: Optional[torch.Tensor],
         input_layernorm_weight: torch.Tensor,
@@ -210,7 +210,7 @@ def attention(  # pylint: disable=huawei-too-many-arguments
                      "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
                     },
 )
-def ifa_func_kernel(  # pylint: disable=huawei-too-many-arguments
+def ifa_func_kernel(
     block_table: pypto.Tensor(),
     kv_act_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     index: pypto.Tensor(),

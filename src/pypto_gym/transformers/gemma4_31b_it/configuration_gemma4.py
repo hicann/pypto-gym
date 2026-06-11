@@ -99,8 +99,9 @@ class Gemma4TextConfig(PreTrainedConfig):
     hidden_size_per_layer_input (`int`, defaults to 256):
         Per-layer hidden dimension for the PLE system. The actual embedding weight has shape
         `[vocab_size_per_layer_input, num_hidden_layers * hidden_size_per_layer_input]`
-        because all layers are packed into a single table. See the [Gemma4](https://huggingface.co/docs/transformers/main/en/model_doc/gemma4#per-layer-embeddings-ple) docs
-        for a description of the full PLE pipeline.
+        because all layers are packed into a single table. See the [Gemma4]
+        (https://huggingface.co/docs/transformers/main/en/model_doc/gemma4#per-layer-embeddings-ple)
+        docs for a description of the full PLE pipeline.
     num_global_key_value_heads (`int`, *optional*):
         Number of key-value heads for global (full) attention layers. If `None`, defaults
         to `num_key_value_heads`.
@@ -142,7 +143,8 @@ class Gemma4TextConfig(PreTrainedConfig):
         "layers.*.experts": "moe_tp_experts",
     }
     base_model_ep_plan = {
-        # EP plan for google/gemma-4-26B-A4B-it: do not tp in attention (num_global_key_value_heads=2 too small to partition)
+        # EP plan for google/gemma-4-26B-A4B-it: do not tp in attention
+        # (num_global_key_value_heads=2 too small to partition)
         "layers.*.mlp.gate_proj": "colwise",
         "layers.*.mlp.up_proj": "colwise",
         "layers.*.mlp.down_proj": "rowwise",
@@ -205,7 +207,8 @@ class Gemma4TextConfig(PreTrainedConfig):
 
         if self.layer_types and (last_layer_type := self.layer_types[-1]) != "full_attention":
             logger.warning(
-                f"Last layer must use `full_attention`, but got `{last_layer_type}`. Forcing last layer to `full_attention`."
+                f"Last layer must use `full_attention`, but got `{last_layer_type}`. "
+            f"Forcing last layer to `full_attention`."
             )
             self.layer_types[-1] = "full_attention"
 

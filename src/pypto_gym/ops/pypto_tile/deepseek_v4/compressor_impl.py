@@ -8,11 +8,19 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+import collections
 import pypto
 import torch
 from torch._dynamo import allow_in_graph
 from dataclasses import dataclass
 from typing import List
+
+# pylint: disable-next=invalid-name
+CompressorArgs = collections.namedtuple('CompressorArgs', [
+    'x', 'kv_state', 'score_state', 'kv_block_table', 'score_block_table',
+    'sin', 'cos', 'wkv', 'wgate', 'ape', 'weight', 'hadamard',
+    'start_pos', 'ratio', 'rope_head_dim', 'rotate',
+])
 
 
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
@@ -24,7 +32,7 @@ pyptolib.define(
 
 
 @torch.library.impl(pyptolib, "compressor", "Meta")
-def compressor(  # pylint: disable=huawei-too-many-arguments
+def compressor(
     x,
     kv_state,
     score_state,
@@ -50,7 +58,7 @@ def compressor(  # pylint: disable=huawei-too-many-arguments
 
 try:
     @torch.library.impl(pyptolib, "compressor", "NPU")
-    def compressor(  # pylint: disable=huawei-too-many-arguments
+    def compressor(
         x,
         kv_state,
         score_state,
@@ -68,24 +76,14 @@ try:
         rope_head_dim,
         rotate,
     ):
-        return npu_compressor(
-            x,
-            kv_state,
-            score_state,
-            kv_block_table,
-            score_block_table,
-            sin,
-            cos,
-            wkv,
-            wgate,
-            ape,
-            weight,
-            hadamard,
-            start_pos,
-            ratio,
-            rope_head_dim,
-            rotate,
+        args = CompressorArgs(
+            x=x, kv_state=kv_state, score_state=score_state,
+            kv_block_table=kv_block_table, score_block_table=score_block_table,
+            sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
+            hadamard=hadamard, start_pos=start_pos,
+            ratio=ratio, rope_head_dim=rope_head_dim, rotate=rotate,
         )
+        return npu_compressor(args)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
         print(f"Skip: torchair not installed, skip NPU registration for operator 'compressor'")
@@ -93,67 +91,47 @@ except Exception as e:
         print(f"Skip: Unexpected error : {e}")
 
 
-def compressor_pypto(  # pylint: disable=huawei-too-many-arguments
-    x,
-    kv_state,
-    score_state,
-    kv_block_table,
-    score_block_table,
-    sin,
-    cos,
-    wkv,
-    wgate,
-    ape,
-    weight,
-    hadamard,
-    start_pos,
-    ratio,
-    rope_head_dim,
-    rotate,
-):
+def compressor_pypto(args: CompressorArgs):
     return torch.ops.pypto.compressor(
-        x,
-        kv_state,
-        score_state,
-        kv_block_table,
-        score_block_table,
-        sin,
-        cos,
-        wkv,
-        wgate,
-        ape,
-        weight,
-        hadamard,
-        start_pos,
-        ratio,
-        rope_head_dim,
-        rotate,
+        args.x,
+        args.kv_state,
+        args.score_state,
+        args.kv_block_table,
+        args.score_block_table,
+        args.sin,
+        args.cos,
+        args.wkv,
+        args.wgate,
+        args.ape,
+        args.weight,
+        args.hadamard,
+        args.start_pos,
+        args.ratio,
+        args.rope_head_dim,
+        args.rotate,
     )
 
 
 @allow_in_graph
-def npu_compressor(  # pylint: disable=huawei-too-many-arguments
-    x,
-    kv_state,
-    score_state,
-    kv_block_table,
-    score_block_table,
-    sin,
-    cos,
-    wkv,
-    wgate,
-    ape,
-    weight,
-    hadamard,
-    start_pos,
-    ratio,
-    rope_head_dim,
-    rotate,
-):
-    check_args(
-        x, kv_state, score_state, kv_block_table, score_block_table, sin, cos, wkv, wgate, ape, weight, hadamard,
-        start_pos, ratio, rope_head_dim, rotate
-    )
+def npu_compressor(args: CompressorArgs):
+    check_args(args)
+
+    x = args.x
+    kv_state = args.kv_state
+    score_state = args.score_state
+    kv_block_table = args.kv_block_table
+    score_block_table = args.score_block_table
+    sin = args.sin
+    cos = args.cos
+    wkv = args.wkv
+    wgate = args.wgate
+    ape = args.ape
+    weight = args.weight
+    hadamard = args.hadamard
+    start_pos = args.start_pos
+    ratio = args.ratio
+    rope_head_dim = args.rope_head_dim
+    rotate = args.rotate
 
     out = torch.zeros((min(x.shape[0] * x.shape[1], x.shape[0] * x.shape[1] // ratio + x.shape[0]), weight.shape[0]),
         dtype=x.dtype, device=x.device)
@@ -173,24 +151,24 @@ def npu_compressor(  # pylint: disable=huawei-too-many-arguments
     return out, kv_state, score_state
 
 
-def check_args(  # pylint: disable=huawei-too-many-arguments
-    x,
-    kv_state,
-    score_state,
-    kv_block_table,
-    score_block_table,
-    sin,
-    cos,
-    wkv,
-    wgate,
-    ape,
-    weight,
-    hadamard,
-    start_pos,
-    ratio,
-    rope_head_dim,
-    rotate,
-):
+def check_args(args: CompressorArgs):
+    x = args.x
+    kv_state = args.kv_state
+    score_state = args.score_state
+    kv_block_table = args.kv_block_table
+    score_block_table = args.score_block_table
+    sin = args.sin
+    cos = args.cos
+    wkv = args.wkv
+    wgate = args.wgate
+    ape = args.ape
+    weight = args.weight
+    hadamard = args.hadamard
+    start_pos = args.start_pos
+    ratio = args.ratio
+    rope_head_dim = args.rope_head_dim
+    rotate = args.rotate
+
     overlap = ratio == 4
     coff = 1 + overlap
     d = weight.shape[0]
@@ -408,7 +386,7 @@ def scatter_update_3d(input, index, src):
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_4_kernel(  # pylint: disable=huawei-too-many-arguments
+def compressor_ratio_4_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -606,7 +584,7 @@ def compressor_ratio_4_kernel(  # pylint: disable=huawei-too-many-arguments
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_4_rotate_kernel(  # pylint: disable=huawei-too-many-arguments
+def compressor_ratio_4_rotate_kernel(
     x_in: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -825,7 +803,7 @@ def compressor_ratio_4_rotate_kernel(  # pylint: disable=huawei-too-many-argumen
         "device_sched_mode": 3,
     },
 )
-def compressor_ratio_128_kernel(  # pylint: disable=huawei-too-many-arguments
+def compressor_ratio_128_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     kv_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     score_state_total: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP32),

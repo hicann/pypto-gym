@@ -19,6 +19,7 @@ Shared test infrastructure used by both test_bsa_fwd.py and test_bsa_bwd.py:
   - Tensor comparison helpers
 """
 
+import collections
 import os
 import re
 import sys
@@ -35,6 +36,10 @@ from numpy.testing import assert_allclose
 from bsa_common import DEFAULT_CONFIG, generate_block_sparse_mask
 
 
+BsaInputs = collections.namedtuple("BsaInputs", [
+    "Q", "K", "V", "dO", "mask", "asq", "askv",
+])
+
 # shorthand
 cfg = DEFAULT_CONFIG
 
@@ -43,28 +48,21 @@ cfg = DEFAULT_CONFIG
 # Auto environment configuration
 # ===========================================================================
 _DEFAULT_ASCEND_HOME = "/home/developer/Ascend/cann-9.0.0"
-_DEFAULT_PYPTO_PATH  = "/mnt/workspace/gitCode/cann/pypto/python"
-_FORK_PYPTO_PATH     = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
+_DEFAULT_PYPTO_PATH = "/mnt/workspace/gitCode/cann/pypto/python"
+_FORK_PYPTO_PATH = "/mnt/workspace/gitCode/cann/mce/pypto_fork/pypto_6304/python"
 _DEFAULT_PTO_ISA_PATH = "/mnt/workspace/gitCode/cann/mce/pto-isa"
 
 
-def _check_env():
-    """Auto-configure environment variables and verify the runtime is ready."""
-    errors = []
-    warnings = []
-
+def _check_ascend_env(errors, warnings):
     ascend = os.environ.get("ASCEND_HOME_PATH", _DEFAULT_ASCEND_HOME)
     if not os.path.isdir(ascend):
         errors.append(f"ASCEND_HOME_PATH not found: {ascend}")
     else:
         os.environ["ASCEND_HOME_PATH"] = ascend
         print(f"[ENV] ASCEND_HOME_PATH = {ascend}")
-
     devid = os.environ.get("TILE_FWK_DEVICE_ID", "0")
     os.environ["TILE_FWK_DEVICE_ID"] = devid
     print(f"[ENV] TILE_FWK_DEVICE_ID = {devid}")
-
-    # PTO_TILE_LIB_CODE_PATH: must use mce pto-isa to avoid DivAlgorithm enum conflict
     pto_isa_path = os.environ.get("PTO_TILE_LIB_CODE_PATH", _DEFAULT_PTO_ISA_PATH)
     if not os.path.isdir(pto_isa_path):
         warnings.append(f"PTO_TILE_LIB_CODE_PATH not found: {pto_isa_path}")
@@ -72,9 +70,9 @@ def _check_env():
         os.environ["PTO_TILE_LIB_CODE_PATH"] = pto_isa_path
         print(f"[ENV] PTO_TILE_LIB_CODE_PATH = {pto_isa_path}")
 
-    # Respect PYPTO_PATH env var; default to original (stable) pypto
-    pypto_path = os.environ.get("PYPTO_PATH", _DEFAULT_PYPTO_PATH)
 
+def _check_pypto_path(errors):
+    pypto_path = os.environ.get("PYPTO_PATH", _DEFAULT_PYPTO_PATH)
     if not os.path.isdir(pypto_path):
         errors.append(f"PyPTO path not found: {pypto_path}")
     else:
@@ -85,6 +83,8 @@ def _check_env():
             sys.path.insert(0, pypto_path)
         print(f"[ENV] PyPTO path = {pypto_path}")
 
+
+def _check_npu_tools(errors, warnings):
     try:
         result = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
@@ -94,13 +94,11 @@ def _check_env():
                 print(f"[NPU] {line}")
     except (FileNotFoundError, subprocess.TimeoutExpired):
         warnings.append("npu-smi not available")
-
     try:
         import torch_npu  # noqa: F401
         print(f"[ENV] torch_npu OK")
     except ImportError:
         errors.append("torch_npu import failed")
-
     try:
         import pypto  # noqa: F401
         print(f"[ENV] pypto OK  (path: {pypto.__file__})")
@@ -109,20 +107,26 @@ def _check_env():
     except ImportError:
         errors.append("pypto import failed")
 
+
+def _check_env():
+    """Auto-configure environment variables and verify the runtime is ready."""
+    errors = []
+    warnings = []
+    _check_ascend_env(errors, warnings)
+    _check_pypto_path(errors)
+    _check_npu_tools(errors, warnings)
     print()
     if warnings:
         for w in warnings:
             print(f"[WARN] {w}")
         print()
-
     if errors:
         print("=" * 60)
         print("Environment check FAILED:")
         for i, e in enumerate(errors, 1):
             print(f"\n  [{i}] {e}")
         print("\n" + "=" * 60)
-        sys.exit(1)
-
+        raise RuntimeError("Environment check FAILED") from None
     print("[ENV] All checks passed. Starting tests...\n")
 
 
@@ -338,12 +342,15 @@ def _print_perf_summary():
     W_UTIL = 10
 
     def _fmt_us(val):
-        if val is None: return "N/A".rjust(W_TASK)
-        if val >= 1000: return f"{val / 1000:.2f} ms".rjust(W_TASK)
+        if val is None:
+            return "N/A".rjust(W_TASK)
+        if val >= 1000:
+            return f"{val / 1000:.2f} ms".rjust(W_TASK)
         return f"{val:.1f} us".rjust(W_TASK)
 
     def _fmt_pct(val):
-        if val is None: return "N/A".rjust(W_UTIL)
+        if val is None:
+            return "N/A".rjust(W_UTIL)
         return f"{val:.1f}%".rjust(W_UTIL)
 
     sep = "+" + "-" * (W_TEST + 2) + "+" + "-" * (W_KERNEL + 2) + \
@@ -406,7 +413,7 @@ def gen_inputs(B, Hq, Hkv, Sq, Skv, sparsity, device, seed=42):
     asq = torch.full([B], Sq, dtype=torch.int64, device=device)
     askv = torch.full([B], Skv, dtype=torch.int64, device=device)
 
-    return Q, K, V, dO, mask, asq, askv
+    return BsaInputs(Q=Q, K=K, V=V, dO=dO, mask=mask, asq=asq, askv=askv)
 
 
 # ---------------------------------------------------------------------------

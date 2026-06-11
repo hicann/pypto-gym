@@ -73,7 +73,9 @@ if args.use_pypto:
     patched_count = 0
     for module in model.modules():
         if type(module).__name__ == "Qwen3VLTextRMSNorm":
+
             orig_forward = module.forward
+
             def new_forward(self, hidden_states, orig=orig_forward):
                 pk = sys.modules.get("pto_kernels")
                 if pk is not None and getattr(pk, "USE_PTO_RMS_NORM", False):

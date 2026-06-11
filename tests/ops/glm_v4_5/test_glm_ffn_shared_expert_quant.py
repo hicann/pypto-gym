@@ -24,6 +24,11 @@ import numpy as np
 from numpy.testing import assert_allclose
 from glm_v4_5.glm_ffn_shared_expert_quant_impl import ffn_shared_expert_quant
 import pytest
+import collections
+
+
+FfnGenInputOutput = collections.namedtuple("FfnGenInputOutput",
+    ["hidden_states", "w13", "w13_scale", "w2", "w2_scale", "ffn_res"])
 
 
 def ffn_golden_quan_per_token(x):
@@ -98,11 +103,11 @@ def gen_input(
     w2_scale = w2_scale.reshape(-1).to(dtypes)
 
     ffn_res = torch.empty((b * s, hidden_size), dtype=dtypes, device=f'npu:{device_id}')
-    return hidden_states, w13, w13_scale, w2, w2_scale, ffn_res
+    return FfnGenInputOutput(hidden_states, w13, w13_scale, w2, w2_scale, ffn_res)
 
 
 @pytest.mark.soc("950", "910")
-def test_ffn_share() -> None:  # pylint: disable=too-many-return-values
+def test_ffn_share() -> None:
     x_dtype = torch.bfloat16
     s = 1
     intermediate_size = 192

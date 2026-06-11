@@ -25,7 +25,7 @@ from bsa_common import DEFAULT_CONFIG, _resolve_defaults, _block_ranges, _is_val
 # ===========================================================================
 # Backward
 # ===========================================================================
-def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,  # pylint: disable=huawei-too-many-arguments
+def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,
                             Q_f, K_f, V_f, dO_f, O_f, lse,
                             block_sparse_mask, dQ, dK, dV):
     """Process one Q block's backward pass across all valid KV blocks."""
@@ -53,7 +53,7 @@ def _process_backward_block(b, h_q, h_kv, u, sq, skv, bx, by, scale,  # pylint: 
         dV[b, h_kv, k_start:k_end, :] += torch.matmul(P.t(), do_block)
 
 
-def bsa_backward_golden(  # pylint: disable=huawei-too-many-arguments
+def bsa_backward_golden(
     dout, query, key, value, attention_out, softmax_lse,
     block_sparse_mask,
     block_shape_x=None, block_shape_y=None,
@@ -68,9 +68,12 @@ def bsa_backward_golden(  # pylint: disable=huawei-too-many-arguments
         dS = P * (dP - softmaxGrad)
         dQ += dS @ K * scale,  dK += dS^T @ Q * scale,  dV += P^T @ dO
     """
-    B, Hq, Hkv, Sq, Skv, D, bx, by, scale, asq, askv = _resolve_defaults(
+    defaults = _resolve_defaults(
         query, key, block_shape_x, block_shape_y,
         actual_seq_lengths, actual_seq_lengths_kv, scale_value, cfg)
+    B, Hq, Hkv, Sq, Skv, D, bx, by, scale, asq, askv = (
+        defaults.B, defaults.Hq, defaults.Hkv, defaults.Sq, defaults.Skv,
+        defaults.D, defaults.bx, defaults.by, defaults.scale, defaults.asq, defaults.askv)
 
     dtype = query.dtype
     ftype = cfg.accum_torch_dtype

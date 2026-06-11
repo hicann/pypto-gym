@@ -86,8 +86,8 @@ def cfa_attention(
         with PyTorch's compilation graph.
     """
     if isinstance(q, FakeTensor):
-        return
-    # pylint: disable=inconsistent-return-statements
+        attention_out = torch.empty([q.size(0) * q.size(1), q.size(2)], dtype=q.dtype, device=f'{q.device}')
+        return attention_out
     check_args(
         q,
         cmp_kv,

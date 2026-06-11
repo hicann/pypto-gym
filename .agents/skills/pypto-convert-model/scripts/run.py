@@ -55,6 +55,57 @@ def run_target(target: Path, fmt: str, sample, model_template, meta):
     raise ValueError(fmt)
 
 
+def _convert_and_test_single_format(model_id: str, fmt: str, model, sample, ref, meta, out_root: Path) -> dict:
+    clog = conversion_logger(model_id, fmt)
+    out_dir = out_root / fmt
+    out_dir.mkdir(exist_ok=True)
+    result = {"status": "PENDING"}
+    t0 = time.time()
+    try:
+        with timed(clog, f"convert {model_id} -> {fmt}"):
+            path = CONVERTERS[fmt](model, sample, out_dir, meta)
+        size_mb = path.stat().st_size / 1e6 if path.is_file() else sum(
+            p.stat().st_size for p in path.rglob("*") if p.is_file()
+        ) / 1e6
+        result["convert_seconds"] = round(time.time() - t0, 2)
+        try:
+            result["artifact"] = str(path.relative_to(WORKDIR))
+        except ValueError:
+            result["artifact"] = str(path)
+        result["size_mb"] = round(size_mb, 2)
+
+        # Test stage
+        try:
+            with timed(clog, f"test {model_id} <- {fmt}"):
+                # For safetensors, need a fresh template instance
+                if fmt == "safetensors":
+                    template, _, _ = load(model_id, CACHE)
+                    out = run_target(path, fmt, sample, template, meta)
+                    del template
+                else:
+                    out = run_target(path, fmt, sample, None, meta)
+                d = cmp.diff(ref, out)
+                result["diff"] = d
+                result["status"] = "PASS" if d["allclose"] else "DIFF"
+        except NotImplementedError as e:
+            result["status"] = "TEST_SKIP"
+            result["error"] = str(e)
+            clog.warning(f"test skipped: {e}")
+        except Exception as e:
+            result["status"] = "TEST_FAIL"
+            result["error"] = repr(e)
+            clog.exception(f"test failed: {e}")
+    except NotImplementedError as e:
+        result["status"] = "SKIP"
+        result["error"] = str(e)
+        clog.warning(f"skipped: {e}")
+    except Exception as e:
+        result["status"] = "CONVERT_FAIL"
+        result["error"] = repr(e)
+        clog.exception(f"convert failed: {e}")
+    return result
+
+
 def process_model(model_id: str) -> dict:
     mlog = master_logger()
     mlog.info(f"=== {model_id} ===")
@@ -75,55 +126,9 @@ def process_model(model_id: str) -> dict:
         return results
 
     for fmt in TARGET_FORMATS:
-        clog = conversion_logger(model_id, fmt)
-        out_dir = out_root / fmt
-        out_dir.mkdir(exist_ok=True)
-        result = {"status": "PENDING"}
-        t0 = time.time()
-        try:
-            with timed(clog, f"convert {model_id} -> {fmt}"):
-                path = CONVERTERS[fmt](model, sample, out_dir, meta)
-            size_mb = path.stat().st_size / 1e6 if path.is_file() else sum(
-                p.stat().st_size for p in path.rglob("*") if p.is_file()
-            ) / 1e6
-            result["convert_seconds"] = round(time.time() - t0, 2)
-            try:
-                result["artifact"] = str(path.relative_to(WORKDIR))
-            except ValueError:
-                result["artifact"] = str(path)
-            result["size_mb"] = round(size_mb, 2)
-
-            # Test stage
-            try:
-                with timed(clog, f"test {model_id} <- {fmt}"):
-                    # For safetensors, need a fresh template instance
-                    if fmt == "safetensors":
-                        template, _, _ = load(model_id, CACHE)
-                        out = run_target(path, fmt, sample, template, meta)
-                        del template
-                    else:
-                        out = run_target(path, fmt, sample, None, meta)
-                    d = cmp.diff(ref, out)
-                    result["diff"] = d
-                    result["status"] = "PASS" if d["allclose"] else "DIFF"
-            except NotImplementedError as e:
-                result["status"] = "TEST_SKIP"
-                result["error"] = str(e)
-                clog.warning(f"test skipped: {e}")
-            except Exception as e:
-                result["status"] = "TEST_FAIL"
-                result["error"] = repr(e)
-                clog.exception(f"test failed: {e}")
-        except NotImplementedError as e:
-            result["status"] = "SKIP"
-            result["error"] = str(e)
-            clog.warning(f"skipped: {e}")
-        except Exception as e:
-            result["status"] = "CONVERT_FAIL"
-            result["error"] = repr(e)
-            clog.exception(f"convert failed: {e}")
-        results[fmt] = result
-        # Free intermediate state
+        results[fmt] = _convert_and_test_single_format(
+            model_id, fmt, model, sample, ref, meta, out_root,
+        )
         gc.collect()
     # Write per-model JSON
     (RESULTS / f"{model_id}.json").write_text(json.dumps(results, indent=2), encoding="utf-8")

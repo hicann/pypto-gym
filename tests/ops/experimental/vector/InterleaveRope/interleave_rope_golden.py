@@ -85,12 +85,7 @@ def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 
     # ---- 3. 沿 N 维 broadcast cos/sin 到 [B, N, S, D]（S_cs=1 时同时沿 S broadcast）----
     # cos/sin: [B, 1, S_cs, D]，利用 torch 隐式 broadcast 即可。
-    # x_f:    [B, N, S, D]
     # 因此 x_f * cos_f / x_f * sin_f 在最后两维上自动 broadcast。
-
-    # ---- 4. 沿最后维拆奇偶位 ----
-    # x_even[..., i]   = x[..., 2i]
-    # x_odd[..., i]    = x[..., 2i+1]
     x_even = x_f[..., 0::2]  # [B, N, S, D/2]
     x_odd = x_f[..., 1::2]  # [B, N, S, D/2]
 
@@ -101,15 +96,11 @@ def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     sin_odd = sin_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i+1]
 
     # ---- 5. 计算 ----
-    # y_even = x_even * cos_even - x_odd * sin_even
-    # y_odd  = x_even * sin_odd  + x_odd * cos_odd
     y_even = x_even * cos_even - x_odd * sin_even  # [B, N, S, D/2]
     y_odd = x_even * sin_odd + x_odd * cos_odd   # [B, N, S, D/2]
 
     # ---- 6. split-half 输出 layout (v2.3) ----
     # 不再做 interleave 重组。约定：
-    #   y[..., 0:D/2 ] = y_even = [y_origin[0],  y_origin[2],  ..., y_origin[D-2]]
-    #   y[..., D/2:D] = y_odd  = [y_origin[1],  y_origin[3],  ..., y_origin[D-1]]
     # 下游 attention QK^T 在 Q/K 同 layout 时数值等价。
     y = torch.cat((y_even, y_odd), dim=-1)  # [B, N, S, D]
 
@@ -166,46 +157,42 @@ def _make_inputs(B: int, N: int, S: int, D: int, S_cs: int, dtype: torch.dtype,
 
 
 def _check(name: str, cond: bool, detail: str = "") -> bool:
-    mark = "✓ PASS" if cond else "✗ FAIL"
+    mark = "\u2713 PASS" if cond else "\u2717 FAIL"
     print(f"  {name} ... {mark}{(' ' + detail) if detail else ''}")
     return cond
 
 
-def _validate():
-    print("=" * 60)
-    print("interleave_rope_golden 验证报告")
-    print("=" * 60)
-
-    all_pass = True
-
-    # ---- 1. 典型 case 验证 ----
+def _validate_typical_cases():
+    """Validate typical P0 cases."""
     print("\n[典型 case 验证]")
+    all_pass = True
     typical_cases = [
-        # (name, B, N, S, D, S_cs, dtype, priority)
-        ("功能_P0_min      ", 1, 1, 1024, 64, 1024, torch.bfloat16, "P0"),
-        ("功能_P0_typ      ", 1, 128, 2048, 64, 2048, torch.bfloat16, "P0"),
-        ("功能_P0_Scs1     ", 2, 128, 4096, 64, 1, torch.bfloat16, "P0"),
-        ("功能_P0_typ_fp16 ", 1, 8, 1024, 64, 1024, torch.float16, "P0"),
-        # 性能_P0_max 较大，仍可在 CPU 上跑（fp32 中间约 4*128*8192*64*4B=1GB），酌情仅做 shape 验证
+        ("功能_P0_min      ", 1, 1, 1024, 64, 1024, torch.bfloat16),
+        ("功能_P0_typ      ", 1, 128, 2048, 64, 2048, torch.bfloat16),
+        ("功能_P0_Scs1     ", 2, 128, 4096, 64, 1, torch.bfloat16),
+        ("功能_P0_typ_fp16 ", 1, 8, 1024, 64, 1024, torch.float16),
     ]
-    for name, B, N, S, D, S_cs, dtype, _ in typical_cases:
+    for name, B, N, S, D, S_cs, dtype in typical_cases:
         x, cos, sin = _make_inputs(B, N, S, D, S_cs, dtype, seed=42)
         y = interleave_rope_golden(x, cos, sin)
         cond = (y.shape == x.shape) and (y.dtype == dtype)
         all_pass &= _check(f"{name} B={B},N={N},S={S},D={D},S_cs={S_cs},dt={dtype}",
                            cond, f"out.shape={tuple(y.shape)} dtype={y.dtype}")
+    return all_pass
 
-    # ---- 2. 泛化 case 验证 ----
+
+def _validate_generalization_cases():
+    """Validate generalization configs."""
     print("\n[泛化 case 验证]")
+    all_pass = True
     gen_cases = [
-        (1, 1, 1, 64, 1, torch.bfloat16),  # 最小 case
-        (4, 128, 8192, 64, 8192, torch.bfloat16),  # 上限（仅 shape 检查时不实际跑）
+        (1, 1, 1, 64, 1, torch.bfloat16),
+        (4, 128, 8192, 64, 8192, torch.bfloat16),
         (2, 1, 512, 64, 512, torch.float16),
-        (1, 128, 1, 64, 1, torch.bfloat16),  # S=1 + S_cs=1
-        (3, 64, 4096, 64, 1, torch.bfloat16),  # 中间 N + S_cs=1
+        (1, 128, 1, 64, 1, torch.bfloat16),
+        (3, 64, 4096, 64, 1, torch.bfloat16),
     ]
     for B, N, S, D, S_cs, dtype in gen_cases:
-        # 跳过过大的 case：仅当总元素 <= 64M 时实际计算
         total = B * N * S * D
         if total > 64 * 1024 * 1024:
             print(f"  B={B},N={N},S={S},D={D},S_cs={S_cs} ... (skip: too large for cpu validation)")
@@ -215,9 +202,13 @@ def _validate():
         cond = (y.shape == (B, N, S, D)) and (y.dtype == dtype)
         all_pass &= _check(f"B={B},N={N},S={S},D={D},S_cs={S_cs},dt={dtype}",
                            cond, f"out.shape={tuple(y.shape)}")
+    return all_pass
 
-    # ---- 3. 数学正确性检查（与 complex-style 等价实现交叉验证）----
+
+def _validate_mathematical_correctness():
+    """Cross-validate against complex-style reference."""
     print("\n[数学正确性检查 vs complex-ref]")
+    all_pass = True
     for B, N, S, S_cs, dtype in [
         (1, 4, 16, 16, torch.bfloat16),
         (2, 8, 32, 1, torch.float16),
@@ -227,62 +218,78 @@ def _validate():
         y_a = interleave_rope_golden(x, cos, sin).to(torch.float32)
         y_b = _interleave_rope_complex_ref(x, cos, sin).to(torch.float32)
         diff = (y_a - y_b).abs().max().item()
-        atol = 1e-4 if dtype == torch.float16 else 5e-3   # bf16 精度更低
+        atol = 1e-4 if dtype == torch.float16 else 5e-3
         cond = diff <= atol
         all_pass &= _check(f"B={B},N={N},S={S},S_cs={S_cs},dt={dtype}",
                            cond, f"max_abs_diff={diff:.2e} (atol={atol})")
+    return all_pass
 
-    # ---- 4. 边界 / 特殊点 ----
+
+def _validate_boundary_special():
+    """Validate boundary and special cases."""
     print("\n[边界与特殊点]")
-
-    # 4.1 cos=1, sin=0 → y == permute(x, split-half)
-    # v2.3 split-half layout: y[..., 0:D/2] = x[..., 0::2], y[..., D/2:D] = x[..., 1::2]
+    all_pass = True
     B, N, S, D = 1, 2, 4, 64
+
+    # cos=1, sin=0
     x = torch.randn(B, N, S, D, dtype=torch.float32).to(torch.bfloat16)
     cos = torch.ones(B, 1, S, D, dtype=torch.bfloat16)
     sin = torch.zeros(B, 1, S, D, dtype=torch.bfloat16)
     y = interleave_rope_golden(x, cos, sin)
     expected = torch.cat((x[..., 0::2], x[..., 1::2]), dim=-1)
     diff = (y.to(torch.float32) - expected.to(torch.float32)).abs().max().item()
-    all_pass &= _check("cos=1,sin=0 → y==split_half(x)", diff < 1e-2, f"max_abs_diff={diff:.2e}")
+    all_pass &= _check("cos=1,sin=0 \u2192 y==split_half(x)", diff < 1e-2, f"max_abs_diff={diff:.2e}")
 
-    # 4.2 x=0 → y=0
+    # x=0
     x = torch.zeros(B, N, S, D, dtype=torch.bfloat16)
-    cos, sin, _ = _make_inputs(B, 1, S, D, S, torch.bfloat16)[1], None, None
     cos_in = torch.randn(B, 1, S, D, dtype=torch.float32).to(torch.bfloat16)
     sin_in = torch.randn(B, 1, S, D, dtype=torch.float32).to(torch.bfloat16)
     y = interleave_rope_golden(x, cos_in, sin_in)
-    cond = torch.all(y == 0).item()
-    all_pass &= _check("x=0 → y=0", cond)
+    all_pass &= _check("x=0 \u2192 y=0", torch.all(y == 0).item())
 
-    # 4.3 数值稳定性：无 NaN/Inf
+    # No NaN/Inf
     x, cos, sin = _make_inputs(2, 4, 128, 64, 128, torch.bfloat16, seed=1)
     y = interleave_rope_golden(x, cos, sin)
-    cond = not (torch.isnan(y).any().item() or torch.isinf(y).any().item())
-    all_pass &= _check("无 NaN/Inf", cond)
+    all_pass &= _check("无 NaN/Inf", not (torch.isnan(y).any().item() or torch.isinf(y).any().item()))
 
-    # 4.4 dtype 一致性
+    # dtype consistency
     for dt in (torch.float16, torch.bfloat16):
         x, cos, sin = _make_inputs(1, 2, 8, 64, 8, dt, seed=2)
         y = interleave_rope_golden(x, cos, sin)
         all_pass &= _check(f"dtype 保持 {dt}", y.dtype == dt, f"got {y.dtype}")
+    return all_pass
 
-    # ---- 5. S_cs=1 broadcast 正确性 ----
+
+def _validate_scs1_broadcast():
+    """Validate S_cs=1 broadcast consistency."""
     print("\n[S_cs=1 broadcast 一致性]")
+    all_pass = True
     B, N, S, D = 2, 4, 16, 64
-    # 构造 S_cs=1 的 cos/sin
     x, cos1, sin1 = _make_inputs(B, N, S, D, 1, torch.bfloat16, seed=11)
-    # 手工沿 S 维 expand 到 S_cs=S 应得到相同结果
     cosS = cos1.expand(B, 1, S, D).contiguous()
     sinS = sin1.expand(B, 1, S, D).contiguous()
     y1 = interleave_rope_golden(x, cos1, sin1).to(torch.float32)
     yS = interleave_rope_golden(x, cosS, sinS).to(torch.float32)
     diff = (y1 - yS).abs().max().item()
     all_pass &= _check("S_cs=1 vs S_cs=S(expand) 一致", diff == 0.0, f"max_abs_diff={diff:.2e}")
+    return all_pass
+
+
+def _validate():
+    print("=" * 60)
+    print("interleave_rope_golden 验证报告")
+    print("=" * 60)
+
+    all_pass = True
+    all_pass &= _validate_typical_cases()
+    all_pass &= _validate_generalization_cases()
+    all_pass &= _validate_mathematical_correctness()
+    all_pass &= _validate_boundary_special()
+    all_pass &= _validate_scs1_broadcast()
 
     # ---- 总结 ----
     print("\n" + "=" * 60)
-    print("✅ 所有验证通过" if all_pass else "❌ 存在失败项")
+    print("\u2705 所有验证通过" if all_pass else "\u274c 存在失败项")
     print("=" * 60)
     return all_pass
 

@@ -33,7 +33,7 @@ def test_pil_builder_raise():
             try:
                 try:
                     raise Expr.TypeA(0)
-                except Expr.TypeA:
+                except Expr.TypeA:  # noqa: W0706 - Testing PIL builder's handling of bare raise in except handler
                     raise  # noqa: TRY200 - Testing PIL builder's handling of bare raise in except handler
             except Expr.TypeA as e:
                 Expr.int(e.value)

@@ -11,6 +11,7 @@
 """
 """
 from dataclasses import dataclass
+import collections
 import math
 import logging
 from typing import List, Tuple
@@ -41,6 +42,22 @@ Main Functions:
 Example:
     See test_mla_prolog_quant_v4.py for usage examples.
 """
+
+# pylint: disable-next=invalid-name
+MlaCheckInputConfigV4 = collections.namedtuple('MlaCheckInputConfigV4', [
+    'token_x', 'wq_a', 'wq_b', 'wkv', 'rope_cos', 'rope_sin',
+    'gamma_cq', 'gamma_ckv',
+    'output_q_data', 'output_kv_data', 'output_qr_data',
+])
+
+# pylint: disable-next=invalid-name
+MlaPrologV4ComputeConfigV4 = collections.namedtuple('MlaPrologV4ComputeConfigV4', [
+    'x', 'wq_a', 'wq_b', 'wkv',
+    'rmsnorm_gamma_cq', 'rmsnorm_gamma_ckv',
+    'cos', 'sin',
+    'q_out', 'kv_out', 'qr_out',
+    'attrs', 'configs',
+])
 
 SHAPE_DIM_2 = 2
 SHAPE_DIM_3 = 3
@@ -112,8 +129,18 @@ class MlaPrologV4Configs:
     chunk_size: int
 
 
-def check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,  # pylint: disable=huawei-too-many-arguments
-                                    output_q_data, output_kv_data, output_qr_data):
+def check_input_output_shape_dtype(cfg: MlaCheckInputConfigV4):
+    token_x = cfg.token_x
+    wq_a = cfg.wq_a
+    wq_b = cfg.wq_b
+    wkv = cfg.wkv
+    rope_cos = cfg.rope_cos
+    rope_sin = cfg.rope_sin
+    gamma_cq = cfg.gamma_cq
+    gamma_ckv = cfg.gamma_ckv
+    output_q_data = cfg.output_q_data
+    output_kv_data = cfg.output_kv_data
+    output_qr_data = cfg.output_qr_data
     assert token_x.size(1) == 4096 and token_x.dim() == 2, f"expected token_x dim num 2, token_x axis1 4096"
     assert wq_a.dim() == 2 and wq_a.size(0) == 4096 and wq_a.size(1) == 1024, \
             f"expected wq_a dim num 2 residual axis0 4096, wq_a axis1 1024"
@@ -302,20 +329,20 @@ def rope_3d(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor) -> pypto.Tens
     return x_embed_cast
 
 
-def mla_prolog_v4_compute(  # pylint: disable=huawei-too-many-arguments
-    x,
-    wq_a,
-    wq_b,
-    wkv,
-    rmsnorm_gamma_cq,
-    rmsnorm_gamma_ckv,
-    cos,
-    sin,
-    q_out,
-    kv_out,
-    qr_out,
-    attrs,
-     configs):
+def mla_prolog_v4_compute(cfg: MlaPrologV4ComputeConfigV4):
+    x = cfg.x
+    wq_a = cfg.wq_a
+    wq_b = cfg.wq_b
+    wkv = cfg.wkv
+    rmsnorm_gamma_cq = cfg.rmsnorm_gamma_cq
+    rmsnorm_gamma_ckv = cfg.rmsnorm_gamma_ckv
+    cos = cfg.cos
+    sin = cfg.sin
+    q_out = cfg.q_out
+    kv_out = cfg.kv_out
+    qr_out = cfg.qr_out
+    attrs = cfg.attrs
+    configs = cfg.configs
     t = x.shape[0]
     h = x.shape[1]
     q_lora_rank = rmsnorm_gamma_cq.shape[0]
@@ -406,7 +433,7 @@ class MLAKernelMAnager:
     kv_out_shape,
      qr_out_shape]
 
-    def infer_controlflow_shape(self, *args):  # pylint: disable=huawei-too-many-arguments
+    def infer_controlflow_shape(self, *args):
         global vec_all_shape, t_vec
         if not args:
             return [v for v in self.vec_all_shape.values()]
@@ -438,20 +465,14 @@ def mla_prolog_v4(
     qr_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     attrs, configs):
     pypto.experimental.set_operation_options(combine_axis=True)
-    mla_prolog_v4_compute(
-    x,
-    wq_a,
-    wq_b,
-    wkv,
-    rmsnorm_gamma_cq,
-    rmsnorm_gamma_ckv,
-    cos,
-    sin,
-    q_out,
-    kv_out,
-    qr_out,
-    attrs,
-     configs)
+    mla_prolog_v4_compute(MlaPrologV4ComputeConfigV4(
+        x=x, wq_a=wq_a, wq_b=wq_b, wkv=wkv,
+        rmsnorm_gamma_cq=rmsnorm_gamma_cq,
+        rmsnorm_gamma_ckv=rmsnorm_gamma_ckv,
+        cos=cos, sin=sin,
+        q_out=q_out, kv_out=kv_out, qr_out=qr_out,
+        attrs=attrs, configs=configs,
+    ))
 
 
 @allow_in_graph
@@ -461,8 +482,14 @@ def mla_prolog_v4_in(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gam
     output_kv_data = torch.zeros([token_x.size(0), gamma_ckv.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
     output_qr_data = torch.zeros([token_x.size(0), gamma_cq.size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
 
-    check_input_output_shape_dtype(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv,
-                                    output_q_data, output_kv_data, output_qr_data)
+    check_input_output_shape_dtype(MlaCheckInputConfigV4(
+        token_x=token_x, wq_a=wq_a, wq_b=wq_b, wkv=wkv,
+        rope_cos=rope_cos, rope_sin=rope_sin,
+        gamma_cq=gamma_cq, gamma_ckv=gamma_ckv,
+        output_q_data=output_q_data,
+        output_kv_data=output_kv_data,
+        output_qr_data=output_qr_data,
+    ))
     attrs = MlaPrologV4Attrs(eps=1e-6, layout_query="TND", layout_key="PA_BSND")
     configs = MlaPrologV4Configs(unroll_list=[128, 64, 32, 16, 1],
                                 cube_l1_reuse_setting={2: 4},

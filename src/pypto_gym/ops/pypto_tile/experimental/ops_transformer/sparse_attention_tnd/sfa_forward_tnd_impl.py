@@ -55,7 +55,7 @@ class SaTileShapeConfig:
     v2_tile_shape: list
 
 
-def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,  # pylint: disable=huawei-too-many-arguments
+def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,
                             q_pe, k_pe,
                             npu_actual_q_len, npu_actual_kv_len,
                             core_attn_out, softmax_max_out, softmax_sum_out,
@@ -109,12 +109,10 @@ def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,  # pylint:
     out_2d = pypto.tensor([t1_sym * nq1, dn], dtype=pypto.DT_BF16)
     # Outer loop over B (batch dimension)
     for batch_idx in pypto.loop(0, b_sym, 1, name="LOOP_B", idx_name="bIdx"):
-        # npu_actual_q_len is prefix-sum: s = q_len[i] - q_len[i-1] * (i > 0)
         cur_q_prefix = npu_actual_q_len[batch_idx]
         prev_q_prefix = npu_actual_q_len[(batch_idx - 1).max(0)] * (batch_idx > 0)
         s_per_batch = cur_q_prefix - prev_q_prefix
 
-        # npu_actual_kv_len is prefix-sum: kv_len = kv_prefix[i] - kv_prefix[i-1] * (i > 0)
         cur_kv_prefix = npu_actual_kv_len[batch_idx]
         prev_kv_prefix = npu_actual_kv_len[(batch_idx - 1).max(0)] * (batch_idx > 0)
         cur_kv_len = cur_kv_prefix - prev_kv_prefix
@@ -125,7 +123,6 @@ def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,  # pylint:
             eff_topk.as_variable()
             eff_topk_cond = (cur_kv_len - s_per_batch + 1 + s_idx).max(0)
             eff_topk_cond.as_variable()
-            # t_idx = global token index = prev_q_prefix + s_idx
             t_idx = prev_q_prefix + s_idx
             # View to fixed shape [max_total_kv, D] with valid_shape [T2*N2, D]
             kv_2d = pypto.view(kv_2d_dyn, [max_total_kv, dn], [0, 0],
@@ -213,7 +210,7 @@ def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,  # pylint:
         "device_sched_mode": 1,
     },
 )
-def sfa_forward_tnd(  # pylint: disable=huawei-too-many-arguments
+def sfa_forward_tnd(
     q_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     compressed_kv_norm: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     topk_indices: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_INT32),

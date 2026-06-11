@@ -440,6 +440,108 @@ def moe_distributed_dispatch_kernel(
     cum_sum_row_size = align_up(moe_expert_num, 256)
     count_size = 8
 
+    def _dispatch_send_loop(x, expert_ids, expert_ids_vec, shmem_data, shmem_info, shmem_count,
+                             this_rank, batch_size, topk, hidden_size, info_size, expert_num_per_rank,
+                             ep_world_size, moe_expert_num):
+        """Send tokens, info, and counts to remote ranks."""
+        for _ in pypto.loop(1, name='MOE_DISTRIBUTED_DISPATCH_SEND', idx_name='_'):
+            for index in range(batch_size * topk):
+                token_id = index // topk
+                k_offset = index % topk
+                moe_info = pypto.Tensor([1, info_size], pypto.DT_INT32)
+                tensor_tile = x[token_id:token_id + 1, :]
+                pypto.set_vec_tile_shapes(1, info_size)
+                moe_info[0, 0] = this_rank
+                moe_info[0, 1] = token_id
+                moe_info[0, 2] = k_offset
+                remote_expert_id = expert_ids[token_id, k_offset]
+                remote_rank_id = remote_expert_id // pypto.SymbolicScalar(expert_num_per_rank)
+                remote_expert_offset = remote_expert_id % expert_num_per_rank
+                token_offset_result = dispatch_calc_occurrences(expert_ids_vec, remote_expert_id, index)
+                token_index = max(index - 1, 0)
+                token_offset = token_offset_result[0, token_index]
+                pypto.set_vec_tile_shapes(1, hidden_size)
+                shmem_data_out_put = pypto.distributed.shmem_put(
+                    tensor_tile,
+                    [(remote_expert_offset * ep_world_size + this_rank) * batch_size + token_offset, 0],
+                    shmem_data, remote_rank_id)
+                pypto.set_vec_tile_shapes(1, info_size)
+                shmem_info_out_put = pypto.distributed.shmem_put(
+                    moe_info,
+                    [(remote_expert_offset * ep_world_size + this_rank) * batch_size + token_offset, 0],
+                    shmem_info, remote_rank_id)
+                pypto.set_vec_tile_shapes(1, hidden_size)
+                pypto.distributed.shmem_signal(
+                    shmem_data, 0, 1, [1, hidden_size], [0, 0],
+                    target_pe=-1, sig_op=pypto.AtomicType.ADD,
+                    pred=[shmem_data_out_put, shmem_info_out_put])
+            for expert_id in range(moe_expert_num):
+                expert_offset = dispatch_calc_occurrences(expert_ids_vec, expert_id, batch_size * topk)
+                remote_rank_id = expert_id // expert_num_per_rank
+                remote_expert_offset = expert_id % expert_num_per_rank
+                total_offset_tile = expert_offset[:, -1:]
+                pypto.set_vec_tile_shapes(1, 1)
+                shmem_put_out = pypto.distributed.shmem_put(
+                    total_offset_tile,
+                    [remote_expert_offset * ep_world_size + this_rank + 1, 0],
+                    shmem_count, remote_rank_id, pred=[total_offset_tile])
+                pypto.set_vec_tile_shapes(1, count_size)
+                pypto.distributed.shmem_signal(
+                    shmem_count, 0, 1, [1, count_size], [0, 0],
+                    target_pe=remote_rank_id, sig_op=pypto.AtomicType.ADD, pred=[shmem_put_out])
+
+    def _dispatch_cumsum_and_receive(
+            shmem_data, shmem_info, shmem_count, x, this_rank,
+            cum_sum_row_size, count_size, hidden_size, info_out_size,
+            moe_expert_num, ep_world_size, expert_num_per_rank, batch_size,
+            recv_counts, expert_token_nums,
+            expand_x, assist_info_for_combine):
+        """Compute cumsum and receive data from shmem."""
+        cum_sum_result = pypto.tensor([cum_sum_row_size, count_size], pypto.DT_INT32, 'cumSumResult')
+        local_expert_recv_count = pypto.tensor([cum_sum_row_size, count_size], pypto.DT_INT32, 'localExpertRecvCount')
+        for _ in pypto.loop(1, name='MOE_DISTRIBUTED_DISPATCH_CUM_SUM', idx_name='_'):
+            pypto.set_vec_tile_shapes(1, hidden_size)
+            shmem_data_wait_out = pypto.distributed.shmem_wait_until(
+                shmem_data, 0, batch_size * topk * ep_world_size,
+                [1, hidden_size], [0, 0], cmp=pypto.OpType.EQ, clear_signal=True, pred=[x])
+            pypto.set_vec_tile_shapes(1, count_size)
+            shmem_count_wait_out = pypto.distributed.shmem_wait_until(
+                shmem_count, 0, moe_expert_num,
+                [1, count_size], [0, 0], cmp=pypto.OpType.EQ, clear_signal=True, pred=[x])
+            pypto.set_vec_tile_shapes(cum_sum_row_size, count_size)
+            local_expert_recv_count = pypto.distributed.shmem_get(
+                shmem_count, this_rank, [cum_sum_row_size, count_size], [0, 0],
+                pred=[shmem_data_wait_out, shmem_count_wait_out])
+            pypto.set_vec_tile_shapes(cum_sum_row_size, count_size)
+            cum_sum_input = pypto.distributed.shmem_get(
+                shmem_count, this_rank, [cum_sum_row_size, count_size], [0, 0],
+                pred=[shmem_data_wait_out, shmem_count_wait_out])
+            cum_sum_current = pypto.cumsum(cum_sum_input, 0)
+            cum_sum_result = pypto.cast(cum_sum_current, pypto.DT_INT32, pypto.CastMode.CAST_TRUNC)
+            recv_count_result = cum_sum_result[expert_num_per_rank * ep_world_size, 0]
+            recv_counts[0] = recv_count_result
+            for expert_id in range(expert_num_per_rank):
+                cum_sum_start_row = expert_id * ep_world_size + 1
+                cum_sum_end_row = cum_sum_start_row + ep_world_size
+                expert_valid_cnt = cum_sum_input[cum_sum_start_row:cum_sum_end_row, :]
+                expert_valid_cum_sum = pypto.cumsum(expert_valid_cnt, 0)
+                expert_valid_cum_sum_int32 = pypto.cast(expert_valid_cum_sum, pypto.DT_INT32, pypto.CastMode.CAST_TRUNC)
+                recv_valid_result = expert_valid_cum_sum_int32[ep_world_size - 1, 0]
+                expert_token_nums[expert_id] = recv_valid_result
+        for index in pypto.loop(moe_expert_num, name='MOE_DISTRIBUTED_DISPATCH_RECEIVE', idx_name='_'):
+            cur_count = local_expert_recv_count[index + 1, 0]
+            offset = cum_sum_result[index, 0]
+            pypto.set_vec_tile_shapes(batch_size, hidden_size)
+            local_data_recv_count = pypto.distributed.shmem_get(
+                shmem_data, this_rank, [batch_size, hidden_size], [index * batch_size, 0],
+                pred=[cum_sum_result], valid_shape=[cur_count, hidden_size])
+            expand_x[offset:offset + cur_count, ...] = local_data_recv_count
+            pypto.set_vec_tile_shapes(batch_size, info_out_size)
+            local_info_recv_count = pypto.distributed.shmem_get(
+                shmem_info, this_rank, [batch_size, info_out_size], [index * batch_size, 0],
+                pred=[cum_sum_result], valid_shape=[cur_count, info_out_size])
+            assist_info_for_combine[offset:offset + cur_count, ...] = local_info_recv_count
+
     @pypto.frontend.jit()
     def kernel(
         x: pypto.Tensor([batch_size, hidden_size], data_type, format=pypto.TileOpFormat.TILEOP_ND),
@@ -467,161 +569,16 @@ def moe_distributed_dispatch_kernel(
         pypto.set_vec_tile_shapes(1, batch_size * topk)
         expert_ids_vec = pypto.reshape(expert_ids, [1, batch_size * topk], inplace=True)
 
-        for _ in pypto.loop(1, name='MOE_DISTRIBUTED_DISPATCH_SEND', idx_name='_'):
-            # 发送 token 与 info 信息
-            for index in range(batch_size * topk):
-                token_id = index // topk
-                k_offset = index % topk
-                moe_info = pypto.Tensor([1, info_size], pypto.DT_INT32)
-                tensor_tile = x[token_id:token_id + 1, :]
-                pypto.set_vec_tile_shapes(1, info_size)
-                moe_info[0, 0] = this_rank
-                moe_info[0, 1] = token_id
-                moe_info[0, 2] = k_offset
-                remote_expert_id = expert_ids[token_id, k_offset]
-                remote_rank_id = remote_expert_id // pypto.SymbolicScalar(expert_num_per_rank)
-                remote_expert_offset = remote_expert_id % expert_num_per_rank
-                token_offset_result = dispatch_calc_occurrences(
-                    expert_ids_vec,
-                    remote_expert_id,
-                    index,
-                )
-                token_index = max(index - 1, 0)
-                token_offset = token_offset_result[0, token_index]
-                pypto.set_vec_tile_shapes(1, hidden_size)
-                shmem_data_out_put = pypto.distributed.shmem_put(
-                    tensor_tile,
-                    [(remote_expert_offset * ep_world_size + this_rank) * batch_size + token_offset, 0],
-                    shmem_data,
-                    remote_rank_id,
-                )
-                pypto.set_vec_tile_shapes(1, info_size)
-                shmem_info_out_put = pypto.distributed.shmem_put(
-                    moe_info,
-                    [(remote_expert_offset * ep_world_size + this_rank) * batch_size + token_offset, 0],
-                    shmem_info,
-                    remote_rank_id,
-                )
-                pypto.set_vec_tile_shapes(1, hidden_size)
-                pypto.distributed.shmem_signal(
-                    shmem_data,
-                    0,
-                    1,
-                    [1, hidden_size],
-                    [0, 0],
-                    target_pe=-1,
-                    sig_op=pypto.AtomicType.ADD,
-                    pred=[shmem_data_out_put, shmem_info_out_put],
-                )
-            # 发送每个专家的 token 有效发送数目
-            for expert_id in range(moe_expert_num):
-                expert_offset = dispatch_calc_occurrences(
-                    expert_ids_vec,
-                    expert_id,
-                    batch_size * topk,
-                )
-                remote_rank_id = expert_id // expert_num_per_rank
-                remote_expert_offset = expert_id % expert_num_per_rank
-                total_offset_tile = expert_offset[:, -1:]
-                pypto.set_vec_tile_shapes(1, 1)
-                shmem_put_out = pypto.distributed.shmem_put(
-                    total_offset_tile,
-                    [remote_expert_offset * ep_world_size + this_rank + 1, 0],
-                    shmem_count,
-                    remote_rank_id,
-                    pred=[total_offset_tile],
-                )
-                pypto.set_vec_tile_shapes(1, count_size)
-                pypto.distributed.shmem_signal(
-                    shmem_count,
-                    0,
-                    1,
-                    [1, count_size],
-                    [0, 0],
-                    target_pe=remote_rank_id,
-                    sig_op=pypto.AtomicType.ADD, pred=[shmem_put_out],
-                )
+        _dispatch_send_loop(x, expert_ids, expert_ids_vec, shmem_data, shmem_info, shmem_count,
+                            this_rank, batch_size, topk, hidden_size, info_size, expert_num_per_rank,
+                            ep_world_size, moe_expert_num)
 
-        # 接收 count 值，计算专家接收数据在输出上的偏移
-        cum_sum_result = pypto.tensor([cum_sum_row_size, count_size], pypto.DT_INT32, 'cumSumResult')
-        local_expert_recv_count = pypto.tensor([cum_sum_row_size, count_size], pypto.DT_INT32, 'localExpertRecvCount')
-        for _ in pypto.loop(1, name='MOE_DISTRIBUTED_DISPATCH_CUM_SUM', idx_name='_'):
-            pypto.set_vec_tile_shapes(1, hidden_size)
-            shmem_data_wait_out = pypto.distributed.shmem_wait_until(
-                shmem_data,
-                0,
-                batch_size * topk * ep_world_size,
-                [1, hidden_size],
-                [0, 0],
-                cmp=pypto.OpType.EQ,
-                clear_signal=True,
-                pred=[x],
-            )
-            pypto.set_vec_tile_shapes(1, count_size)
-            shmem_count_wait_out = pypto.distributed.shmem_wait_until(
-                shmem_count,
-                0,
-                moe_expert_num,
-                [1, count_size],
-                [0, 0],
-                cmp=pypto.OpType.EQ,
-                clear_signal=True,
-                pred=[x],
-            )
-            pypto.set_vec_tile_shapes(cum_sum_row_size, count_size)
-            local_expert_recv_count = pypto.distributed.shmem_get(
-                shmem_count,
-                this_rank,
-                [cum_sum_row_size, count_size],
-                [0, 0],
-                pred=[shmem_data_wait_out, shmem_count_wait_out],
-            )
-            pypto.set_vec_tile_shapes(cum_sum_row_size, count_size)
-            cum_sum_input = pypto.distributed.shmem_get(
-                shmem_count,
-                this_rank,
-                [cum_sum_row_size, count_size],
-                [0, 0],
-                pred=[shmem_data_wait_out, shmem_count_wait_out],
-            )
-            cum_sum_current = pypto.cumsum(cum_sum_input, 0)
-            cum_sum_result = pypto.cast(cum_sum_current, pypto.DT_INT32, pypto.CastMode.CAST_TRUNC)
-
-            recv_count_result = cum_sum_result[expert_num_per_rank * ep_world_size, 0]
-            recv_counts[0] = recv_count_result
-            for expert_id in range(expert_num_per_rank):
-                cum_sum_start_row = expert_id * ep_world_size + 1
-                cum_sum_end_row = cum_sum_start_row + ep_world_size
-                expert_valid_cnt = cum_sum_input[cum_sum_start_row:cum_sum_end_row, :]
-                expert_valid_cum_sum = pypto.cumsum(expert_valid_cnt, 0)
-                expert_valid_cum_sum_int32 = pypto.cast(expert_valid_cum_sum, pypto.DT_INT32, pypto.CastMode.CAST_TRUNC)
-                recv_valid_result = expert_valid_cum_sum_int32[ep_world_size - 1, 0]
-                expert_token_nums[expert_id] = recv_valid_result
-
-        # 根据偏移值，做 token 与 info 的数据接收
-        for index in pypto.loop(moe_expert_num, name='MOE_DISTRIBUTED_DISPATCH_RECEIVE', idx_name='_'):
-            cur_count = local_expert_recv_count[index + 1, 0]
-            offset = cum_sum_result[index, 0]
-            pypto.set_vec_tile_shapes(batch_size, hidden_size)
-            local_data_recv_count = pypto.distributed.shmem_get(
-                shmem_data,
-                this_rank,
-                [batch_size, hidden_size],
-                [index * batch_size, 0],
-                pred=[cum_sum_result],
-                valid_shape=[cur_count, hidden_size],
-            )
-            expand_x[offset:offset + cur_count, ...] = local_data_recv_count
-            pypto.set_vec_tile_shapes(batch_size, info_out_size)
-            local_info_recv_count = pypto.distributed.shmem_get(
-                shmem_info,
-                this_rank,
-                [batch_size, info_out_size],
-                [index * batch_size, 0],
-                pred=[cum_sum_result],
-                valid_shape=[cur_count, info_out_size],
-            )
-            assist_info_for_combine[offset:offset + cur_count, ...] = local_info_recv_count
+        _dispatch_cumsum_and_receive(
+            shmem_data, shmem_info, shmem_count, x, this_rank,
+            cum_sum_row_size, count_size, hidden_size, info_out_size,
+            moe_expert_num, ep_world_size, expert_num_per_rank, batch_size,
+            recv_counts, expert_token_nums,
+            expand_x, assist_info_for_combine)
 
     return kernel
 

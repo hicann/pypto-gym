@@ -545,7 +545,8 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
 class Qwen2_5_VLModelOutputWithPast(ModelOutput):
     r"""
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -643,7 +644,8 @@ class Qwen2MLP(nn.Module):
 
 
 def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
+    """Applies Rotary Position Embedding with Multimodal Sections to the query and key
+    tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
         Multimodal 3D rotary position embedding is an extension to 1D rotary position embedding. The input embedding
@@ -674,11 +676,11 @@ def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    mrope_section = mrope_section * 2
-    cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+    split_sections = mrope_section * 2
+    cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(split_sections, dim=-1))], dim=-1).unsqueeze(
         unsqueeze_dim
     )
-    sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+    sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(split_sections, dim=-1))], dim=-1).unsqueeze(
         unsqueeze_dim
     )
 
@@ -1064,7 +1066,8 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
             Temporal position IDs are spaced by:
                 `interval = tokens_per_second * temporal_patch_size / fps`
 
-                If fps = 1; tokens_per_second = 25; temporal_patch_size = 2, temporal IDs increase by 50 for each temporal patch:
+                If fps = 1; tokens_per_second = 25; temporal_patch_size = 2,
+                temporal IDs increase by 50 for each temporal patch:
                 `[0, 0, 0, 0, 50, 50, 50, 50, 100, 100, 100, 100]`
 
             Height IDs repeat per row: `[0, 0, 1, 1, ...]`
@@ -1073,10 +1076,11 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
 
         Args:
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-                Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
-                it.
+                Indices of input sequence tokens in the vocabulary. Padding will be
+                ignored by default should you provide it.
             mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`):
-                Token type ids matching each modality to a different value in the input sequence, i.e. text (0), image (1), video (2).
+                Token type ids matching each modality to a different value in the input
+                sequence, i.e. text (0), image (1), video (2).
             image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
                 The temporal, height and width of feature shape of each image in LLM.
             video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
@@ -1209,8 +1213,9 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         video_features: torch.FloatTensor | None = None,
     ):
         """
-        Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and checks that the placeholder token count is
-        equal to the length of multimodal features. If the lengths are different, an error is raised.
+        Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and
+        checks that the placeholder token count is equal to the length of multimodal
+        features. If the lengths are different, an error is raised.
         """
         if input_ids is None:
             special_image_mask = inputs_embeds == self.get_input_embeddings()(
@@ -1230,7 +1235,8 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         if image_features is not None:
             torch_compilable_check(
                 inputs_embeds[special_image_mask].numel() == image_features.numel(),
-                f"Image features and image tokens do not match, tokens: {n_image_tokens}, features: {image_features.shape[0]}",
+                f"Image features and image tokens do not match, "
+                f"tokens: {n_image_tokens}, features: {image_features.shape[0]}",
             )
 
         n_video_tokens = special_video_mask.sum()
@@ -1238,7 +1244,8 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         if video_features is not None:
             torch_compilable_check(
                 inputs_embeds[special_video_mask].numel() == video_features.numel(),
-                f"Video features and video tokens do not match, tokens: {n_video_tokens}, features: {video_features.shape[0]}",
+                f"Video features and video tokens do not match, "
+                f"tokens: {n_video_tokens}, features: {video_features.shape[0]}",
             )
         return special_image_mask, special_video_mask
 
@@ -1383,7 +1390,8 @@ class Qwen2_5_VLCausalLMOutputWithPast(ModelOutput):
     logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -1498,7 +1506,11 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 "content": [
                     {
                         "type": "image",
-                        "image": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg",
+                        "image": (
+                            "https://huggingface.co/datasets/huggingface/"
+                            "documentation-images/resolve/main/"
+                            "pipeline-cat-chonk.jpeg"
+                        ),
                     },
                     {"type": "text", "text": "Describe the image."},
                 ],
@@ -1516,7 +1528,9 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         >>> # Generate
         >>> generated_ids = model.generate(**inputs, max_new_tokens=1024)
         >>> generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
-        >>> output_text = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        >>> output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True,
+            clean_up_tokenization_spaces=False)[0]
         >>> print(output_text)
         ```
         """
@@ -1616,10 +1630,14 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             inputs_tensor = model_kwargs["input_ids"]
 
         is_input_ids = len(inputs_tensor.shape) == 2 and inputs_tensor.dtype in [torch.int, torch.long]
+        has_multimodal_input = (
+            model_kwargs.get("image_grid_thw") is not None
+            or model_kwargs.get("video_grid_thw") is not None
+        )
         if (
             is_input_ids
             and model_kwargs.get("mm_token_type_ids") is not None
-            and (model_kwargs.get("image_grid_thw") is not None or model_kwargs.get("video_grid_thw") is not None)
+            and has_multimodal_input
         ):
             model_kwargs = {k: v for k, v in model_kwargs.items() if k != "input_ids"}
             vision_positions, rope_deltas = self.model.get_rope_index(inputs_tensor, **model_kwargs)
@@ -1643,7 +1661,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the number of images and videos for each sample to calculate the separation length of the sample tensor.
-        These parameters are not passed through the processor to avoid unpredictable impacts from interface modifications.
+        These parameters are not passed through the processor to avoid unpredictable
+        impacts from interface modifications.
 
         Args:
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):

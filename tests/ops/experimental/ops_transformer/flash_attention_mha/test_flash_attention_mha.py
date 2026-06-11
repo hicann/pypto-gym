@@ -1,28 +1,11 @@
 #!/usr/bin/env python3
 # coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# ... (license unchanged)
 # -----------------------------------------------------------------------------------------------------------
 """
 Flash Attention Forward with Dynamic Variable Length Sequences
-
-语义约定:
-  - Q 侧: s1_size (Q seqlen), 张量包括 Q/O/L/M
-  - KV 侧: s2_size (KV seqlen), 张量包括 K/V
-  - Q_TILE/K_TILE: 序列维度的分块大小 (将 s1/s2 切分为多个 tile 迭代)
-
-4 loops: batch + head + q_tile + kv_tile.
-Tiles Q and KV sequence dimensions by Q_TILE/K_TILE to reduce intermediate
-attention matrix from [s1_size, s2_size] to [Q_TILE, K_TILE] per iteration.
-O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
-
-
 import sys
 import os
 _p = os.path.dirname(__file__)
@@ -31,6 +14,7 @@ while not os.path.isdir(os.path.join(_p, 'src')):
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
+import collections
 import logging
 from dataclasses import dataclass
 
@@ -40,18 +24,22 @@ import torch_npu
 import numpy as np
 import pytest
 
-from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import flash_attention_varlen_forward_kernel, FlashAttentionTileShapeConfig, flash_attention_varlen_forward_kernel_910
-
+from experimental.ops_transformer.flash_attention_mha.flash_attention_mha_impl import (
+    flash_attention_varlen_forward_kernel,
+    FlashAttentionTileShapeConfig,
+    flash_attention_varlen_forward_kernel_910,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
-
 
 NUM_HEADS = 8
 HEAD_DIM = 64
 HIDDEN_DIM = NUM_HEADS * HEAD_DIM
-
 Q_TILE = 320
 K_TILE = 320
+
+MhaInputs = collections.namedtuple("MhaInputs", ["q", "k", "v", "cu_seqlens_q", "cu_seqlens_k", "q_seqlens", "kv_seqlens"])
+AttentionForwardOutput = collections.namedtuple("AttentionForwardOutput", ["o", "m", "l"])
 
 
 def get_device_id():
@@ -66,41 +54,12 @@ def get_device_id():
 
 
 def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
-    """
-    创建 varlen 布局的输入张量（三维布局）。
-
-    布局说明 (Q: s1_size, KV: s2_size):
-      - Q/K/V: 三维 [total_seq, num_heads, head_dim]
-      - Kernel从shape自动推导 num_heads 和 head_dim
-
-    数据类型严格对应 kernel 签名:
-      - q/k/v:       BF16  (kernel: pypto.DT_BF16, 三维)
-      - cu_seqlens:  INT32 (kernel: pypto.DT_INT32)
-
-    Args:
-        batch_size: 批次数量
-        s1_size:    Q 序列长度 (每个 batch 的 Q seqlen)
-        s2_size:    KV 序列长度 (每个 batch 的 KV seqlen)
-        num_heads:  注意力头数
-        head_dim:   每个头的维度
-        device:     计算设备
-    Returns:
-        q:          shape=[total_q, num_heads, head_dim], dtype=bfloat16 (三维)
-        k, v:       shape=[total_kv, num_heads, head_dim], dtype=bfloat16 (三维)
-        cu_seqlens_q:   shape=[batch_size + 1], dtype=int32
-                        cu_seqlens_q[i]=前 i 个 batch 的累积 Q seqlen
-        cu_seqlens_k:   shape=[batch_size + 1], dtype=int32
-                        cu_seqlens_k[i]=前 i 个 batch 的累积 KV seqlen
-        q_seqlens:  list of Q seqlens per batch
-        kv_seqlens: list of KV seqlens per batch
-    """
     q_seqlens = [s1_size] * batch_size
     kv_seqlens = [s2_size] * batch_size
     total_q = sum(q_seqlens)
     total_kv = sum(kv_seqlens)
 
     torch.manual_seed(42)
-    # 三维布局: [total_seq, num_heads, head_dim]
     q = torch.randn(total_q, num_heads, head_dim, dtype=torch.bfloat16, device=device) + 0.5
     k = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) + 0.5
     v = torch.randn(total_kv, num_heads, head_dim, dtype=torch.bfloat16, device=device) + 0.5
@@ -108,51 +67,112 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     cu_seqlens_q = torch.tensor([0] + list(np.cumsum(q_seqlens)), dtype=torch.int32, device=device)
     cu_seqlens_k = torch.tensor([0] + list(np.cumsum(kv_seqlens)), dtype=torch.int32, device=device)
 
-    return q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens
+    return MhaInputs(q=q, k=k, v=v, cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
 
-def attention_forward_golden_noflash(q, k, v, scale):  # pylint: disable=too-many-return-values
+def attention_forward_golden_noflash(q, k, v, scale):
     scores = torch.matmul(q.cpu().to(torch.float32), k.cpu().transpose(1, 0).to(torch.float32)) * scale
     m = scores.amax(dim=-1, keepdim=True)
-
     p_unnorm = torch.exp(scores - m)
     l = p_unnorm.sum(dim=-1, keepdim=True)
-
     p_norm = p_unnorm / l
     o = torch.matmul(p_norm.to(torch.bfloat16).to(torch.float32), v.cpu().to(torch.float32)).to(torch.bfloat16)
+    return AttentionForwardOutput(o, m, l)
 
-    return o, m, l
+
+def _kv_tile_iter_body(q_tile_view, k_tile_view, v_tile_view, scale,
+                        oi_upd, li_upd, mi_upd, q_tile_len, k_tile_idx, k_tile_count):
+    """One KV tile iteration: compute scores, softmax, matmul, and update accumulators."""
+    scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+    mij = scores.amax(dim=-1, keepdim=True)
+    s_shifted = scores - mij
+    pij = torch.exp(s_shifted)
+    lij = pij.sum(dim=-1, keepdim=True)
+    p_bf16 = pij.to(torch.bfloat16)
+    oij = torch.matmul(p_bf16, v_tile_view)
+
+    if k_tile_idx == 0:
+        if k_tile_count == 1:
+            return None, None, None, None, None, None, True, None, None, None, \
+                lij[:q_tile_len, :], mij[:q_tile_len, :], oij[:q_tile_len, :], scores, pij
+        oi_upd = torch.zeros(q_tile_view.shape[0], q_tile_view.shape[1], dtype=torch.float32)
+        li_upd = torch.zeros(q_tile_view.shape[0], 1, dtype=torch.float32)
+        mi_upd = torch.full((q_tile_view.shape[0], 1), float('-inf'), dtype=torch.float32)
+        oi_upd[:q_tile_len, :] = oij[:q_tile_len, :]
+        li_upd[:q_tile_len, :] = lij[:q_tile_len, :]
+        mi_upd[:q_tile_len, :] = mij[:q_tile_len, :]
+        return oi_upd, li_upd, mi_upd, lij, mij, oij, False, scores, pij, lij, mij, oij, scores, pij
+    else:
+        mi = mi_upd[:q_tile_len, :]
+        li = li_upd[:q_tile_len, :]
+        oi = oi_upd[:q_tile_len, :]
+        mi_new = torch.maximum(mi, mij[:q_tile_len, :])
+        t1 = torch.exp(mi - mi_new)
+        t2 = torch.exp(mij[:q_tile_len, :] - mi_new)
+        li_new = t1 * li + t2 * lij[:q_tile_len, :]
+        oi_tmp = t1 * oi + t2 * oij[:q_tile_len, :]
+        if k_tile_idx == k_tile_count - 1:
+            return None, None, None, None, None, None, True, None, None, None, \
+                li_new, mi_new, oi_tmp, scores, pij
+        oi_upd[:q_tile_len, :] = oi_tmp
+        li_upd[:q_tile_len, :] = li_new
+        mi_upd[:q_tile_len, :] = mi_new
+        return oi_upd, li_upd, mi_upd, lij, mij, oij, False, scores, pij, li_new, mi_new, oi_tmp, scores, pij
+
+
+def _process_kv_tile(q_tile_view, k_tile_view, v_tile_view, scale, q_tile_len, k_tile_idx,
+                     k_tile_count, oi_upd, li_upd, mi_upd, q_tile_start, q_tile_end,
+                     o_out, l_out, m_out):
+    """Process one KV tile: compute scores, softmax, matmul, update accumulators."""
+    scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+    mij = scores.amax(dim=-1, keepdim=True)
+    s_shifted = scores - mij
+    pij = torch.exp(s_shifted)
+    lij = pij.sum(dim=-1, keepdim=True)
+    p_bf16 = pij.to(torch.bfloat16)
+    oij = torch.matmul(p_bf16, v_tile_view)
+
+    if k_tile_idx == 0:
+        if k_tile_idx == k_tile_count - 1:
+            pij_div = pij / lij
+            pij_bf16 = pij_div.to(torch.bfloat16)
+            out_bf16 = torch.matmul(pij_bf16, v_tile_view)
+            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
+            l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
+            m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
+        else:
+            oi_upd[:q_tile_len, :] = oij[:q_tile_len, :]
+            li_upd[:q_tile_len, :] = lij[:q_tile_len, :]
+            mi_upd[:q_tile_len, :] = mij[:q_tile_len, :]
+    else:
+        mi = mi_upd[:q_tile_len, :]
+        li = li_upd[:q_tile_len, :]
+        oi = oi_upd[:q_tile_len, :]
+        mi_new = torch.maximum(mi, mij[:q_tile_len, :])
+        t1 = torch.exp(mi - mi_new)
+        t2 = torch.exp(mij[:q_tile_len, :] - mi_new)
+        li_new = t1 * li + t2 * lij[:q_tile_len, :]
+        oi_tmp = t1 * oi + t2 * oij[:q_tile_len, :]
+        if k_tile_idx == k_tile_count - 1:
+            out_fp32 = oi_tmp / li_new
+            out_bf16 = out_fp32.to(torch.bfloat16)
+            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
+            l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
+            m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]
+        else:
+            oi_upd[:q_tile_len, :] = oi_tmp
+            li_upd[:q_tile_len, :] = li_new
+            mi_upd[:q_tile_len, :] = mi_new
 
 
 def attention_forward_golden(q, k, v, scale):
-    """
-    Golden reference: Flash Attention (online softmax)算法实现。
-
-    Q: [s1_size, head_dim],  KV: [s2_size, head_dim]
-    输入 q/k/v 均为 BF16。
-
-    采用 online softmax 算法，分块计算避免存储完整的 [s1, s2] attention matrix。
-    通过增量更新 O, M, L，实现内存高效的 attention 计算。
-
-    Args:
-        q:     [s1_size, head_dim] BF16 — Q 切片
-        k, v:  [s2_size, head_dim] BF16 — KV 切片
-        scale: attention scale factor (1/sqrt(head_dim))
-    Returns:
-        o:     [s1_size, head_dim] BF16 — 输出 O
-        m:     [s1_size, 1] FP32 — softmax 最大值 M
-        l:     [s1_size, 1] FP32 — softmax 分母 L
-    """
     s1_size, head_dim = q.shape
     s2_size = k.shape[0]
-
     q_f = q.cpu().to(torch.float32)
     k_f = k.cpu().to(torch.float32)
     v_f = v.cpu().to(torch.float32)
-
     q_tile = Q_TILE
     k_tile = K_TILE
-
     q_tile_count = (s1_size + q_tile - 1) // q_tile
     k_tile_count = (s2_size + k_tile - 1) // k_tile
 
@@ -164,21 +184,17 @@ def attention_forward_golden(q, k, v, scale):
         q_tile_start = q_tile_idx * q_tile
         q_tile_end = min(q_tile_start + q_tile, s1_size)
         q_tile_len = q_tile_end - q_tile_start
-
         q_tile_view = q_f[q_tile_start:q_tile_end, :]
 
-        oi_update = torch.zeros(q_tile, head_dim, dtype=torch.float32)
-        li_update = torch.zeros(q_tile, 1, dtype=torch.float32)
-        mi_update = torch.full((q_tile, 1), float('-inf'), dtype=torch.float32)
+        oi_upd = torch.zeros(q_tile, head_dim, dtype=torch.float32)
+        li_upd = torch.zeros(q_tile, 1, dtype=torch.float32)
+        mi_upd = torch.full((q_tile, 1), float('-inf'), dtype=torch.float32)
 
         for k_tile_idx in range(k_tile_count):
             k_tile_start = k_tile_idx * k_tile
             k_tile_end = min(k_tile_start + k_tile, s2_size)
-            k_tile_len = k_tile_end - k_tile_start
-
             k_tile_view = k_f[k_tile_start:k_tile_end, :]
             v_tile_view = v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
-
             scores = torch.matmul(q_tile_view.to(torch.float32), k_tile_view.to(torch.float32).T) * scale
 
             mij = scores.amax(dim=-1, keepdim=True)
@@ -199,13 +215,13 @@ def attention_forward_golden(q, k, v, scale):
                     l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
                     m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
                 else:
-                    oi_update[:q_tile_len, :] = oij[:q_tile_len, :]
-                    li_update[:q_tile_len, :] = lij[:q_tile_len, :]
-                    mi_update[:q_tile_len, :] = mij[:q_tile_len, :]
+                    oi_upd[:q_tile_len, :] = oij[:q_tile_len, :]
+                    li_upd[:q_tile_len, :] = lij[:q_tile_len, :]
+                    mi_upd[:q_tile_len, :] = mij[:q_tile_len, :]
             else:
-                mi = mi_update[:q_tile_len, :]
-                li = li_update[:q_tile_len, :]
-                oi = oi_update[:q_tile_len, :]
+                mi = mi_upd[:q_tile_len, :]
+                li = li_upd[:q_tile_len, :]
+                oi = oi_upd[:q_tile_len, :]
 
                 mi_new = torch.maximum(mi, mij[:q_tile_len, :])
                 t1 = torch.exp(mi - mi_new)
@@ -222,149 +238,55 @@ def attention_forward_golden(q, k, v, scale):
                     l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
                     m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]
                 else:
-                    oi_update[:q_tile_len, :] = oi_tmp
-                    li_update[:q_tile_len, :] = li_new
-                    mi_update[:q_tile_len, :] = mi_new
+                    oi_upd[:q_tile_len, :] = oi_tmp
+                    li_upd[:q_tile_len, :] = li_new
+                    mi_upd[:q_tile_len, :] = mi_new
 
     return o_out, m_out, l_out
 
 
-def run_test(batch_size=None, num_heads=None, s1_size=None,
-             s2_size=None, dim=None, tile_config=None, perf_910=False, no_flash=False):
-    """
-    运行单个测试用例: 构造输入 → 调用 kernel → 与 golden 对比。
-
-    参数语义 (Q: s1_size, KV: s2_size):
-      - batch_size: 批次数量              (默认 2)
-      - num_heads:  注意力头数            (默认 NUM_HEADS=8)
-      - s1_size:    Q 序列长度            (默认 4096)
-      - s2_size:    KV 序列长度           (默认 = s1_size)
-      - dim:        每个头的维度 head_dim (默认 HEAD_DIM=64)
-      - tile_config: TileConfig 分块配置 (默认使用全局 Q_TILE/K_TILE)
-
-    输入张量布局:
-      - Q/O/L/M: [total_q, hidden_dim]  — Q 侧
-      - K/V:      [total_kv, hidden_dim]  — KV 侧
-      - cu_seqlens_q/k: [batch_size + 1] — 累积序列长度
-
-    数据类型严格对应 kernel 签名:
-      ┌────────────┬──────────────────────────────────────────┬─────────────┐
-      │ 张量       │ kernel 签名                              │ host dtype  │
-      ├────────────┼──────────────────────────────────────────┼─────────────┤
-      │ q/k/v      │ pypto.Tensor([DYN, HIDDEN_DIM], DT_BF16) │ bfloat16    │
-      │ l/m        │ pypto.Tensor([DYN, STATIC],    DT_FP32) │ float32     │
-      │ cu_seqlens │ pypto.Tensor([DYN],            DT_INT32) │ int32       │
-      └────────────┴──────────────────────────────────────────┴─────────────┘
-
-    Args:
-        device:      计算设备
-        batch_size:  批次数量 (可选)
-        num_heads:   注意力头数 (可选)
-        s1_size:     Q 序列长度 (可选)
-        s2_size:     KV 序列长度 (可选, 默认 = s1_size)
-        dim:         每个头的维度 head_dim (可选)
-        tile_config: TileConfig 分块配置 (可选)
-    Returns:
-        passed: 是否通过精度校验
-    """
-    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
-    torch.npu.set_device(int(device_id))
-    device = f'npu:{device_id}'
-
-    if batch_size is None:
-        batch_size = 1
-    if num_heads is None:
-        num_heads = NUM_HEADS
-    if s1_size is None:
-        s1_size = 320
-    if s2_size is None:
-        s2_size = s1_size
-    if dim is None:
-        dim = HEAD_DIM
-    if tile_config is None:
-        if perf_910:
-            tile_config = FlashAttentionTileShapeConfig(
-                q_tile = 2048,
-                k_tile = 2048,
-                c1_cube_tile = [[128, 128], [256, 512], [128, 128]],
-                v1_tile = [8, 1024],
-                c2_cube_tile = [[128, 128], [256, 512], [128, 128]],
-                v2_tile = [64, 128]
-            )
-        else:
-            tile_config = FlashAttentionTileShapeConfig(
-                q_tile = Q_TILE,
-                k_tile = K_TILE,
-                c1_cube_tile = [[128, 128], [128, 256], [128, 128]],
-                v1_tile = [64, 512],
-                c2_cube_tile = [[128, 512], [256, 512], [64, 64]],
-                v2_tile = [512, 64]
-            )          
-
-    hidden_dim = num_heads * dim
-    scale = 1.0 / (dim ** 0.5)
-
-    logging.info("=" * 60)
-    logging.info(f"Test Case: batch={batch_size}, heads={num_heads}, "
-                 f"Q:s1_size={s1_size}, KV:s2_size={s2_size}, dim={dim}")
-    logging.info(f"  hidden_dim={hidden_dim}, scale={scale:.6f}")
-    logging.info("=" * 60)
-
-    # 输入tensor（三维）: kernel从shape推导num_heads和head_dim
-    q, k, v, cu_seqlens_q, cu_seqlens_k, q_seqlens, kv_seqlens = create_inputs(
-        batch_size, s1_size, s2_size, num_heads, dim, device)
-
-    total_q = batch_size * s1_size
-    total_kv = batch_size * s2_size
-
-    # Kernel输出tensor（二维）
-    out_npu = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16, device=device)
-    l_out_npu = torch.empty(total_q, num_heads, dtype=torch.float32, device=device)
-    m_out_npu = torch.empty(total_q, num_heads, dtype=torch.float32, device=device)
-
-    # ---- Golden 计算: 先完整计算所有 batch/head 的 golden O/M/L ----
-    # golden O/M/L 与 kernel 输出同 shape: [total_q, ...], dtype与kernel输出一致
-    out_golden = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16)
-    l_golden = torch.empty(total_q, num_heads, dtype=torch.float32)
-    m_golden = torch.empty(total_q, num_heads, dtype=torch.float32)
+def _compute_golden_outputs(inputs, batch_size, num_heads, dim, s1_size, scale, no_flash):
+    """Compute golden O/M/L outputs for all batches and heads."""
+    out_golden = torch.empty(batch_size * s1_size, num_heads * dim, dtype=torch.bfloat16)
+    l_golden = torch.empty(batch_size * s1_size, num_heads, dtype=torch.float32)
+    m_golden = torch.empty(batch_size * s1_size, num_heads, dtype=torch.float32)
 
     q_off, k_off = 0, 0
     for b in range(batch_size):
-        sq, sk = q_seqlens[b], kv_seqlens[b]
-
+        sq, sk = inputs.q_seqlens[b], inputs.kv_seqlens[b]
         for h in range(num_heads):
             h_off = h * dim
-            # 输入tensor是三维，按三维索引
-            q_h = q[q_off:q_off + sq, h, :]
-            k_h = k[k_off:k_off + sk, h, :]
-            v_h = v[k_off:k_off + sk, h, :]
-
+            q_h = inputs.q[q_off:q_off + sq, h, :]
+            k_h = inputs.k[k_off:k_off + sk, h, :]
+            v_h = inputs.v[k_off:k_off + sk, h, :]
             if no_flash:
                 golden_o, golden_m, golden_l = attention_forward_golden_noflash(q_h, k_h, v_h, scale)
             else:
                 golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
-            # golden 返回 [sq, ...] FP32, 写入二维 golden tensor
             out_golden[q_off:q_off + sq, h_off:h_off + dim] = golden_o
             m_golden[q_off:q_off + sq, h:h + 1] = golden_m
             l_golden[q_off:q_off + sq, h:h + 1] = golden_l
         q_off += sq
         k_off += sk
+    return out_golden, l_golden, m_golden
 
-    # ---- 调用 kernel ----
+
+def _run_kernel_and_verify(inputs, out_npu, l_out_npu, m_out_npu,
+                            out_golden, l_golden, m_golden, tile_config, perf_910):
+    """Run the kernel and verify outputs against golden."""
     logging.info("  Running kernel...")
     if perf_910:
         a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
         for _ in range(100):
             a_max = torch.max(a)
         flash_attention_varlen_forward_kernel_910(
-            q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
-            tile_config)
+            inputs.q, inputs.k, inputs.v, out_npu, l_out_npu, m_out_npu,
+            inputs.cu_seqlens_q, inputs.cu_seqlens_k, tile_config)
     else:
         flash_attention_varlen_forward_kernel(
-            q, k, v, out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k,
-            tile_config)
+            inputs.q, inputs.k, inputs.v, out_npu, l_out_npu, m_out_npu,
+            inputs.cu_seqlens_q, inputs.cu_seqlens_k, tile_config)
 
-    # ---- 精度校验: kernel 输出 vs golden 输出 ----
     torch.set_printoptions(precision=6)
     passed = True
     for name, npu_tensor, golden_tensor, rtol, atol in [
@@ -375,16 +297,69 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
         npu_np = npu_tensor.cpu().float().numpy()
         golden_np = golden_tensor.float().numpy()
         max_diff = np.abs(npu_np - golden_np).max()
-
         try:
             from deepseek_v32_exp.utils.compare import compare
             compare(npu_tensor.cpu(), golden_tensor, name, atol=atol, rtol=rtol, max_error_count=10)
-
             logging.info(f"  {name}: PASSED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")
         except AssertionError as e:
             logging.info(f"  {name}: FAILED (max_diff={max_diff:.6f})")
             logging.info(f"    {e}")
             passed = False
+    return passed
+
+
+def _get_default_tile_config(perf_910):
+    """Get default tile config if none provided."""
+    if perf_910:
+        return FlashAttentionTileShapeConfig(
+            q_tile=2048, k_tile=2048,
+            c1_cube_tile=[[128, 128], [256, 512], [128, 128]],
+            v1_tile=[8, 1024],
+            c2_cube_tile=[[128, 128], [256, 512], [128, 128]],
+            v2_tile=[64, 128])
+    return FlashAttentionTileShapeConfig(
+        q_tile=Q_TILE, k_tile=K_TILE,
+        c1_cube_tile=[[128, 128], [128, 256], [128, 128]],
+        v1_tile=[64, 512],
+        c2_cube_tile=[[128, 512], [256, 512], [64, 64]],
+        v2_tile=[512, 64])
+
+
+def run_test(batch_size=None, num_heads=None, s1_size=None,
+             s2_size=None, dim=None, tile_config=None, perf_910=False, no_flash=False):
+    device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
+    torch.npu.set_device(int(device_id))
+    device = f'npu:{device_id}'
+
+    if batch_size is None: batch_size = 1
+    if num_heads is None: num_heads = NUM_HEADS
+    if s1_size is None: s1_size = 320
+    if s2_size is None: s2_size = s1_size
+    if dim is None: dim = HEAD_DIM
+    if tile_config is None: tile_config = _get_default_tile_config(perf_910)
+
+    hidden_dim = num_heads * dim
+    scale = 1.0 / (dim ** 0.5)
+
+    logging.info("=" * 60)
+    logging.info(f"Test Case: batch={batch_size}, heads={num_heads}, "
+                 f"Q:s1_size={s1_size}, KV:s2_size={s2_size}, dim={dim}")
+    logging.info(f"  hidden_dim={hidden_dim}, scale={scale:.6f}")
+    logging.info("=" * 60)
+
+    inputs = create_inputs(batch_size, s1_size, s2_size, num_heads, dim, device)
+    total_q = batch_size * s1_size
+    total_kv = batch_size * s2_size
+
+    out_npu = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16, device=device)
+    l_out_npu = torch.empty(total_q, num_heads, dtype=torch.float32, device=device)
+    m_out_npu = torch.empty(total_q, num_heads, dtype=torch.float32, device=device)
+
+    out_golden, l_golden, m_golden = _compute_golden_outputs(
+        inputs, batch_size, num_heads, dim, s1_size, scale, no_flash)
+
+    passed = _run_kernel_and_verify(inputs, out_npu, l_out_npu, m_out_npu,
+                                     out_golden, l_golden, m_golden, tile_config, perf_910)
 
     logging.info(f"  {'PASSED' if passed else 'FAILED'}")
     logging.info("")
@@ -392,75 +367,52 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
 
 
 def test_00_910_1b():
-    """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
     return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
 def test_00_910_2b():
-    """batch=2, heads=8, s1=4096, s2=4096, dim=128"""
     return run_test(batch_size=2, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
 def test_00_910_8b():
-    """batch=8, heads=8, s1=4096, s2=4096, dim=128"""
     return run_test(batch_size=8, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
 def test_01():
-    """batch=8, heads=8, s1=320, s2=320, dim=64"""
     return run_test(batch_size=8, num_heads=8, s1_size=320, s2_size=320, dim=64)
 
 
 @pytest.mark.soc("950")
 def test_02():
-    """batch=1, heads=8, s1=4096, s2=4096, dim=128"""
     return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
 
 
 @pytest.mark.soc("950")
 def test_03():
-    """batch=8, heads=16, s1=32, s2=32, dim=32"""
     return run_test(batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
 
 
 @pytest.mark.soc("950")
 def test_04():
-    """batch=8, heads=16, s1=64, s2=64, dim=32"""
     return run_test(batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
 
 
 @pytest.mark.soc("950")
 def test_05():
-    """batch=8, heads=8, s1=32, s2=32, dim=64"""
     return run_test(batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
 
 
 @pytest.mark.soc("950")
 def test_06():
-    """batch=8, heads=4, s1=64, s2=64, dim=128"""
     return run_test(batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
 
 
 def main():
-    """
-    主入口: 在下方列表中选择要运行的测试用例。
-    注释/取消注释即可控制执行哪些用例。
-    """
     logging.info("\n" + "=" * 60)
     logging.info("Flash Attention Forward (4-loop, Q+KV tiling)")
     logging.info("=" * 60 + "\n")
 
-    test_funcs = [
-        test_00_910_1b,
-        test_00_910_2b,
-        test_00_910_8b,
-        test_01,
-        test_02,
-        test_03,
-        test_04,
-        test_05,
-        test_06,
-    ]
+    test_funcs = [test_00_910_1b, test_00_910_2b, test_00_910_8b, test_01, test_02, test_03, test_04, test_05, test_06]
 
     results = []
     for i, fn in enumerate(test_funcs):

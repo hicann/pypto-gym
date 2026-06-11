@@ -83,6 +83,35 @@ def test_symbolic_scalar_uniop():
     assert not_s.concrete() == 0
 
 
+def _check_binary_op(expr, expr1, expr2, expr3, val):
+    """Validate properties of a binary operation expression."""
+    assert isinstance(expr, pypto.symbolic_scalar)
+    assert expr.is_symbol() == False
+    assert expr.is_expression() == True
+    assert expr.is_immediate() == False
+    assert expr.is_concrete() == False
+
+    assert isinstance(expr1, pypto.symbolic_scalar)
+    assert expr1.is_symbol() == False
+    assert expr1.is_expression() == True
+    assert expr1.is_immediate() == False
+    assert expr1.is_concrete() == False
+
+    assert isinstance(expr2, pypto.symbolic_scalar)
+    assert expr2.concrete() == val
+    assert expr2.is_symbol() == False
+    assert expr2.is_expression() == False
+    assert expr2.is_immediate() == True
+    assert expr2.is_concrete() == True
+
+    assert isinstance(expr3, pypto.symbolic_scalar)
+    assert expr3.concrete() == val
+    assert expr3.is_symbol() == False
+    assert expr3.is_expression() == False
+    assert expr3.is_immediate() == True
+    assert expr3.is_concrete() == True
+
+
 def test_binary_ops():
     c = 10
     x = pypto.symbolic_scalar(10)
@@ -117,31 +146,7 @@ def test_binary_ops():
     ]
 
     for (expr, expr1, expr2, expr3, val) in tests:
-        assert isinstance(expr, pypto.symbolic_scalar)
-        assert expr.is_symbol() == False
-        assert expr.is_expression() == True
-        assert expr.is_immediate() == False
-        assert expr.is_concrete() == False
-
-        assert isinstance(expr1, pypto.symbolic_scalar)
-        assert expr1.is_symbol() == False
-        assert expr1.is_expression() == True
-        assert expr1.is_immediate() == False
-        assert expr1.is_concrete() == False
-
-        assert isinstance(expr2, pypto.symbolic_scalar)
-        assert expr2.concrete() == val
-        assert expr2.is_symbol() == False
-        assert expr2.is_expression() == False
-        assert expr2.is_immediate() == True
-        assert expr2.is_concrete() == True
-
-        assert isinstance(expr3, pypto.symbolic_scalar)
-        assert expr3.concrete() == val
-        assert expr3.is_symbol() == False
-        assert expr3.is_expression() == False
-        assert expr3.is_immediate() == True
-        assert expr3.is_concrete() == True
+        _check_binary_op(expr, expr1, expr2, expr3, val)
 
 
 def test_symbolic_scalar_add():

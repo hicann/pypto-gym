@@ -108,6 +108,45 @@ except Exception as e:
 '''
 
 
+def _interpret_result(proc):
+    """Parse subprocess stdout/stderr and return exit code (0=pass, 1=fail, 2=unavailable)."""
+    stdout = proc.stdout
+    stderr = proc.stderr
+
+    if "__NPU_PASS__" in stdout:
+        for line in stdout.splitlines():
+            if "__NPU_PASS__" in line:
+                print(f"   ✅ {line.replace('__NPU_PASS__: ', '')}")
+        print(f"\n   NPU 预检通过 ✓")
+        return 0
+
+    if "__NPU_UNAVAILABLE__" in stdout:
+        for line in stdout.splitlines():
+            if "__NPU_UNAVAILABLE__" in line:
+                reason = line.replace("__NPU_UNAVAILABLE__: ", "")
+                print(f"   ⚠️  NPU 不可用: {reason}")
+        print(f"\n   ❌ NPU 预检失败 — 无法获取 NPU 设备")
+        return 2
+
+    if "__NPU_FAIL__" in stdout:
+        for line in stdout.splitlines():
+            if "__NPU_FAIL__" in line or "TRACE" in line:
+                print(f"   {line.replace('__NPU_FAIL__: ', '')}")
+        if stderr.strip():
+            err_lines = [l for l in stderr.strip().splitlines() if l.strip()]
+            for line in err_lines[-5:]:
+                print(f"   {line.strip()}")
+        print(f"\n   ❌ NPU 预检失败 — case 不兼容 NPU")
+        return 1
+
+    print(f"   ❌ 子进程异常退出 (code={proc.returncode})")
+    if stdout.strip():
+        print(f"   stdout: {stdout.strip()[-500:]}")
+    if stderr.strip():
+        print(f"   stderr: {stderr.strip()[-500:]}")
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="KernelBench case NPU 预检 — 在 NPU 上执行 Model.forward() 验证兼容性"
@@ -159,41 +198,7 @@ def main() -> int:
         print(f"⏱️ 超时 ({args.timeout}s)，可能 NPU 资源不足或 case 计算量过大")
         return 1
 
-    stdout = proc.stdout
-    stderr = proc.stderr
-
-    if "__NPU_PASS__" in stdout:
-        for line in stdout.splitlines():
-            if "__NPU_PASS__" in line:
-                print(f"   ✅ {line.replace('__NPU_PASS__: ', '')}")
-        print(f"\n   NPU 预检通过 ✓")
-        return 0
-
-    if "__NPU_UNAVAILABLE__" in stdout:
-        for line in stdout.splitlines():
-            if "__NPU_UNAVAILABLE__" in line:
-                reason = line.replace("__NPU_UNAVAILABLE__: ", "")
-                print(f"   ⚠️  NPU 不可用: {reason}")
-        print(f"\n   ❌ NPU 预检失败 — 无法获取 NPU 设备")
-        return 2
-
-    if "__NPU_FAIL__" in stdout:
-        for line in stdout.splitlines():
-            if "__NPU_FAIL__" in line or "TRACE" in line:
-                print(f"   {line.replace('__NPU_FAIL__: ', '')}")
-        if stderr.strip():
-            err_lines = [l for l in stderr.strip().splitlines() if l.strip()]
-            for line in err_lines[-5:]:
-                print(f"   {line.strip()}")
-        print(f"\n   ❌ NPU 预检失败 — case 不兼容 NPU")
-        return 1
-
-    print(f"   ❌ 子进程异常退出 (code={proc.returncode})")
-    if stdout.strip():
-        print(f"   stdout: {stdout.strip()[-500:]}")
-    if stderr.strip():
-        print(f"   stderr: {stderr.strip()[-500:]}")
-    return 1
+    return _interpret_result(proc)
 
 
 if __name__ == "__main__":

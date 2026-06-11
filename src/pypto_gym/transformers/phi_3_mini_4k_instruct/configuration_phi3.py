@@ -26,8 +26,10 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 PHI3_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "microsoft/Phi-3-mini-4k-instruct": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct/resolve/main/config.json",
-    "microsoft/Phi-3-mini-128k-instruct": "https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/resolve/main/config.json",
+    "microsoft/Phi-3-mini-4k-instruct":
+        "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct/resolve/main/config.json",
+    "microsoft/Phi-3-mini-128k-instruct":
+        "https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/resolve/main/config.json",
 }
 
 
@@ -215,7 +217,9 @@ class Phi3Config(PretrainedConfig):
             )
         if not len(rope_scaling_short_factor) == self.hidden_size // self.num_attention_heads // 2:
             raise ValueError(
-                f"`rope_scaling`'s short_factor field must have length {self.hidden_size // self.num_attention_heads // 2}, got {len(rope_scaling_short_factor)}"
+                f"`rope_scaling`'s short_factor field must have length "
+                f"{self.hidden_size // self.num_attention_heads // 2}, "
+                f"got {len(rope_scaling_short_factor)}"
             )
         if not (
             isinstance(rope_scaling_long_factor, list)
@@ -226,5 +230,7 @@ class Phi3Config(PretrainedConfig):
             )
         if not len(rope_scaling_long_factor) == self.hidden_size // self.num_attention_heads // 2:
             raise ValueError(
-                f"`rope_scaling`'s long_factor field must have length {self.hidden_size // self.num_attention_heads // 2}, got {len(rope_scaling_long_factor)}"
+                f"`rope_scaling`'s long_factor field must have length "
+                f"{self.hidden_size // self.num_attention_heads // 2}, "
+                f"got {len(rope_scaling_long_factor)}"
             )

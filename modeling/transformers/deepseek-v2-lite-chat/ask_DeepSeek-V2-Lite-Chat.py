@@ -48,7 +48,8 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # ===== PyPTO sys.modules注入（transformers导入前） =====
 pto_kernels = None
-if args.use_pto or args.use_rope or args.use_kv_fusion or args.use_acl_graph:  # pylint: disable=too-many-boolean-expressions
+pto_enabled = args.use_pto or args.use_rope or args.use_kv_fusion or args.use_acl_graph
+if pto_enabled:
     logging.info("PyPTO mode enabled")
     sys.path.insert(0, args.model_path)
     import pto_kernels as _pto_kernels

@@ -92,7 +92,6 @@ def gemma4_decode_attn_gqa(
     Skv = k_full.shape[1]
     s2_loop = (Skv + S2_TILE - 1) // S2_TILE
 
-    # Reshape q: [Nq=32, D=256] -> [Nkv=4, GROUPS=8, D=256]
     pypto.set_vec_tile_shapes(Nkv, GROUPS, D)
     q_3d = pypto.tensor([Nkv, GROUPS, D], pypto.DT_BF16, "q_3d")
     q_3d[:] = pypto.reshape(q, [Nkv, GROUPS, D])
@@ -118,7 +117,6 @@ def gemma4_decode_attn_gqa(
         v_tile[:] = pypto.view(v_full, [Nkv, S2_TILE, D], [0, s2_start, 0],
                                valid_shape=[Nkv, s2_valid, D])
 
-        # QK^T: [Nkv=4, GROUPS=8, D=256] @ [Nkv=4, S2_TILE=64, D=256]^T -> [Nkv=4, GROUPS=8, S2_TILE=64]
         pypto.set_cube_tile_shapes([4, 4], [128, 128], [64, 64])
         sij = pypto.matmul(q_3d, k_tile, pypto.DT_FP32, b_trans=True)
 
@@ -255,7 +253,6 @@ def gqa_decode_attn_wrapper(query_states, key_states, value_states, attention_ma
         k_padded = k_reduced.contiguous()
         v_padded = v_reduced.contiguous()
 
-    # Build mask: [Nkv=4, GROUPS=8, Skv_padded]
     if attention_mask is not None:
         mask_base = attention_mask[0, 0, 0, :].float()
     else:

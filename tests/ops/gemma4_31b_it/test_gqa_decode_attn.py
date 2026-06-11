@@ -111,6 +111,60 @@ def run_case_subprocess(case_data, device_str, python_exe, script_path, json_pat
     return result.returncode == 0
 
 
+def _setup_npu_device(args):
+    """Set up NPU device from --device arg for single-case mode."""
+    device = args.device
+    if device.startswith("npu"):
+        if "TILE_FWK_DEVICE_ID" not in os.environ:
+            raise RuntimeError("Environment check failed")
+        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
+        import torch_npu  # noqa: F401
+        torch.npu.set_device(device_id)
+        device = f"npu:{device_id}"
+    return device
+
+
+def _run_single_inprocess(args, gqa_cases):
+    """Run a single test case in the current process."""
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import torch
+    device = _setup_npu_device(args)
+    match = [c for c in gqa_cases if c["id"] == args.case_id]
+    if not match:
+        raise RuntimeError("Test execution failed")
+    ok = run_single_case(match[0], device)
+    sys.exit(0 if ok else 1)
+
+
+def _run_all_cases_subprocess(args, gqa_cases):
+    """Run all (or filtered) test cases in subprocesses for JIT isolation."""
+    if args.case_id:
+        match = [c for c in gqa_cases if c["id"] == args.case_id]
+        if not match:
+            print(f"ERROR: unknown case '{args.case_id}'")
+            raise RuntimeError("Test execution failed")
+        to_run = match
+    else:
+        to_run = gqa_cases
+
+    python_exe = sys.executable
+    script_path = os.path.abspath(__file__)
+    passed = 0
+    for case_data in to_run:
+        print(f"\n>> Running {case_data['id']}")
+        if run_case_subprocess(case_data, args.device, python_exe, script_path, args.json):
+            passed += 1
+        else:
+            print(f"\nFailed at {case_data['id']}")
+            raise RuntimeError("Test failed")
+
+    print("\n" + "=" * 60)
+    print(f"All GQA decode attention tests passed! ({passed}/{len(to_run)} cases)")
+    print("=" * 60)
+
+
 def main():
     parser = argparse.ArgumentParser(description="GQA decode attention kernel precision test")
     parser.add_argument("case_id", type=str, nargs="?", help="Case ID to run (omit for all)")
@@ -133,53 +187,10 @@ def main():
             print(f"  {c['id']}  -- {c.get('description', '')}  [Skv={c['Skv']}, kind={c['layer_kind']}]")
         return
 
-    # Internal: run a single case in-process (called by subprocess)
     if args._run_one:
-        # Ensure test dir is in path for golden imports
-        test_dir = os.path.dirname(os.path.abspath(__file__))
-        if test_dir not in sys.path:
-            sys.path.insert(0, test_dir)
-        import torch
-        device = args.device
-        if device.startswith("npu"):
-            if "TILE_FWK_DEVICE_ID" not in os.environ:
-                raise RuntimeError("Environment check failed")
-            device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-            import torch_npu  # noqa: F401
-            torch.npu.set_device(device_id)
-            device = f"npu:{device_id}"
-
-        match = [c for c in gqa_cases if c["id"] == args.case_id]
-        if not match:
-            raise RuntimeError("Test execution failed")
-        ok = run_single_case(match[0], device)
-        raise SystemExit(0 if ok else 1)  # pylint: disable=avoid-using-exit
-
-    # Main: run each case in a subprocess for JIT isolation
-    if args.case_id:
-        match = [c for c in gqa_cases if c["id"] == args.case_id]
-        if not match:
-            print(f"ERROR: unknown case '{args.case_id}'")
-            raise RuntimeError("Test execution failed")
-        to_run = match
+        _run_single_inprocess(args, gqa_cases)
     else:
-        to_run = gqa_cases
-
-    python_exe = sys.executable
-    script_path = os.path.abspath(__file__)
-
-    passed = 0
-    for case_data in to_run:
-        print(f"\n>> Running {case_data['id']}")
-        if run_case_subprocess(case_data, args.device, python_exe, script_path, args.json):
-            passed += 1
-        else:
-            print(f"\nFailed at {case_data['id']}")
-            raise RuntimeError("Test failed")
-
-    print("\n" + "=" * 60)
-    print(f"All GQA decode attention tests passed! ({passed}/{len(to_run)} cases)")
-    print("=" * 60)
+        _run_all_cases_subprocess(args, gqa_cases)
 
 
 if __name__ == "__main__":

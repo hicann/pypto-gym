@@ -45,87 +45,47 @@ from tests.ops.utils.get_format import get_format
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 
 
-def check_args(  # pylint: disable=huawei-too-many-arguments
-    hidden_states,
-    residual,
-    input_layernorm_weight,
-    input_layernorm_bias,
-    atten_qkv_input_scale_reciprocal,
-    atten_qkv_input_offset,
-    atten_qkv_weight,
-    atten_qkv_quant_bias,
-    atten_qkv_deq_scale,
-    atten_q_norm_weight,
-    atten_q_norm_bias,
-    atten_k_norm_weight,
-    atten_k_norm_bias,
-    cos,
-    sin,
-    query,
-    key,
-    value,
-    residual_res
-):
+def _check_input_shape_dtype(t, dim, fmt, dtype, name):
+    assert t.dim() == dim, f"invalid {name} dim"
+    assert get_format(t) == fmt, f"invalid {name} format"
+    assert t.dtype == dtype, f"invalid {name} dtype"
 
-    assert hidden_states.dim() == 2
-    assert get_format(hidden_states) == 'ND'
-    assert hidden_states.dtype == torch.bfloat16
-    assert residual.dim() == 2
-    assert get_format(residual) == 'ND'
-    assert residual.dtype == torch.bfloat16
-    assert input_layernorm_weight.dim() == 1
-    assert get_format(input_layernorm_weight) == 'ND'
-    assert input_layernorm_weight.dtype == torch.bfloat16
-    assert input_layernorm_bias.dim() == 1
-    assert get_format(input_layernorm_bias) == 'ND'
-    assert input_layernorm_bias.dtype == torch.bfloat16
-    assert atten_qkv_input_scale_reciprocal.dim() == 1
-    assert get_format(atten_qkv_input_scale_reciprocal) == 'ND'
-    assert atten_qkv_input_scale_reciprocal.dtype == torch.bfloat16
-    assert atten_qkv_input_offset.dim() == 1
-    assert get_format(atten_qkv_input_offset) == 'ND'
-    assert atten_qkv_input_offset.dtype == torch.bfloat16
+
+def check_args(
+    hidden_states, residual, input_layernorm_weight, input_layernorm_bias,
+    atten_qkv_input_scale_reciprocal, atten_qkv_input_offset,
+    atten_qkv_weight, atten_qkv_quant_bias, atten_qkv_deq_scale,
+    atten_q_norm_weight, atten_q_norm_bias, atten_k_norm_weight, atten_k_norm_bias,
+    cos, sin, query, key, value, residual_res
+):
+    bf16 = torch.bfloat16
+    _check_input_shape_dtype(hidden_states, 2, 'ND', bf16, "hidden_states")
+    _check_input_shape_dtype(residual, 2, 'ND', bf16, "residual")
+    _check_input_shape_dtype(input_layernorm_weight, 1, 'ND', bf16, "input_layernorm_weight")
+    _check_input_shape_dtype(input_layernorm_bias, 1, 'ND', bf16, "input_layernorm_bias")
+    _check_input_shape_dtype(atten_qkv_input_scale_reciprocal, 1, 'ND', bf16, "atten_qkv_input_scale_reciprocal")
+    _check_input_shape_dtype(atten_qkv_input_offset, 1, 'ND', bf16, "atten_qkv_input_offset")
     assert atten_qkv_weight.dim() == 2
     assert get_format(atten_qkv_weight) == 'NZ'
     assert atten_qkv_weight.dtype == torch.int8
-    assert atten_qkv_quant_bias.dim() == 1
-    assert get_format(atten_qkv_quant_bias) == 'ND'
-    assert atten_qkv_quant_bias.dtype == torch.int32
-    assert atten_qkv_deq_scale.dim() == 1
-    assert get_format(atten_qkv_deq_scale) == 'ND'
-    assert atten_qkv_deq_scale.dtype == torch.float32
-    assert atten_q_norm_weight.dim() == 1
-    assert get_format(atten_q_norm_weight) == 'ND'
-    assert atten_q_norm_weight.dtype == torch.bfloat16
-    assert atten_q_norm_bias.dim() == 1
-    assert get_format(atten_q_norm_bias) == 'ND'
-    assert atten_q_norm_bias.dtype == torch.bfloat16
-    assert atten_k_norm_weight.dim() == 1
-    assert get_format(atten_k_norm_weight) == 'ND'
-    assert atten_k_norm_weight.dtype == torch.bfloat16
-    assert atten_k_norm_bias.dim() == 1
-    assert get_format(atten_k_norm_bias) == 'ND'
-    assert atten_k_norm_bias.dtype == torch.bfloat16
+    _check_input_shape_dtype(atten_qkv_quant_bias, 1, 'ND', torch.int32, "atten_qkv_quant_bias")
+    _check_input_shape_dtype(atten_qkv_deq_scale, 1, 'ND', torch.float32, "atten_qkv_deq_scale")
+    _check_input_shape_dtype(atten_q_norm_weight, 1, 'ND', bf16, "atten_q_norm_weight")
+    _check_input_shape_dtype(atten_q_norm_bias, 1, 'ND', bf16, "atten_q_norm_bias")
+    _check_input_shape_dtype(atten_k_norm_weight, 1, 'ND', bf16, "atten_k_norm_weight")
+    _check_input_shape_dtype(atten_k_norm_bias, 1, 'ND', bf16, "atten_k_norm_bias")
     assert cos.dim() == 3
     assert cos.shape[1] == 1
     assert get_format(cos) == 'ND'
-    assert cos.dtype == torch.bfloat16
+    assert cos.dtype == bf16
     assert sin.dim() == 3
     assert sin.shape[1] == 1
     assert get_format(sin) == 'ND'
-    assert sin.dtype == torch.bfloat16
-    assert query.dim() == 2
-    assert get_format(query) == 'ND'
-    assert query.dtype == torch.bfloat16
-    assert key.dim() == 2
-    assert get_format(key) == 'ND'
-    assert key.dtype == torch.bfloat16
-    assert value.dim() == 2
-    assert get_format(value) == 'ND'
-    assert value.dtype == torch.bfloat16
-    assert residual_res.dim() == 2
-    assert get_format(residual_res) == 'ND'
-    assert residual_res.dtype == torch.bfloat16
+    assert sin.dtype == bf16
+    _check_input_shape_dtype(query, 2, 'ND', bf16, "query")
+    _check_input_shape_dtype(key, 2, 'ND', bf16, "key")
+    _check_input_shape_dtype(value, 2, 'ND', bf16, "value")
+    _check_input_shape_dtype(residual_res, 2, 'ND', bf16, "residual_res")
 
 
 # golden
@@ -231,10 +191,208 @@ def rope_data(x1, x2, cos, sin, tile_shape):
     return y_bf16
 
 
+def _init_norm_weights(q_gamma, q_bias, k_gamma, k_bias, q_num_head, kv_num_head,
+                       head_size, hidden_size, calc_dtype):
+    """Initialize and expand norm weight tensors."""
+    vec_tile_value = 5120
+    pypto.set_vec_tile_shapes(vec_tile_value)
+    q_gamma_2d = pypto.reshape(q_gamma, [1, 1, head_size], inplace=True)
+    q_bias_2d = pypto.reshape(q_bias, [1, 1, head_size], inplace=True)
+    k_gamma_2d = pypto.reshape(k_gamma, [1, 1, head_size], inplace=True)
+    k_bias_2d = pypto.reshape(k_bias, [1, 1, head_size], inplace=True)
+
+    pypto.set_vec_tile_shapes(1, 1, head_size)
+    q_gamma_2d_fp32 = pypto.cast(q_gamma_2d, calc_dtype)
+    q_bias_2d_fp32 = pypto.cast(q_bias_2d, calc_dtype)
+    k_gamma_2d_fp32 = pypto.cast(k_gamma_2d, calc_dtype)
+    k_bias_2d_fp32 = pypto.cast(k_bias_2d, calc_dtype)
+    q_gamma_expand = pypto.expand_clone(q_gamma_2d_fp32, [1, q_num_head, head_size])
+    q_bias_expand = pypto.expand_clone(q_bias_2d_fp32, [1, q_num_head, head_size])
+    k_gamma_expand = pypto.expand_clone(k_gamma_2d_fp32, [1, kv_num_head, head_size])
+    k_bias_expand = pypto.expand_clone(k_bias_2d_fp32, [1, kv_num_head, head_size])
+    return q_gamma_expand, q_bias_expand, k_gamma_expand, k_bias_expand
+
+
+def _process_bs_tile(
+    x, residual_input, x_gamma_2d, x_bias_2d, x_scale_2d, x_offset_2d,
+    weight, quant_bias_2d, deq_scale_2d,
+    q_gamma_expand, q_bias_expand, k_gamma_expand, k_bias_expand,
+    cos, sin, q, k, v, residual,
+    bs_idx, bs_tile, bs, hidden_size, total_head_size, head_size,
+    calc_dtype, input_dtype, vec_tile_value, tiling_value, q_batch_tile,
+    x_mean_coff, eps, qk_mean_coff,
+    q_num_head, kv_num_head, kv_index,
+    rotary_dim, stay_dim, half_rotary_dim, q_size, kv_size):
+    """Process a single batch-size tile in the attention pre quant kernel."""
+    act_bs_tile = (bs - bs_idx * bs_tile).min(bs_tile)
+
+    x_tile = pypto.view(x, [bs_tile, hidden_size], [bs_idx * bs_tile, 0],
+                        valid_shape=[act_bs_tile, hidden_size])
+    pypto.set_vec_tile_shapes(1, vec_tile_value)
+    x_tile_fp32 = pypto.cast(x_tile, calc_dtype)
+    residual_input_tile = pypto.view(residual_input, [bs_tile, hidden_size], [bs_idx * bs_tile, 0],
+        valid_shape=[act_bs_tile, hidden_size])
+    residual_input_tile_fp32 = pypto.cast(residual_input_tile, calc_dtype)
+    x_f32 = pypto.add(residual_input_tile_fp32, x_tile_fp32)
+
+    square = pypto.mul(x_f32, x_f32)
+    mean_res = pypto.mul(square, x_mean_coff)
+    reduce_asum = pypto.sum(mean_res, -1, keepdim=True)
+    reduce_sum = pypto.add(reduce_asum, eps)
+    reduce_sqrt = pypto.sqrt(reduce_sum)
+    res_div = pypto.div(x_f32, reduce_sqrt)
+    residual_bf16 = pypto.cast(x_f32, input_dtype)
+
+    x_int8 = _quantize_x_tile(res_div, x_gamma_2d, x_bias_2d, x_scale_2d, x_offset_2d,
+                               bs_tile, hidden_size, calc_dtype, input_dtype, vec_tile_value)
+    mm_bf16 = _quantized_matmul(x_int8, weight, quant_bias_2d, deq_scale_2d,
+                                 bs_tile, total_head_size, head_size, calc_dtype, input_dtype)
+    pypto.set_vec_tile_shapes(bs_tile, tiling_value, head_size)
+
+    q_tile, k_tile, v_tile = _split_qkv(mm_bf16, bs_tile, total_head_size, head_size,
+                                         q_num_head, kv_num_head, kv_index, act_bs_tile)
+
+    q_norm = rms_norm_bias(q_tile, q_gamma_expand, q_bias_expand, qk_mean_coff, eps,
+        [q_batch_tile, q_num_head, head_size])
+    k_norm = rms_norm_bias(k_tile, k_gamma_expand, k_bias_expand, qk_mean_coff, eps,
+        [q_batch_tile, kv_num_head, head_size])
+
+    q_rot = pypto.view(q_norm, [bs_tile, q_num_head, rotary_dim], [0, 0, 0],
+        valid_shape=[act_bs_tile, q_num_head, rotary_dim])
+    q_pass = pypto.view(q_norm, [bs_tile, q_num_head, stay_dim], [0, 0, rotary_dim],
+        valid_shape=[act_bs_tile, q_num_head, stay_dim])
+    k_rot = pypto.view(k_norm, [bs_tile, kv_num_head, rotary_dim], [0, 0, 0],
+        valid_shape=[act_bs_tile, kv_num_head, rotary_dim])
+    k_pass = pypto.view(k_norm, [bs_tile, kv_num_head, stay_dim], [0, 0, rotary_dim],
+        valid_shape=[act_bs_tile, kv_num_head, stay_dim])
+
+    q_cat, k_cat = _apply_rope(q_rot, q_pass, k_rot, k_pass, cos, sin,
+                                bs_idx, bs_tile, act_bs_tile,
+                                q_num_head, kv_num_head, half_rotary_dim,
+                                calc_dtype, q_batch_tile, head_size)
+
+    q_res = pypto.reshape(q_cat, [bs_tile, q_size], valid_shape=[act_bs_tile, q_size])
+    k_res = pypto.reshape(k_cat, [bs_tile, kv_size], valid_shape=[act_bs_tile, kv_size])
+    v_res = pypto.reshape(v_tile, [bs_tile, kv_size], valid_shape=[act_bs_tile, kv_size])
+
+    q[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = q_res
+    k[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = k_res
+    v[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = v_res
+    residual[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = residual_bf16
+
+
+def _quantize_x_tile(res_div, x_gamma_2d, x_bias_2d, x_scale_2d, x_offset_2d,
+                      bs_tile, hidden_size, calc_dtype, input_dtype, vec_tile_value):
+    """Quantize x tile per-row and pack into int8 tensor."""
+    x_int8 = pypto.tensor([bs_tile, hidden_size], pypto.DT_INT8, "x_int8")
+    for tmp_idx in range(bs_tile):
+        pypto.set_vec_tile_shapes(1, vec_tile_value)
+        xg = pypto.cast(x_gamma_2d, calc_dtype)
+        xb = pypto.cast(x_bias_2d, calc_dtype)
+        xs = pypto.cast(x_scale_2d, calc_dtype)
+        xo = pypto.cast(x_offset_2d, calc_dtype)
+        res_div_single = pypto.view(res_div, [1, hidden_size], [tmp_idx, 0])
+        res = pypto.mul(res_div_single, xg)
+        res_add = pypto.add(res, xb)
+        x_norm = pypto.cast(res_add, input_dtype)
+        pypto.set_vec_tile_shapes(1, vec_tile_value)
+        x_norm_fp32 = pypto.cast(x_norm, calc_dtype)
+        x_mul = pypto.mul(x_norm_fp32, xs)
+        x_add = pypto.add(x_mul, xo)
+        x_int32 = pypto.cast(x_add, pypto.DT_INT32, pypto.CastMode.CAST_RINT)
+        x_fp16 = pypto.cast(x_int32, pypto.DT_FP16)
+        x_int8[tmp_idx:tmp_idx + 1, 0:] = pypto.cast(x_fp16, pypto.DT_INT8, satmode=pypto.SaturationMode.ON)
+    return x_int8
+
+
+def _quantized_matmul(x_int8, weight, quant_bias_2d, deq_scale_2d,
+                       bs_tile, total_head_size, head_size, calc_dtype, input_dtype):
+    """Perform quantized matmul with dequant."""
+    pypto.set_cube_tile_shapes([32, 32], [256, 512], [256, 256])
+    tmp_c = pypto.matmul(x_int8, weight, pypto.DT_INT32)
+    pypto.set_vec_tile_shapes(bs_tile, total_head_size)
+    mm_add = pypto.add(tmp_c, quant_bias_2d)
+    mm_fp32 = pypto.cast(mm_add, calc_dtype)
+    mm_deq_scale = pypto.mul(mm_fp32, deq_scale_2d)
+    mm_bf16 = pypto.cast(mm_deq_scale, input_dtype)
+    pypto.set_vec_tile_shapes(bs_tile, head_size)
+    return mm_bf16
+
+
+def _split_qkv(mm_bf16, bs_tile, total_head_size, head_size,
+                q_num_head, kv_num_head, kv_index, act_bs_tile):
+    """Split matmul output into q, k, v tiles."""
+    mm_3d = pypto.reshape(mm_bf16, [bs_tile, total_head_size // head_size, head_size], inplace=True)
+    q_tile = pypto.view(mm_3d, [bs_tile, q_num_head, head_size], [0, 0, 0],
+        valid_shape=[act_bs_tile, q_num_head, head_size])
+    k_tile = pypto.view(mm_3d, [bs_tile, kv_num_head, head_size], [0, q_num_head, 0],
+        valid_shape=[act_bs_tile, kv_num_head, head_size])
+    v_tile = pypto.view(mm_3d, [bs_tile, kv_num_head, head_size], [0, kv_index, 0],
+        valid_shape=[act_bs_tile, kv_num_head, head_size])
+    return q_tile, k_tile, v_tile
+
+
+def _apply_rope(q_rot, q_pass, k_rot, k_pass, cos, sin,
+                bs_idx, bs_tile, act_bs_tile,
+                q_num_head, kv_num_head, half_rotary_dim,
+                calc_dtype, q_batch_tile, head_size):
+    """Apply RoPE to q and k tiles."""
+    pypto.set_vec_tile_shapes(q_batch_tile, q_num_head, head_size)
+    cos_tile = pypto.view(cos, [bs_tile, 1, half_rotary_dim], [bs_idx * bs_tile, 0, 0],
+        valid_shape=[act_bs_tile, 1, half_rotary_dim])
+    sin_tile = pypto.view(sin, [bs_tile, 1, half_rotary_dim], [bs_idx * bs_tile, 0, 0],
+        valid_shape=[act_bs_tile, 1, half_rotary_dim])
+    q_fp32 = pypto.cast(q_rot, calc_dtype)
+    k_fp32 = pypto.cast(k_rot, calc_dtype)
+    cos_fp32 = pypto.cast(cos_tile, calc_dtype)
+    sin_fp32 = pypto.cast(sin_tile, calc_dtype)
+
+    q1 = pypto.view(q_fp32, [bs_tile, q_num_head, half_rotary_dim], [0, 0, 0],
+        valid_shape=[act_bs_tile, q_num_head, half_rotary_dim])
+    q2 = pypto.view(q_fp32, [bs_tile, q_num_head, half_rotary_dim], [0, 0, half_rotary_dim],
+        valid_shape=[act_bs_tile, q_num_head, half_rotary_dim])
+    q_rope = rope_data(q1, q2, cos_fp32, sin_fp32, [q_batch_tile, q_num_head, half_rotary_dim])
+    q_cat = pypto.concat([q_rope, q_pass], 2)
+
+    k1 = pypto.view(k_fp32, [bs_tile, kv_num_head, half_rotary_dim], [0, 0, 0],
+        valid_shape=[act_bs_tile, kv_num_head, half_rotary_dim])
+    k2 = pypto.view(k_fp32, [bs_tile, kv_num_head, half_rotary_dim], [0, 0, half_rotary_dim],
+        valid_shape=[act_bs_tile, kv_num_head, half_rotary_dim])
+    k_rope = rope_data(k1, k2, cos_fp32, sin_fp32, [q_batch_tile, q_num_head, half_rotary_dim])
+    k_cat = pypto.concat([k_rope, k_pass], 2)
+    return q_cat, k_cat
+
+
+def _init_kernel_cfg(x, weight, q_gamma, cos, q, k, head_size):
+    """Initialize kernel configuration parameters from tensor shapes."""
+    bs_tile = 8
+    bs = x.shape[0]
+    q_size = q.shape[-1]
+    kv_size = k.shape[-1]
+    half_rotary_dim = cos.shape[-1]
+    x_mean_coff = 1.0 / x.shape[-1]
+    qk_mean_coff = 1.0 / head_size
+    eps = 1e-05
+    rotary_dim = half_rotary_dim * 2
+    stay_dim = head_size - rotary_dim
+    q_num_head = q_size // head_size
+    kv_num_head = kv_size // head_size
+    kv_index = q_num_head + kv_num_head
+    bs_loop = (bs + bs_tile - 1) // bs_tile
+    return {
+        "bs_tile": bs_tile, "bs_loop": bs_loop,
+        "half_rotary_dim": half_rotary_dim,
+        "q_size": q_size, "kv_size": kv_size,
+        "x_mean_coff": x_mean_coff, "qk_mean_coff": qk_mean_coff,
+        "eps": eps, "rotary_dim": rotary_dim, "stay_dim": stay_dim,
+        "q_num_head": q_num_head, "kv_num_head": kv_num_head, "kv_index": kv_index,
+    }
+
+
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128}
 )
-def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
+def quant_attention_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     residual_input: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     x_gamma: pypto.Tensor([], pypto.DT_BF16),
@@ -255,43 +413,7 @@ def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
     v: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     residual: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
 ):
-    """
-    JIT compiled kernel for fused attention_pre_quant operation.
-
-    This kernel performs the following operations in sequence:
-    1. Add residual connection: x = residual + hidden_states
-    2. RMS normalization: x_norm = RMSNorm(x)
-    3. Input quantization: x_int8 = Quantize(x_norm)
-    4. Quantized QKV projection: qkv = Dequantize(MatMul(x_int8, weight))
-    5. Split QKV: q, k, v = Split(qkv)
-    6. Q/K normalization: q_norm = RMSNorm(q), k_norm = RMSNorm(k)
-    7. Apply RoPE: q_rope = RoPE(q_norm), k_rope = RoPE(k_norm)
-
-    Args:
-        x: Input hidden states [num_tokens, hidden_size]
-        residual_input: Residual tensor [num_tokens, hidden_size]
-        x_gamma: Input LayerNorm weight [hidden_size]
-        x_bias: Input LayerNorm bias [hidden_size]
-        x_scale: Input quantization scale [hidden_size]
-        x_offset: Input quantization offset [hidden_size]
-        weight: QKV weight matrix (int8) [hidden_size, total_head_size]
-        quant_bias: QKV quantization bias [total_head_size]
-        deq_scale: QKV dequantization scale [total_head_size]
-        q_gamma: Query LayerNorm weight [head_size]
-        q_bias: Query LayerNorm bias [head_size]
-        k_gamma: Key LayerNorm weight [head_size]
-        k_bias: Key LayerNorm bias [head_size]
-        cos: Cosine values for RoPE [num_tokens, 1, half_rotary_dim]
-        sin: Sine values for RoPE [num_tokens, 1, half_rotary_dim]
-        q: Output query tensor [num_tokens, q_size]
-        k: Output key tensor [num_tokens, kv_size]
-        v: Output value tensor [num_tokens, kv_size]
-        residual: Output residual tensor [num_tokens, hidden_size]
-
-    Note:
-        This function processes inputs in tiles of size 8 to support dynamic batch sizes.
-        The computation uses FP32 for intermediate calculations to maintain numerical precision.
-    """
+    """JIT fused kernel: RMSNorm(x+residual) → quantize → QKV matmul → split → QK norm → RoPE."""
     hidden_size = x.shape[1]
     total_head_size = weight.shape[1]
     head_size = q_gamma.shape[0]
@@ -299,24 +421,20 @@ def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
     half_rotary_dim = cos.shape[-1]
     q_size = q.shape[-1]
     kv_size = k.shape[-1]
-    bs_tile = 8
 
-    x_mean_coff = 1.0 / x.shape[-1]
-    qk_mean_coff = 1.0 / head_size
-    eps = 1e-05
-    rotary_dim = half_rotary_dim * 2
-    stay_dim = head_size - rotary_dim
-
-    q_num_head = q_size // head_size
-    kv_num_head = kv_size // head_size
-    kv_index = q_num_head + kv_num_head
-
-    bs_loop = (bs + bs_tile - 1) // bs_tile
+    cfg = _init_kernel_cfg(x, weight, q_gamma, cos, q, k, head_size)
+    bs_tile = cfg["bs_tile"]
+    bs_loop = cfg["bs_loop"]
     calc_dtype = pypto.DT_FP32
     input_dtype = x.dtype
     tiling_value = 128
     vec_tile_value = 5120
     q_batch_tile = 4
+
+    q_gamma_expand, q_bias_expand, k_gamma_expand, k_bias_expand = \
+        _init_norm_weights(q_gamma, q_bias, k_gamma, k_bias, cfg["q_num_head"], cfg["kv_num_head"],
+                           head_size, hidden_size, calc_dtype)
+
     # 4. 定义动态函数
     pypto.set_vec_tile_shapes(vec_tile_value)
     x_gamma_2d = pypto.reshape(x_gamma, [1, hidden_size], inplace=True)
@@ -325,152 +443,78 @@ def quant_attention_pre_kernel(  # pylint: disable=huawei-too-many-arguments
     x_offset_2d = pypto.reshape(x_offset, [1, hidden_size], inplace=True)
     quant_bias_2d = pypto.reshape(quant_bias, [1, total_head_size], inplace=True)
     deq_scale_2d = pypto.reshape(deq_scale, [1, total_head_size], inplace=True)
-    q_gamma_2d = pypto.reshape(q_gamma, [1, 1, head_size], inplace=True)
-    q_bias_2d = pypto.reshape(q_bias, [1, 1, head_size], inplace=True)
-    k_gamma_2d = pypto.reshape(k_gamma, [1, 1, head_size], inplace=True)
-    k_bias_2d = pypto.reshape(k_bias, [1, 1, head_size], inplace=True)
-
-    pypto.set_vec_tile_shapes(1, 1, head_size)
-    q_gamma_2d_fp32 = pypto.cast(q_gamma_2d, calc_dtype)
-    q_bias_2d_fp32 = pypto.cast(q_bias_2d, calc_dtype)
-    k_gamma_2d_fp32 = pypto.cast(k_gamma_2d, calc_dtype)
-    k_bias_2d_fp32 = pypto.cast(k_bias_2d, calc_dtype)
-    q_gamma_expand = pypto.expand_clone(q_gamma_2d_fp32, [1, q_num_head, head_size])
-    q_bias_expand = pypto.expand_clone(q_bias_2d_fp32, [1, q_num_head, head_size])
-    k_gamma_expand = pypto.expand_clone(k_gamma_2d_fp32, [1, kv_num_head, head_size])
-    k_bias_expand = pypto.expand_clone(k_bias_2d_fp32, [1, kv_num_head, head_size])
 
     # 5. 实现kernel逻辑，循环展开BS动态轴
-    for bs_idx in pypto.loop(bs_loop, name="LOOP_ATT_PRE_L0", idx_name="bs_idx"):
-        act_bs_tile = (bs - bs_idx * bs_tile).min(bs_tile)
+    for bs_idx in pypto.loop(cfg["bs_loop"], name="LOOP_ATT_PRE_L0", idx_name="bs_idx"):
+        _process_bs_tile(
+            x, residual_input, x_gamma_2d, x_bias_2d, x_scale_2d, x_offset_2d,
+            weight, quant_bias_2d, deq_scale_2d,
+            q_gamma_expand, q_bias_expand, k_gamma_expand, k_bias_expand,
+            cos, sin, q, k, v, residual,
+            bs_idx, cfg["bs_tile"], bs, hidden_size, total_head_size, head_size,
+            calc_dtype, input_dtype, vec_tile_value, tiling_value, q_batch_tile,
+            cfg["x_mean_coff"], cfg["eps"], cfg["qk_mean_coff"],
+            cfg["q_num_head"], cfg["kv_num_head"], cfg["kv_index"],
+            cfg["rotary_dim"], cfg["stay_dim"], cfg["half_rotary_dim"], cfg["q_size"], cfg["kv_size"])
 
-        # rms norm
-        x_tile = pypto.view(x, [bs_tile, hidden_size], [bs_idx * bs_tile, 0],
-                                valid_shape=[act_bs_tile, hidden_size])
-        # init
-        pypto.set_vec_tile_shapes(1, vec_tile_value)
-        x_tile_fp32 = pypto.cast(x_tile, calc_dtype)
-        # add
-        residual_input_tile = pypto.view(residual_input, [bs_tile, hidden_size], [bs_idx * bs_tile, 0],
-            valid_shape=[act_bs_tile, hidden_size])
-        residual_input_tile_fp32 = pypto.cast(residual_input_tile, calc_dtype)
-        x_f32 = pypto.add(residual_input_tile_fp32, x_tile_fp32) # tile_x
 
-        square = pypto.mul(x_f32, x_f32) # square
-        mean_res = pypto.mul(square, x_mean_coff) # mean_res = square * mean_coff
-        reduce_asum = pypto.sum(mean_res, -1, keepdim=True) # reduce_asum = mean_res.sum(dim=-1, keepdim=True)
-        reduce_sum = pypto.add(reduce_asum, eps) # reduce_sum = reduce_asum + eps
-        reduce_sqrt = pypto.sqrt(reduce_sum) # reduce_sqrt = torch.sqrt(reduce_sum)
-        res_div = pypto.div(x_f32, reduce_sqrt) # res_div = x_f32 / reduce_sqrt
-        residual_bf16 = pypto.cast(x_f32, input_dtype)
-        x_int8 = pypto.tensor([bs_tile, hidden_size], pypto.DT_INT8, "x_int8")
+def _generate_test_data(device_id, bs, hidden_size, total_head_size, head_size,
+                         q_size, kv_size, half_rotary_dim):
+    """Generate test input tensors on NPU."""
+    np.random.seed(0)
+    x = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    residual_input = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    x_gamma = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    x_bias = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    x_scale = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    x_offset = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    weight = torch.randint(-128, 128, size=(hidden_size, total_head_size), dtype=torch.int8,
+        device=f'npu:{device_id}')
+    weight = torch_npu.npu_format_cast(weight, 29)
+    quant_bias = torch.randint(-128, 128, size=(total_head_size,), dtype=torch.int32, device=f'npu:{device_id}')
+    deq_scale = torch.rand(total_head_size, dtype=torch.float32, device=f'npu:{device_id}')
+    q_gamma = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    q_bias = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    k_gamma = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    k_bias = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    cos = torch.rand(bs, 1, half_rotary_dim, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    sin = torch.rand(bs, 1, half_rotary_dim, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    query = torch.rand(bs, q_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    key = torch.rand(bs, kv_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    value = torch.rand(bs, kv_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    residual_res = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+    return (x, residual_input, x_gamma, x_bias, x_scale, x_offset, weight,
+            quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
+            cos, sin, query, key, value, residual_res)
 
-        for tmp_idx in range(bs_tile):
-            pypto.set_vec_tile_shapes(1, vec_tile_value)
-            x_gamma_2d_fp32 = pypto.cast(x_gamma_2d, calc_dtype)
-            x_bias_2d_fp32 = pypto.cast(x_bias_2d, calc_dtype)
-            x_scale_2d_fp32 = pypto.cast(x_scale_2d, calc_dtype)
-            x_offset_2d_fp32 = pypto.cast(x_offset_2d, calc_dtype)
 
-            res_div_single = pypto.view(res_div, [1, hidden_size], [tmp_idx, 0])
-
-            res = pypto.mul(res_div_single, x_gamma_2d_fp32) # res = res_div * weight
-            res_add = pypto.add(res, x_bias_2d_fp32)
-            x_norm = pypto.cast(res_add, input_dtype)
-
-            # x quant
-            pypto.set_vec_tile_shapes(1, vec_tile_value)
-            x_norm_fp32 = pypto.cast(x_norm, calc_dtype) # bf16 -> fp32
-            x_mul = pypto.mul(x_norm_fp32, x_scale_2d_fp32)
-            x_add = pypto.add(x_mul, x_offset_2d_fp32)
-            x_int32 = pypto.cast(x_add, pypto.DT_INT32, pypto.CastMode.CAST_RINT) # Align ascendC
-            x_fp16 = pypto.cast(x_int32, pypto.DT_FP16)
-            x_int8[tmp_idx:tmp_idx + 1, 0:] = pypto.cast(x_fp16, pypto.DT_INT8, satmode=pypto.SaturationMode.ON)
-
-        pypto.set_cube_tile_shapes([32, 32], [256, 512], [256, 256])
-        tmp_c = pypto.matmul(x_int8, weight, pypto.DT_INT32)
-        pypto.set_vec_tile_shapes(bs_tile, total_head_size)
-        mm_add = pypto.add(tmp_c, quant_bias_2d)
-        mm_fp32 = pypto.cast(mm_add, calc_dtype) # int32 -> fp32
-        mm_deq_scale = pypto.mul(mm_fp32, deq_scale_2d)
-        mm_bf16 = pypto.cast(mm_deq_scale, input_dtype) # fp32 -> bf16
-
-        pypto.set_vec_tile_shapes(bs_tile, head_size)
-        mm_3d = pypto.reshape(mm_bf16, [bs_tile, total_head_size // head_size, head_size], inplace=True)
-        pypto.set_vec_tile_shapes(bs_tile, tiling_value, head_size)
-
-        # split
-        q_tile = pypto.view(mm_3d, [bs_tile, q_num_head, head_size], [0, 0, 0],
-            valid_shape=[act_bs_tile, q_num_head, head_size])
-        k_tile = pypto.view(mm_3d, [bs_tile, kv_num_head, head_size], [0, q_num_head, 0],
-            valid_shape=[act_bs_tile, kv_num_head, head_size])
-        v_tile = pypto.view(mm_3d, [bs_tile, kv_num_head, head_size], [0, kv_index, 0],
-            valid_shape=[act_bs_tile, kv_num_head, head_size])
-
-        # rms norm
-        q_norm = rms_norm_bias(q_tile, q_gamma_expand, q_bias_expand, qk_mean_coff, eps,
-            [q_batch_tile, q_num_head, head_size])
-        k_norm = rms_norm_bias(k_tile, k_gamma_expand, k_bias_expand, qk_mean_coff, eps,
-            [q_batch_tile, kv_num_head, head_size])
-
-        q_rot = pypto.view(q_norm, [bs_tile, q_num_head, rotary_dim], [0, 0, 0],
-            valid_shape=[act_bs_tile, q_num_head, rotary_dim])
-        q_pass = pypto.view(q_norm, [bs_tile, q_num_head, stay_dim], [0, 0, rotary_dim],
-            valid_shape=[act_bs_tile, q_num_head, stay_dim])
-
-        k_rot = pypto.view(k_norm, [bs_tile, kv_num_head, rotary_dim], [0, 0, 0],
-            valid_shape=[act_bs_tile, kv_num_head, rotary_dim])
-        k_pass = pypto.view(k_norm, [bs_tile, kv_num_head, stay_dim], [0, 0, rotary_dim],
-            valid_shape=[act_bs_tile, kv_num_head, stay_dim])
-
-        # apply rope
-        # cast
-        pypto.set_vec_tile_shapes(q_batch_tile, q_num_head, head_size)
-        cos_tile = pypto.view(cos, [bs_tile, 1, half_rotary_dim], [bs_idx * bs_tile, 0, 0],
-            valid_shape=[act_bs_tile, 1, half_rotary_dim])
-        sin_tile = pypto.view(sin, [bs_tile, 1, half_rotary_dim], [bs_idx * bs_tile, 0, 0],
-            valid_shape=[act_bs_tile, 1, half_rotary_dim])
-        q_fp32 = pypto.cast(q_rot, calc_dtype)
-        k_fp32 = pypto.cast(k_rot, calc_dtype)
-        cos_fp32 = pypto.cast(cos_tile, calc_dtype)
-        sin_fp32 = pypto.cast(sin_tile, calc_dtype)
-
-        # q split
-        q1 = pypto.view(q_fp32, [bs_tile, q_num_head, half_rotary_dim], [0, 0, 0],
-            valid_shape=[act_bs_tile, q_num_head, half_rotary_dim])
-        q2 = pypto.view(q_fp32, [bs_tile, q_num_head, half_rotary_dim], [0, 0, half_rotary_dim],
-            valid_shape=[act_bs_tile, q_num_head, half_rotary_dim])
-
-        # rope data
-        q_rope = rope_data(q1, q2, cos_fp32, sin_fp32, [q_batch_tile, q_num_head, half_rotary_dim])
-        q_cat = pypto.concat([q_rope, q_pass], 2)
-
-        # k split
-        k1 = pypto.view(k_fp32, [bs_tile, kv_num_head, half_rotary_dim], [0, 0, 0],
-            valid_shape=[act_bs_tile, kv_num_head, half_rotary_dim])
-        k2 = pypto.view(k_fp32, [bs_tile, kv_num_head, half_rotary_dim], [0, 0, half_rotary_dim],
-            valid_shape=[act_bs_tile, kv_num_head, half_rotary_dim])
-
-        # rope data
-        k_rope = rope_data(k1, k2, cos_fp32, sin_fp32, [q_batch_tile, q_num_head, half_rotary_dim])
-        k_cat = pypto.concat([k_rope, k_pass], 2)
-
-        # post process
-        q_res = pypto.reshape(q_cat, [bs_tile, q_size], valid_shape=[act_bs_tile, q_size])
-        k_res = pypto.reshape(k_cat, [bs_tile, kv_size], valid_shape=[act_bs_tile, kv_size])
-        v_res = pypto.reshape(v_tile, [bs_tile, kv_size], valid_shape=[act_bs_tile, kv_size])
-
-        # # 6. 将结果搬运到输出tensor上
-        # # update output
-        q[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = q_res
-        k[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = k_res
-        v[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = v_res
-        residual[bs_idx * pypto.symbolic_scalar(bs_tile):, 0:] = residual_bf16
+def _compute_golden(x, residual_input, x_gamma, x_bias, x_scale, x_offset,
+                    weight, quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
+                    cos, sin, eps, q_size, kv_size, head_size, bs, rotary_dim):
+    """Compute golden reference for attention pre quant."""
+    x_g, residual_g = add_rms_norm_npu_golden(x, residual_input, x_gamma, x_bias, eps)
+    x_quant = torch_npu.npu_quantize(x_g, x_scale, x_offset, torch.qint8, -1, False)
+    mm_golden = torch_npu.npu_quant_matmul(x_quant, weight, deq_scale,
+                                           bias=quant_bias, output_dtype=torch.bfloat16)
+    q_g, k_g, v_g = mm_golden.split([q_size, kv_size, kv_size], dim=-1)
+    q_by_head = q_g.view(*q_g.shape[:-1], q_g.shape[-1] // head_size, head_size)
+    q_by_head = rms_norm_npu_golden(q_by_head, q_gamma, q_bias, eps)
+    k_by_head = k_g.view(*k_g.shape[:-1], k_g.shape[-1] // head_size, head_size)
+    k_by_head = rms_norm_npu_golden(k_by_head, k_gamma, k_bias, eps)
+    q_rot = q_by_head[..., :rotary_dim]
+    q_pass = q_by_head[..., rotary_dim:]
+    k_rot = k_by_head[..., :rotary_dim]
+    k_pass = k_by_head[..., rotary_dim:]
+    q_r, k_r = apply_rotary_pos_emb_v2(q_rot, k_rot, cos, sin)
+    q_cat = torch.cat((q_r, q_pass), dim=-1)
+    k_cat = torch.cat((k_r, k_pass), dim=-1)
+    q_r = q_cat.view(bs, q_size)
+    k_r = k_cat.view(bs, kv_size)
+    return residual_g, q_r, k_r, v_g
 
 
 @pytest.mark.soc("950", "910")
 def test_quant_attention_pre():
-    # 1. 设置参数
     bs = 8
     hidden_size = 5120
     total_head_size = 1792
@@ -485,108 +529,47 @@ def test_quant_attention_pre():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
 
-    # 2. 构造多种shape，测试动态case
     for i in range(0, 1):
-        if (i == 1):
+        if i == 1:
             bs = 5
-        elif (i == 2):
+        elif i == 2:
             bs = 11
-        elif (i == 3):
+        elif i == 3:
             bs = 2
 
-        # 3. 准备测试数据
-        np.random.seed(0)
-        # inputs
-        x = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        residual_input = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        x_gamma = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        x_bias = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        x_scale = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        x_offset = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        weight = torch.randint(-128, 128, size=(hidden_size, total_head_size), dtype=torch.int8,
-            device=f'npu:{device_id}')
-        weight = torch_npu.npu_format_cast(weight, 29)
-        quant_bias = torch.randint(-128, 128, size=(total_head_size,), dtype=torch.int32, device=f'npu:{device_id}')
-        deq_scale = torch.rand(total_head_size, dtype=torch.float32, device=f'npu:{device_id}')
-        q_gamma = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        q_bias = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        k_gamma = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        k_bias = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        cos = torch.rand(bs, 1, half_rotary_dim, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        sin = torch.rand(bs, 1, half_rotary_dim, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        query = torch.rand(bs, q_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        key = torch.rand(bs, kv_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        value = torch.rand(bs, kv_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
-        residual_res = torch.rand(bs, hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
+        (x, residual_input, x_gamma, x_bias, x_scale, x_offset, weight,
+         quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
+         cos, sin, query, key, value, residual_res) = \
+            _generate_test_data(device_id, bs, hidden_size, total_head_size, head_size,
+                                q_size, kv_size, half_rotary_dim)
 
-        # # 4. 执行kernel并获取结果
-        inputs = [
-            x,
-            residual_input,
-            x_gamma,
-            x_bias,
-            x_scale,
-            x_offset,
-            weight,
-            quant_bias,
-            deq_scale,
-            q_gamma,
-            q_bias,
-            k_gamma,
-            k_bias,
-            cos,
-            sin,
-            query,
-            key,
-            value,
-            residual_res
-        ]
-
+        inputs = [x, residual_input, x_gamma, x_bias, x_scale, x_offset, weight,
+                  quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
+                  cos, sin, query, key, value, residual_res]
         attention_pre_quant(*inputs)
 
-        # 5. 与PyTorch参考实现对比
-        # add rms norm
-        x_g, residual_g = add_rms_norm_npu_golden(x, residual_input, x_gamma, x_bias, eps)
+        residual_g, q_r, k_r, v_g = _compute_golden(
+            x, residual_input, x_gamma, x_bias, x_scale, x_offset,
+            weight, quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
+            cos, sin, eps, q_size, kv_size, head_size, bs, rotary_dim)
 
-        # matmul
-        x_quant = torch_npu.npu_quantize(x_g, x_scale, x_offset, torch.qint8, -1, False)
-        mm_golden = torch_npu.npu_quant_matmul(x_quant, weight, deq_scale, \
-                                               bias=quant_bias, output_dtype=torch.bfloat16)
-
-        # split
-        q_g, k_g, v_g = mm_golden.split([q_size, kv_size, kv_size], dim=-1)
-
-        # rms norm
-        q_by_head = q_g.view(*q_g.shape[:-1], q_g.shape[-1] // head_size, head_size)
-        q_by_head = rms_norm_npu_golden(q_by_head, q_gamma, q_bias, eps)
-
-        k_by_head = k_g.view(*k_g.shape[:-1], k_g.shape[-1] // head_size, head_size)
-        k_by_head = rms_norm_npu_golden(k_by_head, k_gamma, k_bias, eps)
-
-        # apply rope
-        q_rot = q_by_head[..., :rotary_dim]
-        q_pass = q_by_head[..., rotary_dim:]
-        k_rot = k_by_head[..., :rotary_dim]
-        k_pass = k_by_head[..., rotary_dim:]
-        q_r, k_r = apply_rotary_pos_emb_v2(q_rot, k_rot, cos, sin)
-        q_cat = torch.cat((q_r, q_pass), dim=-1)
-        k_cat = torch.cat((k_r, k_pass), dim=-1)
-        # post process
-        q_r = q_cat.view(bs, q_size)
-        k_r = k_cat.view(bs, kv_size)
-        assert_allclose(np.array(residual_g.cpu().flatten().tolist()), np.array(residual_res.cpu().flatten().tolist()),
+        assert_allclose(np.array(residual_g.cpu().flatten().tolist()),
+                        np.array(residual_res.cpu().flatten().tolist()),
                         rtol=0.0078125, atol=0.0001)
-        assert_allclose(np.array(q_r.cpu().flatten().tolist()), np.array(query.cpu().flatten().tolist()),
+        assert_allclose(np.array(q_r.cpu().flatten().tolist()),
+                        np.array(query.cpu().flatten().tolist()),
                         rtol=0.0078125, atol=0.0001)
-        assert_allclose(np.array(k_r.cpu().flatten().tolist()), np.array(key.cpu().flatten().tolist()),
+        assert_allclose(np.array(k_r.cpu().flatten().tolist()),
+                        np.array(key.cpu().flatten().tolist()),
                         rtol=0.0078125, atol=0.0001)
-        assert_allclose(np.array(v_g.cpu().flatten().tolist()), np.array(value.cpu().flatten().tolist()),
+        assert_allclose(np.array(v_g.cpu().flatten().tolist()),
+                        np.array(value.cpu().flatten().tolist()),
                         rtol=0.0078125, atol=0.0001)
         logging.info("PASS")
 
 
 @allow_in_graph
-def attention_pre_quant(  # pylint: disable=huawei-too-many-arguments
+def attention_pre_quant(
     hidden_states: torch.Tensor,
     residual: Optional[torch.Tensor],
     input_layernorm_weight: torch.Tensor,

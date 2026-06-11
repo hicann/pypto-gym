@@ -31,14 +31,10 @@ def scatter_pa_kv_cache_kernel(
     # Tensor 描述符：动态轴标为 pypto.DYNAMIC，静态轴写常量整数
     # 禁止 pypto.Tensor() / pypto.Tensor([], dtype) 空注解
     # num_tokens 和 num_blocks 都是动态轴（SPEC.md: dynamic_axes: ['num_tokens', 'num_blocks'])
-    # [num_tokens, num_heads, head_size]
     key: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
-    # [num_blocks, block_size, num_heads, head_size]
     key_cache: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     slot_mapping: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),                # [num_tokens]
-    # [num_tokens, num_heads, head_size]
     value: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
-    # [num_blocks, block_size, num_heads, head_size]
     value_cache: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
 ):
     """PyPTO jit kernel for scatter_pa_kv_cache.

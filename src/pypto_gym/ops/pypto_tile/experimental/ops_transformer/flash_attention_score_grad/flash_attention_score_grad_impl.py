@@ -28,7 +28,7 @@ import torch
 S_TILE = 128  # 优化: 64 → 128
 
 
-def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,  # pylint: disable=huawei-too-many-arguments
+def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,
                  actual_s1, actual_s2, scale_value, c_tile, v_tile_s, v_tile_d, s_tile_size):
     """计算一个 (s1_tile, s2_tile) 块的 P_ij 和 dS_ij。"""
     # 计算公式：S_ij = Q_i @ K_j^T * scale
@@ -68,7 +68,7 @@ def compute_tile(q_i, k_j, v_j, dy_i, smax_i, ssum_i, d_i,  # pylint: disable=hu
         "cube_nbuffer_setting": {0: 4},
     }
 )
-def flash_attention_score_grad_kernel(  # pylint: disable=huawei-too-many-arguments
+def flash_attention_score_grad_kernel(
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     k: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
     v: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),

@@ -347,7 +347,10 @@ print(f"  {generated_text}")
 print("\n" + "=" * 80)
 print("性能报告")
 print("=" * 80)
-print(f"模式: {'PyPTO' if args.use_pto else 'Baseline'} + {'compile(' + args.backend + ')' if args.use_compile else 'Eager'}")
+print(
+    f"模式: {'PyPTO' if args.use_pto else 'Baseline'} + "
+    f"{'compile(' + args.backend + ')' if args.use_compile else 'Eager'}"
+)
 print(f"推理耗时: {infer_time:.3f}s")
 print(f"生成tokens: {metrics['tokens_generated']}")
 print(f"吞吐: {metrics['throughput_tokens_per_sec']:.2f} tokens/s")

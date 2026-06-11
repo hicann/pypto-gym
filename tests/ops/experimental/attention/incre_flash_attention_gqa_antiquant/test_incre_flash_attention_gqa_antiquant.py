@@ -35,7 +35,9 @@ while not os.path.isdir(os.path.join(_p, 'src')):
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 from experimental.attention.incre_flash_attention_gqa_antiquant.utils import create_logger, get_device, compare
-from experimental.attention.incre_flash_attention_gqa_antiquant.incre_flash_attention_gqa_antiquant_impl import incre_flash_attention_gqa_antiquant
+from experimental.attention.incre_flash_attention_gqa_antiquant.incre_flash_attention_gqa_antiquant_impl import (
+    incre_flash_attention_gqa_antiquant
+)
 
 
 logger = create_logger(__name__)
@@ -114,7 +116,9 @@ def kv_cache_concat(cache_tensor: torch.Tensor,
                 break
             start_idx = s_idx * block_size
             end_idx = min((s_idx + 1) * block_size, cur_kv_seq_len)
-            temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor_cpu[block_idx:block_idx + 1, :, :end_idx - start_idx, :].to(torch.bfloat16)
+            temp_tensor[:, :, start_idx:end_idx, :] = cache_tensor_cpu[
+                block_idx:block_idx + 1, :, :end_idx - start_idx, :
+            ].to(torch.bfloat16)
             s_idx += 1
 
         result[b_idx:b_idx + 1, :, :cur_kv_seq_len, :] = temp_tensor
@@ -187,7 +191,9 @@ def create_query_tensor(ifa_gqa_config: IfaGqaConfig, device: str) -> torch.Tens
     return query
 
 
-def create_kv_cache_tensors(ifa_gqa_config: IfaGqaConfig, max_s2: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
+def create_kv_cache_tensors(
+    ifa_gqa_config: IfaGqaConfig, max_s2: int, device: str
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Create key and value cache tensors with proper initialization.
 
     Args:
@@ -383,7 +389,7 @@ def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
 
 
 def get_case_config(case_name):
-    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5 }
+    base_params = {"layout": "BNSD", "block_size": 128, "d": 128, "softmax_scale": 128 ** -0.5}
     if case_name.startswith("1b2k"):
         params = {"b": 1, "n1": 8, "s1": 1, "s2": 2 * 1024, "n2": 1}
     elif case_name.startswith("8b2kqs2"):
@@ -454,7 +460,8 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
         block_table=ifa_gqa_inputs['block_table'],
     )
     pypto_atten_out = incre_flash_attention_gqa_antiquant(**pypto_kernel_inputs)
-    compare(pypto_atten_out.cpu(), gqa_antiquant_golden.cpu(), "pypto_atten_out", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
+    compare(pypto_atten_out.cpu(), gqa_antiquant_golden.cpu(), "pypto_atten_out",
+            atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
     print("[PRECISION_PASS]")
 
 

@@ -62,6 +62,24 @@ def load_test_cases(json_path=None):
 # 2. test execution
 # ─────────────────────────────────────────────
 
+def _assert_precision(result, golden, rtol, atol):
+    """Shared precision assertion for both npu and sim modes."""
+    try:
+        assert_allclose(
+            result.cpu().float().numpy(),
+            golden.cpu().float().numpy(),
+            rtol=rtol,
+            atol=atol,
+        )
+        print("[PRECISION_PASS]")
+    except AssertionError as e:
+        print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
+        raise
+    except Exception as e:
+        print(f"Runtime error: {e}", file=sys.stderr)
+        raise
+
+
 def run_single_case(case_data, device_id=None, run_mode="npu"):
     """Run a single test case."""
     case_id = case_data["id"]
@@ -98,36 +116,7 @@ def run_single_case(case_data, device_id=None, run_mode="npu"):
     rtol = case_data.get("rtol", 1e-3)
     atol = case_data.get("atol", 1e-3)
 
-    if run_mode == "npu":
-        try:
-            assert_allclose(
-                result.cpu().float().numpy(),
-                golden.cpu().float().numpy(),
-                rtol=rtol,
-                atol=atol,
-            )
-            print("[PRECISION_PASS]")
-        except AssertionError as e:
-            print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
-            raise
-        except Exception as e:
-            print(f"Runtime error: {e}", file=sys.stderr)
-            raise
-    else:
-        try:
-            assert_allclose(
-                result.cpu().float().numpy(),
-                golden.cpu().float().numpy(),
-                rtol=rtol,
-                atol=atol,
-            )
-            print("[PRECISION_PASS]")
-        except AssertionError as e:
-            print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
-            raise
-        except Exception as e:
-            print(f"Runtime error: {e}", file=sys.stderr)
-            raise
+    _assert_precision(result, golden, rtol, atol)
 
     print("  Passed\n")
 
@@ -136,7 +125,8 @@ def run_single_case(case_data, device_id=None, run_mode="npu"):
 # 3. CLI entry
 # ─────────────────────────────────────────────
 
-def main():
+def _build_arg_parser():
+    """Build the argparse parser for test_sigmoid."""
     parser = argparse.ArgumentParser(
         description="PyPTO Sigmoid operator test",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -158,15 +148,14 @@ Examples:
         "--json", type=str, default="test_cases.json",
         help="Test cases JSON file (default: test_cases.json)",
     )
-    args = parser.parse_args()
+    return parser
 
-    test_cases = load_test_cases(args.json)
-    cases = test_cases.get("test_cases", [])
 
+def _resolve_cases_to_run(args, cases):
+    """Resolve which test cases to run based on CLI args."""
     if not cases:
         print("ERROR: No test cases found in JSON")
         raise RuntimeError("Test execution failed")
-
     if args.list:
         print(f"\nTest cases from {args.json}:\n")
         for case in cases:
@@ -175,8 +164,7 @@ Examples:
             shape = case["input"]["shape"]
             dtype = case["input"]["dtype"]
             print(f"  {case_id}  — {desc}  [{dtype} {shape}]")
-        return
-
+        return None
     if args.case_id:
         case_data = None
         for case in cases:
@@ -190,6 +178,31 @@ Examples:
         to_run = [case_data]
     else:
         to_run = cases
+    return to_run
+
+
+def _run_test_loop(to_run, device_id, run_mode):
+    """Execute the test loop for all resolved cases."""
+    passed = 0
+    for case_data in to_run:
+        print(f"\n▸ Running {case_data['id']}")
+        run_single_case(case_data, device_id, run_mode)
+        passed += 1
+    print("\n" + "=" * 60)
+    print(f"All tests passed! ({passed}/{len(to_run)} cases)")
+    print("=" * 60)
+
+
+def main():
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+
+    test_cases = load_test_cases(args.json)
+    cases = test_cases.get("test_cases", [])
+
+    to_run = _resolve_cases_to_run(args, cases)
+    if to_run is None:
+        return
 
     device_id = None
     if args.run_mode == "npu":
@@ -199,15 +212,7 @@ Examples:
         torch.npu.set_device(device_id)
 
     try:
-        passed = 0
-        for case_data in to_run:
-            print(f"\n▸ Running {case_data['id']}")
-            run_single_case(case_data, device_id, args.run_mode)
-            passed += 1
-
-        print("\n" + "=" * 60)
-        print(f"All tests passed! ({passed}/{len(to_run)} cases)")
-        print("=" * 60)
+        _run_test_loop(to_run, device_id, args.run_mode)
     except Exception as e:
         print(f"\nError: {e}")
         raise

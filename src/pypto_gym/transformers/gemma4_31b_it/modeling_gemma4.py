@@ -85,7 +85,8 @@ if is_accelerate_available():
 class Gemma4ModelOutputWithPast(BaseModelOutputWithPast):
     r"""
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -120,7 +121,8 @@ class Gemma4CausalLMOutputWithPast(ModelOutput):
     logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.text_config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
     past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-        It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+        It is a [`~cache_utils.Cache`] instance. For more details, see our
+        [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
         `past_key_values` input) to speed up sequential decoding.
@@ -308,7 +310,8 @@ class Gemma4AudioAttention(nn.Module):
         )
 
     def _convert_to_block(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Splits a `(batch_size, seq_len, num_heads, head_dim)` tensor into non-overlapping blocks of `chunk_size` along the sequence dim."""
+        """Splits a `(batch_size, seq_len, num_heads, head_dim)` tensor into non-overlapping
+        blocks of `chunk_size` along the sequence dim."""
         batch_size, seq_len, num_heads, head_dim = hidden_states.shape
         num_blocks = (seq_len + self.chunk_size - 1) // self.chunk_size
         pad = num_blocks * self.chunk_size - seq_len
@@ -522,20 +525,8 @@ class Gemma4AudioFeedForward(nn.Module):
         return hidden_states
 
 
-# TODO: this could be imported from Voxtral realtime
+# This could potentially be imported from Voxtral realtime
 class Gemma4AudioCausalConv1d(nn.Conv1d):
-    # def __init__(
-    #     self,
-    #     in_channels: int,
-    #     out_channels: int,
-    #     kernel_size: int,
-    #     # cache_key: str,
-    #     stride: int = 1,
-    #     dilation: int = 1,
-    #     bias: bool = True,
-    # ):
-    #     super().__init__(in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, bias=bias)
-    # self.cache_key = cache_key
 
     @cached_property
     def left_pad(self):
@@ -545,12 +536,7 @@ class Gemma4AudioCausalConv1d(nn.Conv1d):
     def forward(
         self,
         x: torch.Tensor,
-        # padding_cache: VoxtralRealtimeConv1dPaddingCache | None = None,  # TODO: we might want to add a cache?
     ) -> torch.Tensor:
-        # if padding_cache is not None:
-        #     x = padding_cache.update(x, self.cache_key, self)
-        # else:
-        #     x = nn.functional.pad(x, (self.left_pad, 0))
         x = nn.functional.pad(x, (self.left_pad, 0))
 
         return super().forward(x)
@@ -1465,9 +1451,12 @@ class Gemma4TextAttention(nn.Module):
         query_states = apply_rotary_pos_emb(query_states, cos, sin, unsqueeze_dim=2)
         query_states = query_states.transpose(1, 2)
 
-        # For layers with shared KV (from kv sharing point onwards), we reuse the same keys/values states as the last non-sharing layer.
-        # We cannot simply reuse the cached state if we have a Cache, as sliding layers will not remember the full states in their Cache
-        # once we are past the sliding window - so we always use `shared_kv_states` instead, even when past_key_values is not None
+        # For layers with shared KV (from kv sharing point onwards), we reuse the same
+        # keys/values states as the last non-sharing layer.
+        # We cannot simply reuse the cached state if we have a Cache, as sliding layers
+        # will not remember the full states in their Cache
+        # once we are past the sliding window - so we always use `shared_kv_states`
+        # instead, even when past_key_values is not None
         if self.is_kv_shared_layer:
             key_states, value_states = shared_kv_states[self.layer_type]
             # Device of past layer may be different from current one
@@ -1497,7 +1486,8 @@ class Gemma4TextAttention(nn.Module):
 
         # PYPTO_PATCH: GQA-native decode attention for sliding layers (D=256)
         _pk = sys.modules.get("gemma4_pto_kernels")
-        if (_pk is not None and getattr(_pk, "USE_PTO_GQA", False)
+        use_gqa_decode = _pk is not None and getattr(_pk, "USE_PTO_GQA", False)
+        if (use_gqa_decode
                 and query_states.shape[2] == 1  # decode only (Sq=1)
                 and self.head_dim == 256  # sliding layers only (D=256)
                 and not self.training):
@@ -1891,7 +1881,8 @@ class Gemma4TextModel(Gemma4PreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        # Gemma4 downcasts the below to bfloat16, causing sqrt(3072)=55.4256 to become 55.5. See https://github.com/huggingface/transformers/pull/29402
+        # Gemma4 downcasts the below to bfloat16, causing sqrt(3072)=55.4256 to become 55.5.
+        # See https://github.com/huggingface/transformers/pull/29402
         self.embed_tokens = Gemma4TextScaledWordEmbedding(
             config.vocab_size,
             config.hidden_size,
@@ -1960,12 +1951,14 @@ class Gemma4TextModel(Gemma4PreTrainedModel):
         **kwargs: Unpack[TransformersKwargs],
     ) -> Gemma4TextModelOutputWithPast:
         r"""
-        per_layer_inputs (`torch.Tensor` of shape `(batch_size, sequence_length, num_hidden_layers, hidden_size_per_layer_input)`, *optional*):
-            Pre-computed per-layer input embeddings. When provided, these are used directly instead of being
-            computed from `input_ids` via `get_per_layer_inputs()`. This is primarily used by the multimodal
-            model (`Gemma4Model`) which pre-computes per-layer inputs from the original `input_ids` *before*
-            merging multimodal soft tokens into `inputs_embeds` — at which point the original token ids are
-            no longer recoverable.
+        per_layer_inputs (`torch.Tensor` of shape
+            `(batch_size, sequence_length, num_hidden_layers, hidden_size_per_layer_input)`,
+            *optional*):
+            Pre-computed per-layer input embeddings. When provided, these are used directly
+            instead of being computed from `input_ids` via `get_per_layer_inputs()`. This is
+            primarily used by the multimodal model (`Gemma4Model`) which pre-computes per-layer
+            inputs from the original `input_ids` *before* merging multimodal soft tokens into
+            `inputs_embeds` — at which point the original token ids are no longer recoverable.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -2083,12 +2076,15 @@ class Gemma4TextModel(Gemma4PreTrainedModel):
                 )
                 try:
                     input_ids = input_ids.view(inputs_embeds.shape[:2])
-                except RuntimeError:
+                except RuntimeError as e:
                     raise RuntimeError(
-                        "It seems like you tried to call `forward` from `inputs_embeds` without providing `input_ids`, and that "
-                        "the `inputs_embeds` you provided do not exactly match the embedding weights. Since Gemma4 needs to reverse "
-                        "the embedding to compute another embedding, make sure you provide exact `inputs_embeds`"
-                    )
+                        "It seems like you tried to call `forward` from `inputs_embeds` "
+                        "without providing `input_ids`, and that "
+                        "the `inputs_embeds` you provided do not exactly match the "
+                        "embedding weights. Since Gemma4 needs to reverse "
+                        "the embedding to compute another embedding, make sure you "
+                        "provide exact `inputs_embeds`"
+                    ) from e
 
         return self.embed_tokens_per_layer(input_ids).reshape(
             *input_ids.shape,
@@ -2248,7 +2244,8 @@ class Gemma4AudioModel(Gemma4PreTrainedModel):
 
     config: Gemma4AudioConfig
     main_input_name = "input_features"
-    base_model_prefix = "model.audio_tower"  # prefix for Gemma4ForConditionalGeneration saved checkpoints, required for Gemma4AudioModel.from_pretrained()
+    base_model_prefix = "model.audio_tower"
+    # prefix for Gemma4ForConditionalGeneration saved checkpoints
     _can_record_outputs = {
         "hidden_states": Gemma4AudioLayer,
         "attentions": Gemma4AudioAttention,
@@ -2405,7 +2402,6 @@ class Gemma4VisionModel(Gemma4PreTrainedModel):
             output_length=output_length,
         )
 
-        # Strip padding tokens. pooler_mask is True = valid, False = padding.
         hidden_states = hidden_states[pooler_mask]
 
         if self.config.standardize:

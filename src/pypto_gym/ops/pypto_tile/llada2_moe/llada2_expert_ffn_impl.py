@@ -30,7 +30,6 @@ ND = pypto.TileOpFormat.TILEOP_ND
 
 
 def _swiglu_silu(gate_up):
-    """SiLU(gate) * up.  SiLU(x) = x / (1 + exp(-x))."""
     half = gate_up.shape[1] // 2
     gate = pypto.view(gate_up, [gate_up.shape[0], half], [0, 0])
     up = pypto.view(gate_up, [gate_up.shape[0], half], [0, half])

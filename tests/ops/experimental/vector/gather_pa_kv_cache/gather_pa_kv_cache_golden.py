@@ -52,6 +52,45 @@ def _validate_index_tensor(name: str, tensor: torch.Tensor, dim: int) -> None:
         raise ValueError(f"{name} must have rank {dim}, got shape {tuple(tensor.shape)}")
 
 
+def _gather_kv_pages(
+    q_count: int,
+    lengths: torch.Tensor,
+    bases: torch.Tensor,
+    table_offsets: torch.Tensor,
+    block_tables: torch.Tensor,
+    block_size: int,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    key_num_blocks: int,
+    key_out: torch.Tensor,
+    value_out: torch.Tensor,
+) -> None:
+    """Gather KV cache tokens from paged blocks into contiguous output tensors (in-place)."""
+    for q_idx in range(q_count):
+        seq_len = int(lengths[q_idx].item())
+        if seq_len == 0:
+            continue
+        output_base = int(bases[q_idx].item())
+        table_offset = int(table_offsets[q_idx].item())
+        required_blocks = (seq_len + block_size - 1) // block_size
+        table_end = table_offset + required_blocks
+        if table_end > block_tables.shape[1]:
+            raise ValueError(
+                f"block_tables row {q_idx} is too short: need columns up to {table_end}, "
+                f"got {block_tables.shape[1]}"
+            )
+        for logical_block in range(required_blocks):
+            physical_block = int(block_tables[q_idx, table_offset + logical_block].item())
+            if physical_block < 0 or physical_block >= key_num_blocks:
+                raise ValueError(f"block id {physical_block} outside [0, {key_num_blocks})")
+            token_start = logical_block * block_size
+            valid_tokens = min(seq_len - token_start, block_size)
+            out_start = output_base + token_start
+            out_end = out_start + valid_tokens
+            key_out[out_start:out_end, :, :] = key_cache[physical_block, :valid_tokens, :, :]
+            value_out[out_start:out_end, :, :] = value_cache[physical_block, :valid_tokens, :, :]
+
+
 def _lengths_and_bases(
     seq_lens: torch.Tensor,
     q_count: int,
@@ -143,29 +182,10 @@ def gather_pa_kv_cache_golden(
         else torch.empty((total_tokens, value_num_heads, value_dim), dtype=torch.bfloat16)
     )
 
-    for q_idx in range(q_count):
-        seq_len = int(lengths[q_idx].item())
-        if seq_len == 0:
-            continue
-        output_base = int(bases[q_idx].item())
-        table_offset = int(table_offsets[q_idx].item())
-        required_blocks = (seq_len + block_size - 1) // block_size
-        table_end = table_offset + required_blocks
-        if table_end > block_tables.shape[1]:
-            raise ValueError(
-                f"block_tables row {q_idx} is too short: need columns up to {table_end}, "
-                f"got {block_tables.shape[1]}"
-            )
-        for logical_block in range(required_blocks):
-            physical_block = int(block_tables[q_idx, table_offset + logical_block].item())
-            if physical_block < 0 or physical_block >= key_num_blocks:
-                raise ValueError(f"block id {physical_block} outside [0, {key_num_blocks})")
-            token_start = logical_block * block_size
-            valid_tokens = min(seq_len - token_start, block_size)
-            out_start = output_base + token_start
-            out_end = out_start + valid_tokens
-            key_out[out_start:out_end, :, :] = key_cache[physical_block, :valid_tokens, :, :]
-            value_out[out_start:out_end, :, :] = value_cache[physical_block, :valid_tokens, :, :]
+    _gather_kv_pages(
+        q_count, lengths, bases, table_offsets, block_tables, block_size,
+        key_cache, value_cache, key_num_blocks, key_out, value_out,
+    )
 
     return key_out, value_out
 
@@ -176,25 +196,10 @@ def _split_total_tokens(total_tokens: int, q_count: int) -> list[int]:
     return [base + (1 if idx < rem else 0) for idx in range(q_count)]
 
 
-def make_case(
-    *,
-    total_tokens: int,
-    q_count: int,
-    num_blocks: int = 5513,
-    block_table_cols: int = MAX_BLOCK_TABLE_COLS,
-    block_size: int = 128,
-    key_num_heads: int = 1,
-    key_dim: int = 512,
-    value_num_heads: int = 1,
-    value_dim: int = 64,
-    seq_lens: list[int] | tuple[int, ...] | torch.Tensor | None = None,
-    seq_offset: list[int] | tuple[int, ...] | torch.Tensor | None = None,
-    is_seq_lens_cumsum: bool = False,
-    compute_golden: bool = True,
-    seed: int = 0,
-) -> dict[str, Any]:
-    """Create a CPU test case matching the network sweep ND shapes."""
-
+def _validate_make_case_params(
+    q_count: int, total_tokens: int, block_table_cols: int, num_blocks: int,
+    block_size: int, key_num_heads: int, value_num_heads: int, key_dim: int, value_dim: int,
+) -> None:
     if q_count < 1:
         raise ValueError("q_count must be positive")
     if total_tokens < 0:
@@ -203,12 +208,15 @@ def make_case(
         raise ValueError("block_table_cols must be positive")
     if num_blocks < 1:
         raise ValueError("num_blocks must be positive")
-    if block_size < 1 or key_num_heads < 1 or value_num_heads < 1 or key_dim < 1 or value_dim < 1:  # pylint: disable=too-many-boolean-expressions
+    invalid_param = block_size < 1 or key_num_heads < 1 or value_num_heads < 1 or key_dim < 1 or value_dim < 1
+    if invalid_param:
         raise ValueError("cache non-batch dimensions must be positive")
 
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(seed)
 
+def _make_seq_lens_and_offsets(
+    total_tokens: int, q_count: int, block_size: int,
+    seq_lens=None, seq_offset=None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if seq_lens is None:
         lengths = torch.tensor(_split_total_tokens(total_tokens, q_count), dtype=torch.int32)
     else:
@@ -231,24 +239,28 @@ def make_case(
             raise ValueError("seq_offset must be divisible by block_size")
         table_offsets = (seq_offset_tensor.to(torch.int64) // block_size)
 
+    return lengths, seq_offset_tensor, table_offsets
+
+
+def _make_caches_and_block_tables(
+    num_blocks: int, block_size: int,
+    key_num_heads: int, key_dim: int,
+    value_num_heads: int, value_dim: int,
+    total_tokens: int, q_count: int,
+    lengths: torch.Tensor, table_offsets: torch.Tensor,
+    block_table_cols: int, generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     blocks_per_seq = torch.div(
-        lengths.to(torch.int64) + block_size - 1,
-        block_size,
-        rounding_mode="floor",
-    )
+        lengths.to(torch.int64) + block_size - 1, block_size, rounding_mode="floor")
     if int((blocks_per_seq + table_offsets).max().item()) > block_table_cols:
         raise ValueError("block_table_cols is too small for this case")
 
     key_cache = torch.randn(
         (num_blocks, block_size, key_num_heads, key_dim),
-        dtype=torch.float32,
-        generator=generator,
-    ).to(torch.bfloat16)
+        dtype=torch.float32, generator=generator).to(torch.bfloat16)
     value_cache = torch.randn(
         (num_blocks, block_size, value_num_heads, value_dim),
-        dtype=torch.float32,
-        generator=generator,
-    ).to(torch.bfloat16)
+        dtype=torch.float32, generator=generator).to(torch.bfloat16)
     key_ref = torch.empty((total_tokens, key_num_heads, key_dim), dtype=torch.bfloat16)
     value_ref = torch.empty((total_tokens, value_num_heads, value_dim), dtype=torch.bfloat16)
 
@@ -261,12 +273,55 @@ def make_case(
             block_tables[q_idx, col_idx] = next_block % num_blocks
             next_block += 1
 
+    return key_cache, value_cache, key_ref, value_ref, block_tables
+
+
+def _finalize_seq_lens_tensor(
+    lengths: torch.Tensor, is_seq_lens_cumsum: bool,
+) -> torch.Tensor:
     if is_seq_lens_cumsum:
-        seq_lens_tensor = torch.empty(q_count + 1, dtype=torch.int32)
+        seq_lens_tensor = torch.empty(len(lengths) + 1, dtype=torch.int32)
         seq_lens_tensor[0] = 0
         seq_lens_tensor[1:] = torch.cumsum(lengths, dim=0)
     else:
         seq_lens_tensor = lengths.clone()
+    return seq_lens_tensor
+
+
+def make_case(
+    *,
+    total_tokens: int,
+    q_count: int,
+    num_blocks: int = 5513,
+    block_table_cols: int = MAX_BLOCK_TABLE_COLS,
+    block_size: int = 128,
+    key_num_heads: int = 1,
+    key_dim: int = 512,
+    value_num_heads: int = 1,
+    value_dim: int = 64,
+    seq_lens: list[int] | tuple[int, ...] | torch.Tensor | None = None,
+    seq_offset: list[int] | tuple[int, ...] | torch.Tensor | None = None,
+    is_seq_lens_cumsum: bool = False,
+    compute_golden: bool = True,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """Create a CPU test case matching the network sweep ND shapes."""
+    _validate_make_case_params(
+        q_count, total_tokens, block_table_cols, num_blocks,
+        block_size, key_num_heads, value_num_heads, key_dim, value_dim)
+
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(seed)
+
+    lengths, seq_offset_tensor, table_offsets = _make_seq_lens_and_offsets(
+        total_tokens, q_count, block_size, seq_lens, seq_offset)
+
+    key_cache, value_cache, key_ref, value_ref, block_tables = _make_caches_and_block_tables(
+        num_blocks, block_size, key_num_heads, key_dim,
+        value_num_heads, value_dim, total_tokens, q_count,
+        lengths, table_offsets, block_table_cols, generator)
+
+    seq_lens_tensor = _finalize_seq_lens_tensor(lengths, is_seq_lens_cumsum)
 
     result = {
         "key_cache": key_cache,
@@ -283,14 +338,8 @@ def make_case(
     }
     if compute_golden:
         result["golden"] = gather_pa_kv_cache_golden(
-            key_cache,
-            value_cache,
-            block_tables,
-            seq_lens_tensor,
-            key_ref,
-            value_ref,
-            seq_offset_tensor,
-            cache_mode="Norm",
-            is_seq_lens_cumsum=is_seq_lens_cumsum,
+            key_cache, value_cache, block_tables, seq_lens_tensor,
+            key_ref, value_ref, seq_offset_tensor,
+            cache_mode="Norm", is_seq_lens_cumsum=is_seq_lens_cumsum,
         )
     return result

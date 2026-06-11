@@ -310,6 +310,61 @@ def _run_safetensors(path: Path, source_module: torch.nn.Module,
     with torch.no_grad():
         return _flatten(m(*args))
 
+# ---------- port() helpers ----------
+
+def _load_source(in_path: Path, in_fmt: str,
+                 input_shape: tuple[int, ...] | None,
+                 hf_repo: str | None) -> tuple[Source, str, float]:
+    """Load the source model. Returns (source, device_label, load_time_sec)."""
+    t = time.time()
+    sample = _build_sample(input_shape, hf_repo)
+    device, label = pick_device()
+    if in_fmt == "pt":
+        src = _load_pt_source(in_path, sample, device)
+    elif in_fmt == "onnx":
+        src = _load_onnx_source(in_path, sample, device)
+    elif in_fmt == "safetensors":
+        src = _load_safetensors_source(in_path, sample, hf_repo, device)
+    else:
+        raise ValueError(in_fmt)
+    return src, label, time.time() - t
+
+
+def _convert_target(src: Source, out_path: Path, out_fmt: str) -> float:
+    """Write the source model in the target format. Returns convert_time_sec."""
+    t = time.time()
+    if out_fmt == "pt":
+        _write_pt(src, out_path)
+    elif out_fmt == "onnx":
+        _write_onnx(src, out_path)
+    elif out_fmt == "safetensors":
+        _write_safetensors(src, out_path)
+    else:
+        raise ValueError(out_fmt)
+    return time.time() - t
+
+
+def _verify_roundtrip(src: Source, out_path: Path,
+                      out_fmt: str) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+    """Forward on source and converted target. Returns (ref, out, timing_dict)."""
+    timings: dict[str, float] = {}
+    t = time.time()
+    ref = src.forward()
+    timings["ref_forward"] = time.time() - t
+
+    t = time.time()
+    if out_fmt == "pt":
+        out = _run_pt(out_path, src.sample, src.device)
+    elif out_fmt == "onnx":
+        out = _run_onnx(out_path, src.sample)
+    elif out_fmt == "safetensors":
+        out = _run_safetensors(out_path, src.module, src.sample, src.device)
+    else:
+        raise ValueError(out_fmt)
+    timings["target_forward"] = time.time() - t
+
+    return ref, out, timings
+
 
 # ---------- orchestration ----------
 
@@ -324,30 +379,12 @@ def port(in_path: Path, out_path: Path,
         raise ValueError(f"formats must be one of {VALID_FORMATS}")
 
     timings: dict[str, float] = {}
-    t = time.time()
-    sample = _build_sample(input_shape, hf_repo)
-    device, label = pick_device()
 
-    if in_fmt == "pt":
-        src = _load_pt_source(in_path, sample, device)
-    elif in_fmt == "onnx":
-        src = _load_onnx_source(in_path, sample, device)
-    elif in_fmt == "safetensors":
-        src = _load_safetensors_source(in_path, sample, hf_repo, device)
-    else:
-        raise ValueError(in_fmt)
-    timings["load"] = time.time() - t
+    # 1. Load source model
+    src, label, timings["load"] = _load_source(in_path, in_fmt, input_shape, hf_repo)
 
-    t = time.time()
-    if out_fmt == "pt":
-        _write_pt(src, out_path)
-    elif out_fmt == "onnx":
-        _write_onnx(src, out_path)
-    elif out_fmt == "safetensors":
-        _write_safetensors(src, out_path)
-    else:
-        raise ValueError(out_fmt)
-    timings["convert"] = time.time() - t
+    # 2. Convert to target format
+    timings["convert"] = _convert_target(src, out_path, out_fmt)
 
     sample_shapes = [tuple(int(x) for x in a.shape) for a in src.sample]
     sample_dtypes = [str(a.dtype) for a in src.sample]
@@ -367,23 +404,12 @@ def port(in_path: Path, out_path: Path,
         info["verified"] = False
         return info
 
+    # 3. Verify round-trip
     info["device"] = label
     info["ort_providers"] = onnxruntime_providers() if "onnx" in (in_fmt, out_fmt) else None
 
-    t = time.time()
-    ref = src.forward()
-    timings["ref_forward"] = time.time() - t
-
-    t = time.time()
-    if out_fmt == "pt":
-        out = _run_pt(out_path, src.sample, device)
-    elif out_fmt == "onnx":
-        out = _run_onnx(out_path, src.sample)
-    elif out_fmt == "safetensors":
-        out = _run_safetensors(out_path, src.module, src.sample, device)
-    else:
-        raise ValueError(out_fmt)
-    timings["target_forward"] = time.time() - t
+    ref, out, vt = _verify_roundtrip(src, out_path, out_fmt)
+    timings.update(vt)
 
     info["ref_stats"] = _tensor_stats(ref)
     info["out_stats"] = _tensor_stats(out)

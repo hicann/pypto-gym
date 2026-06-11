@@ -35,7 +35,7 @@ import pypto
 from torch._dynamo import allow_in_graph
 
 from bsa_common import (
-    DEFAULT_CONFIG,
+    DEFAULT_CONFIG, SparseKvBuildConfig,
     _pad_to_block_aligned, _build_sparse_kv_cached,
     _build_sparse_q_dkdv_cached,
     _make_jit_opts,
@@ -360,17 +360,23 @@ def block_sparse_attention_backward(
     numqb_hint = torch.zeros(numQB, 1, dtype=torch.float32, device=query.device)
     numkb_hint = torch.zeros(numKB, 1, dtype=torch.float32, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(
-        block_sparse_mask, k_2d, v_2d,
-        B, Hq, Hkv, Sq, Skv, Sq_pad, Skv_pad, numQB, numKB,
-        bx, by, D, query.device)
+    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+        block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
+        B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
+        numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
 
     maxsel_hint = torch.zeros(maxSel, 1, dtype=torch.float32, device=query.device)
 
-    q_c, do_c, o_c, lse_c, inner_mask, maxInner = _build_sparse_q_dkdv_cached(
+    q_result = _build_sparse_q_dkdv_cached(
         block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
         B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
         bx, by, D, query.device)
+    q_c = q_result.q_compact
+    do_c = q_result.do_compact
+    o_c = q_result.o_compact
+    lse_c = q_result.lse_compact
+    inner_mask = q_result.inner_mask
+    maxInner = q_result.maxInner
 
     torch.npu.synchronize()
 

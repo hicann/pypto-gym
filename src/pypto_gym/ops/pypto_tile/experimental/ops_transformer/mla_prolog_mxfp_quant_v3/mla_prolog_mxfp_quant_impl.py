@@ -465,7 +465,7 @@ def pre_compute_2d(
     return qkv_pre_res
 
 
-def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant_compute(
     token_x: pypto.Tensor,
     x_scale: pypto.Tensor,
     w_dq: pypto.Tensor,
@@ -587,7 +587,6 @@ def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
         m = tile_config.m_tile
         pypto.set_semantic_label("Matmul_qNope_wUk")
         pypto.set_cube_tile_shapes([m, m], [128, 128], [128, 128])
-        # transposed_batchmatmul: [tile_bs, n1, qk_nope_head_dim] @ [n1, qk_nope_head_dim, kv_lora_rank]^T
         q_nope_new_trans = pypto.experimental.transposed_batchmatmul(q_nope, w_uk, pypto.DT_BF16)
 
         pypto.set_semantic_label("Assemble_queryOut")
@@ -647,7 +646,7 @@ def mla_prolog_quant_compute(  # pylint: disable=huawei-too-many-arguments
     },
     runtime_options={"device_sched_mode": 2, "stitch_function_max_num": 128}
 )
-def mla_prolog_quant(  # pylint: disable=huawei-too-many-arguments
+def mla_prolog_quant(
     token_x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP8E4M3),
     x_scale: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_FP8E8M0),
     w_dq: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP8E4M3),

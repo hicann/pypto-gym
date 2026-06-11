@@ -63,7 +63,6 @@ def get_device_id():
 
 def setup_npu(device_id):
     """设置 NPU 设备。"""
-    import torch_npu  # pylint: disable=redefined-outer-name
     torch.npu.set_device(device_id)
 
 
@@ -71,48 +70,10 @@ def setup_npu(device_id):
 # 2. 测试函数
 # ─────────────────────────────────────────────
 
-def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
-    """通用测试函数：执行 mhc_post 算子精度验证
-
-    Args:
-        bs: batch size (B*S)
-        N: 注意力头数
-        D: 隐藏层维度
-        device_id: NPU 设备 ID
-        run_mode: 运行模式 ("npu" 或 "sim")
-        test_name: 测试名称（可选，用于日志输出）
-    """
-    if test_name is None:
-        test_name = f"B*S = {bs}"
-
-    print("=" * 60)
-    print(f"Test: mhc_post {test_name}")
-    print("=" * 60)
-
-    # 设置设备
-    if run_mode == "npu":
-        if device_id is None:
-            device_id = get_device_id()
-        setup_npu(device_id)
-        device = f"npu:{device_id}"
-    else:
-        device = "cpu"
-
-    # 固定随机种子以保证可重复性
-    torch.manual_seed(42)
-
-    # 准备测试数据（使用 [B, S, N, D] 格式，wrapper 会 reshape）
-    # B*S = bs，假设 B=1, S=bs（简化处理）
+def _run_golden_and_compare(x, h_res, h_out, h_post, result, bs, N, D, run_mode):
+    """Execute golden reference on CPU and compare precision with kernel result."""
     B = 1
     S = bs
-
-    x = torch.randn(B, S, N, D, dtype=torch.bfloat16, device=device)
-    h_res = torch.randn(B, S, N, N, dtype=torch.float32, device=device)
-    h_out = torch.randn(B, S, D, dtype=torch.bfloat16, device=device)
-    h_post = torch.randn(B, S, N, dtype=torch.float32, device=device)
-
-    # 执行 kernel wrapper
-    result = mhc_post_wrapper(x, h_res, h_out, h_post)
 
     # 执行 golden（在 CPU 上）
     x_cpu = x.cpu()
@@ -158,6 +119,51 @@ def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
             raise
 
     print("  ✓ Passed\n")
+
+
+def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
+    """通用测试函数：执行 mhc_post 算子精度验证
+
+    Args:
+        bs: batch size (B*S)
+        N: 注意力头数
+        D: 隐藏层维度
+        device_id: NPU 设备 ID
+        run_mode: 运行模式 ("npu" 或 "sim")
+        test_name: 测试名称（可选，用于日志输出）
+    """
+    if test_name is None:
+        test_name = f"B*S = {bs}"
+
+    print("=" * 60)
+    print(f"Test: mhc_post {test_name}")
+    print("=" * 60)
+
+    # 设置设备
+    if run_mode == "npu":
+        if device_id is None:
+            device_id = get_device_id()
+        setup_npu(device_id)
+        device = f"npu:{device_id}"
+    else:
+        device = "cpu"
+
+    # 固定随机种子以保证可重复性
+    torch.manual_seed(42)
+
+    # 准备测试数据（使用 [B, S, N, D] 格式，wrapper 会 reshape）
+    B = 1
+    S = bs
+
+    x = torch.randn(B, S, N, D, dtype=torch.bfloat16, device=device)
+    h_res = torch.randn(B, S, N, N, dtype=torch.float32, device=device)
+    h_out = torch.randn(B, S, D, dtype=torch.bfloat16, device=device)
+    h_post = torch.randn(B, S, N, dtype=torch.float32, device=device)
+
+    # 执行 kernel wrapper
+    result = mhc_post_wrapper(x, h_res, h_out, h_post)
+
+    _run_golden_and_compare(x, h_res, h_out, h_post, result, bs, N, D, run_mode)
 
 
 def test_mhc_post_bs8_n4_d128(device_id=None, run_mode="npu"):

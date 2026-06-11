@@ -63,7 +63,6 @@ def get_device_id():
 
 def setup_npu(device_id):
     """设置 NPU 设备。"""
-    import torch_npu  # pylint: disable=redefined-outer-name
     torch.npu.set_device(device_id)
 
 

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import sys
@@ -25,6 +26,13 @@ import torch
 from numpy.testing import assert_allclose
 
 from qkv_rms_norm_rope_cache_golden import qkv_rms_norm_rope_cache_golden
+
+
+QkvNormRopeInputs = collections.namedtuple(
+    "QkvNormRopeInputs",
+    ["qkv", "q_gamma", "k_gamma", "cos", "sin", "index",
+     "q_out", "k_cache", "v_cache", "k_scale", "v_scale"],
+)
 
 
 CASE_FILE = Path(__file__).with_name("test_cases.json")
@@ -94,10 +102,12 @@ def make_inputs(case: Dict, device: torch.device):
     else:
         k_scale = None
         v_scale = None
-    return qkv, q_gamma, k_gamma, cos, sin, index, q_out, k_cache, v_cache, k_scale, v_scale
+    return QkvNormRopeInputs(
+        qkv, q_gamma, k_gamma, cos, sin, index, q_out, k_cache, v_cache, k_scale, v_scale
+    )
 
 
-def run_single_case(case: Dict):  # pylint: disable=huawei-too-many-arguments
+def run_single_case(case: Dict):
     device = npu_device()
     inputs = make_inputs(case, device)
     golden_inputs = [x.cpu() if isinstance(x, torch.Tensor) else x for x in inputs]
@@ -135,7 +145,11 @@ def run_single_case(case: Dict):  # pylint: disable=huawei-too-many-arguments
             )
         except AssertionError:
             diff = (actual.to(torch.float32) - expected.to(torch.float32)).abs()
-            print(f"output {idx} mismatch: max_diff={float(diff.max())}, actual_nonzero={int(actual.count_nonzero())}, expected_nonzero={int(expected.count_nonzero())}")
+            print(
+                f"output {idx} mismatch: max_diff={float(diff.max())}, "
+                f"actual_nonzero={int(actual.count_nonzero())}, "
+                f"expected_nonzero={int(expected.count_nonzero())}"
+            )
             raise
     return result
 
@@ -180,7 +194,11 @@ def run_benchmark_case(case: Dict, warmup: int, repeat: int):
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     avg_ms = elapsed_ms / repeat
     tokens = int(case["qkv_size"][0]) * int(case["qkv_size"][1])
-    print(f"[PERF] {case['id']} avg_ms={avg_ms:.6f} repeat={repeat} warmup={warmup} tokens={tokens} ms_per_token={avg_ms / tokens:.6f}")
+    print(
+        f"[PERF] {case['id']} avg_ms={avg_ms:.6f} "
+        f"repeat={repeat} warmup={warmup} tokens={tokens} "
+        f"ms_per_token={avg_ms / tokens:.6f}"
+    )
 
 
 def main():

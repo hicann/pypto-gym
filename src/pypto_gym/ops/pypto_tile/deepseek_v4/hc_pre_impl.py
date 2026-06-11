@@ -29,7 +29,6 @@ def rms_norm_denom(x: pypto.Tensor, norm_eps=1e-6) -> pypto.Tensor:
 
 
 def sigmoid(x: pypto.Tensor) -> pypto.Tensor:
-    # sigmoid(x) = 1 / (1 + exp(-x))
     x_neg = pypto.mul(x, -1.0)
     exp_neg = pypto.exp(x_neg)
     ones = pypto.full(exp_neg.shape, 1.0, exp_neg.dtype, valid_shape=exp_neg.shape)
@@ -195,7 +194,6 @@ def hc_pre_kernel(
 
         pypto.set_vec_tile_shapes(tile_shape_2, 32)
         if (not split_k):
-            # (t, hc*d) @ (mix_hc, hc*d)^t = (t, mix_hc)
             mm_res = pypto.matmul(x_fp32, hc_fn, pypto.DT_FP32, b_trans=True)
         else:
             tile_k = 4*1024
@@ -233,7 +231,6 @@ def hc_pre_kernel(
         comb_flag = (rms_res[:, 2*hc:] * (hc_scale_hc[2:3, :]) + hc_base[:, 2*hc:])
         comb_flag = comb_flag.reshape([tile_t, hc, hc]) # (tile_t, 4, 4)
 
-        # (tile_t, hc), (tile_t, hc), (tile_t, hc, hc)
         comb_ = hc_split_sinkhorn(comb_flag, hc_split_sinkhorn_iters, hc_eps)
         pypto.assemble(comb_, [t_idx, 0, 0], comb)
 
@@ -289,7 +286,6 @@ def hc_pre_kernel_prefill(
 
         pypto.set_vec_tile_shapes(24, 128)
         if (not split_k):
-            # (mix_hc, hc*d) @ (t, hc*d)^t = (mix_hc, t)
             mm_res = pypto.matmul(hc_fn, x_fp32, pypto.DT_FP32, b_trans=True)
         else:
             tile_k = 4*1024
@@ -358,7 +354,11 @@ def check_input_output_shape_dtype(x: torch.Tensor, hc_fn: torch.Tensor, hc_scal
     assert hc_base.dtype == torch.float32, f"hc_base.dtype is {hc_base.dtype}, expected torch.float32"
 
 pyptolib = torch.library.Library("pypto", "FRAGMENT")
-pyptolib.define("hc_pre(Tensor x, Tensor hc_fn, Tensor hc_scale, Tensor hc_base, int hc_mult, int hc_split_sinkhorn_iters, float hc_eps) -> (Tensor, Tensor, Tensor)")
+pyptolib.define(
+    "hc_pre(Tensor x, Tensor hc_fn, Tensor hc_scale, "
+    "Tensor hc_base, int hc_mult, int hc_split_sinkhorn_iters, "
+    "float hc_eps) -> (Tensor, Tensor, Tensor)"
+)
 
 
 @torch.library.impl(pyptolib, "hc_pre", "Meta")

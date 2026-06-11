@@ -8,6 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+import collections
 import os
 import sys
 
@@ -27,6 +28,12 @@ import pypto
 
 from deepseek_v4.hc_pre_impl import hc_pre_kernel, hc_pre_kernel_prefill, npu_hc_pre, check_input_output_shape_dtype
 from tests.ops.utils.compare import compare
+
+
+HcPreData = collections.namedtuple(
+    "HcPreData",
+    ["x", "hc_fn", "hc_scale", "hc_base", "res", "post", "comb", "mm_res"],
+)
 
 
 hc, d, sinkhorn_iters, norm_eps, hc_eps = 4, 4096, 20, 1e-6, 1e-6
@@ -161,11 +168,11 @@ def gen_hc_pre_data(t=16, is_trans=False):
         res, post, comb, mm_res = gen_hc_pre_trans(x, hc_fn, hc_scale, hc_base)
     else:
         res, post, comb, mm_res = gen_hc_pre(x, hc_fn, hc_scale, hc_base)
-    return x, hc_fn, hc_scale, hc_base, res, post, comb, mm_res
+    return HcPreData(x, hc_fn, hc_scale, hc_base, res, post, comb, mm_res)
 
 
 class HC_PRE(torch.nn.Module):
-    def forward(self, x, hc_fn, hc_scale, hc_base):  # pylint: disable=too-many-return-values
+    def forward(self, x, hc_fn, hc_scale, hc_base):
         #### add some op here  x = torch.add(x, 0)
         return torch.ops.pypto.hc_pre(x, hc_fn, hc_scale, hc_base, 4, 20, 1e-6)
 
@@ -175,10 +182,12 @@ def test_hc_pre_inmodel(t=16):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch.npu.set_device(int(device_id))
     torch.manual_seed(42)
-    x, hc_fn, hc_scale, hc_base, y_gd, post_gd, comb_gd, mm_res_gd = gen_hc_pre_data(t)
+    result = gen_hc_pre_data(t)
     print("gen golden success !!!")
 
     ### to device
+    x, hc_fn, hc_scale, hc_base = result.x, result.hc_fn, result.hc_scale, result.hc_base
+    y_gd, post_gd, comb_gd, mm_res_gd = result.res, result.post, result.comb, result.mm_res
     x = x.npu()
     hc_fn = hc_fn.npu()
     hc_scale = hc_scale.npu()
@@ -208,8 +217,11 @@ def test_hc_pre(t=16, is_trans=False):
     torch.npu.set_device(int(device_id))
     torch.manual_seed(42)
 
-    x, hc_fn, hc_scale, hc_base, y_gd, post_gd, comb_gd, mm_res_gd = gen_hc_pre_data(t)
+    result = gen_hc_pre_data(t)
     print("gen golden success !!!")
+
+    x, hc_fn, hc_scale, hc_base = result.x, result.hc_fn, result.hc_scale, result.hc_base
+    y_gd, post_gd, comb_gd, mm_res_gd = result.res, result.post, result.comb, result.mm_res
 
     check_input_output_shape_dtype(x, hc_fn, hc_scale, hc_base)
 

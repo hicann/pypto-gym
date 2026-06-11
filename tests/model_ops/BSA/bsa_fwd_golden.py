@@ -59,9 +59,12 @@ def bsa_forward_golden(
         P_uv = exp(S_uv - LSE)
         O_u  = sum_v( P_uv @ V_v ),  for valid v
     """
-    B, Hq, Hkv, Sq, Skv, D, bx, by, scale, asq, askv = _resolve_defaults(
+    defaults = _resolve_defaults(
         query, key, block_shape_x, block_shape_y,
         actual_seq_lengths, actual_seq_lengths_kv, scale_value, cfg)
+    B, Hq, Hkv, Sq, Skv, D, bx, by, scale, asq, askv = (
+        defaults.B, defaults.Hq, defaults.Hkv, defaults.Sq, defaults.Skv,
+        defaults.D, defaults.bx, defaults.by, defaults.scale, defaults.asq, defaults.askv)
 
     dtype = query.dtype
     ftype = cfg.accum_torch_dtype

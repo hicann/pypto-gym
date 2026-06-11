@@ -30,8 +30,18 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import pytest
 import pypto
 
-from experimental.ops_transformer.mla_prolog_mxfp_quant_v3.mla_prolog_mxfp_quant_impl import mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
+from experimental.ops_transformer.mla_prolog_mxfp_quant_v3.mla_prolog_mxfp_quant_impl import (
+    mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
+)
 from deepseek_v32_exp.utils.compare import compare
+import collections
+
+
+MlaPrologMxfpResult = collections.namedtuple('MlaPrologMxfpResult', [
+    'q_nope_new_t', 'q_embed', 'q_a_layernorm', 'q_a_layernorm_scale_dequant',
+    'kv_cache_out', 'kr_cache_out'
+])
+GenBlockTableOutput = collections.namedtuple("GenBlockTableOutput", ["block_num", "block_table", "cache_index"])
 
 
 FP8_E4M3_TARGET_MAX_POW2 = 8
@@ -73,9 +83,7 @@ def rms_norm(x, gamma):
 
 def scatter_update(inputs, axis):
     # inputs: cache, key_states, indices
-    # cache shape: [block_number,block_size,n2,d], n2=1
     # key_states shape: [b*s1*1, d]
-    # indices shape: [b, s1], s1=1
     cache, key_states, indices = inputs
     block_number, block_size, n2, d = cache.shape
     res = cache.reshape(block_number * block_size * n2, d)
@@ -213,46 +221,23 @@ def tensor_to_file(t: torch.Tensor, output: Path):
             f.write(each.view(dtype).cpu().numpy().tobytes())
 
 
-def mla_prolog_quant_v32_compute(inputs):
+
+def _compute_q_path(inputs, t, h, q_lora_rank, q_head_dim, qk_nope_head_dim, kv_lora_rank, n):
+    """Compute Q projection path: q_a_proj -> layernorm -> q_b_proj -> q_nope_new_t."""
     dtype = inputs.get("dtype")
     is_quant_a = inputs.get("is_quant_a")
     is_quant_b = inputs.get("is_quant_b")
-    has_smooth = inputs.get("has_smooth")
-    cache_mode = inputs.get("cache_mode")
-    gamma_cq = inputs.get("gamma_cq")
-    gamma_ckv = inputs.get("gamma_ckv")
     x = inputs.get("x")
     w_dq = inputs.get("w_dq")
+    gamma_cq = inputs.get("gamma_cq")
     w_uqqr = inputs.get("w_uqqr")
     w_uk = inputs.get("w_uk")
-    w_dkvkr = inputs.get("w_dkvkr")
-    cos = inputs.get("cos")
-    sin = inputs.get("sin")
-    kv_cache = inputs.get("kv_cache")
-    kr_cache = inputs.get("kr_cache")
-    kv_quant_scale_cache = None
-    if is_quant_b:
-        kv_quant_scale_cache = inputs.get("kv_quant_scale_cache")
-    cache_index = inputs.get("cache_index")
-    if is_quant_a:
-        x_scale = inputs.get("x_scale")
-        w_dq_scale = inputs.get("w_dq_scale")
-        w_dkvkr_scale = inputs.get("w_dkvkr_scale")
-    if is_quant_b:
-        w_uqqr_scale = inputs.get("w_uqqr_scale")
-        if has_smooth:
-            smooth_cq = inputs.get("smooth_cq")
 
-    t, h = x.shape
-    qk_rope_head_dim = cos.shape[1]
-    n, qk_nope_head_dim, kv_lora_rank = w_uk.shape
-    q_head_dim = qk_nope_head_dim + qk_rope_head_dim
-    q_lora_rank = w_dq.shape[1]
-
-    """ q """
     # shape is: [t, h] @ [h, q_lora_rank] -> [t, q_lora_rank]
     if is_quant_a:
         # no smooth
+        x_scale = inputs.get("x_scale")
+        w_dq_scale = inputs.get("w_dq_scale")
         q_a_proj = torch_npu.npu_quant_matmul(x.view(1, t, h).npu(), w_dq.view(1, h, q_lora_rank).npu(), \
             w_dq_scale.npu(), pertoken_scale=x_scale.view(t, h // 64, 2).npu(), \
             x1_dtype=torch.float8_e4m3fn, x2_dtype=torch.float8_e4m3fn, output_dtype=torch.float32, \
@@ -267,6 +252,7 @@ def mla_prolog_quant_v32_compute(inputs):
     q_a_layernorm_scale_dequant = None
     if is_quant_b:
         q_a_layernorm, q_a_layernorm_scale_dequant = quant_mx_golden_bytes(q_a_layernorm)  # scale: [t,1]
+        w_uqqr_scale = inputs.get("w_uqqr_scale")
         q_b_proj = torch_npu.npu_quant_matmul(q_a_layernorm.view(1, t, q_lora_rank).npu(), \
             w_uqqr.view(1, q_lora_rank, n * q_head_dim).npu(), w_uqqr_scale.npu(), \
             pertoken_scale=q_a_layernorm_scale_dequant.view(t, q_lora_rank // 64, 2).npu(), \
@@ -285,9 +271,27 @@ def mla_prolog_quant_v32_compute(inputs):
     q_nope_new = q_nope_new.to(dtype)
     q_nope_new_t = q_nope_new.permute(1, 0, 2)  # [t, n, kv_lora_rank]
 
+    return q_nope_new_t, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant
+
+
+def _compute_kv_rope_cache_path(inputs, t, h, kv_lora_rank, qk_rope_head_dim, qk_nope_head_dim, q_reshape):
+    """Compute KV projection, RoPE embedding, and cache scatter update."""
+    dtype = inputs.get("dtype")
+    is_quant_a = inputs.get("is_quant_a")
+    x = inputs.get("x")
+    w_dkvkr = inputs.get("w_dkvkr")
+    gamma_ckv = inputs.get("gamma_ckv")
+    cos = inputs.get("cos")
+    sin = inputs.get("sin")
+    kv_cache = inputs.get("kv_cache")
+    kr_cache = inputs.get("kr_cache")
+    cache_index = inputs.get("cache_index")
+
     """ kv """
     # shape is: [t, h] @ [h, kv_lora_rank + qk_rope_head_dim] -> [t, kv_lora_rank + qk_rope_head_dim]
     if is_quant_a:
+        x_scale = inputs.get("x_scale")
+        w_dkvkr_scale = inputs.get("w_dkvkr_scale")
         kv_a_proj = torch_npu.npu_quant_matmul(x.view(1, t, h).npu(), \
             w_dkvkr.view(1, h, kv_lora_rank + qk_rope_head_dim).npu(), w_dkvkr_scale.npu(), \
             pertoken_scale=x_scale.view(t, h // 64, 2).npu(), x1_dtype=torch.float8_e4m3fn, \
@@ -326,11 +330,31 @@ def mla_prolog_quant_v32_compute(inputs):
     kr_cache_tmp = kr_cache.clone()
     kr_cache_out = scatter_update([kr_cache_tmp, k_embed_r, cache_index], -2)
 
-    return q_nope_new_t, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out, \
-            kr_cache_out
+    return q_embed, kv_cache_out, kr_cache_out
 
 
-def gen_block_table(act_seq, block_size, s1, need_indices=False):  # pylint: disable=too-many-return-values
+def mla_prolog_quant_v32_compute(inputs):
+    x = inputs.get("x")
+    cos = inputs.get("cos")
+    w_uk = inputs.get("w_uk")
+    w_dq = inputs.get("w_dq")
+    t, h = x.shape
+    qk_rope_head_dim = cos.shape[1]
+    n, qk_nope_head_dim, kv_lora_rank = w_uk.shape
+    q_head_dim = qk_nope_head_dim + qk_rope_head_dim
+    q_lora_rank = w_dq.shape[1]
+
+    q_nope_new_t, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant = \
+        _compute_q_path(inputs, t, h, q_lora_rank, q_head_dim, qk_nope_head_dim, kv_lora_rank, n)
+    q_embed, kv_cache_out, kr_cache_out = \
+        _compute_kv_rope_cache_path(inputs, t, h, kv_lora_rank, qk_rope_head_dim, qk_nope_head_dim, q_reshape)
+
+    return MlaPrologMxfxResult(q_nope_new_t, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out,
+                              kr_cache_out)
+
+
+
+def gen_block_table(act_seq, block_size, s1, need_indices=False):
     b = act_seq.shape[0]
     block_num = 0
     block_num_each = []
@@ -369,43 +393,15 @@ def gen_block_table(act_seq, block_size, s1, need_indices=False):  # pylint: dis
         cache_index = None
 
     if need_indices:
-        return block_num, block_table, cache_index
+        return GenBlockTableOutput(block_num, block_table, cache_index)
     else:
-        return block_num, block_table, cache_index
+        return GenBlockTableOutput(block_num, block_table, cache_index)
 
 
-def gen_mla_prolog_quant_v32_input_data(params, dtypes, actual_seq, is_quant=(False, False),
-                                        has_smooth=False, block_size=128, cache_mode="BSND"):
-    dtype, w_dtype = dtypes
 
-    is_quant_a, is_quant_b = is_quant
-    b = params.get("b")
-    t = params.get("t")
-    s1 = t // b
-    h = params.get("h")
-    n = params.get("n1")
-    q_lora_rank = params.get("q_lora_rank")
-    qk_nope_head_dim = params.get("qk_nope_head_dim")
-    qk_rope_head_dim = params.get("qk_rope_head_dim")
-    kv_lora_rank = params.get("kv_lora_rank")
-    block_num, block_table, cache_index = gen_block_table(actual_seq, block_size, s1, need_indices=True)
-
-    skv_max = actual_seq.max()
-    q_head_dim = qk_nope_head_dim + qk_rope_head_dim
-    x_shape = [t, h]
-    w_qa_shape = [h, q_lora_rank]
-    w_qb_shape = [q_lora_rank, n * q_head_dim]
-    w_kv_a_shape = [h, kv_lora_rank + qk_rope_head_dim]
-    w_kv_b_k_shape = [n, qk_nope_head_dim, kv_lora_rank]
-    gamma_cq_shape = [q_lora_rank]
-    gamma_ckv_shape = [kv_lora_rank]
-    cos_shape = [t, qk_rope_head_dim]
-    kv_bsnd_shape = [b, skv_max, 1, kv_lora_rank + qk_rope_head_dim]
-    kv_cache_shape = [block_num, block_size, 1, kv_lora_rank]
-    kr_cache_shape = [block_num, block_size, 1, qk_rope_head_dim]
-    kv_quant_scale_cache_shape = [block_num, block_size, 1, 4]
-    smooth_cq_shape = [1, q_lora_rank]
-
+def _init_and_quantize_weights(x_shape, w_qa_shape, w_qb_shape, w_kv_a_shape, smooth_cq_shape,
+                                is_quant_a, is_quant_b, has_smooth):
+    """Create input tensors and apply MX quantization if enabled."""
     res = [None] * 16
     x = torch.empty(x_shape).uniform_(-1, 1).to(torch.float32)
     res[0] = x
@@ -433,20 +429,14 @@ def gen_mla_prolog_quant_v32_input_data(params, dtypes, actual_seq, is_quant=(Fa
 
     res[1] = w_dq
     res[2] = w_uqqr
-
     res[5] = w_dkvkr
 
-    w_uk = torch.empty(w_kv_b_k_shape).uniform_(-0.1, 0.1).to(w_dtype)
-    res[6] = w_uk
-    gamma_cq = torch.empty(gamma_cq_shape).uniform_(-1, 1).to(dtype)  # [q_lora_rank]
-    gamma_ckv = torch.empty(gamma_ckv_shape).uniform_(-1, 1).to(dtype)  # [kv_lora_rank]
-    res[7] = gamma_cq
-    res[8] = gamma_ckv
-    cos = torch.empty(cos_shape).uniform_(-0.1, 0.1).to(dtype)  # [b, s, qk_rope_head_dim]
-    sin = torch.empty(cos_shape).uniform_(-0.1, 0.1).to(dtype)  # [b, s, qk_rope_head_dim]
-    res[9] = cos
-    res[10] = sin
-    res[11] = cache_index.reshape(t, 1)
+    return res
+
+
+def _build_kv_kr_cache(block_table, block_num, block_size, b, kv_lora_rank, qk_rope_head_dim, dtype, skv_max):
+    """Build kv_cache and kr_cache from block table and random KV data."""
+    kv_bsnd_shape = [b, skv_max, 1, kv_lora_rank + qk_rope_head_dim]
     k_bsnd = torch.empty(kv_bsnd_shape).uniform_(-1, 1).to(dtype)
     # kv paddIng
     per_batch_max_num = math.ceil(skv_max / block_size)
@@ -464,13 +454,55 @@ def gen_mla_prolog_quant_v32_input_data(params, dtypes, actual_seq, is_quant=(Fa
                     b_idx, block_offset:(block_offset + block_size), :, :]
     kv_cache = k_cache_tensor[:, :, :, : kv_lora_rank]
     kr_cache = k_cache_tensor[:, :, :, kv_lora_rank:]
+    return kv_cache, kr_cache
 
+
+def gen_mla_prolog_quant_v32_input_data(params, dtypes, actual_seq, is_quant=(False, False),
+                                        has_smooth=False, block_size=128, cache_mode="BSND"):
+    dtype, w_dtype = dtypes
+    is_quant_a, is_quant_b = is_quant
+    b = params.get("b")
+    t = params.get("t")
+    s1 = t // b
+    h = params.get("h")
+    n = params.get("n1")
+    q_lora_rank = params.get("q_lora_rank")
+    qk_nope_head_dim = params.get("qk_nope_head_dim")
+    qk_rope_head_dim = params.get("qk_rope_head_dim")
+    kv_lora_rank = params.get("kv_lora_rank")
+    block_num, block_table, cache_index = gen_block_table(actual_seq, block_size, s1, need_indices=True)
+
+    skv_max = actual_seq.max()
+    q_head_dim = qk_nope_head_dim + qk_rope_head_dim
+    x_shape = [t, h]
+    w_qa_shape = [h, q_lora_rank]
+    w_qb_shape = [q_lora_rank, n * q_head_dim]
+    w_kv_a_shape = [h, kv_lora_rank + qk_rope_head_dim]
+    smooth_cq_shape = [1, q_lora_rank]
+
+    res = _init_and_quantize_weights(x_shape, w_qa_shape, w_qb_shape, w_kv_a_shape, smooth_cq_shape,
+                                      is_quant_a, is_quant_b, has_smooth)
+
+    w_kv_b_k_shape = [n, qk_nope_head_dim, kv_lora_rank]
+    gamma_cq_shape = [q_lora_rank]
+    gamma_ckv_shape = [kv_lora_rank]
+    cos_shape = [t, qk_rope_head_dim]
+    res[6] = torch.empty(w_kv_b_k_shape).uniform_(-0.1, 0.1).to(w_dtype)
+    res[7] = torch.empty(gamma_cq_shape).uniform_(-1, 1).to(dtype)
+    res[8] = torch.empty(gamma_ckv_shape).uniform_(-1, 1).to(dtype)
+    res[9] = torch.empty(cos_shape).uniform_(-0.1, 0.1).to(dtype)
+    res[10] = torch.empty(cos_shape).uniform_(-0.1, 0.1).to(dtype)
+    res[11] = cache_index.reshape(t, 1)
+
+    kv_cache, kr_cache = _build_kv_kr_cache(block_table, block_num, block_size, b,
+                                              kv_lora_rank, qk_rope_head_dim, dtype, skv_max)
     res[12] = kv_cache
     res[13] = kr_cache
     res[14] = block_num
     res[15] = block_table
 
     return res
+
 
 
 def gen_mla_prolog_quant_v32_data(params, dtypes, actual_seq, is_quant=(False, False),
@@ -519,9 +551,9 @@ def gen_mla_prolog_quant_v32_data(params, dtypes, actual_seq, is_quant=(False, F
     return inputs, outputs
 
 
-def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, \
-                        is_quant_b, nz, tile_config):
 
+def _define_mla_prolog_shapes(params):
+    """Compute all tensor shapes from model parameters."""
     b = params['b']
     s = params['s']
     t = b * s
@@ -555,43 +587,63 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, 
     q_nope_out_shape = [t, n1, kv_lora_rank]
     q_rope_out_shape = [t, n1, qk_rope_head_dim]
 
+    return dict(
+        b=b, s=s, t=t, s2=s2, n1=n1, n2=n2, h=h,
+        q_lora_rank=q_lora_rank, qk_nope_head_dim=qk_nope_head_dim,
+        qk_rope_head_dim=qk_rope_head_dim, kv_lora_rank=kv_lora_rank,
+        block_size=block_size, q_head_dim=q_head_dim, block_num=block_num,
+        token_x_shape=token_x_shape, w_dq_shape=w_dq_shape,
+        w_uq_qr_shape=w_uq_qr_shape, dequant_scale_w_uq_qr_shape=dequant_scale_w_uq_qr_shape,
+        w_dkv_kr_shape=w_dkv_kr_shape, w_uk_shape=w_uk_shape,
+        rope_cos_shape=rope_cos_shape, rmsnorm_gamma_cq_shape=rmsnorm_gamma_cq_shape,
+        rmsnorm_gamma_ckv_shape=rmsnorm_gamma_ckv_shape, cache_index_shape=cache_index_shape,
+        kv_cache_shape=kv_cache_shape, kr_cache_shape=kr_cache_shape,
+        kv_cache_out_shape=kv_cache_out_shape, kr_cache_out_shape=kr_cache_out_shape,
+        q_nope_out_shape=q_nope_out_shape, q_rope_out_shape=q_rope_out_shape,
+    )
+
+
+def _apply_nz_format(input_tensors, shapes):
+    """Apply FRACTAL_NZ format cast to weight tensors."""
+    w_dq_nz = torch_npu.npu_format_cast(input_tensors["w_dq"].reshape(shapes["w_dq_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
+    w_dkvkr_nz = torch_npu.npu_format_cast(input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
+    w_uqqr_nz = torch_npu.npu_format_cast(input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
+    input_tensors["w_uqqr"] = w_uqqr_nz
+    input_tensors["w_dkvkr"] = w_dkvkr_nz
+    input_tensors["w_dq"] = w_dq_nz
+
+
+def _prepare_mla_prolog_tensors(shapes, input_tensors, golden_data, dtype, is_quant_a, is_quant_b, nz):
+    """Prepare input and output tensors for mla_prolog_quant kernel invocation."""
     # golden data
-    golden1 = golden_data["q_golden"].reshape(q_nope_out_shape)
-    golden2 = golden_data["q_rope"] .reshape(q_rope_out_shape)
+    golden1 = golden_data["q_golden"].reshape(shapes["q_nope_out_shape"])
+    golden2 = golden_data["q_rope"].reshape(shapes["q_rope_out_shape"])
+    golden3 = golden_data["kv_golden"].reshape(shapes["kv_cache_out_shape"])
+    golden4 = golden_data["kr_golden"].reshape(shapes["kr_cache_out_shape"])
 
-    golden3 = golden_data["kv_golden"].reshape(kv_cache_out_shape)
-    golden4 = golden_data["kr_golden"].reshape(kr_cache_out_shape)
-
-    output_q_nope_data = torch.empty(q_nope_out_shape, dtype=dtype).npu()
-    output_q_rope_data = torch.empty(q_rope_out_shape, dtype=dtype).npu()
-    output_kv_cache_data = input_tensors["kv_cache"].reshape(kv_cache_shape).npu()
-    output_kr_cache_data = input_tensors["kr_cache"].reshape(kr_cache_shape).npu()
+    output_q_nope_data = torch.empty(shapes["q_nope_out_shape"], dtype=dtype).npu()
+    output_q_rope_data = torch.empty(shapes["q_rope_out_shape"], dtype=dtype).npu()
+    output_kv_cache_data = input_tensors["kv_cache"].reshape(shapes["kv_cache_shape"]).npu()
+    output_kr_cache_data = input_tensors["kr_cache"].reshape(shapes["kr_cache_shape"]).npu()
 
     if nz:
-        w_dq_nz = torch_npu.npu_format_cast(input_tensors["w_dq"].reshape(w_dq_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        w_dkvkr_nz = torch_npu.npu_format_cast(input_tensors["w_dkvkr"].reshape(w_dkv_kr_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        w_uqqr_nz = torch_npu.npu_format_cast(input_tensors["w_uqqr"].reshape(w_uq_qr_shape).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        input_tensors["w_uqqr"] = w_uqqr_nz
-        input_tensors["w_dkvkr"] = w_dkvkr_nz
-        input_tensors["w_dq"] = w_dq_nz
+        _apply_nz_format(input_tensors, shapes)
+
 
     # input data
-    token_x_data = input_tensors["x"].reshape(token_x_shape).npu()
-    w_dq_data = input_tensors["w_dq"].reshape(w_dq_shape).npu()
-    w_uq_qr_data = input_tensors["w_uqqr"].reshape(w_uq_qr_shape).npu()
-    w_uk_data = input_tensors["w_uk"].reshape(w_uk_shape).npu()
-    w_dkv_kr_data = input_tensors["w_dkvkr"].reshape(w_dkv_kr_shape).npu()
-    rmsnorm_gamma_cq_data =  \
-                    input_tensors["gamma_cq"].reshape(rmsnorm_gamma_cq_shape).npu()
-    rmsnorm_gamma_ckv_data = input_tensors["gamma_ckv"].reshape(rmsnorm_gamma_ckv_shape).npu()
-    rope_cos_data = input_tensors["cos"].reshape(rope_cos_shape).npu()
-    rope_sin_data = input_tensors["sin"].reshape(rope_cos_shape).npu()
-    cache_index_data = input_tensors["cache_index"].reshape(cache_index_shape).npu()
-    kv_cache_data = input_tensors["kv_cache"].reshape(kv_cache_shape).npu()
-    kr_cache_data = input_tensors["kr_cache"].reshape(kr_cache_shape).npu()
+    token_x_data = input_tensors["x"].reshape(shapes["token_x_shape"]).npu()
+    w_dq_data = input_tensors["w_dq"].reshape(shapes["w_dq_shape"]).npu()
+    w_uq_qr_data = input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu()
+    w_uk_data = input_tensors["w_uk"].reshape(shapes["w_uk_shape"]).npu()
+    w_dkv_kr_data = input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu()
+    rmsnorm_gamma_cq_data = \
+                    input_tensors["gamma_cq"].reshape(shapes["rmsnorm_gamma_cq_shape"]).npu()
+    rmsnorm_gamma_ckv_data = input_tensors["gamma_ckv"].reshape(shapes["rmsnorm_gamma_ckv_shape"]).npu()
+    rope_cos_data = input_tensors["cos"].reshape(shapes["rope_cos_shape"]).npu()
+    rope_sin_data = input_tensors["sin"].reshape(shapes["rope_cos_shape"]).npu()
+    cache_index_data = input_tensors["cache_index"].reshape(shapes["cache_index_shape"]).npu()
+    kv_cache_data = input_tensors["kv_cache"].reshape(shapes["kv_cache_shape"]).npu()
+    kr_cache_data = input_tensors["kr_cache"].reshape(shapes["kr_cache_shape"]).npu()
 
     if is_quant_a:
         x_scale_data = input_tensors["x_scale"].npu()
@@ -602,7 +654,7 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, 
         w_dkvkr_scale_data = torch.Tensor().npu()
 
     if is_quant_b:
-        w_uqqr_scale_data =  \
+        w_uqqr_scale_data = \
                 input_tensors["w_uqqr_scale"].npu()
     else:
         w_uqqr_scale_data = torch.Tensor().npu()
@@ -612,11 +664,15 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, 
                 rope_cos_data, rope_sin_data, cache_index_data,
                 kv_cache_data, kr_cache_data]
     output_data = [output_q_nope_data, output_q_rope_data, output_kv_cache_data, output_kr_cache_data]
+    goldens = [golden1, golden2, golden3, golden4]
 
-    rope_tile_shape = RopeTileShapeConfig(two_dim=[32, 64], three_dim=[32, 32, 128], four_dim=[16, 128, 128, 128])
-    mla_prolog_quant(*input_data, *output_data, 1e-5, 1e-5, tile_config, rope_tile_shape)
+    return input_data, output_data, goldens
 
-    ########## compare #######
+
+def _compare_mla_prolog_results(output_data, goldens):
+    """Compare kernel outputs against golden references."""
+    output_q_nope_data, output_q_rope_data, output_kv_cache_data, output_kr_cache_data = output_data
+    golden1, golden2, golden3, golden4 = goldens
     logging.info("qNope =======")
     compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", 0.005, 0.0078125, 0.005)
     logging.info("qRope =======")
@@ -625,6 +681,17 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, 
     compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", 0.0001, 0.0078125, 0)
     logging.info("kr =======")
     compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", 0.0001, 0.0078125, 0)
+
+
+def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, \
+                        is_quant_b, nz, tile_config):
+    shapes = _define_mla_prolog_shapes(params)
+    input_data, output_data, goldens = \
+        _prepare_mla_prolog_tensors(shapes, input_tensors, golden_data, dtype, is_quant_a, is_quant_b, nz)
+    rope_tile_shape = RopeTileShapeConfig(two_dim=[32, 64], three_dim=[32, 32, 128], four_dim=[16, 128, 128, 128])
+    mla_prolog_quant(*input_data, *output_data, 1e-5, 1e-5, tile_config, rope_tile_shape)
+    _compare_mla_prolog_results(output_data, goldens)
+
 
 
 @pytest.mark.soc("950")
