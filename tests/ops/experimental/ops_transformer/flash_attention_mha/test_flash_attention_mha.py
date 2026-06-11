@@ -179,7 +179,7 @@ def attention_forward_golden(q, k, v, scale):
             k_tile_view = k_f[k_tile_start:k_tile_end, :]
             v_tile_view = v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
 
-            scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+            scores = torch.matmul(q_tile_view.to(torch.float32), k_tile_view.to(torch.float32).T) * scale
 
             mij = scores.amax(dim=-1, keepdim=True)
             s_shifted = scores - mij
@@ -187,7 +187,7 @@ def attention_forward_golden(q, k, v, scale):
             lij = pij.sum(dim=-1, keepdim=True)
 
             p_bf16 = pij.to(torch.bfloat16)
-            oij = torch.matmul(p_bf16, v_tile_view)
+            oij = torch.matmul(p_bf16.to(torch.float32), v_tile_view.to(torch.float32))
 
             if k_tile_idx == 0:
                 if k_tile_idx == k_tile_count - 1:
