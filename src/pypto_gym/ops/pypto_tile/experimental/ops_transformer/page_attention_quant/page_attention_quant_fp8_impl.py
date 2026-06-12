@@ -61,7 +61,7 @@ def create_config(b, s1, s2, nq, nkv, qd, block_size):
     m_tile = 128
     cube_tile = 128
     s2_tile = 128
-    v2_tile = 512
+    v2_tile = 256
     return {
         "b": b, "s1": s1, "s2": s2, "nq": nq, "nkv": nkv, "qd": qd, "block_size": block_size,
         "tile_config": PfaTileShapeConfig(
@@ -182,7 +182,7 @@ def symmetric_quantization_per_token_fp8_e4m3(input_tensor) -> Tuple:
 
 
 @pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 1024, "device_sched_mode": 0},
+    runtime_options={"stitch_function_max_num": 512, "device_sched_mode": 0},
     # 当子图大小达到上界不允许与其他子图合并
     pass_options={
         # Q常驻，0代表第一组mmad，4代表4次matmul合并
@@ -333,9 +333,9 @@ def pfa_func_kernel_v2_bound(
                             if pypto.is_loop_end(s2_idx):
                                 oi_update[:] = pypto.div(
     oi_tmp, sum_local, precision_type=pypto.PrecisionType.INTRINSIC)
-                                pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
-                                oi_update_3d = pypto.cast(pypto.reshape(oi_update, [1, g_tile, dn]),
-                                                        dtype)
+                                oi_update_3d_tmp = pypto.reshape(oi_update, [1, g_tile, dn])
+                                pypto.set_vec_tile_shapes(1, v2_tile[0], v2_tile[1])
+                                oi_update_3d = pypto.cast(oi_update_3d_tmp, dtype)
                                 # 10. 将结果搬运到输出tensor上
                                 pypto.assemble(oi_update_3d, oi_ofs, atten_out)
                             else:
@@ -362,10 +362,11 @@ def pfa_func_kernel_v2_bound(
                             oi_flash = pypto.mul(mm2_res, t4)
                             oi_tmp = pypto.add(oi_last, oi_flash)
                             if pypto.is_loop_end(s2_idx):
-                                pypto.set_vec_tile_shapes(16, v2_tile[0], v2_tile[1])
                                 oi_update_tmp = pypto.div(oi_tmp, sum_update,
                                                           precision_type=pypto.PrecisionType.INTRINSIC)
-                                oi_update_3d = pypto.cast(pypto.reshape(oi_update_tmp, [1, g_tile, dn]), dtype)
+                                oi_update_tmp_3d = pypto.reshape(oi_update_tmp, [1, g_tile, dn])
+                                pypto.set_vec_tile_shapes(1, v2_tile[0], v2_tile[1])
+                                oi_update_3d = pypto.cast(oi_update_tmp_3d, dtype)
                                 # 11. 将结果搬运到输出tensor上
                                 pypto.assemble(oi_update_3d, oi_ofs, atten_out)
                             else:
