@@ -349,7 +349,7 @@ def mla_prolog_quant_v32_compute(inputs):
     q_embed, kv_cache_out, kr_cache_out = \
         _compute_kv_rope_cache_path(inputs, t, h, kv_lora_rank, qk_rope_head_dim, qk_nope_head_dim, q_reshape)
 
-    return MlaPrologMxfxResult(q_nope_new_t, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out,
+    return MlaPrologMxfpResult(q_nope_new_t, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out,
                               kr_cache_out)
 
 
