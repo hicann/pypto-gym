@@ -108,15 +108,20 @@ class FinalizeRoutingInputs:
         "vec_nbuffer_setting": {-2: 1, -1: 1},
         "auto_mix_partition": 1,
     },
-    runtime_options={"stitch_function_max_num": 128},
+    runtime_options={
+        "stitch_function_max_num": 128,
+        "device_sched_mode": 1},
 )
 def gmm_finalize_routing_kernel(
     x1: pypto.Tensor(),
     x2: pypto.Tensor(),
     scale: pypto.Tensor(),
     pertoken_scale: pypto.Tensor(),
+    shared_input: pypto.Tensor(),
+    shared_row_index: pypto.Tensor(),
     logit: pypto.Tensor(),
     row_index: pypto.Tensor(),
+    gmm_out: pypto.Tensor(),
     out: pypto.Tensor(),
     group_list,
     config: FinalizeRoutingConfig,
@@ -164,47 +169,79 @@ def gmm_finalize_routing_kernel(
             scale_b_trans=config.transpose_x2,
         )
 
-        pypto.set_vec_tile_shapes(config.m_tile_shape[-1], config.n_tile_shape[-1])
-        if config.has_logit:
-            logit_tile = logit[start:end]
-            logit_2d = pypto.unsqueeze(logit_tile, -1)
-            mm_result = pypto.mul(mm_result, logit_2d)
+        gmm_out[start:end, :] = mm_result
 
-        index_tile = row_index[start:end]
-        pypto.index_put_(out, (index_tile,), mm_result, accumulate=True)
+    pypto.set_vec_tile_shapes(config.m_tile_shape[-1], config.n_tile_shape[-1])
+    route_tile = 512
+    route_tile_num = config.m // route_tile
+    route_tail = config.m - route_tile_num * route_tile
+
+    if config.has_logit:
+        for tile_idx in pypto.loop(route_tile_num, parallel=False):
+            start = tile_idx * route_tile
+            end = start + route_tile
+            result_tile = gmm_out[start:end, :]
+            logit_2d = pypto.unsqueeze(logit[start:end], -1)
+            result_tile = pypto.mul(result_tile, logit_2d)
+            pypto.index_add_(out, 0, row_index[start:end], result_tile)
+
+        if route_tail > 0:
+            start = route_tile_num * route_tile
+            end = start + route_tail
+            result_tile = gmm_out[start:end, :]
+            logit_2d = pypto.unsqueeze(logit[start:end], -1)
+            result_tile = pypto.mul(result_tile, logit_2d)
+            pypto.index_add_(out, 0, row_index[start:end], result_tile)
+    else:
+        for tile_idx in pypto.loop(route_tile_num, parallel=False):
+            start = tile_idx * route_tile
+            end = start + route_tile
+            pypto.index_add_(out, 0, row_index[start:end], gmm_out[start:end, :])
+
+        if route_tail > 0:
+            start = route_tile_num * route_tile
+            end = start + route_tail
+            pypto.index_add_(out, 0, row_index[start:end], gmm_out[start:end, :])
+
+    if config.has_shared_input:
+        shared_fp32 = pypto.cast(shared_input[:, :], pypto.DT_FP32)
+        shared_scaled = pypto.mul(shared_fp32, config.shared_input_weight)
+        pypto.index_add_(out, 0, shared_row_index, shared_scaled)
+
+    pypto.set_vec_tile_shapes(config.m_tile_shape[-1], config.n_tile_shape[-1])
 
 
 def gen_pypto(inputs: FinalizeRoutingInputs) -> torch.Tensor:
     """执行 PyPTO kernel 并返回 FP32 输出。
 
     注意：
-    - kernel 内只处理 grouped matmul + logit + row_index accumulate；
-    - shared_input 的叠加在 host 侧提前加到 out 初值上，再传入 kernel。
+    - kernel 内处理 grouped matmul + logit + row_index accumulate；
+    - shared_input 的 cast、缩放与叠加也在 kernel 内完成。
     """
     x1 = inputs.x1.npu()
     x2 = inputs.x2.npu()
     scale = inputs.scale.npu()
     pertoken_scale = inputs.pertoken_scale.npu()
     group_list = inputs.group_list.cpu().tolist()
+    shared_input = inputs.shared_input.npu()
+    shared_row_index = (
+        torch.arange(inputs.shared_input.shape[0], dtype=torch.int32) + inputs.config.shared_input_offset
+    ).npu()
     logit = inputs.logit.npu()
-    row_index = inputs.row_index.npu()
-    out_host = inputs.out.clone()
-    if inputs.config.has_shared_input:
-        shared_start = inputs.config.shared_input_offset
-        shared_end = shared_start + inputs.shared_input.shape[0]
-        out_host[shared_start:shared_end, :] = (
-            out_host[shared_start:shared_end, :]
-            + inputs.shared_input.to(torch.float32) * inputs.config.shared_input_weight
-        )
-    out = out_host.npu()
+    row_index = inputs.row_index.to(torch.int32).npu()
+    gmm_out = torch.zeros((inputs.config.m, inputs.config.n), dtype=torch.float32).npu()
+    out = inputs.out.clone().npu()
 
     gmm_finalize_routing_kernel(
         x1,
         x2,
         scale,
         pertoken_scale,
+        shared_input,
+        shared_row_index,
         logit,
         row_index,
+        gmm_out,
         out,
         group_list,
         inputs.config,

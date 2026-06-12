@@ -147,7 +147,7 @@ def compute_combined_scale(
     },
     runtime_options={
         "stitch_function_max_num": 128,
-    },
+        "device_sched_mode": 1},
 )
 def quant_batch_matmul_kernel(
     x1: pypto.Tensor(),

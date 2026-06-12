@@ -88,7 +88,7 @@ def gen_golden(inputs: FinalizeRoutingGoldenInputs) -> torch.Tensor:
     if cfg.transpose_x1:
         raise ValueError("aclnnGroupedMatmulFinalizeRoutingV3 only supports transposeX1=False.")
 
-    golden = inputs.out.clone()
+    gmm_out = torch.zeros((cfg.m, cfg.n), dtype=torch.float32)
     for expert_idx in range(cfg.num_experts):
         start, end = _expert_range(inputs.group_list, expert_idx, cfg.group_list_type)
         if end <= start:
@@ -103,7 +103,7 @@ def gen_golden(inputs: FinalizeRoutingGoldenInputs) -> torch.Tensor:
             weight = weight.transpose(-1, -2).contiguous()
             scale = scale.transpose(0, 1).contiguous()
 
-        mm_result = _compute_mxfp8_matmul_golden(
+        gmm_out[start:end, :] = _compute_mxfp8_matmul_golden(
             x,
             weight,
             pertoken_scale,
@@ -111,10 +111,12 @@ def gen_golden(inputs: FinalizeRoutingGoldenInputs) -> torch.Tensor:
             transpose_x1=False,
             transpose_x2=False,
         )
-        if cfg.has_logit:
-            mm_result = mm_result * inputs.logit[start:end].to(torch.float32).unsqueeze(-1)
 
-        golden.index_add_(0, inputs.row_index[start:end].to(torch.int64), mm_result)
+    if cfg.has_logit:
+        gmm_out = gmm_out * inputs.logit.to(torch.float32).unsqueeze(-1)
+
+    golden = inputs.out.clone()
+    golden.index_add_(0, inputs.row_index.to(torch.int64), gmm_out)
 
     if cfg.has_shared_input:
         shared_start = cfg.shared_input_offset
