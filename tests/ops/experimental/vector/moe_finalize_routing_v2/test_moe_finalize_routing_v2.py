@@ -30,8 +30,9 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import argparse
 
-# 注意：torch、numpy、golden、impl 等模块将在测试函数中延迟导入
-# 这样可以避免在 --list 或 --help 时卡住
+import torch
+import numpy as np
+from numpy.testing import assert_allclose
 
 # 精度容差
 RTOL = 0.0078125
@@ -57,7 +58,6 @@ def get_device_id():
 def setup_npu(device_id):
     """设置 NPU 设备。"""
     import torch_npu  # noqa: F401
-    import torch
     torch.npu.set_device(device_id)
 
 
@@ -83,9 +83,6 @@ def _prepare_optional_inputs(num_rows, K, H, E, has_x1, has_x2, has_bias, has_sc
 
 
 def _moe_precision_compare_and_assert(result, golden, run_mode):
-    import numpy as np
-    from numpy.testing import assert_allclose
-
     result_np = result.cpu().float().numpy()
     golden_np = golden.cpu().float().numpy()
 
@@ -114,7 +111,6 @@ def run_moe_finalize_routing_v2_test(
     drop_pad_mode=2, seed=42,
     device_id=None, run_mode="npu", test_name=None
 ):
-    import torch
     from moe_finalize_routing_v2_golden import moe_finalize_routing_v2_golden
     from experimental.vector.moe_finalize_routing_v2.moe_finalize_routing_v2_impl import moe_finalize_routing_v2_wrapper
 
