@@ -38,7 +38,7 @@ import pytest
 
 from experimental.ops_transformer.sparse_attention_tnd.sfa_forward_tnd_impl import sfa_forward_tnd, SaTileShapeConfig
 
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 
 
 def gen_uniform_data(data_shape, min_value, max_value, dtype):

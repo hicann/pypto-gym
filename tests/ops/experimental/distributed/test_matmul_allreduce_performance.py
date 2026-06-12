@@ -42,7 +42,7 @@ import torch
 import pypto
 
 from experimental.distributed.distributed_config import DistributedConfig
-from experimental.distributed.swimlane_analyzer import SwimlaneAnalyzer
+from common_utils import SwimlaneAnalyzer
 
 logger = logging.getLogger(__name__)
 

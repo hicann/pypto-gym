@@ -34,15 +34,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 MAX_S2 = 131072
 
 
-# pylint: disable-next=invalid-name
-SCFAComputeInputs = collections.namedtuple('SCFAComputeInputs', [
-    'query', 'actual_seq_q', 'ori_kv', 'cmp_kv', 'ori_block_table',
-    'cmp_block_table', 'atten_sink', 'seqused_kv', 'cmp_sparse_indices',
-    'attention_out', 'nq', 'n_kv', 'softmax_scale', 'topk',
-    'block_size', 'win_size', 'cmp_ratio', 'tile_config',
-])
 
-# pylint: disable-next=invalid-name
 SCFANpuInputs = collections.namedtuple('SCFANpuInputs', [
     'query_npu', 'q_act_seqs_npu', 'ori_kv_npu', 'cmp_kv_npu',
     'ori_block_table_npu', 'cmp_block_table_npu', 'atten_sink_npu',

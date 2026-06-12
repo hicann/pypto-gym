@@ -26,18 +26,8 @@ import pypto
 
 from deepseek_v32_exp.sparse_attention_antiquant_impl \
     import sparse_attention_antiquant_d, sparse_attention_antiquant_p, SaTileShapeConfig
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare, gen_uniform_data
 
-
-def gen_uniform_data(data_shape, min_value, max_value, dtype):
-    if min_value == 0 and max_value == 0:
-        return torch.zeros(data_shape, dtype=dtype)
-    if dtype == torch.bool:
-        return torch.randint(0, 2, data_shape, dtype=dtype)
-    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
-        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
-    else:
-        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
 def _dequant_slc_kv(slc_nope, slc_kv_up, s2_tile_cur, kv_lora_rank, qk_rope_dim, input_dtype):

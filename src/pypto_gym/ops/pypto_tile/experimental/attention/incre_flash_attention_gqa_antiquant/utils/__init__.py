@@ -9,11 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-
-from .logger import create_logger
-from .device import get_device
-from .compare import compare
-
+from common_utils import create_logger, get_device, compare
 
 __all__ = [
     "create_logger",

@@ -24,14 +24,12 @@ from pypto import pypto_impl
 from pypto.operation import op_wrapper
 
 
-# pylint: disable-next=invalid-name
 MlaCheckInputConfig = collections.namedtuple('MlaCheckInputConfig', [
     'token_x', 'wq_a', 'wq_b', 'wkv', 'rope_cos', 'rope_sin',
     'gamma_cq', 'gamma_ckv', 'wq_b_scale',
     'output_q_data', 'output_kv_data', 'output_qr_data', 'output_qr_scale_data',
 ])
 
-# pylint: disable-next=invalid-name
 MlaPrologV4ComputeConfig = collections.namedtuple('MlaPrologV4ComputeConfig', [
     'x', 'wq_a', 'wq_b', 'wkv',
     'rmsnorm_gamma_cq', 'rmsnorm_gamma_ckv',

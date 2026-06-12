@@ -43,14 +43,12 @@ Example:
     See test_mla_prolog_quant_v4.py for usage examples.
 """
 
-# pylint: disable-next=invalid-name
 MlaCheckInputConfigV4 = collections.namedtuple('MlaCheckInputConfigV4', [
     'token_x', 'wq_a', 'wq_b', 'wkv', 'rope_cos', 'rope_sin',
     'gamma_cq', 'gamma_ckv',
     'output_q_data', 'output_kv_data', 'output_qr_data',
 ])
 
-# pylint: disable-next=invalid-name
 MlaPrologV4ComputeConfigV4 = collections.namedtuple('MlaPrologV4ComputeConfigV4', [
     'x', 'wq_a', 'wq_b', 'wkv',
     'rmsnorm_gamma_cq', 'rmsnorm_gamma_ckv',

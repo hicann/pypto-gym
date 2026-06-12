@@ -231,7 +231,6 @@ def _validate_boundary_special():
     all_pass = True
     B, N, S, D = 1, 2, 4, 64
 
-    # cos=1, sin=0
     x = torch.randn(B, N, S, D, dtype=torch.float32).to(torch.bfloat16)
     cos = torch.ones(B, 1, S, D, dtype=torch.bfloat16)
     sin = torch.zeros(B, 1, S, D, dtype=torch.bfloat16)
@@ -240,7 +239,6 @@ def _validate_boundary_special():
     diff = (y.to(torch.float32) - expected.to(torch.float32)).abs().max().item()
     all_pass &= _check("cos=1,sin=0 \u2192 y==split_half(x)", diff < 1e-2, f"max_abs_diff={diff:.2e}")
 
-    # x=0
     x = torch.zeros(B, N, S, D, dtype=torch.bfloat16)
     cos_in = torch.randn(B, 1, S, D, dtype=torch.float32).to(torch.bfloat16)
     sin_in = torch.randn(B, 1, S, D, dtype=torch.float32).to(torch.bfloat16)
@@ -261,7 +259,6 @@ def _validate_boundary_special():
 
 
 def _validate_scs1_broadcast():
-    """Validate S_cs=1 broadcast consistency."""
     print("\n[S_cs=1 broadcast 一致性]")
     all_pass = True
     B, N, S, D = 2, 4, 16, 64

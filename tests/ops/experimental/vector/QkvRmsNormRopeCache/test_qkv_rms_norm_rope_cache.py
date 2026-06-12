@@ -128,7 +128,8 @@ def run_single_case(case: Dict):
     inputs = make_inputs(case, device)
     golden_inputs = [x.cpu() if isinstance(x, torch.Tensor) else x for x in inputs]
     golden = qkv_rms_norm_rope_cache_golden(
-        *golden_inputs,
+        *golden_inputs[:9],
+        k_scale=golden_inputs[9], v_scale=golden_inputs[10],
         qkv_size=case["qkv_size"],
         head_nums=case["head_nums"],
         epsilon=case["epsilon"],

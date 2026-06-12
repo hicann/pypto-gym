@@ -118,6 +118,7 @@ def _setup_npu_device(args):
         if "TILE_FWK_DEVICE_ID" not in os.environ:
             raise RuntimeError("Environment check failed")
         device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
+        import torch
         import torch_npu  # noqa: F401
         torch.npu.set_device(device_id)
         device = f"npu:{device_id}"
@@ -169,7 +170,9 @@ def main():
     parser = argparse.ArgumentParser(description="GQA decode attention kernel precision test")
     parser.add_argument("case_id", type=str, nargs="?", help="Case ID to run (omit for all)")
     parser.add_argument("--list", action="store_true", help="List available cases")
-    parser.add_argument("--device", type=str, default="cpu", help="Device: cpu or npu:<id>")
+    parser.add_argument("--device", type=str,
+                        default="npu" if "TILE_FWK_DEVICE_ID" in os.environ else "cpu",
+                        help="Device: cpu or npu:<id>")
     parser.add_argument("--json", type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_cases.json"))
     parser.add_argument("--_run_one", action="store_true", help=argparse.SUPPRESS)

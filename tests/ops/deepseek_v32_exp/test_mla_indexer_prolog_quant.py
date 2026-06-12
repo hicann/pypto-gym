@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import pytest
 import pypto
 from deepseek_v32_exp.mla_prolog_quant_impl import MlaTileConfig
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 
 PRINT_DEBUG = False
 
@@ -586,7 +586,7 @@ def indexer_prolog(inputs: dict, dims: dict):
     cache_index = inputs['idx_k_cache_index']
     x_dtype = x.dtype
 
-    q_bf16 = _indexer_q_path(q_norm, q_norm_scale, w_idx_qb, w_idx_qb_scale, n, d, x_dtype)
+    q_bf16 = _indexer_q_path(q_norm.reshape(b, s, -1), q_norm_scale.reshape(b, s, -1), w_idx_qb, w_idx_qb_scale, n, d, x_dtype)
     q_int8, q_scale = _indexer_q_rope_hadamard(q_bf16, cos, sin, rope_head_dim, hadamard_q, x_dtype)
 
     k_int8, k_scale = _indexer_k_path(x, w_idx_k, layer_norm_gamma, layer_norm_beta,
@@ -783,20 +783,20 @@ def gen_zero_tensor(t):
 
 def check(case_name, outputs, goldens):
     ########### mla ###########
-    compare(outputs['q_nope'].cpu(), goldens['q_nope'], 'qNope', 0.005, 0.0078125,
-            0.005)
-    compare(outputs['q_rope'].cpu(), goldens['q_rope'], 'qRope', 0.005, 0.0078125, 0.005)
-    compare(outputs['kv_cache_out'].cpu(), goldens['kv_cache_out'], 'kv', 1, 0, 0)
-    compare(outputs['kr_cache_out'].cpu(), goldens['kr_cache_out'], 'kr', 0.0001, 0.0078125, 0.005)
-    compare(outputs['kv_quant_scale_cache_out'].cpu(), goldens['kv_quant_scale_cache_out'], 'kScaleCache', 0.000025,
-            0.005, 0.005)
+    compare(outputs['q_nope'].cpu(), goldens['q_nope'], 'qNope', atol=0.005, rtol=0.0078125,
+            max_error_ratio=0.005)
+    compare(outputs['q_rope'].cpu(), goldens['q_rope'], 'qRope', atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
+    compare(outputs['kv_cache_out'].cpu(), goldens['kv_cache_out'], 'kv', atol=1, rtol=0, max_error_ratio=0)
+    compare(outputs['kr_cache_out'].cpu(), goldens['kr_cache_out'], 'kr', atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
+    compare(outputs['kv_quant_scale_cache_out'].cpu(), goldens['kv_quant_scale_cache_out'], 'kScaleCache', atol=0.000025,
+            rtol=0.005, max_error_ratio=0.005)
 
     ########### ip ###########
-    compare(outputs['q_int8'].cpu(), goldens['q_int8'], 'q_int8', 2, 0, 0)
-    compare(outputs['q_scale'].cpu(), goldens['q_scale'], 'q_scale', 0.000025, 0.006)
-    compare(outputs['idx_k_cache_out'].cpu(), goldens['idx_k_cache_out'], 'k_int8', 1, 0, 0)
-    compare(outputs['idx_k_scale_cache_out'].cpu(), goldens['idx_k_scale_cache_out'], 'k_scale', 0.000025, 0, 0.005)
-    compare(outputs['weights'].cpu(), goldens['weights'], 'weights', 0.000025, 0, 0.005)
+    compare(outputs['q_int8'].cpu(), goldens['q_int8'], 'q_int8', atol=2, rtol=0, max_error_ratio=0)
+    compare(outputs['q_scale'].cpu(), goldens['q_scale'], 'q_scale', atol=0.000025, rtol=0.006)
+    compare(outputs['idx_k_cache_out'].cpu(), goldens['idx_k_cache_out'], 'k_int8', atol=1, rtol=0, max_error_ratio=0)
+    compare(outputs['idx_k_scale_cache_out'].cpu(), goldens['idx_k_scale_cache_out'], 'k_scale', atol=0.000025, rtol=0, max_error_ratio=0.005)
+    compare(outputs['weights'].cpu(), goldens['weights'], 'weights', atol=0.000025, rtol=0, max_error_ratio=0.005)
     logging.debug(f'=== {case_name}: PASS ===')
 
 

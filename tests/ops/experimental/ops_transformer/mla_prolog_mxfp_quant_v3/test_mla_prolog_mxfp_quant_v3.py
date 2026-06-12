@@ -33,7 +33,7 @@ import pypto
 from experimental.ops_transformer.mla_prolog_mxfp_quant_v3.mla_prolog_mxfp_quant_impl import (
     mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
 )
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 import collections
 
 

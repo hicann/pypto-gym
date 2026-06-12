@@ -8,24 +8,6 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-import enum
-import torch
+from common_utils.get_format import get_format
 
-
-class TileOpFormat(enum.Enum):
-    ND = "ND"
-    NZ = "NZ"
-
-
-def get_format(tensor):
-    if not isinstance(tensor, torch.Tensor):
-        raise TypeError("input type error")
-    if not tensor.is_contiguous():
-        raise TypeError("input type error")
-
-    tile_op_format = TileOpFormat.ND.value
-    if tensor.device.type == "npu":
-        import torch_npu
-        if torch_npu.get_npu_format(tensor) == 29:
-            tile_op_format = TileOpFormat.NZ.value
-    return tile_op_format
+__all__ = ["get_format"]

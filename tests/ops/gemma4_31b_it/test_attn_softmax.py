@@ -106,7 +106,9 @@ def main():
     parser = argparse.ArgumentParser(description="Attention SoftMax kernel precision test")
     parser.add_argument("case_id", type=str, nargs="?", help="Case ID to run (omit for all)")
     parser.add_argument("--list", action="store_true", help="List available cases")
-    parser.add_argument("--device", type=str, default="cpu", help="Device: cpu or npu:<id>")
+    parser.add_argument("--device", type=str,
+                        default="npu" if "TILE_FWK_DEVICE_ID" in os.environ else "cpu",
+                        help="Device: cpu or npu:<id>")
     parser.add_argument("--json", type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_cases.json"))
     args = parser.parse_args()

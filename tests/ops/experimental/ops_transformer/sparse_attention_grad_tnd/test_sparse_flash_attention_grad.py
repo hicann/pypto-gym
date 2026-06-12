@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import numpy as np
 
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 import pytest
 
 

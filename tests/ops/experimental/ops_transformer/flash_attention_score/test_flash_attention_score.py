@@ -159,7 +159,6 @@ def _run_kernel(inputs, shape, dev):
 
 
 def test_l0() -> None:
-    """L0: B=1, N=64, Sq=1024, Skv=1024, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
@@ -179,7 +178,6 @@ def test_l0() -> None:
 
 
 def test_l1() -> None:
-    """L1: B=2, N=32, Sq=500, Skv=500, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 
@@ -199,7 +197,6 @@ def test_l1() -> None:
 
 
 def test_l2() -> None:
-    """L2: B=8, N=32, Sq=439, Skv=439, D=128"""
     _set_device()
     dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
 

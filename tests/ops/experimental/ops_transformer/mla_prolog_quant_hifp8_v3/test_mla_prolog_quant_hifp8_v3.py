@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import pytest
 import pypto
 
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 from experimental.ops_transformer.mla_prolog_quant_hifp8_v3.mla_prolog_quant_hifp8_v3_impl import (
     mla_prolog_quant, MlaTileConfig, RopeTileShapeConfig
 )

@@ -70,3 +70,6 @@ include = ["pypto_gym*", "benchmark*"]
 
 [tool.pytest.ini_options]
 junit_family = "xunit1"
+
+[tool.pylint.variables]
+variable-rgx = "(([a-z_][a-z0-9_]{0,30})|([A-Z][a-zA-Z0-9]+))$"

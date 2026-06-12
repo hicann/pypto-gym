@@ -13,12 +13,12 @@
 BSA Forward PyPTO Kernel Implementation (Single-Phase, Auto-Configured)
 
 Dynamic axes: B, Hq, Hkv, Sq, Skv (the 5 primitive shape dimensions that vary
-across test cases). Derived values (numQB, maxSel, BH, Sq_pad, etc.) are
+across test cases). Derived values (numQB, max_sel, BH, Sq_pad, etc.) are
 carried via hint tensors or derived from data tensor shapes inside the kernel.
 
 Single jit kernel with nested loops:
   - Outer loop (LOOP_fwd_outer): TOTAL_OUTER = BH * numQB iterations, parallel
-  - Inner loop (LOOP_fwd_kblk): maxSel iterations, sequential (online softmax)
+  - Inner loop (LOOP_fwd_kblk): max_sel iterations, sequential (online softmax)
 
 Each outer iteration processes one Q block across all its valid KV blocks,
 computing the full online softmax accumulation (m, l, o) and writing the
@@ -161,7 +161,7 @@ def _get_fwd_kernel(cfg, *, extra_pass_options=None, extra_runtime_options=None)
 
         BH = output_3d.shape[0]
         numQB = numqb_hint.shape[0]
-        maxSel = maxsel_hint.shape[0]
+        max_sel = maxsel_hint.shape[0]
         TOTAL_OUTER = BH * numQB
 
         for outer_local in pypto.loop(TOTAL_OUTER, name="LOOP_fwd_outer",
@@ -175,9 +175,9 @@ def _get_fwd_kernel(cfg, *, extra_pass_options=None, extra_runtime_options=None)
             li_acc = pypto.tensor([SUB_BLOCK, 1], pypto.DT_FP32, "li_acc")
             oi_acc = pypto.tensor([SUB_BLOCK, D], pypto.DT_FP32, "oi_acc")
 
-            for v_idx in pypto.loop(maxSel, name="LOOP_fwd_kblk",
+            for v_idx in pypto.loop(max_sel, name="LOOP_fwd_kblk",
                                     idx_name="kblk_idx"):
-                kv_row_ofs = outer_local * maxSel * KV_BLOCK + v_idx * KV_BLOCK
+                kv_row_ofs = outer_local * max_sel * KV_BLOCK + v_idx * KV_BLOCK
 
                 pypto.set_vec_tile_shapes(*vtl)
                 q_sub = pypto.view(q_2d, [SUB_BLOCK, D], [q_row_ofs, 0])
@@ -188,7 +188,7 @@ def _get_fwd_kernel(cfg, *, extra_pass_options=None, extra_runtime_options=None)
                 S = pypto.matmul(q_sub, k_block, pypto.DT_FP32,
                                 a_trans=False, b_trans=True)
 
-                mask_row_ofs = outer_local * maxSel * BLOCK + v_idx * BLOCK
+                mask_row_ofs = outer_local * max_sel * BLOCK + v_idx * BLOCK
                 scaled_mask_block = pypto.view(scaled_mask, [SUB_BLOCK, KV_BLOCK],
                                                 [mask_row_ofs, 0])
                 neg_inf_block = pypto.view(neg_inf_mask, [SUB_BLOCK, KV_BLOCK],
@@ -297,7 +297,7 @@ def block_sparse_attention_forward(
     output_3d = torch.zeros(B * Hq, Sq_pad, D, dtype=cfg.torch_dtype, device=query.device)
     lse_2d = torch.full([B * Hq, Sq_pad], cfg.lse_init, dtype=cfg.accum_torch_dtype, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+    k_compact, v_compact, valid_mask, max_sel = _build_sparse_kv_cached(SparseKvBuildConfig(
         block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
         B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
         numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
@@ -313,7 +313,7 @@ def block_sparse_attention_forward(
     sq_hint = torch.zeros(Sq, 1, dtype=torch.float32, device=query.device)
     skv_hint = torch.zeros(Skv, 1, dtype=torch.float32, device=query.device)
     numqb_hint = torch.zeros(numQB, 1, dtype=torch.float32, device=query.device)
-    maxsel_hint = torch.zeros(maxSel, 1, dtype=torch.float32, device=query.device)
+    maxsel_hint = torch.zeros(max_sel, 1, dtype=torch.float32, device=query.device)
 
     kernel_fn, kernel_dir = _get_fwd_kernel(cfg,
         extra_pass_options=extra_pass_options,
@@ -407,7 +407,7 @@ def block_sparse_attention_forward_concurrent(
     output_3d = torch.zeros(B * Hq, Sq_pad, D, dtype=cfg.torch_dtype, device=query.device)
     lse_2d = torch.full([B * Hq, Sq_pad], cfg.lse_init, dtype=cfg.accum_torch_dtype, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+    k_compact, v_compact, valid_mask, max_sel = _build_sparse_kv_cached(SparseKvBuildConfig(
         block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
         B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
         numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
@@ -424,7 +424,7 @@ def block_sparse_attention_forward_concurrent(
     sq_hint = torch.zeros(Sq, 1, dtype=torch.float32, device=query.device)
     skv_hint = torch.zeros(Skv, 1, dtype=torch.float32, device=query.device)
     numqb_hint = torch.zeros(numQB, 1, dtype=torch.float32, device=query.device)
-    maxsel_hint = torch.zeros(maxSel, 1, dtype=torch.float32, device=query.device)
+    maxsel_hint = torch.zeros(max_sel, 1, dtype=torch.float32, device=query.device)
 
     kernel_fn, kernel_dir = _get_fwd_kernel(cfg,
         extra_pass_options=extra_pass_options,
@@ -433,15 +433,15 @@ def block_sparse_attention_forward_concurrent(
 
     streams = [torch.npu.Stream() for _ in range(BH)]
     bh_stride_q = Sq_pad
-    bh_stride_kv = numQB * maxSel * by
-    bh_stride_mask = numQB * maxSel * bx
+    bh_stride_kv = numQB * max_sel * by
+    bh_stride_mask = numQB * max_sel * bx
 
     for bh_idx in range(BH):
         q_bh = q_2d[bh_idx * bh_stride_q: bh_idx * bh_stride_q + Sq_pad]
-        k_bh = k_compact[bh_idx * bh_stride_kv: bh_idx * bh_stride_kv + numQB * maxSel * by]
-        v_bh = v_compact[bh_idx * bh_stride_kv: bh_idx * bh_stride_kv + numQB * maxSel * by]
-        sm_bh = scaled_mask[bh_idx * bh_stride_mask: bh_idx * bh_stride_mask + numQB * maxSel * bx]
-        nm_bh = neg_inf_mask[bh_idx * bh_stride_mask: bh_idx * bh_stride_mask + numQB * maxSel * bx]
+        k_bh = k_compact[bh_idx * bh_stride_kv: bh_idx * bh_stride_kv + numQB * max_sel * by]
+        v_bh = v_compact[bh_idx * bh_stride_kv: bh_idx * bh_stride_kv + numQB * max_sel * by]
+        sm_bh = scaled_mask[bh_idx * bh_stride_mask: bh_idx * bh_stride_mask + numQB * max_sel * bx]
+        nm_bh = neg_inf_mask[bh_idx * bh_stride_mask: bh_idx * bh_stride_mask + numQB * max_sel * bx]
         out_bh = output_3d[bh_idx: bh_idx + 1]
         lse_bh = lse_2d[bh_idx: bh_idx + 1]
 

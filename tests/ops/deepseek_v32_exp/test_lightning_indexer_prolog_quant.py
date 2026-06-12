@@ -30,7 +30,7 @@ import pypto
 from deepseek_v32_exp.lightning_indexer_prolog_quant_impl import (
     IndexerPrologQuantInput, IndexerPrologQuantOutput, IndexerPrologQuantAttr, IndexerPrologQuantConfigs,
     lightning_indexer_prolog_quant)
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 
 
 def gen_dims(params):
@@ -420,11 +420,11 @@ def _run_and_compare(inputs, outputs, configs, q_int8_golden, q_scale_golden,
               [tensor for _, tensor in vars(outputs).items()]
     lightning_indexer_prolog_quant(*tensors, configs, attrs)
 
-    compare(outputs.q_int8.cpu(), q_int8_golden, "q_int8", 1, 0, 0)
-    compare(outputs.q_scale.cpu(), q_scale_golden, "q_scale", 0.000025, 0, 0.005)
-    compare(outputs.k_int8.cpu(), k_cache_golden, "k_int8", 1, 0, 0)
-    compare(outputs.k_scale.cpu(), k_cache_scale_golden, "k_scale", 0.000025, 0, 0)
-    compare(outputs.weights.cpu(), weights_golden, "weights", 0.000025, 0., 0)
+    compare(outputs.q_int8.cpu(), q_int8_golden, "q_int8", atol=1, rtol=0, max_error_ratio=0)
+    compare(outputs.q_scale.cpu(), q_scale_golden, "q_scale", atol=0.000025, rtol=0, max_error_ratio=0.005)
+    compare(outputs.k_int8.cpu(), k_cache_golden, "k_int8", atol=1, rtol=0, max_error_ratio=0)
+    compare(outputs.k_scale.cpu(), k_cache_scale_golden, "k_scale", atol=0.000025, rtol=0, max_error_ratio=0)
+    compare(outputs.weights.cpu(), weights_golden, "weights", atol=0.000025, rtol=0., max_error_ratio=0)
 
 
 def do_test_lighting_indexer_prolog_quant(case_name, configs):

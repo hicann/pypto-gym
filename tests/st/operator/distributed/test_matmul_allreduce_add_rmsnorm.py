@@ -401,7 +401,7 @@ def _run_performance_single_iteration(run_num, config, expected_total_time):
     collect_process_errors(processes, error_queue)
 
     try:
-        from swimlane_analyzer import SwimlaneAnalyzer
+        from common_utils import SwimlaneAnalyzer
         analyzer = SwimlaneAnalyzer(output_dir, expected_total_time=expected_total_time)
         stats = analyzer.calculate_stats(config.world_size)
         min_time = stats['min_time']

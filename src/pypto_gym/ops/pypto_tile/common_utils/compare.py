@@ -19,7 +19,7 @@ from numpy.testing import assert_allclose
 import pypto
 
 
-def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ratio=0.005, max_error_count=10):
+def compare(t: torch.Tensor, t_ref: torch.Tensor, name, *, atol, rtol, max_error_ratio=0.005, max_error_count=10):
     """
     比较两个张量的差异，超过阈值时打印错误点并抛出断言错误
     Args:
@@ -127,3 +127,13 @@ def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ra
     assert error_count <= error_count_threshold, \
         (f"compare fail: {name}, max diff: {max_diff.item():.8f} at {max_pos}, "
          f"error_count: {error_count}, error_count_threshold: {error_count_threshold}")
+
+def gen_uniform_data(data_shape, min_value, max_value, dtype):
+    if min_value == 0 and max_value == 0:
+        return torch.zeros(data_shape, dtype=dtype)
+    if dtype == torch.bool:
+        return torch.randint(0, 2, data_shape, dtype=dtype)
+    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
+        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
+    else:
+        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)

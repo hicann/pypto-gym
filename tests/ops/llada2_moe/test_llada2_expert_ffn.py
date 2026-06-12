@@ -64,7 +64,7 @@ def test_llada2_expert_ffn():
 
 
 def main():
-    pypto.set_host_options(compile_monitor_enable=True, compile_timeout=10,
+    pypto.set_host_options(compile_monitor_enable=1, compile_timeout=10,
                             compile_timeout_stage=5,
                             compile_monitor_print_interval=2)
     test_llada2_expert_ffn()

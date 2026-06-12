@@ -33,7 +33,8 @@ import numpy as np
 import pypto
 
 from deepseek_v4.mla_prolog_quant_v4_impl import mla_prolog_v4, MlaPrologV4Attrs, \
-            MlaTileConfigs, MlaPrologV4Configs, check_input_output_shape_dtype, mla_prolog_quant_pypto, MlaCheckInputConfig
+    MlaTileConfigs, MlaPrologV4Configs, check_input_output_shape_dtype, mla_prolog_quant_pypto, \
+    MlaCheckInputConfig
 from tests.ops.utils.compare import compare
 
 torch.manual_seed(5)

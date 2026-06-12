@@ -27,7 +27,7 @@ import torch_npu  # noqa: F401
 import numpy as np
 import pytest
 
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 from experimental.ops_transformer.sparse_attention_antiquant_kv_split.sparse_attention_antiquant_kv_split_impl import (
     sparse_attention_antiquant_kv_split_d,
     sparse_attention_antiquant_kv_split_p,

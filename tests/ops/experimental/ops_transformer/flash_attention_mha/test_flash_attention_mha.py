@@ -298,7 +298,7 @@ def _run_kernel_and_verify(inputs, out_npu, l_out_npu, m_out_npu,
         golden_np = golden_tensor.float().numpy()
         max_diff = np.abs(npu_np - golden_np).max()
         try:
-            from deepseek_v32_exp.utils.compare import compare
+            from common_utils import compare
             compare(npu_tensor.cpu(), golden_tensor, name, atol=atol, rtol=rtol, max_error_count=10)
             logging.info(f"  {name}: PASSED (max_diff={max_diff:.6f}, rtol={rtol}, atol={atol})")
         except AssertionError as e:

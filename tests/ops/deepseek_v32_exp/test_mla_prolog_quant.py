@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import pytest
 import pypto
 from deepseek_v32_exp.mla_prolog_quant_impl import mla_prolog_quant_p, mla_prolog_quant_d, MlaTileConfig
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare
 import collections
 
 
@@ -478,27 +478,27 @@ def _run_and_compare(output_q_norm_data, output_q_norm_scale_data, output_q_nope
                      golden1, golden2, golden3, golden4, golden5, golden6, golden7,
                      is_quant_b, k_scale):
     print("qNope =======")
-    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", 0.005, 0.0078125, 0.005)
+    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     print("qRope =======")
-    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", 0.005, 0.0078125, 0.005)
+    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     if is_quant_b:
         print("qNorm =======")
-        compare(output_q_norm_data.cpu(), golden6.cpu(), "qNorm", 1.0, 0.0, 0.005)
+        compare(output_q_norm_data.cpu(), golden6.cpu(), "qNorm", atol=1.0, rtol=0.0, max_error_ratio=0.005)
         print("qNormScale =======")
-        compare(output_q_norm_scale_data.cpu(), golden7.cpu(), "qNormScale", 0.000025, 0.005, 0.005)
+        compare(output_q_norm_scale_data.cpu(), golden7.cpu(), "qNormScale", atol=0.000025, rtol=0.005, max_error_ratio=0.005)
     else:
         print("qNorm =======")
-        compare(output_q_norm_data.cpu(), golden6.cpu(), "qNorm", 0.0001, 0.0078125, 0.005)
+        compare(output_q_norm_data.cpu(), golden6.cpu(), "qNorm", atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
     print("kv =======")
     if is_quant_b:
-        compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", 1.0, 0.0, 0)
+        compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", atol=1.0, rtol=0.0, max_error_ratio=0)
     else:
-        compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", 0.0001, 0.0078125, 0)
+        compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
     print("kr =======")
-    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", 0.0001, 0.0078125, 0)
+    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
     if is_quant_b:
         print("kScaleCache =======")
-        compare(k_scale.cpu(), golden5.cpu(), "kScaleCache", 0.000025, 0.005, 0)
+        compare(k_scale.cpu(), golden5.cpu(), "kScaleCache", atol=0.000025, rtol=0.005, max_error_ratio=0)
 
 
 def _setup_input_output_data(input_tensors, params, is_quant_b, d_type, dtype_kv_quant):

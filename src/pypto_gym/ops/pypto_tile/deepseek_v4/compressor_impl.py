@@ -15,7 +15,6 @@ from torch._dynamo import allow_in_graph
 from dataclasses import dataclass
 from typing import List
 
-# pylint: disable-next=invalid-name
 CompressorArgs = collections.namedtuple('CompressorArgs', [
     'x', 'kv_state', 'score_state', 'kv_block_table', 'score_block_table',
     'sin', 'cos', 'wkv', 'wgate', 'ape', 'weight', 'hadamard',

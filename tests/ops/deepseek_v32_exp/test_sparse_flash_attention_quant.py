@@ -32,29 +32,8 @@ import pypto
 from deepseek_v32_exp.sparse_flash_attention_quant_impl \
     import sparse_flash_attention_quant_d, sparse_flash_attention_quant_p, \
            sparse_flash_attention_quant_d_950, SaTileShapeConfig
-from deepseek_v32_exp.utils.compare import compare
+from common_utils import compare, gen_uniform_data
 
-
-def gen_uniform_data(data_shape, min_value, max_value, dtype):
-    """
-    PyTorch版本的均匀分布数据生成，与NumPy版本行为完全一致
-    严格保持 [min_value, max_value) 左闭右开区间特性
-    """
-    # 特殊情况：全零张量
-    if min_value == 0 and max_value == 0:
-        return torch.zeros(data_shape, dtype=dtype)
-    # 布尔类型处理：等概率生成True/False
-    if dtype == torch.bool:
-        # 生成[0,2)的整数，转换为bool即等概率True/False
-        return torch.randint(0, 2, data_shape, dtype=dtype)
-    # 浮点类型：[min_value, max_value)
-    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
-        # torch.rand生成[0,1)，缩放后得到[min_value, max_value)
-        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
-    # 整数类型：[min_value, max_value)
-    else:
-        # torch.randint的high参数为开区间，直接对应[min_value, max_value)
-        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
 def _gather_kv_cache(s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,

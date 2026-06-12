@@ -38,20 +38,17 @@ SparseQkDvResult = collections.namedtuple("SparseQkDvResult", [
     "q_compact", "do_compact", "o_compact", "lse_compact", "inner_mask", "maxInner",
 ])
 
-# pylint: disable-next=invalid-name
 CompactKvConfig = collections.namedtuple('CompactKvConfig', [
-    'qblock_info', 'maxSel', 'k_2d', 'v_2d', 'valid_mask',
+    'qblock_info', 'max_sel', 'k_2d', 'v_2d', 'valid_mask',
     'Hkv', 'Skv_pad', 'bx', 'by', 'D', 'device', 'total_qblocks',
 ])
 
-# pylint: disable-next=invalid-name
 SparseKvBuildConfig = collections.namedtuple('SparseKvBuildConfig', [
     'block_sparse_mask', 'k_2d', 'v_2d',
     'B', 'Hq', 'Hkv', 'Sq', 'Skv', 'Sq_pad', 'Skv_pad',
     'numQB', 'numKB', 'bx', 'by', 'D', 'device',
 ])
 
-# pylint: disable-next=invalid-name
 CompactQConfig = collections.namedtuple('CompactQConfig', [
     'kvblock_info', 'maxInner',
     'q_2d', 'do_2d', 'o_2d', 'lse_2d',
@@ -201,21 +198,21 @@ def _is_dense_mask(block_sparse_mask):
 # ---------------------------------------------------------------------------
 # Boundary mask helpers (used by compacted KV/Q builders)
 # ---------------------------------------------------------------------------
-def _apply_kv_boundary_mask(valid_mask, qblock_info, maxSel, bx, numKB, remaining_kv):
+def _apply_kv_boundary_mask(valid_mask, qblock_info, max_sel, bx, numKB, remaining_kv):
     """Zero out columns in valid_mask for the last KV block's padded rows."""
     for i, (b, h_kv, valid_v) in enumerate(qblock_info):
         for j, v_blk in enumerate(valid_v):
             if v_blk == numKB - 1:
-                m_start = i * maxSel * bx + j * bx
+                m_start = i * max_sel * bx + j * bx
                 valid_mask[m_start:m_start + bx, remaining_kv:] = 0.0
 
 
-def _apply_q_boundary_mask(valid_mask, total_qblocks, maxSel, bx, numQB, remaining_q):
+def _apply_q_boundary_mask(valid_mask, total_qblocks, max_sel, bx, numQB, remaining_q):
     """Zero out rows in valid_mask for the last Q block's padded rows."""
     for i in range(total_qblocks):
         if i % numQB == numQB - 1:
-            for j in range(maxSel):
-                m_dst = i * maxSel * bx + j * bx
+            for j in range(max_sel):
+                m_dst = i * max_sel * bx + j * bx
                 valid_mask[m_dst + remaining_q:m_dst + bx, :] = 0.0
 
 
@@ -227,7 +224,7 @@ def _collect_valid_kv_per_qblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
     group = Hq // Hkv
     nkv_cols = block_sparse_mask.shape[3]
     qblock_info = []
-    maxSel = 0
+    max_sel = 0
 
     for flat_idx in range(B * Hq):
         b = flat_idx // Hq
@@ -239,14 +236,14 @@ def _collect_valid_kv_per_qblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
             if not valid_v:
                 valid_v = [0]
             qblock_info.append((b, h_kv, valid_v))
-            maxSel = max(maxSel, len(valid_v))
+            max_sel = max(max_sel, len(valid_v))
 
-    return qblock_info, max(maxSel, 1)
+    return qblock_info, max(max_sel, 1)
 
 
 def _fill_compacted_kv(cfg: CompactKvConfig):
     qblock_info = cfg.qblock_info
-    maxSel = cfg.maxSel
+    max_sel = cfg.max_sel
     k_2d = cfg.k_2d
     v_2d = cfg.v_2d
     valid_mask = cfg.valid_mask  # unused, recomputed below
@@ -257,28 +254,38 @@ def _fill_compacted_kv(cfg: CompactKvConfig):
     D = cfg.D
     device = cfg.device
     total_qblocks = cfg.total_qblocks
-    k_compact = torch.zeros(total_qblocks * maxSel * by, D,
+    k_compact = torch.zeros(total_qblocks * max_sel * by, D,
                             dtype=torch.float16, device=device)
-    v_compact = torch.zeros(total_qblocks * maxSel * by, D,
+    v_compact = torch.zeros(total_qblocks * max_sel * by, D,
                             dtype=torch.float16, device=device)
-    valid_mask_new = torch.zeros(total_qblocks * maxSel * bx, by,
+    valid_mask_new = torch.zeros(total_qblocks * max_sel * bx, by,
                                  dtype=torch.float32, device=device)
 
     for i, (b, h_kv, valid_v) in enumerate(qblock_info):
         for j, v_blk in enumerate(valid_v):
             src = (b * Hkv + h_kv) * Skv_pad + v_blk * by
-            dst = i * maxSel * by + j * by
+            dst = i * max_sel * by + j * by
             k_compact[dst:dst + by] = k_2d[src:src + by]
             v_compact[dst:dst + by] = v_2d[src:src + by]
-            valid_mask_new[i * maxSel * bx + j * bx:i * maxSel * bx + j * bx + bx, :] = 1.0
+            valid_mask_new[i * max_sel * bx + j * bx:i * max_sel * bx + j * bx + bx, :] = 1.0
 
         first_src = (b * Hkv + h_kv) * Skv_pad + valid_v[0] * by
-        for j in range(len(valid_v), maxSel):
-            dst = i * maxSel * by + j * by
+        for j in range(len(valid_v), max_sel):
+            dst = i * max_sel * by + j * by
             k_compact[dst:dst + by] = k_2d[first_src:first_src + by]
             v_compact[dst:dst + by] = v_2d[first_src:first_src + by]
 
     return k_compact, v_compact, valid_mask_new
+
+
+def _apply_skv_boundary_if_needed(cfg, valid_mask, qblock_info, max_sel, total_qblocks):
+    if cfg.Skv_pad > cfg.Skv:
+        _apply_kv_boundary_mask(
+            valid_mask, qblock_info, max_sel, cfg.bx, cfg.numKB,
+            cfg.Skv - (cfg.numKB - 1) * cfg.by)
+    if cfg.Sq_pad > cfg.Sq:
+        _apply_q_boundary_mask(valid_mask, total_qblocks, max_sel, cfg.bx, cfg.numQB,
+                               cfg.Sq - (cfg.numQB - 1) * cfg.bx)
 
 
 def _build_sparse_kv(cfg: SparseKvBuildConfig):
@@ -301,27 +308,21 @@ def _build_sparse_kv(cfg: SparseKvBuildConfig):
     device = cfg.device
     total_qblocks = B * Hq * numQB
 
-    qblock_info, maxSel = _collect_valid_kv_per_qblock(
+    qblock_info, max_sel = _collect_valid_kv_per_qblock(
         block_sparse_mask, B, Hq, Hkv, numQB, numKB)
 
     k_compact, v_compact, valid_mask = _fill_compacted_kv(CompactKvConfig(
-        qblock_info=qblock_info, maxSel=maxSel, k_2d=k_2d, v_2d=v_2d,
+        qblock_info=qblock_info, max_sel=max_sel, k_2d=k_2d, v_2d=v_2d,
         valid_mask=None, Hkv=Hkv, Skv_pad=Skv_pad, bx=bx, by=by, D=D,
         device=device, total_qblocks=total_qblocks))
-    if Skv_pad > Skv:
-        _apply_kv_boundary_mask(
-            valid_mask, qblock_info, maxSel, bx, numKB,
-            Skv - (numKB - 1) * by)
+    _apply_skv_boundary_if_needed(
+        cfg, valid_mask, qblock_info, max_sel, total_qblocks)
 
-    if Sq_pad > Sq:
-        _apply_q_boundary_mask(valid_mask, total_qblocks, maxSel, bx, numQB,
-                               Sq - (numQB - 1) * bx)
-
-    return k_compact, v_compact, valid_mask, maxSel
+    return k_compact, v_compact, valid_mask, max_sel
 
 
 # ===========================================================================
-# C3: Mask structure cache (reuse valid_mask/maxSel across calls)
+# C3: Mask structure cache (reuse valid_mask/max_sel across calls)
 # ===========================================================================
 _mask_cache = {}
 
@@ -352,26 +353,20 @@ def _build_sparse_kv_cached(cfg: SparseKvBuildConfig):
 
     cached = _mask_cache.get(cache_key)
     if cached is not None:
-        qblock_info, maxSel = cached
+        qblock_info, max_sel = cached
     else:
-        qblock_info, maxSel = _collect_valid_kv_per_qblock(
+        qblock_info, max_sel = _collect_valid_kv_per_qblock(
             block_sparse_mask, B, Hq, Hkv, numQB, numKB)
-        _mask_cache[cache_key] = (qblock_info, maxSel)
+        _mask_cache[cache_key] = (qblock_info, max_sel)
 
     k_compact, v_compact, valid_mask = _fill_compacted_kv(CompactKvConfig(
-        qblock_info=qblock_info, maxSel=maxSel, k_2d=k_2d, v_2d=v_2d,
+        qblock_info=qblock_info, max_sel=max_sel, k_2d=k_2d, v_2d=v_2d,
         valid_mask=None, Hkv=Hkv, Skv_pad=Skv_pad, bx=bx, by=by, D=D,
         device=device, total_qblocks=total_qblocks))
-    if Skv_pad > Skv:
-        _apply_kv_boundary_mask(
-            valid_mask, qblock_info, maxSel, bx, numKB,
-            Skv - (numKB - 1) * by)
+    _apply_skv_boundary_if_needed(
+        cfg, valid_mask, qblock_info, max_sel, total_qblocks)
 
-    if Sq_pad > Sq:
-        _apply_q_boundary_mask(valid_mask, total_qblocks, maxSel, bx, numQB,
-                               Sq - (numQB - 1) * bx)
-
-    return k_compact, v_compact, valid_mask, maxSel
+    return k_compact, v_compact, valid_mask, max_sel
 
 
 # ---------------------------------------------------------------------------

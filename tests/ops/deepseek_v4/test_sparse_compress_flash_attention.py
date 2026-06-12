@@ -27,6 +27,7 @@ import pypto
 from deepseek_v4.sparse_compress_flash_attention_impl \
     import sparse_compress_flash_attention_kernel, SCFATileShapeConfig, \
         npu_sparse_compress_flash_attention, sparse_compress_flash_attention_graph, SCFANpuInputs
+from common_utils import gen_uniform_data
 from tests.ops.utils.compare import compare
 
 
@@ -43,16 +44,6 @@ class CompressSFA(torch.nn.Module):
             softmax_scale=softmax_scale, win_size=win_size, cmp_ratio=cmp_ratio)
         return sparse_compress_flash_attention_graph(args)
 
-
-def gen_uniform_data(data_shape, min_value, max_value, dtype):
-    if min_value == 0 and max_value == 0:
-        return torch.zeros(data_shape, dtype=dtype)
-    if dtype == torch.bool:
-        return torch.randint(0, 2, data_shape, dtype=dtype)
-    if torch.is_floating_point(torch.tensor(0, dtype=dtype)):
-        return min_value + (max_value - min_value) * torch.rand(data_shape, dtype=dtype)
-    else:
-        return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
 def _build_kj_tile(t_idx, b_idx, topk_indices, s2_start, s2_end, s2_tile_cur,

@@ -13,7 +13,7 @@
 BSA Backward PyPTO Kernel Implementation (Fully Dynamic Axis Pattern)
 
 Dynamic axes: B, Hq, Hkv, Sq, Skv (the 5 primitive shape dimensions that vary
-across test cases). Derived values (numQB, numKB, maxSel, maxInner, BH, BHKV,
+across test cases). Derived values (numQB, numKB, max_sel, maxInner, BH, BHKV,
 Sq_pad, Skv_pad) are computed inside the kernel from hint tensor shapes.
 
 Single compiled kernel handles ALL (B, Hq, Hkv, Sq, Skv) combinations — no
@@ -360,12 +360,12 @@ def block_sparse_attention_backward(
     numqb_hint = torch.zeros(numQB, 1, dtype=torch.float32, device=query.device)
     numkb_hint = torch.zeros(numKB, 1, dtype=torch.float32, device=query.device)
 
-    k_compact, v_compact, valid_mask, maxSel = _build_sparse_kv_cached(SparseKvBuildConfig(
+    k_compact, v_compact, valid_mask, max_sel = _build_sparse_kv_cached(SparseKvBuildConfig(
         block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
         B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
         numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
 
-    maxsel_hint = torch.zeros(maxSel, 1, dtype=torch.float32, device=query.device)
+    maxsel_hint = torch.zeros(max_sel, 1, dtype=torch.float32, device=query.device)
 
     q_result = _build_sparse_q_dkdv_cached(
         block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,

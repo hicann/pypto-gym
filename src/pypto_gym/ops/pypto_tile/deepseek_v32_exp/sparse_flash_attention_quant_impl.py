@@ -33,13 +33,6 @@ import pypto
 from pypto.experimental import gather_in_l1, gather_in_ub
 
 
-# pylint: disable-next=invalid-name
-SFAQuantComputeInputs = collections.namedtuple('SFAQuantComputeInputs', [
-    'query_nope', 'query_rope', 'key_nope_2d', 'key_rope_2d',
-    'k_nope_scales', 'topk_indices', 'block_table', 'kv_act_seqs',
-    'attention_out', 'nq', 'n_kv', 'softmax_scale', 'topk',
-    'block_size', 'max_blocknum_perbatch', 'tile_config',
-])
 
 
 @dataclass
