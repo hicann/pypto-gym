@@ -170,3 +170,10 @@ mtp2_tp1_network_quant avg_ms=0.684205 repeat=30 warmup=3 tokens=12
 mtp2_tp4_network_quant AICore E2E 98.04 us, utilization 37.23%
 mtp2_tp1_network_quant AICore E2E 52.66 us, utilization 39.00%
 ```
+
+## 2026-06-11 整改同步
+
+- 新增 `qkv_rms_norm_rope_cache_quant_kernel_generic`，用于超出 TP4/TP1 快路径 head 规模的功能兜底。
+- Q 继续按 `q_group_heads=16` 分组；K/V fallback 按 `kv_group_heads=2` 分组。
+- K/V fallback cache 写入采用 flatten + `pypto.scatter` + assemble，支持非连续 `index`。
+- Wrapper 分流保持旧性能 case 走 TP4/TP1 fast path，`Nq>64` 或 `Nk/Nv>4` 走 generic fallback。

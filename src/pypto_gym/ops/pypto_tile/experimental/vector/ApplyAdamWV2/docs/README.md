@@ -50,7 +50,7 @@ the dtype of `weight`.
 ```
 cd <repo-root>
 source env_setup.sh
-python3 custom/apply_adam_w_v2/test_apply_adam_w_v2.py
+python3 tests/ops/experimental/vector/ApplyAdamWV2/test_apply_adam_w_v2.py
 ```
 
 Pass tolerance: `atol=1e-4`, `rtol=0.0078125`. The test prints
@@ -68,3 +68,9 @@ Pass tolerance: `atol=1e-4`, `rtol=0.0078125`. The test prints
   same kernel iteration.
 - `step` only enters the kernel through the precomputed `bc1` / `bc2` floats —
   no device-side `pow`.
+
+## 2026-06-11 Update
+
+- Kernel now supports dynamic `M` and dynamic `K` 2D tensors, not only `M=7168`.
+- Added small/tail shape verification levels `level5` to `level7`.
+- Large-M strategy is retained for `[7168, K]` network-style cases to avoid regressing existing performance coverage.

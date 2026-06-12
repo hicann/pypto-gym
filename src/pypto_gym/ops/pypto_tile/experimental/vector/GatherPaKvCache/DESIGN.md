@@ -117,3 +117,9 @@ Latest manually recorded target-shape swimlanes:
 output/output_20260530_111415_350728_1001774_C0A96050/merged_swimlane.json
 output/output_20260530_111420_833310_1001774_C0A96050/merged_swimlane.json
 ```
+
+## 8. 2026-06-11 整改同步
+
+- Host wrapper now requires cumsum `seq_lens` with shape `[Q + 1]`.
+- Kernel path remains the same ND gather path; the change removes the host-side non-cumsum normalization branch.
+- Test cases and golden now use cumsum `seq_lens` consistently.

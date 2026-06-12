@@ -77,6 +77,51 @@
       },
       "rtol": 0.0078125,
       "atol": 1e-4
+    },
+    {
+      "id": "level5",
+      "description": "fp32 dynamic-M tail-K verification on [37, 1500]",
+      "seed": 43,
+      "input": {
+        "shape": [37, 1500],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [37, 1500],
+        "dtype": "float32"
+      },
+      "rtol": 0.0078125,
+      "atol": 1e-4
+    },
+    {
+      "id": "level6",
+      "description": "bf16 dynamic-M small-K verification on [5, 17]",
+      "seed": 44,
+      "input": {
+        "shape": [5, 17],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "shape": [5, 17],
+        "dtype": "bfloat16"
+      },
+      "rtol": 0.0078125,
+      "atol": 1e-4
+    },
+    {
+      "id": "level7",
+      "description": "bf16 dynamic-M dynamic-K multi-tile verification on [33, 2053]",
+      "seed": 45,
+      "input": {
+        "shape": [33, 2053],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "shape": [33, 2053],
+        "dtype": "bfloat16"
+      },
+      "rtol": 0.0078125,
+      "atol": 1e-4
     }
   ]
 }

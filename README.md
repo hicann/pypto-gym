@@ -218,6 +218,7 @@ pypto-gym/
 | `qwen3_next/` | gated_delta_rule | Chunk Gated Delta Rule，线性复杂度 O(n)，支持 1K-1M+ 序列长度 |
 | `qwen3_vl_8b_instruct_.../` | rms_norm | RMSNorm（hidden_size=2048） |
 | `spatial_ssrl_3b/` | rms_norm, rope | RMSNorm + RoPE（Vision 2D / 多模态 3D） |
+| `experimental/vector/` | ApplyAdamWV2, GatherPaKvCache, QkvRmsNormRopeCache | AdamW 更新、Paged Attention KV cache gather、QKV RMSNorm RoPE cache 融合 |
 
 ## 添加新算子
 

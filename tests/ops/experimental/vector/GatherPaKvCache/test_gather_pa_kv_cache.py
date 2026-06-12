@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import traceback
@@ -30,12 +31,12 @@ if os.path.isdir(os.path.join(_repo, "src")):
     sys.path.insert(0, os.path.join(_repo, "src"))
     sys.path.insert(0, os.path.join(_repo, "src", "pypto_gym", "ops", "pypto_tile"))
 
-from gather_pa_kv_cache_golden import gather_pa_kv_cache_golden, make_case  # noqa: E402
-from experimental.vector.gather_pa_kv_cache.gather_pa_kv_cache_impl import (  # noqa: E402
+from experimental.vector.GatherPaKvCache.gather_pa_kv_cache_impl import (  # noqa: E402
     gather_pa_kv_cache_wrapper,
 )
+from gather_pa_kv_cache_golden import gather_pa_kv_cache_golden, make_case  # noqa: E402
 
-
+LOGGER = logging.getLogger(__name__)
 REQUIRED_LEVELS = tuple(f"level{idx}" for idx in range(10))
 
 
@@ -58,19 +59,37 @@ def _load_cases(path: str = None) -> list[dict]:
     return cases
 
 
-def _select_cases(cases: list[dict], selected: list[str]) -> list[dict]:
-    if not selected:
-        return cases
+def _choose_gather_cases(cases: list[dict], selected: list[str]) -> list[dict]:
     wanted = set(selected)
-    out = [case for case in cases if case["id"] in wanted]
-    missing = wanted - {case["id"] for case in out}
+    if not wanted:
+        return cases
+    case_by_id = {case["id"]: case for case in cases}
+    missing = sorted(wanted.difference(case_by_id))
     if missing:
-        raise RuntimeError(f"unknown test case(s): {sorted(missing)}")
-    return out
+        raise RuntimeError(f"unknown gather case(s): {missing}")
+    return [case_by_id[case_id] for case_id in selected]
+
+
+def _list_gather_cases(cases: list[dict]) -> None:
+    for case in cases:
+        LOGGER.info("%s: %s", case["id"], case.get("description", ""))
+
+
+def _run_gather_cases(cases: list[dict], device: str) -> bool:
+    passed = True
+    for case in cases:
+        try:
+            passed = bool(_run_case(case, device)) and passed
+        except Exception:
+            traceback.print_exc()
+            passed = False
+    return passed
 
 
 def _make_inputs(case: dict, device: str) -> tuple[dict, dict]:
     inp = case["input"]
+    if inp.get("is_seq_lens_cumsum") is not True:
+        raise ValueError(f"{case['id']} must use cumsum seq_lens")
     case_cpu = make_case(
         total_tokens=int(inp["total_tokens"]),
         q_count=int(inp["q_count"]),
@@ -81,7 +100,7 @@ def _make_inputs(case: dict, device: str) -> tuple[dict, dict]:
         key_dim=int(inp["key_cache_shape"][3]),
         value_num_heads=int(inp["value_cache_shape"][2]),
         value_dim=int(inp["value_cache_shape"][3]),
-        is_seq_lens_cumsum=bool(inp.get("is_seq_lens_cumsum", False)),
+        is_seq_lens_cumsum=True,
         compute_golden=False,
         seed=int(case.get("seed", 42)),
     )
@@ -114,9 +133,9 @@ def _assert_shapes(case: dict, key_out: torch.Tensor, value_out: torch.Tensor) -
 def _run_case(case: dict, device: str) -> bool:
     case_id = case["id"]
     inp = case["input"]
-    print("=" * 60)
-    print(f"Test: {case_id} - {case.get('description', '')}")
-    print("=" * 60)
+    LOGGER.info("=" * 60)
+    LOGGER.info("Test: %s - %s", case_id, case.get("description", ""))
+    LOGGER.info("=" * 60)
 
     case_cpu, case_dev = _make_inputs(case, device)
     key_out, value_out = gather_pa_kv_cache_wrapper(
@@ -128,7 +147,7 @@ def _run_case(case: dict, device: str) -> bool:
         case_dev["value_ref"],
         case_dev["seq_offset"],
         cache_mode=inp.get("cache_mode", "Norm"),
-        is_seq_lens_cumsum=bool(inp.get("is_seq_lens_cumsum", False)),
+        is_seq_lens_cumsum=True,
         run_mode="npu",
     )
     torch.npu.synchronize()
@@ -143,12 +162,12 @@ def _run_case(case: dict, device: str) -> bool:
         case_cpu["value_ref"],
         case_cpu["seq_offset"],
         cache_mode=inp.get("cache_mode", "Norm"),
-        is_seq_lens_cumsum=bool(inp.get("is_seq_lens_cumsum", False)),
+        is_seq_lens_cumsum=True,
     )
     key_equal = torch.equal(key_out.detach().cpu(), key_ref)
     value_equal = torch.equal(value_out.detach().cpu(), value_ref)
-    print(f"  [key] shape={tuple(key_out.shape)} equal={key_equal}")
-    print(f"  [value] shape={tuple(value_out.shape)} equal={value_equal}")
+    LOGGER.info("  [key] shape=%s equal=%s", tuple(key_out.shape), key_equal)
+    LOGGER.info("  [value] shape=%s equal=%s", tuple(value_out.shape), value_equal)
     return bool(key_equal and value_equal)
 
 
@@ -162,29 +181,18 @@ def main() -> int:
     try:
         cases = _load_cases()
         if args.list:
-            for case in cases:
-                print(f"{case['id']}: {case.get('description', '')}")
+            _list_gather_cases(cases)
             return 0
-        selected_cases = _select_cases(cases, args.cases)
         device = _device()
-        print(f"Using device: {device}")
-        all_ok = True
-        for case in selected_cases:
-            try:
-                ok = _run_case(case, device)
-            except Exception:
-                traceback.print_exc()
-                ok = False
-            all_ok = all_ok and ok
-        if all_ok:
-            print("[PRECISION_PASS]")
+        selected_cases = _choose_gather_cases(cases, args.cases)
+        LOGGER.info("Using gather device: %s", device)
+        if _run_gather_cases(selected_cases, device):
+            LOGGER.info("[PRECISION_PASS]")
             return 0
-        print("[PRECISION_FAIL]")
-        return 1
     except Exception:
         traceback.print_exc()
-        print("[PRECISION_FAIL]")
-        return 1
+    LOGGER.error("[PRECISION_FAIL]")
+    return 1
 
 
 if __name__ == "__main__":

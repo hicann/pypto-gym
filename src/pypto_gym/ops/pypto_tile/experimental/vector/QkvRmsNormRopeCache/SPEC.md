@@ -108,4 +108,10 @@ v_cache[...] = v_int8
 - `cache_mode` 非 `PA_NZ`。
 - `is_output_qkv=True` 的 q/k/v before-quant 输出。
 - `k_offset/v_offset` 非 `None` 的非对称量化。
-- INT8 任意 `index` 通用 scatter；当前实现是当前网络 case 的连续 page0 快路径。
+- TP4/TP1 fast path 不支持 INT8 任意 `index` 通用 scatter；generic fallback 已覆盖 indexed scatter 功能兜底。
+
+## 2026-06-11 整改同步
+
+- 新增 generic fallback，触发条件为 `Nq>64` 或 `Nk/Nv>4`。
+- 新增 `pypto_qkv_rms_norm_rope_cache_id15` 和 `pypto_qkv_rms_norm_rope_cache_id15_indexed`。
+- Generic fallback 已覆盖基于 `index` 的 INT8 PA_NZ cache 写入；TP4/TP1 快路径仍保持 page0 连续写入以保护既有性能 case。

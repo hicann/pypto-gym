@@ -16,7 +16,7 @@ SplitVD -> RMSNorm(Q/K) -> RoPE(Q/K) -> Q 输出
 ## 接口
 
 ```python
-from experimental.vector.qkv_rms_norm_rope_cache.qkv_rms_norm_rope_cache_impl import qkv_rms_norm_rope_cache_wrapper
+from experimental.vector.QkvRmsNormRopeCache.qkv_rms_norm_rope_cache_impl import qkv_rms_norm_rope_cache_wrapper
 
 q_out, k_cache, v_cache = qkv_rms_norm_rope_cache_wrapper(
     qkv,
@@ -125,7 +125,7 @@ env -u ASCEND_VISIBLE_DEVICES -u NPU_VISIBLE_DEVICES -u NPU-VISIBLE-DEVICES \
   ASCEND_GLOBAL_LOG_LEVEL=3 \
   PYTHONPATH=/mnt/workspace/zhangsr/pypto-gym-2/src:/tmp/pypto-wheel:${PYTHONPATH} \
   TILE_FWK_DEVICE_ID=0 \
-  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/qkv_rms_norm_rope_cache/test_qkv_rms_norm_rope_cache.py --run-mode npu
+  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/QkvRmsNormRopeCache/test_qkv_rms_norm_rope_cache.py --run-mode npu
 ```
 
 性能 benchmark：
@@ -137,5 +137,12 @@ env -u ASCEND_VISIBLE_DEVICES -u NPU_VISIBLE_DEVICES -u NPU-VISIBLE-DEVICES \
   ASCEND_GLOBAL_LOG_LEVEL=3 \
   PYTHONPATH=/mnt/workspace/zhangsr/pypto-gym-2/src:/tmp/pypto-wheel:${PYTHONPATH} \
   TILE_FWK_DEVICE_ID=0 \
-  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/qkv_rms_norm_rope_cache/test_qkv_rms_norm_rope_cache.py --run-mode npu --benchmark --warmup 3 --repeat 30
+  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/QkvRmsNormRopeCache/test_qkv_rms_norm_rope_cache.py --run-mode npu --benchmark --warmup 3 --repeat 30
 ```
+
+## 2026-06-11 Update
+
+- Directory name is `QkvRmsNormRopeCache` in pypto-gym.
+- Added generic fallback for `Nq>64` or `Nk/Nv>4`, including `pypto_qkv_rms_norm_rope_cache_id15`.
+- Generic fallback writes INT8 PA_NZ cache by indexed flattened scatter and is verified with non-contiguous `index=[129, 3]`.
+- Existing TP4/TP1 performance cases continue to use the original fast path.

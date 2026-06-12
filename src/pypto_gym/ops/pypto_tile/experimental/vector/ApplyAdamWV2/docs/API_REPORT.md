@@ -203,3 +203,9 @@ feasibility: 可行
 - **可行性**: 可行
 - **主要问题**: 无阻断；实现需重点关注：(1) bf16/fp32 双路径的 cast 边界；(2) host 侧 bias correction 标量预计算；(3) 三输出 in-place 写回顺序；(4) 动态 K 轴的 loop + view + valid_shape 模板。
 - **环境要求**（用户提供）: 运行算子前必须 `cd /mnt/workspace/gitCode/cann/pypto && source env_setup.sh`，将在 Stage 5 首次执行测试时落实。
+
+## 10. 2026-06-11 整改同步
+
+- 已将实现扩展到动态 `M/K`，仍限定 2D tensor。
+- 新增 large-M 策略与通用动态 M 策略分流。
+- 新增 `level5`、`level6`、`level7` 功能验证用例，覆盖非 7168 M 和非 tile 对齐 K。

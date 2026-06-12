@@ -16,20 +16,14 @@
 #   - level0: fp32 path, shape [7168, 2048]
 #   - level1: bf16 path, shape [7168, 2048]
 #
-# Compares the PyPTO kernel output against the pure-PyTorch golden using
+# Compares the PyPTO kernel output against the pure-PyTorch golden.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import sys
-import os
-_p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')):
-    _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
-
-
+import argparse
+import importlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -39,11 +33,18 @@ import torch
 import torch_npu  # noqa: F401  # required to enable npu backend
 from numpy.testing import assert_allclose
 
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, "src")):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, "src"))
+sys.path.insert(0, os.path.join(_p, "src", "pypto_gym", "ops", "pypto_tile"))
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
-
-from apply_adam_w_v2_golden import apply_adam_w_v2_golden
-from experimental.vector.ApplyAdamWV2.apply_adam_w_v2_impl import apply_adam_w_v2_wrapper    # noqa: E402
-
+LOGGER = logging.getLogger(__name__)
+apply_adam_w_v2_golden = importlib.import_module("apply_adam_w_v2_golden").apply_adam_w_v2_golden
+apply_adam_w_v2_wrapper = importlib.import_module(
+    "experimental.vector.ApplyAdamWV2.apply_adam_w_v2_impl"
+).apply_adam_w_v2_wrapper
 
 DEFAULT_PARAMS = dict(
     beta1=0.9,
@@ -59,8 +60,7 @@ DTYPE_MAP = {
     "bfloat16": torch.bfloat16,
 }
 
-# Required test levels - this kernel covers level0 (fp32) and level1 (bf16).
-REQUIRED_LEVELS = ("level0", "level1")
+REQUIRED_LEVELS = tuple(f"level{idx}" for idx in range(8))
 
 
 def _device() -> str:
@@ -82,6 +82,17 @@ def _load_cases(path: str = None) -> list:
     return cases
 
 
+def _select_cases(cases: list[dict], selected: list[str]) -> list[dict]:
+    if not selected:
+        return cases
+    wanted = set(selected)
+    out = [case for case in cases if case["id"] in wanted]
+    missing = wanted - {case["id"] for case in out}
+    if missing:
+        raise RuntimeError(f"unknown test case(s): {sorted(missing)}")
+    return out
+
+
 def _make_inputs(weight_dtype: torch.dtype, shape, seed: int, device: str):
     torch.manual_seed(seed)
     weight = (torch.randn(shape, dtype=torch.float32) * 0.02).to(weight_dtype).to(device)
@@ -99,9 +110,9 @@ def _run_case(case: dict, device: str) -> bool:
     atol = case.get("atol", 1e-4)
     seed = case.get("seed", 42)
 
-    print("=" * 60)
-    print(f"Test: {case_id} - {case.get('description', '')}")
-    print("=" * 60)
+    LOGGER.info("=" * 60)
+    LOGGER.info("Test: %s - %s", case_id, case.get("description", ""))
+    LOGGER.info("=" * 60)
 
     weight, grad, m, v = _make_inputs(weight_dtype, shape, seed, device)
 
@@ -140,11 +151,11 @@ def _run_case(case: dict, device: str) -> bool:
         max_abs = float(diff.max())
         denom = np.maximum(np.abs(e), 1e-12)
         max_rel = float((diff / denom).max())
-        print(f"  [{label}] max_abs_err={max_abs:.6e} max_rel_err={max_rel:.6e}")
+        LOGGER.info("  [%s] max_abs_err=%.6e max_rel_err=%.6e", label, max_abs, max_rel)
         try:
             assert_allclose(a, e, atol=atol, rtol=rtol)
         except AssertionError as exc:
-            print(f"  [{label}] FAIL: {exc}")
+            LOGGER.error("  [%s] FAIL: %s", label, exc)
             ok = False
     return ok
 
@@ -180,27 +191,38 @@ def test_level4(device: str) -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Precision test for apply_adam_w_v2 PyPTO custom op")
+    parser.add_argument("cases", nargs="*", help="case ids from test_cases.json, e.g. level0 level1")
+    parser.add_argument("--list", action="store_true", help="list available cases and exit")
+    args = parser.parse_args()
+
     try:
+        cases = _load_cases()
+        if args.list:
+            for case in cases:
+                LOGGER.info("%s: %s", case["id"], case.get("description", ""))
+            return 0
+        selected_cases = _select_cases(cases, args.cases)
         device = _device()
-        print(f"Using device: {device}")
+        LOGGER.info("Using device: %s", device)
 
         all_ok = True
-        for runner in (test_level4,):
+        for case in selected_cases:
             try:
-                ok = runner(device)
+                ok = _run_case(case, device)
             except Exception:
                 traceback.print_exc()
                 ok = False
             all_ok = all_ok and ok
 
         if all_ok:
-            print("[PRECISION_PASS]")
+            LOGGER.info("[PRECISION_PASS]")
             return 0
-        print("[PRECISION_FAIL]")
+        LOGGER.error("[PRECISION_FAIL]")
         return 1
     except Exception:
         traceback.print_exc()
-        print("[PRECISION_FAIL]")
+        LOGGER.error("[PRECISION_FAIL]")
         return 1
 
 

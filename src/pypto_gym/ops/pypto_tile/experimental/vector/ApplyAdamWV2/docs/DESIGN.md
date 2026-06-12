@@ -444,3 +444,9 @@ def apply_adam_w_v2_kernel_bf16(
 回退记录：无（一次收敛）
 
 开放问题：见 §5 的 O1–O5（均不阻塞 Stage 5 实现，属于优化与边界确认事项）。
+
+## 2026-06-11 整改同步
+
+- Kernel 签名由固定 `M=7168` 调整为 `[DYNAMIC, DYNAMIC]`，通过 M/K 双层 loop 覆盖动态 M 和动态 K。
+- 保留 large-M kernel 作为 `[7168,K<=4096]` 快路径，普通动态 M 规格走通用 kernel。
+- 测试新增 `level5`、`level6`、`level7`，覆盖 tail-K、小 M、小 K 和非对齐多 tile。

@@ -99,8 +99,7 @@ value_out[output_base(q) + token_in_seq, :, :]
 - `key_ref.shape[1:] == key_cache.shape[2:]`.
 - `value_ref.shape[1:] == value_cache.shape[2:]`.
 - `block_tables.shape[0] == Q`.
-- If `is_seq_lens_cumsum=False`, `seq_lens.shape == [Q]`.
-- If `is_seq_lens_cumsum=True`, `seq_lens.shape == [Q + 1]` and starts with 0.
+- `is_seq_lens_cumsum` must be `True`; `seq_lens.shape == [Q + 1]` and starts with 0.
 - `seq_offset` values must be non-negative and divisible by `block_size`.
 - Used `block_tables` entries must be in `[0, num_blocks)`.
 
@@ -133,3 +132,10 @@ against the CPU golden implementation.
 - INT8/FP16/FP32 cache.
 - INT64 `block_tables`, `seq_lens`, `seq_offset`.
 - Arbitrary non-ND layouts.
+- Non-cumsum `seq_lens`.
+
+## 8. 2026-06-11 整改同步
+
+- 当前 ND network sweep 只支持 cumsum `seq_lens`，shape 为 `[Q + 1]`。
+- `test_cases.json` 中各 level 的 `seq_lens_shape` 已从 `[Q]` 调整为 `[Q + 1]`，并设置 `is_seq_lens_cumsum=true`。
+- `gather_pa_kv_cache_wrapper` 和 golden 默认 `is_seq_lens_cumsum=True`。

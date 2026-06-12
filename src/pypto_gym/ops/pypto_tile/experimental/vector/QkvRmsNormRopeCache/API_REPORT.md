@@ -131,3 +131,9 @@ mtp2_tp1_network_quant:
 - `k_offset/v_offset` 非对称量化未实现。
 - `is_output_qkv=True` 未实现。
 - benchmark 是 host 侧端到端平均耗时；泳道图 AICore E2E 是核侧分析口径，二者不能直接混用。
+
+## 2026-06-11 整改同步
+
+- API 映射新增 generic fallback cache 写入：`reshape/transpose` + `pypto.scatter` + `assemble`。
+- 新增 id15/id15_indexed 用例，覆盖 `head_nums=[128,128,128]` 和非连续 `index`。
+- TP4/TP1 fast path 的 `index=torch.arange(T)` 限制仍只适用于快路径，不代表整个算子功能边界。

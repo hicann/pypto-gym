@@ -86,12 +86,18 @@ source /mnt/workspace/gitCode/cann/pypto/env_setup.sh
 cd /mnt/workspace/zhangsr/pypto-gym-2
 PYTHONPATH=/mnt/workspace/zhangsr/pypto-gym-2/src:/tmp/pypto-wheel:${PYTHONPATH} \
   TILE_FWK_DEVICE_ID=0 \
-  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/gather_pa_kv_cache/test_gather_pa_kv_cache.py --run-mode npu
+  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/GatherPaKvCache/test_gather_pa_kv_cache.py --run-mode npu
 ```
 
 Run selected cases:
 
 ```bash
 PYTHONPATH=/mnt/workspace/zhangsr/pypto-gym-2/src:/tmp/pypto-wheel:${PYTHONPATH} \
-  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/gather_pa_kv_cache/test_gather_pa_kv_cache.py level0 level9 --run-mode npu
+  /opt/buildtools/Python-3.11.4/bin/python3 tests/ops/experimental/vector/GatherPaKvCache/test_gather_pa_kv_cache.py level0 level9 --run-mode npu
 ```
+
+## 2026-06-11 Update
+
+- Directory name is `GatherPaKvCache` in pypto-gym.
+- Network sweep cases now use cumsum `seq_lens` with shape `[Q + 1]`.
+- Wrapper default is `is_seq_lens_cumsum=True`; non-cumsum `seq_lens` is rejected for this ND network path.

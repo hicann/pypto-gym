@@ -54,7 +54,7 @@ The static-specialized axes are read from tensor shape inside the kernel.
 - Only BF16 cache and output tensors.
 - Only INT32 index tensors.
 - `seq_offset` must be divisible by `block_size`.
-- `seq_lens` is normalized to cumsum by the wrapper before entering the kernel.
+- `seq_lens` must already be cumsum `[Q + 1]`; non-cumsum `seq_lens` is rejected by the wrapper.
 
 ## 5. Validation Status
 
@@ -78,3 +78,9 @@ The latest manual run passed precision for both target shapes:
 - `PA_NZ` is intentionally out of scope for this implementation.
 - The current large-token branch is a performance specialization, not a
   semantic requirement.
+
+## 7. 2026-06-11 整改同步
+
+- Wrapper/golden default `is_seq_lens_cumsum=True`.
+- `test_cases.json` now records cumsum `seq_lens_shape=[Q+1]` for all network sweep levels.
+- Non-cumsum `seq_lens` is no longer normalized implicitly in this ND network path.
