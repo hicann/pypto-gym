@@ -8,25 +8,13 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-
 """
-Qwen3-1.7B PyPTO 融合算子库 - 实际集成版本
+RMSNorm PyPTO Kernel 导出
 
-实际集成的算子：
-- RoPE (部分融合): q_norm + k_norm + RoPE
-
-融合范围：
-- 部分融合: q_proj/k_proj [B,S,N,D] -> [q_norm + k_norm + RoPE] -> Q/K [B,N,S,D]
-- q_proj/k_proj/v_proj: 在 PyTorch 中完成
-- q_norm/k_norm: 在部分融合 kernel 中完成（USE_PTO_ROPE=True）
+目标文件: core/modeling_qwen2_5_vl.py
+目标类: GutenOcr_3b_VLDecoderLayer
+替换位置: input_layernorm, post_attention_layernorm, final norm
 """
+from .rms_norm_impl import rms_norm_impl as rms_norm_pto_wrapper
 
-from .rms_norm_rope.rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
-USE_PTO_ROPE = False
-
-
-__all__ = [
-    'USE_PTO_ROPE',
-    'qwen3_qk_rope_q',
-    'qwen3_qk_rope_k',
-]
+USE_PTO_RMS_NORM = False

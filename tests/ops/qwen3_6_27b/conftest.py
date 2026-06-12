@@ -9,7 +9,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""为 tests/ops/qwen3_5_9b 下的测试提供 npu_device fixture。
+
+"""为 tests/ops/qwen3_6_27b 下的测试提供 npu_device fixture。
 
 在模块顶层 import torch_npu，使得 collection 阶段（先于 fixture）
 import kernel 文件触发 `@pypto.frontend.jit` 装饰器调用 `torch.npu.is_available()`
@@ -28,27 +29,3 @@ def npu_device(device):
     torch.npu.set_device(device)
     os.environ["TILE_FWK_DEVICE_ID"] = str(device)
     return f"npu:{device}"
-
-"""
-Qwen3-Next PyPTO 融合算子库
-
-实际集成的算子：
-- Gated Delta Rule (chunk 融合版): chunk_gated_delta_rule, chunk_gated_delta_rule_unaligned
-
-融合范围：
-- l2norm + pre_attn + inverse_pto + inverse_matmul + cal_value_and_key_cumdecay + recurrent_state_attn_all
-- 支持对齐和未对齐两种 chunk 模式
-
-应用场景：
-- Qwen3-Next 模型的 Gated Delta Rule prefill 推理加速
-"""
-
-from .gated_delta_rule_impl import (
-    chunk_gated_delta_rule,
-    chunk_gated_delta_rule_unaligned,
-)
-
-__all__ = [
-    'chunk_gated_delta_rule',
-    'chunk_gated_delta_rule_unaligned',
-]

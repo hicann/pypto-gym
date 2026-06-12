@@ -1,0 +1,69 @@
+{
+  "op_name": "rope",
+  "source": "Spatial-SSRL-3B",
+  "description": "RoPE 算子真实测试用例（打点采集）- PyPTO implementation 验证",
+  "test_cases": [
+    {
+      "id": "case_001",
+      "description": "multimodal RoPE - prefill阶段 (batch=1, seq_len=31)",
+      "seed": 42,
+      "input": {
+        "rope_type": "multimodal",
+        "q": {"shape": [1, 16, 31, 128], "dtype": "float16"},
+        "k": {"shape": [1, 2, 31, 128], "dtype": "float16"},
+        "cos": {"shape": [3, 1, 31, 128], "dtype": "float16"},
+        "sin": {"shape": [3, 1, 31, 128], "dtype": "float16"},
+        "mrope_section": [16, 24, 24],
+        "unsqueeze_dim": 1
+      },
+      "output": {
+        "q_shape": [1, 16, 31, 128],
+        "k_shape": [1, 2, 31, 128],
+        "dtype": "float16"
+      },
+      "rtol": 5e-3,
+      "atol": 5e-3
+    },
+    {
+      "id": "case_002",
+      "description": "multimodal RoPE - decode阶段 (batch=1, seq_len=1)",
+      "seed": 42,
+      "input": {
+        "rope_type": "multimodal",
+        "q": {"shape": [1, 16, 1, 128], "dtype": "float16"},
+        "k": {"shape": [1, 2, 1, 128], "dtype": "float16"},
+        "cos": {"shape": [3, 1, 1, 128], "dtype": "float16"},
+        "sin": {"shape": [3, 1, 1, 128], "dtype": "float16"},
+        "mrope_section": [16, 24, 24],
+        "unsqueeze_dim": 1
+      },
+      "output": {
+        "q_shape": [1, 16, 1, 128],
+        "k_shape": [1, 2, 1, 128],
+        "dtype": "float16"
+      },
+      "rtol": 5e-3,
+      "atol": 5e-3
+    },
+    
+    {
+      "id": "case_003",
+      "description": "vision RoPE - 图像编码器 (seq_len=32, num_heads=16)",
+      "seed": 42,
+      "input": {
+        "rope_type": "vision",
+        "q": {"shape": [32, 16, 128], "dtype": "float16"},
+        "k": {"shape": [32, 16, 128], "dtype": "float16"},
+        "cos": {"shape": [32, 128], "dtype": "float16"},
+        "sin": {"shape": [32, 128], "dtype": "float16"}
+      },
+      "output": {
+        "q_shape": [32, 16, 128],
+        "k_shape": [32, 16, 128],
+        "dtype": "float16"
+      },
+      "rtol": 5e-3,
+      "atol": 5e-3
+    }
+  ]
+}

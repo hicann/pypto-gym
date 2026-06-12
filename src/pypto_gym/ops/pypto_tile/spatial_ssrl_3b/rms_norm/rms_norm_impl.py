@@ -46,7 +46,7 @@ def rms_norm_impl(hidden_states: torch.Tensor, weight: torch.Tensor, eps: float 
 if __name__ == "__main__":
     torch.manual_seed(42)
     
-    hidden = torch.randn(1, 11, 2048, dtype=torch.float16, device="cpu")
+    hidden = torch.randn(1, 31, 2048, dtype=torch.float16, device="cpu")
     weight = torch.ones(2048, dtype=torch.float16, device="cpu")
     
     output = rms_norm_impl(hidden, weight, 1e-6)

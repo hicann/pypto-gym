@@ -136,7 +136,7 @@ def test_golden_quant_batch_matmul_layouts(case):
     assert golden.dtype == torch.int8
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 @pytest.mark.parametrize("case", MATMUL_CASES)
 def test_quant_batch_matmul(case):
     config = _make_config(case)

@@ -8,6 +8,16 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+"""
+RMSNorm PyPTO Kernel 导出
+
+目标文件: core/modeling_qwen2_5_vl.py
+目标类: GutenOcr_3b_VLDecoderLayer
+替换位置: input_layernorm, post_attention_layernorm, final norm
+"""
+from .rms_norm_impl import rms_norm_impl as rms_norm_pto_wrapper
+
+USE_PTO_RMS_NORM = False
 
 """
 DeepFM PyPTO 性能分析数据目录

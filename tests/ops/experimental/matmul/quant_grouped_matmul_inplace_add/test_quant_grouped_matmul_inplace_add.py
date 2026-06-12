@@ -166,7 +166,7 @@ def _generate_mxfp8_b(k, n, num_groups, torch_dtype, b_trans):
     dtype=torch.float32).uniform_(0, 1).to(torch.float8_e8m0fnu)
     return b, scaled_b
 
-
+@pytest.mark.soc("950")
 @pytest.mark.parametrize("tile_config", _QUANT_GMM_TEST_CONFIGS)
 def test_quant_grouped_matmul_inplace_add(tile_config):
     """

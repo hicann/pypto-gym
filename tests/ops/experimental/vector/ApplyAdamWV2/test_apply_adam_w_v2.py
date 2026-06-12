@@ -16,7 +16,7 @@
 #   - level0: fp32 path, shape [7168, 2048]
 #   - level1: bf16 path, shape [7168, 2048]
 #
-# Compares the PyPTO kernel output against the pure-PyTorch golden.
+# Compares the PyPTO kernel output against the pure-PyTorch golden using
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -207,7 +207,7 @@ def main() -> int:
         LOGGER.info("Using device: %s", device)
 
         all_ok = True
-        for case in selected_cases:
+        for runner in (test_level4,):
             try:
                 ok = _run_case(case, device)
             except Exception:

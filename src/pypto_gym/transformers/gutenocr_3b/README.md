@@ -1,6 +1,6 @@
 # GutenOCR-3B PyPTO Kernel Integration
 
-HuggingFace `Qwen2_5_VLForConditionalGeneration` vision-language model definition modified to inject PyPTO fused operators on Ascend NPU hardware. GutenOCR-3B is a modified Qwen2.5-VL architecture tuned for OCR tasks, with Huawei-specific PyPTO operator fusion replacing the RMSNorm computation path.
+HuggingFace `GutenOcr_3b_VLForConditionalGeneration` vision-language model definition modified to inject PyPTO fused operators on Ascend NPU hardware. GutenOCR-3B is a modified Qwen2.5-VL architecture tuned for OCR tasks, with Huawei-specific PyPTO operator fusion replacing the RMSNorm computation path.
 
 ## Integration Scope
 
@@ -9,12 +9,12 @@ HuggingFace `Qwen2_5_VLForConditionalGeneration` vision-language model definitio
 | RMS LayerNorm | Yes | PyTorch fp32 | Wired through `sys.modules.get("pto_kernels")` at forward time |
 | Attention (Q/K/V/O + RoPE) | No | eager / flash_attn / sdpa | Standard HuggingFace attention interface |
 | MLP (SwiGLU) | No | PyTorch `nn.Linear` | Standard gate/up/down projection |
-| Vision Encoder (ViT) | No | PyTorch `Qwen2_5_VisionPatchEmbed` / `Qwen2_5_VisionBlock` | Full vision pipeline with flash attention support |
-| Patch Merger | No | PyTorch `Qwen2_5_VLPatchMerger` | Spatial merge and projection |
-| MRoPE (Text) | No | PyTorch `Qwen2_5_VLTextRotaryEmbedding` | Multimodal rope with window attention support |
-| RoPE (Vision) | No | PyTorch `Qwen2_5_VisionRotaryEmbedding` | Standard vision rope |
+| Vision Encoder (ViT) | No | PyTorch `GutenOcr_3b_VisionPatchEmbed` / `GutenOcr_3b_VisionBlock` | Full vision pipeline with flash attention support |
+| Patch Merger | No | PyTorch `GutenOcr_3b_VLPatchMerger` | Spatial merge and projection |
+| MRoPE (Text) | No | PyTorch `GutenOcr_3b_VLTextRotaryEmbedding` | Multimodal rope with window attention support |
+| RoPE (Vision) | No | PyTorch `GutenOcr_3b_VisionRotaryEmbedding` | Standard vision rope |
 
-The RMSNorm integration is the sole PyPTO injection point. Every `Qwen2_5_VLRMSNorm` instance in the network (attention Q/K norms in vision, input layernorm, post-attention layernorm, final output norm, patch merger layernorm) checks for the kernel module at each forward call. The `@use_kernel_forward_from_hub("RMSNorm")` decorator is applied to the `Qwen2_5_VLRMSNorm` class, allowing HuggingFace Hub to additionally supply a kernel implementation.
+The RMSNorm integration is the sole PyPTO injection point. Every `GutenOcr_3b_VLRMSNorm` instance in the network (attention Q/K norms in vision, input layernorm, post-attention layernorm, final output norm, patch merger layernorm) checks for the kernel module at each forward call. The `@use_kernel_forward_from_hub("RMSNorm")` decorator is applied to the `GutenOcr_3b_VLRMSNorm` class, allowing HuggingFace Hub to additionally supply a kernel implementation.
 
 ## Switch Variables
 
@@ -69,11 +69,11 @@ Note: gutenocr_3b uses the generic `"pto_kernels"` name (not `"gutenocr_pto_kern
 ### 2. Instantiate model
 
 ```python
-from pypto_gym.transformers.gutenocr_3b.configuration_qwen2_5_vl import Qwen2_5_VLConfig
-from pypto_gym.transformers.gutenocr_3b.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+from pypto_gym.transformers.gutenocr_3b.configuration_gutenocr_3b_vl import GutenOcr_3b_VLConfig
+from pypto_gym.transformers.gutenocr_3b.modeling_gutenocr_3b_vl import GutenOcr_3b_VLForConditionalGeneration
 
-config = Qwen2_5_VLConfig()
-model = Qwen2_5_VLForConditionalGeneration(config).npu()
+config = GutenOcr_3b_VLConfig()
+model = GutenOcr_3b_VLForConditionalGeneration(config).npu()
 ```
 
 ### 3. Disable PyPTO at runtime
@@ -87,8 +87,8 @@ sys.modules["pto_kernels"].USE_PTO_RMS_NORM = False
 ```json
 {
   "auto_map": {
-    "AutoConfig": "pypto_gym/transformers/gutenocr_3b/configuration_qwen2_5_vl.Qwen2_5_VLConfig",
-    "AutoModelForVision2Seq": "pypto_gym/transformers/gutenocr_3b/modeling_qwen2_5_vl.Qwen2_5_VLForConditionalGeneration"
+    "AutoConfig": "pypto_gym/transformers/gutenocr_3b/configuration_gutenocr_3b_vl.GutenOcr_3b_VLConfig",
+    "AutoModelForVision2Seq": "pypto_gym/transformers/gutenocr_3b/modeling_gutenocr_3b_vl.GutenOcr_3b_VLForConditionalGeneration"
   }
 }
 ```
@@ -106,8 +106,8 @@ The GutenOCR model is based on Qwen2.5-VL with OCR-specific tuning. Key architec
 
 | File | Description |
 |------|-------------|
-| `configuration_qwen2_5_vl.py` | `Qwen2_5_VLConfig`, `Qwen2_5_VLTextConfig`, `Qwen2_5_VLVisionConfig` — multimodal config with vision encoder specs, sliding window params, MRoPE settings |
-| `modeling_qwen2_5_vl.py` | Full model graph (1776 lines) — `Qwen2_5_VLRMSNorm` (with `@use_kernel_forward_from_hub("RMSNorm")` + PyPTO injection), `Qwen2_5_VLForConditionalGeneration`, vision/text decoders, attention, MLP, patch embed/merger |
+| `configuration_gutenocr_3b_vl.py` | `GutenOcr_3b_VLConfig`, `GutenOcr_3b_VLTextConfig`, `GutenOcr_3b_VLVisionConfig` — multimodal config with vision encoder specs, sliding window params, MRoPE settings |
+| `modeling_gutenocr_3b_vl.py` | Full model graph (1776 lines) — `GutenOcr_3b_VLRMSNorm` (with `@use_kernel_forward_from_hub("RMSNorm")` + PyPTO injection), `GutenOcr_3b_VLForConditionalGeneration`, vision/text decoders, attention, MLP, patch embed/merger |
 
 ## Related Directories
 

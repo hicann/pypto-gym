@@ -9,24 +9,13 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""
-Qwen3-1.7B PyPTO 融合算子库 - 实际集成版本
 
-实际集成的算子：
-- RoPE (部分融合): q_norm + k_norm + RoPE
-
-融合范围：
-- 部分融合: q_proj/k_proj [B,S,N,D] -> [q_norm + k_norm + RoPE] -> Q/K [B,N,S,D]
-- q_proj/k_proj/v_proj: 在 PyTorch 中完成
-- q_norm/k_norm: 在部分融合 kernel 中完成（USE_PTO_ROPE=True）
-"""
-
-from .rms_norm_rope.rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
-USE_PTO_ROPE = False
+import torch
 
 
-__all__ = [
-    'USE_PTO_ROPE',
-    'qwen3_qk_rope_q',
-    'qwen3_qk_rope_k',
-]
+def rms_norm_golden(hidden_states: torch.Tensor, weight: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    input_dtype = hidden_states.dtype
+    hidden_states = hidden_states.to(torch.float32)
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
+    hidden_states = hidden_states * torch.rsqrt(variance + eps)
+    return (weight * hidden_states).to(input_dtype)
