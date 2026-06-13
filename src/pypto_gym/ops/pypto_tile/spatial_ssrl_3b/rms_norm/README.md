@@ -1,44 +1,66 @@
-# RMSNorm PyPTO Kernel
+# Spatial-SSRL-3B RMSNorm 算子集成
 
 ## 概述
 
-融合 RMS Normalization 算子，替代原始 Qwen2RMSNorm 实现。
+将 RMSNorm 算子从原始 torch 实现替换为 PyPTO 融合算子，提升 NPU 上的推理性能。
 
-## 性能收益
+## 文件结构
 
-- 减少内核调用开销
-- 预计性能提升 5-8%
-
-## 调用场景
-
-| 位置 | shape | dtype | eps | 调用频率 |
-|------|-------|-------|-----|----------|
-| input_layernorm | [batch, seq, 2048] | float16 | 1e-6 | 每层×每步 |
-| post_attention_layernorm | [batch, seq, 2048] | float16 | 1e-6 | 每层×每步 |
-| final norm | [batch, seq, 2048] | float16 | 1e-6 | 每步1次 |
-
-## 使用方式
-
-```python
-# 在 transformers 导入前注入
-sys.path.insert(0, model_path)
-import spatial_ssrl_3b_pto_kernels as pto_kernels
-sys.modules["spatial_ssrl_3b_pto_kernels"] = pto_kernels
-pto_kernels.USE_PTO_RMS_NORM = True
-
-from transformers import AutoModel
-model = AutoModel.from_pretrained(model_path)
+```
+pypto_gym/ops/pypto_tile/spatial_ssrl_3b/
+└── rms_norm/
+    ├── rms_norm_impl.py           # PyPTO 实现
+    └── README.md                  # 本文档
 ```
 
-## 测试
+## 测试验证
 
 ```bash
-export TILE_FWK_DEVICE_ID=2
-python3 test/test_rms_norm.py
+cd tests/ops/spatial_ssrl_3b
+
+python3 test_rms_norm.py
 ```
 
-## 依赖
+### 测试用例来源
 
-- pypto >= 0.2.1
-- torch-npu >= 2.7.1
-- CANN >= 8.5.0
+从 Spatial-SSRL-3B 模型打点采集的真实 shape/dtype：
+- prefill 阶段：[1, 11, 2048]
+- decode 阶段：[1, 1, 2048]
+
+## 技术说明
+
+### 场景判断
+
+原始实现使用纯 torch 基础算子（pow、mean、rsqrt），属于**场景A**：
+- Golden 直接复制原始代码
+- 无需 torch_npu 验证
+
+### 实现选择
+
+使用 PyPTO 内置 `pypto.rms_norm` 融合算子实现。
+
+## 性能数据
+
+> 测试环境: Ascend 910B, CANN 8.5.0
+>
+> 测试方法: Swimlane (泳道图) — `debug_options={"runtime_debug_mode": 1}`, 解析 `merged_swimlane.json` X 事件 span
+
+| 算子 | 输入 shape | 输入 dtype | kernel 耗时 (μs) | 数据来源 |
+|------|-----------|-----------|-----------------|---------|
+| rms_norm (prefill 主 norm) | [1, 11, 2048] | float16 | 23.8 | Swimlane |
+| rms_norm (prefill q_norm) | [1, 11, 16, 128] | float16 | 25.8 | Swimlane |
+| rms_norm (prefill k_norm) | [1, 11, 8, 128] | float16 | 22.8 | Swimlane |
+| rms_norm (decode 主 norm) | [1, 1, 2048] | float16 | 26.0 | Swimlane |
+| rms_norm (decode q_norm) | [1, 1, 16, 128] | float16 | 5.6 | Swimlane |
+| rms_norm (decode k_norm) | [1, 1, 8, 128] | float16 | 5.0 | Swimlane |
+
+## 状态
+
+✅ 环境验证
+✅ 网络基线验证
+✅ 打点采集
+✅ Golden 编写
+✅ 单算子精度验证
+✅ 单算子性能采集
+⏳ 模型集成
+⏳ 端到端验证

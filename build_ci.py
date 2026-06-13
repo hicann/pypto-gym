@@ -878,7 +878,7 @@ class BuildCtrl():
         # 执行用例Models
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/")],
                                  ext=ext_str)
-                                 
+        
         # 执行用例STest
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.stest, "tests/st/")],
                                  ext=ext_str)

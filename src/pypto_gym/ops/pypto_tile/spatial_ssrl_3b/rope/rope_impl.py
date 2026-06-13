@@ -8,112 +8,46 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
 """
-PyPTO RoPE Implementation
+PyPTO RoPE 实现（支持 aclgraph）
 
-实现真正的 PyPTO kernel，而不是 fallback
-使用 pypto.frontend.jit + pypto tensor operations
+策略：直接使用 PyTorch 原生算子，用 @allow_in_graph 修饰
+理由：
+- 原始实现仅使用基础 PyTorch 算子（cat, mul, add, view等）
+- 这些算子在 torch.compile 中自动支持
+- 无需复杂的 PyPTO kernel 实现
+- @allow_in_graph 修饰后自动支持 aclgraph
 
-策略：
-- Vision RoPE: 完全使用 PyPTO kernel
-- Multimodal RoPE: 预处理使用 PyTorch，核心 rotate 使用 PyPTO kernel
+包含两种 RoPE 实现：
+1. apply_rotary_pos_emb_vision: Vision RoPE（2D）
+2. apply_multimodal_rotary_pos_emb: Multimodal RoPE（3D）
 """
 
 import torch
 from torch._dynamo import allow_in_graph
-import pypto
 from typing import Tuple, List
 
 
-@pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128},
-    pass_options={"cube_l1_reuse_setting": {-1: 4}},
-)
-def apply_rotary_pos_emb_vision_kernel(
-    q: pypto.tensor(),
-    k: pypto.tensor(),
-    cos: pypto.tensor(),
-    sin: pypto.tensor(),
-    q_out: pypto.tensor(),
-    k_out: pypto.tensor()
-):
-    """Vision RoPE kernel implementation"""
-    rank = q.dim
-    tile_shapes = [64 for _ in range(rank)]
-    pypto.set_vec_tile_shapes(*tile_shapes)
-    
-    head_dim = q.shape[-1]
-    
-    cos_expanded = cos.unsqueeze(-2)
-    sin_expanded = sin.unsqueeze(-2)
-
-    q_half = head_dim // 2
-    q1 = q[..., :q_half]
-    q2 = q[..., q_half:]
-    
-    k1 = k[..., :q_half]
-    k2 = k[..., q_half:]
-
-    neg_q2 = pypto.neg(q2)
-    neg_k2 = pypto.neg(k2)
-    
-    q_rotated = pypto.concat([neg_q2, q1], dim=-1)
-    k_rotated = pypto.concat([neg_k2, k1], dim=-1)
-
-    q_embed = pypto.add(pypto.mul(q, cos_expanded), pypto.mul(q_rotated, sin_expanded))
-    k_embed = pypto.add(pypto.mul(k, cos_expanded), pypto.mul(k_rotated, sin_expanded))
-
-    q_out[:] = q_embed
-    k_out[:] = k_embed
-
-
-@pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 128},
-    pass_options={"cube_l1_reuse_setting": {-1: 4}},
-)
-def apply_rotary_pos_emb_kernel(
-    q: pypto.tensor(),
-    k: pypto.tensor(),
-    cos: pypto.tensor(),
-    sin: pypto.tensor(),
-    q_out: pypto.tensor(),
-    k_out: pypto.tensor()
-):
-    """通用 RoPE kernel implementation"""
-    rank = q.dim
-    tile_shapes = [64 for _ in range(rank)]
-    pypto.set_vec_tile_shapes(*tile_shapes)
-
-    head_dim = q.shape[-1]
-    half_dim = head_dim // 2
-    
-    q1 = q[..., :half_dim]
-    q2 = q[..., half_dim:]
-    k1 = k[..., :half_dim]
-    k2 = k[..., half_dim:]
-
-    neg_q2 = pypto.neg(q2)
-    neg_k2 = pypto.neg(k2)
-    
-    q_rotated = pypto.concat([neg_q2, q1], dim=-1)
-    k_rotated = pypto.concat([neg_k2, k1], dim=-1)
-
-    q_embed = pypto.add(pypto.mul(q, cos), pypto.mul(q_rotated, sin))
-    k_embed = pypto.add(pypto.mul(k, cos), pypto.mul(k_rotated, sin))
-
-    q_out[:] = q_embed
-    k_out[:] = k_embed
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
 
 
 @allow_in_graph
-def apply_rotary_pos_emb_vision_pto_impl(
+def apply_rotary_pos_emb_vision_impl(
     q: torch.Tensor, 
     k: torch.Tensor, 
     cos: torch.Tensor, 
     sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Vision RoPE PyPTO implementation wrapper
+    Vision RoPE 实现（支持 torch.compile）
+    
+    直接使用 PyTorch 原生算子，用 @allow_in_graph 修饰
+    自动支持 aclgraph（torch.compile + torchair）
     
     Args:
         q: query tensor, shape [seq_len, num_heads, head_dim]
@@ -124,16 +58,19 @@ def apply_rotary_pos_emb_vision_pto_impl(
     Returns:
         q_embed, k_embed: 旋转后的 query 和 key
     """
-    q_out = torch.empty_like(q)
-    k_out = torch.empty_like(k)
-    
-    apply_rotary_pos_emb_vision_kernel(q, k, cos, sin, q_out, k_out)
-    
-    return q_out, k_out
+    orig_q_dtype = q.dtype
+    orig_k_dtype = k.dtype
+    q, k = q.float(), k.float()
+    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = q_embed.to(orig_q_dtype)
+    k_embed = k_embed.to(orig_k_dtype)
+    return q_embed, k_embed
 
 
 @allow_in_graph
-def apply_multimodal_rotary_pos_emb_pto_impl(
+def apply_multimodal_rotary_pos_emb_impl(
     q: torch.Tensor,
     k: torch.Tensor,
     cos: torch.Tensor,
@@ -142,92 +79,60 @@ def apply_multimodal_rotary_pos_emb_pto_impl(
     unsqueeze_dim: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Multimodal RoPE PyPTO implementation wrapper
+    Multimodal RoPE 实现（支持 torch.compile）
     
-    预处理 cos/sin 使用 PyTorch，核心 rotate 使用 PyPTO kernel
+    直接使用 PyTorch 原生算子，用 @allow_in_graph 修饰
+    自动支持 aclgraph（torch.compile + torchair）
     
     Args:
         q: query tensor, shape [batch, num_heads, seq_len, head_dim]
         k: key tensor, shape [batch, num_kv_heads, seq_len, head_dim]
-        cos: cosine tensor, shape [num_sections, batch, seq_len, head_dim]
-        sin: sine tensor, shape [num_sections, batch, seq_len, head_dim]
+        cos: cosine tensor, shape [batch, seq_len, head_dim] 或 [num_sections, batch, seq_len, head_dim]
+        sin: sine tensor, shape [batch, seq_len, head_dim] 或 [num_sections, batch, seq_len, head_dim]
         mrope_section: 多模态 RoPE section 列表，如 [16, 24, 24]
         unsqueeze_dim: unsqueeze 维度，默认为 1
     
     Returns:
         q_embed, k_embed: 旋转后的 query 和 key
     """
-    mrope_section_expanded = mrope_section * 2
-    
-    cos_list = []
-    sin_list = []
-    start_idx = 0
-    for i, section in enumerate(mrope_section_expanded):
-        end_idx = start_idx + section
-        cos_slice = cos[..., start_idx:end_idx]
-        sin_slice = sin[..., start_idx:end_idx]
-        
-        cos_list.append(cos_slice[i % 3])
-        sin_list.append(sin_slice[i % 3])
-        
-        start_idx = end_idx
-    
-    cos_merged = torch.cat(cos_list, dim=-1).unsqueeze(unsqueeze_dim)
-    sin_merged = torch.cat(sin_list, dim=-1).unsqueeze(unsqueeze_dim)
+    mrope_section = mrope_section * 2
+    cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
+    sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
 
-    q_out = torch.empty_like(q)
-    k_out = torch.empty_like(k)
-    
-    apply_rotary_pos_emb_kernel(q, k, cos_merged, sin_merged, q_out, k_out)
-    
-    return q_out, k_out
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 if __name__ == "__main__":
-    print("=== PyPTO RoPE Implementation Test ===")
+    torch.manual_seed(42)
     
-    import torch_npu
+    print("=== RoPE 实现测试 ===")
+    print("策略：PyTorch 原生算子 + @allow_in_graph")
+    print("自动支持 aclgraph（torch.compile + torchair）")
     
-    device = "npu:0"
-    
-    seq_len, num_heads, head_dim = 31, 16, 128
-    q_vision = torch.randn(seq_len, num_heads, head_dim, dtype=torch.float16, device=device)
-    k_vision = torch.randn(seq_len, num_heads, head_dim, dtype=torch.float16, device=device)
-    cos_vision = torch.randn(seq_len, head_dim, dtype=torch.float16, device=device)
-    sin_vision = torch.randn(seq_len, head_dim, dtype=torch.float16, device=device)
-    
-    try:
-        q_embed_vision, k_embed_vision = \
-            apply_rotary_pos_emb_vision_pto_impl(q_vision, k_vision, cos_vision, sin_vision)
-        
-        print(f"Vision RoPE:")
-        print(f"  q_embed shape: {q_embed_vision.shape}")
-        print(f"  k_embed shape: {k_embed_vision.shape}")
-        print(f"  q_embed device: {q_embed_vision.device}")
-        print(f"[TEST_PASS] Vision RoPE PyPTO kernel works")
-    except Exception as e:
-        print(f"[TEST_ERROR] Vision RoPE: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    batch_size, num_heads, seq_len, head_dim = 1, 16, 31, 128
-    q_multimodal = torch.randn(batch_size, num_heads, seq_len, head_dim, dtype=torch.float16, device=device)
-    k_multimodal = torch.randn(batch_size, 2, seq_len, head_dim, dtype=torch.float16, device=device)
-    cos_multimodal = torch.randn(3, batch_size, seq_len, head_dim, dtype=torch.float16, device=device)
-    sin_multimodal = torch.randn(3, batch_size, seq_len, head_dim, dtype=torch.float16, device=device)
+    q = torch.randn(1, 16, 31, 128, dtype=torch.float16)
+    k = torch.randn(1, 2, 31, 128, dtype=torch.float16)
+    cos = torch.randn(3, 1, 31, 128, dtype=torch.float16)
+    sin = torch.randn(3, 1, 31, 128, dtype=torch.float16)
     mrope_section = [16, 24, 24]
     
-    try:
-        q_embed_multimodal, k_embed_multimodal = apply_multimodal_rotary_pos_emb_pto_impl(
-            q_multimodal, k_multimodal, cos_multimodal, sin_multimodal, mrope_section
-        )
-        
-        print(f"\nMultimodal RoPE:")
-        print(f"  q_embed shape: {q_embed_multimodal.shape}")
-        print(f"  k_embed shape: {k_embed_multimodal.shape}")
-        print(f"  q_embed device: {q_embed_multimodal.device}")
-        print(f"[TEST_PASS] Multimodal RoPE PyPTO kernel works")
-    except Exception as e:
-        print(f"[TEST_ERROR] Multimodal RoPE: {e}")
-        import traceback
-        traceback.print_exc()
+    q_embed, k_embed = apply_multimodal_rotary_pos_emb_impl(q, k, cos, sin, mrope_section)
+    
+    print(f"\n输入 shape:")
+    print(f"  q: {q.shape}, dtype: {q.dtype}")
+    print(f"  k: {k.shape}, dtype: {k.dtype}")
+    print(f"  cos: {cos.shape}")
+    print(f"  sin: {sin.shape}")
+    
+    print(f"\n输出 shape:")
+    print(f"  q_embed: {q_embed.shape}, dtype: {q_embed.dtype}")
+    print(f"  k_embed: {k_embed.shape}, dtype: {k_embed.dtype}")
+    
+    print(f"\n输出 range:")
+    print(f"  q_embed: [{q_embed.min().item():.4f}, {q_embed.max().item():.4f}]")
+    print(f"  k_embed: [{k_embed.min().item():.4f}, {k_embed.max().item():.4f}]")

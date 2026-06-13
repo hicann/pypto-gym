@@ -1,39 +1,43 @@
 #!/usr/bin/env python3
+# coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance of the License.
+# Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Spatial-SSRL-3B PyPTO 算子库
+Spatial-SSRL-3B PyPTO 融合算子库
 
-使用方式:
-    import sys
-    sys.path.insert(0, model_path)
-    import spatial_ssrl_3b_pto_kernels as pto_kernels
-    sys.modules["spatial_ssrl_3b_pto_kernels"] = pto_kernels
-    pto_kernels.USE_PTO_RMS_NORM = True
-    
-    # 之后加载模型，modeling 会自动获取 pto_kernels
+实际集成的算子：
+- RMSNorm (PyPTO 融合版): pypto.rms_norm 融合实现，替代 PyTorch fp32 的 pow+mean+rsqrt 路径
+- RoPE (vision + multimodal): apply_rotary_pos_emb_vision / apply_multimodal_rotary_pos_emb
+
+融合范围：
+- RMSNorm: mean(x^2) + rsqrt(mean+eps) + x * rsqrt * weight
+- RoPE vision: rotate_half + apply_rotary_pos_emb
+- RoPE multimodal: temporal + height + width 三维位置编码的 rotary embedding
+
+应用场景：
+- Spatial-SSRL-3B 模型 (基于 Qwen2.5-VL) 的 text decoder RMSNorm 层
+- 通过 sys.modules["pto_kernels"] 注入 USE_PTO_RMS_NORM 开关和 rms_norm_wrapper 函数
+
+注入方式：
+- sys.modules["pto_kernels"] 提供 USE_PTO_RMS_NORM 开关和 rms_norm_wrapper 函数
+- 与 gutenocr_3b、qwen3_vl_8b、phi_3_mini 共享 "pto_kernels" 模块名，确保每进程仅加载一个模型
 """
-from .rms_norm import rms_norm_pto_wrapper
-from .rope import (
-    apply_rotary_pos_emb_vision_pto_impl,
-    apply_multimodal_rotary_pos_emb_pto_impl,
-    USE_PTO_ROPE
-)
 
 USE_PTO_RMS_NORM = False
-USE_PTO_ROPE = False
+
+from .rms_norm.rms_norm_impl import rms_norm_impl
+from .rope.rope_impl import apply_rotary_pos_emb_vision_impl, apply_multimodal_rotary_pos_emb_impl
 
 __all__ = [
-    "USE_PTO_RMS_NORM", 
-    "USE_PTO_ROPE",
-    "rms_norm_pto_wrapper",
-    "apply_rotary_pos_emb_vision_pto_impl",
-    "apply_multimodal_rotary_pos_emb_pto_impl"
+    'USE_PTO_RMS_NORM',
+    'rms_norm_impl',
+    'apply_rotary_pos_emb_vision_impl',
+    'apply_multimodal_rotary_pos_emb_impl',
 ]

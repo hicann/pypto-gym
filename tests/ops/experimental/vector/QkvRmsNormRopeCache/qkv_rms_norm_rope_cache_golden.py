@@ -18,12 +18,9 @@ SplitVD -> RMSNorm(q, k) -> half-and-half RoPE(q, k) -> PA_NZ cache scatter.
 from __future__ import annotations
 
 import collections
-import importlib
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
-if TYPE_CHECKING:
-    import torch
-
+import torch
 
 QkvSizeInfo = collections.namedtuple(
     "QkvSizeInfo",
@@ -34,6 +31,50 @@ QkvNormRopeCacheOutput = collections.namedtuple(
     "QkvNormRopeCacheOutput",
     ["q_new", "k_new", "v_new", "q_extra", "k_extra", "v_extra"],
 )
+
+
+QKV_GOLDEN_ARG_NAMES = (
+    "index", "q_out", "k_cache", "v_cache", "k_scale", "v_scale", "k_offset",
+    "v_offset", "qkv_size", "head_nums", "epsilon", "cache_mode", "is_output_qkv",
+)
+QkvGoldenArgs = collections.namedtuple("QkvGoldenArgs", QKV_GOLDEN_ARG_NAMES)
+
+
+def _pop_cos_sin_args(args: tuple, kwargs: dict) -> tuple[torch.Tensor, torch.Tensor, tuple]:
+    rest = args
+    if rest:
+        cos = rest[0]
+        rest = rest[1:]
+    elif "cos" in kwargs:
+        cos = kwargs.pop("cos")
+    else:
+        raise TypeError("missing required argument: cos")
+
+    if rest:
+        sin = rest[0]
+        rest = rest[1:]
+    elif "sin" in kwargs:
+        sin = kwargs.pop("sin")
+    else:
+        raise TypeError("missing required argument: sin")
+    return cos, sin, rest
+
+
+def _parse_golden_args(args: tuple, kwargs: dict) -> QkvGoldenArgs:
+    defaults = dict(
+        k_scale=None, v_scale=None, k_offset=None, v_offset=None,
+        qkv_size=(), head_nums=(), epsilon=1e-6, cache_mode="PA_NZ", is_output_qkv=False,
+    )
+    if len(args) > len(QKV_GOLDEN_ARG_NAMES):
+        raise TypeError("too many positional arguments")
+    values = {**defaults, **dict(zip(QKV_GOLDEN_ARG_NAMES, args))}
+    values.update({name: kwargs.pop(name) for name in list(kwargs) if name in QKV_GOLDEN_ARG_NAMES})
+    if kwargs:
+        raise TypeError(f"unexpected keyword argument(s): {sorted(kwargs)}")
+    missing = [name for name in QKV_GOLDEN_ARG_NAMES[:4] if name not in values]
+    if missing:
+        raise TypeError(f"missing required argument(s): {missing}")
+    return QkvGoldenArgs(*(values.get(name) for name in QKV_GOLDEN_ARG_NAMES))
 
 
 def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> QkvSizeInfo:
@@ -103,16 +144,18 @@ def scatter_pa_nz_torch(cache: torch.Tensor, index: torch.Tensor, src: torch.Ten
     return out
 
 
-def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments
+def qkv_rms_norm_rope_cache_golden(
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,
     *args,
     **kwargs,
 ):
-    if cache_mode != "PA_NZ":
-        raise ValueError(f"only PA_NZ cache_mode is supported, got {cache_mode}")
-    result = _check_qkv_size(qkv_size, head_nums)
+    cos, sin, args = _pop_cos_sin_args(args, kwargs)
+    runtime = _parse_golden_args(args, kwargs)
+    if runtime.cache_mode != "PA_NZ":
+        raise ValueError(f"only PA_NZ cache_mode is supported, got {runtime.cache_mode}")
+    result = _check_qkv_size(runtime.qkv_size, runtime.head_nums)
     batch = result.batch
     seq = result.seq
     dim = result.dim
@@ -134,19 +177,19 @@ def qkv_rms_norm_rope_cache_golden(  # pylint: disable=huawei-too-many-arguments
     q_rope = rope_torch(q_norm, cos.reshape(tokens, dim), sin.reshape(tokens, dim))
     k_rope = rope_torch(k_norm, cos.reshape(tokens, dim), sin.reshape(tokens, dim))
 
-    q_new = q_rope.reshape(tokens, num_q * dim).to(q_out.dtype)
-    if k_cache.dtype != importlib.import_module("torch").int8 or v_cache.dtype != importlib.import_module("torch").int8:
+    q_new = q_rope.reshape(tokens, num_q * dim).to(runtime.q_out.dtype)
+    if runtime.k_cache.dtype != torch.int8 or runtime.v_cache.dtype != torch.int8:
         raise ValueError("current reference only supports int8 k_cache/v_cache")
     if runtime.k_scale is None or runtime.v_scale is None:
         raise ValueError("k_scale and v_scale are required when k_cache/v_cache are int8")
     if runtime.k_offset is not None or runtime.v_offset is not None:
         raise ValueError("current reference only supports symmetric quantization")
-    k_src = quant_to_int8_torch(k_rope, k_scale, None)
-    v_src = quant_to_int8_torch(v, v_scale, None)
-    k_new = scatter_pa_nz_torch(k_cache, index, k_src)
-    v_new = scatter_pa_nz_torch(v_cache, index, v_src)
+    k_src = quant_to_int8_torch(k_rope, runtime.k_scale, None)
+    v_src = quant_to_int8_torch(v, runtime.v_scale, None)
+    k_new = scatter_pa_nz_torch(runtime.k_cache, runtime.index, k_src)
+    v_new = scatter_pa_nz_torch(runtime.v_cache, runtime.index, v_src)
 
-    if is_output_qkv:
+    if runtime.is_output_qkv:
         return QkvNormRopeCacheOutput(q_new, k_new, v_new, q_new.clone(),
                                       k_rope.reshape(tokens, num_k * dim), v.reshape(tokens, num_v * dim))
     return QkvNormRopeCacheOutput(q_new, k_new, v_new, None, None, None)

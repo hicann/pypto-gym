@@ -158,7 +158,7 @@ _TQBMM_TEST_CONFIGS = [
     ),
 ]
 
-@pytest.mark.soc("950")
+
 @pytest.mark.parametrize("tile_config", _TQBMM_TEST_CONFIGS)
 def test_transpose_quant_batch_matmul(tile_config):
     """

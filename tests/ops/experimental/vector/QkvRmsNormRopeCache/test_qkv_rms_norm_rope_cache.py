@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import importlib
 import json
 import logging
 import os
@@ -33,13 +34,7 @@ QkvNormRopeInputs = collections.namedtuple(
 )
 
 
-QkvNormRopeInputs = collections.namedtuple(
-    "QkvNormRopeInputs",
-    ["qkv", "q_gamma", "k_gamma", "cos", "sin", "index",
-     "q_out", "k_cache", "v_cache", "k_scale", "v_scale"],
-)
-
-
+LOGGER = logging.getLogger(__name__)
 CASE_FILE = Path(__file__).with_name("test_cases.json")
 P0_SHAPE_MARKERS = [[8, 2304], [2, 9216]]
 THIS_DIR = Path(__file__).resolve().parent
@@ -99,19 +94,21 @@ def make_inputs(case: Dict, device: torch.device):
         raise ValueError("current network cases require int8 cache_dtype")
     cache_dtype = torch.int8
     k_cache = torch.zeros(
-    case["block_num"],
-    num_k * dim // c0,
-    case["block_size"],
-    c0,
-    dtype=cache_dtype,
-     device=device)
+        case["block_num"],
+        num_k * dim // c0,
+        case["block_size"],
+        c0,
+        dtype=cache_dtype,
+        device=device,
+    )
     v_cache = torch.zeros(
-    case["block_num"],
-    num_v * dim // c0,
-    case["block_size"],
-    c0,
-    dtype=cache_dtype,
-     device=device)
+        case["block_num"],
+        num_v * dim // c0,
+        case["block_size"],
+        c0,
+        dtype=cache_dtype,
+        device=device,
+    )
     if cache_dtype == torch.int8:
         k_scale = (torch.rand(num_k, dim, dtype=torch.float32, device=device) * 0.1) + 0.1
         v_scale = (torch.rand(num_v, dim, dtype=torch.float32, device=device) * 0.1) + 0.1
@@ -163,10 +160,9 @@ def run_single_case(case: Dict):
             )
         except AssertionError:
             diff = (actual.to(torch.float32) - expected.to(torch.float32)).abs()
-            print(
-                f"output {idx} mismatch: max_diff={float(diff.max())}, "
-                f"actual_nonzero={int(actual.count_nonzero())}, "
-                f"expected_nonzero={int(expected.count_nonzero())}"
+            LOGGER.error(
+                "output %s mismatch: max_diff=%s, actual_nonzero=%s, expected_nonzero=%s",
+                idx, float(diff.max()), int(actual.count_nonzero()), int(expected.count_nonzero())
             )
             raise
     return result
@@ -208,10 +204,9 @@ def run_benchmark_case(case: Dict, warmup: int, repeat: int):
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     avg_ms = elapsed_ms / repeat
     tokens = int(case["qkv_size"][0]) * int(case["qkv_size"][1])
-    print(
-        f"[PERF] {case['id']} avg_ms={avg_ms:.6f} "
-        f"repeat={repeat} warmup={warmup} tokens={tokens} "
-        f"ms_per_token={avg_ms / tokens:.6f}"
+    LOGGER.info(
+        "[PERF] %s avg_ms=%.6f repeat=%s warmup=%s tokens=%s ms_per_token=%.6f",
+        case["id"], avg_ms, repeat, warmup, tokens, avg_ms / tokens,
     )
 
 

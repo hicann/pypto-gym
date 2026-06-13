@@ -9,28 +9,26 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-# 1. Python 标准库
 import os
-import sys
 import logging
 import math
 from dataclasses import dataclass, replace
 
-# 路径追加（放在标准库之后、三方库之前，属于运行时路径配置）
+import torch
+import torch_npu
+
+import sys
+import os
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
-# 2. 第三方库
-import torch
-import torch_npu
 import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose
 
-# 3. 项目自定义模块
 from experimental.attention.pfa_flash_attention_impl import prompt_flash_attention
 
 

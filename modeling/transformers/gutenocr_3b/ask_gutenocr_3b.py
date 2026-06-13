@@ -161,8 +161,9 @@ else:
 print("\n[模型加载]")
 start_load = time.time()
 
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 
-model = GutenOcr_3b_VLForConditionalGeneration.from_pretrained(
+model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     args.model_path,
     torch_dtype=torch.bfloat16,
     device_map={"": device},

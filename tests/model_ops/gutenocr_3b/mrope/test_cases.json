@@ -1,0 +1,64 @@
+{
+  "op_name": "mrope",
+  "source": "GutenOCR-3B (Qwen2.5-VL-3B)",
+  "description": "Multimodal RoPE 算子真实测试用例（打点采集）",
+  "test_cases": [
+    {
+      "id": "case_001",
+      "description": "prefill阶段 attention层MRoPE",
+      "seed": 42,
+      "input": {
+        "q": {"shape": [1, 16, 11, 128], "dtype": "bfloat16"},
+        "k": {"shape": [1, 2, 11, 128], "dtype": "bfloat16"},
+        "cos": {"shape": [3, 1, 11, 128], "dtype": "bfloat16"},
+        "sin": {"shape": [3, 1, 11, 128], "dtype": "bfloat16"},
+        "mrope_section": {"value": [16, 24, 24]},
+        "unsqueeze_dim": {"value": 1}
+      },
+      "output": {
+        "q_embed": {"shape": [1, 16, 11, 128], "dtype": "bfloat16"},
+        "k_embed": {"shape": [1, 2, 11, 128], "dtype": "bfloat16"}
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_002",
+      "description": "decode阶段 attention层MRoPE",
+      "seed": 42,
+      "input": {
+        "q": {"shape": [1, 16, 1, 128], "dtype": "bfloat16"},
+        "k": {"shape": [1, 2, 1, 128], "dtype": "bfloat16"},
+        "cos": {"shape": [3, 1, 1, 128], "dtype": "bfloat16"},
+        "sin": {"shape": [3, 1, 1, 128], "dtype": "bfloat16"},
+        "mrope_section": {"value": [16, 24, 24]},
+        "unsqueeze_dim": {"value": 1}
+      },
+      "output": {
+        "q_embed": {"shape": [1, 16, 1, 128], "dtype": "bfloat16"},
+        "k_embed": {"shape": [1, 2, 1, 128], "dtype": "bfloat16"}
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    },
+    {
+      "id": "case_003",
+      "description": "batch=4 prefill阶段",
+      "seed": 42,
+      "input": {
+        "q": {"shape": [4, 16, 11, 128], "dtype": "bfloat16"},
+        "k": {"shape": [4, 2, 11, 128], "dtype": "bfloat16"},
+        "cos": {"shape": [3, 4, 11, 128], "dtype": "bfloat16"},
+        "sin": {"shape": [3, 4, 11, 128], "dtype": "bfloat16"},
+        "mrope_section": {"value": [16, 24, 24]},
+        "unsqueeze_dim": {"value": 1}
+      },
+      "output": {
+        "q_embed": {"shape": [4, 16, 11, 128], "dtype": "bfloat16"},
+        "k_embed": {"shape": [4, 2, 11, 128], "dtype": "bfloat16"}
+      },
+      "rtol": 1e-2,
+      "atol": 1e-2
+    }
+  ]
+}

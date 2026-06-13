@@ -21,9 +21,9 @@ Qwen3-1.7B PyPTO 融合算子库 - 实际集成版本
 - q_norm/k_norm: 在部分融合 kernel 中完成（USE_PTO_ROPE=True）
 """
 
-from .rms_norm_rope.rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
 USE_PTO_ROPE = False
 
+from .rope.rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
 
 __all__ = [
     'USE_PTO_ROPE',
