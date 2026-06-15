@@ -49,9 +49,8 @@ from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_g
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 
 
-NUM_HEADS = 8
-HEAD_DIM = 64
-HIDDEN_DIM = NUM_HEADS * HEAD_DIM
+NUM_HEADS_DEFAULT = 8
+HEAD_DIM_DEFAULT = 64
 # KV 序列维度的分块大小 (全局配置常量)
 S1_TILE = 2048
 S2_TILE = 2048
@@ -155,13 +154,13 @@ def _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_
     if batch_size is None:
         batch_size = 1
     if num_heads is None:
-        num_heads = NUM_HEADS
+        num_heads = NUM_HEADS_DEFAULT
     if s1_size is None:
         s1_size = 320
     if s2_size is None:
         s2_size = s1_size
     if dim is None:
-        dim = HEAD_DIM
+        dim = HEAD_DIM_DEFAULT
     if q_seqlens is not None:
         batch_size = len(q_seqlens)
         s1_size = max(q_seqlens)

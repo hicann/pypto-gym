@@ -48,9 +48,8 @@ from experimental.ops_transformer.flash_attention_mha_grad.flash_attention_mha_g
 logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 
 
-NUM_HEADS = 8
-HEAD_DIM = 64
-HIDDEN_DIM = NUM_HEADS * HEAD_DIM
+NUM_HEADS_DEFAULT = 8
+HEAD_DIM_DEFAULT = 64
 S1_TILE = 1024
 S2_TILE = 1024
 
@@ -138,13 +137,13 @@ def _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_
     if batch_size is None:
         batch_size = 1
     if num_heads is None:
-        num_heads = NUM_HEADS
+        num_heads = NUM_HEADS_DEFAULT
     if s1_size is None:
         s1_size = 320
     if s2_size is None:
         s2_size = s1_size
     if dim is None:
-        dim = HEAD_DIM
+        dim = HEAD_DIM_DEFAULT
     if q_seqlens is not None:
         batch_size = len(q_seqlens)
         s1_size = max(q_seqlens)
@@ -204,9 +203,9 @@ def _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum,
 
 def _compute_golden(batch_size, num_heads, dim, q, k, v, o_out, do_t,
                      q_cumsum, kv_cumsum, total_q, total_kv, device, scale):
-    dq_golden = torch.empty(total_q, HIDDEN_DIM, dtype=torch.float32, device=device)
-    dk_golden = torch.empty(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
-    dv_golden = torch.empty(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dq_golden = torch.empty(total_q, num_heads * dim, dtype=torch.float32, device=device)
+    dk_golden = torch.empty(total_kv, num_heads * dim, dtype=torch.float32, device=device)
+    dv_golden = torch.empty(total_kv, num_heads * dim, dtype=torch.float32, device=device)
     for b in range(batch_size):
         q_off = q_cumsum[b]
         kv_off = kv_cumsum[b]
@@ -302,9 +301,9 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum,
                        l_out, m_out, o_out, scale)
 
-    dq_out = torch.zeros(total_q, HIDDEN_DIM, dtype=torch.float32, device=device)
-    dk_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
-    dv_out = torch.zeros(total_kv, HIDDEN_DIM, dtype=torch.float32, device=device)
+    dq_out = torch.zeros(total_q, hidden_dim, dtype=torch.float32, device=device)
+    dk_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
+    dv_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
 
     dq_golden, dk_golden, dv_golden = _compute_golden(
         batch_size, num_heads, dim, q, k, v, o_out, do_t,
