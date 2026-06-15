@@ -363,7 +363,7 @@ def get_case_config(case_name: str):
     test_case_config = {
         "sfa_bf16_b4_s2_seq64K_total_fp8_d": ((4, 128, 1, 2), 1, [65536, 16381, 666, 15]),
         "sfa_bf16_b4_s2_seq64K_per_fp8_d": ((4, 128, 1, 2), 1, [65536] * 4),
-        "sfa_bf16_b1_s256_seq64k_fp8_p": ((1, 128, 1, 256), 1, [65536]),
+        "sfa_bf16_b1_s256_seq64K_fp8_p": ((1, 128, 1, 256), 1, [65536]),
     }
     case_config = test_case_config.get(case_name)
     return case_config
