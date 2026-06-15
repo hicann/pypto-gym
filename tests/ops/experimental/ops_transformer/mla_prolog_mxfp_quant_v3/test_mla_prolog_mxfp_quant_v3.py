@@ -299,7 +299,7 @@ def _compute_kv_rope_cache_path(inputs, t, h, kv_lora_rank, qk_rope_head_dim, qk
         pertoken_scale_dtype=torch.float8_e8m0fnu, scale_dtype=torch.float8_e8m0fnu, group_sizes=[1, 1, 32])
     else:
         # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现与x86平台不一致，通过升精度保证正确性
-        kv_a_proj = torch.matmul(x_2d.to(torch.float32),
+        kv_a_proj = torch.matmul(x.to(torch.float32),
                                  w_dkvkr.to(torch.float32))  # [b * s, kv_lora_rank + qk_rope_head_dim]
 
     kv_a_proj = kv_a_proj.to(dtype)
@@ -674,13 +674,13 @@ def _compare_mla_prolog_results(output_data, goldens):
     output_q_nope_data, output_q_rope_data, output_kv_cache_data, output_kr_cache_data = output_data
     golden1, golden2, golden3, golden4 = goldens
     logging.info("qNope =======")
-    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", 0.005, 0.0078125, 0.005)
+    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     logging.info("qRope =======")
-    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", 0.005, 0.0078125, 0.005)
+    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     logging.info("kv =======")
-    compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", 0.0001, 0.0078125, 0)
+    compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
     logging.info("kr =======")
-    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", 0.0001, 0.0078125, 0)
+    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
 
 
 def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, \
