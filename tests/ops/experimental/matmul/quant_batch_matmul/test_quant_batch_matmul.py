@@ -9,8 +9,6 @@
 
 
 
-import torch_npu  # noqa: F401  # must import before pypto kernel collection
-
 import argparse
 import os
 import random
@@ -19,6 +17,7 @@ from dataclasses import dataclass
 
 import pytest
 import torch
+import torch_npu  # noqa: F401  # must import before pypto kernel collection
 from numpy.testing import assert_allclose
 
 _p = os.path.dirname(__file__)
@@ -28,7 +27,6 @@ sys.path.insert(0, os.path.join(_p, "src"))
 sys.path.insert(0, os.path.join(_p, "src", "pypto_gym", "ops", "pypto_tile"))
 
 import pypto
-from quant_batch_matmul_golden import gen_golden
 from experimental.matmul.quant_batch_matmul.quant_batch_matmul_impl import (
     QuantBatchMatmulConfig,
     QuantBatchMatmulInputs,
@@ -38,6 +36,7 @@ from experimental.matmul.quant_batch_matmul.quant_batch_matmul_impl import (
     get_x2_shape,
     quant_batch_matmul,
 )
+from quant_batch_matmul_golden import gen_golden
 
 
 @dataclass(frozen=True)

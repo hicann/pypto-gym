@@ -27,8 +27,9 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import sys
 import os
+import sys
+
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -48,12 +49,11 @@ from numpy.testing import assert_allclose
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+from experimental.vector.InterleaveRope.interleave_rope_impl import interleave_rope_wrapper  # noqa: E402
 from interleave_rope_golden import interleave_rope_golden
-from experimental.vector.InterleaveRope.interleave_rope_impl import interleave_rope_wrapper    # noqa: E402
-
 
 DTYPE_MAP = {
-    "float16":  torch.float16,
+    "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
 

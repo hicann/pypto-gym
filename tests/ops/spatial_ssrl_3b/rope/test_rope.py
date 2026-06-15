@@ -19,13 +19,12 @@ RoPE PyPTO Implementation 精度测试脚本
 
 """
 
+import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
-
-import json
-import argparse
 import torch
 import torch_npu
 
@@ -39,10 +38,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 try:
-    from rope_golden import (
-        apply_rotary_pos_emb_vision_golden,
-        apply_multimodal_rotary_pos_emb_golden
-    )
+    from rope_golden import apply_multimodal_rotary_pos_emb_golden, apply_rotary_pos_emb_vision_golden
 except ImportError:
     _p = os.path.dirname(__file__)
     sys.path.insert(0, _p)
@@ -52,8 +48,8 @@ except ImportError:
     )
 
 from spatial_ssrl_3b.rope.rope_impl import (
+    apply_multimodal_rotary_pos_emb_pto_impl,
     apply_rotary_pos_emb_vision_pto_impl,
-    apply_multimodal_rotary_pos_emb_pto_impl
 )
 
 
@@ -87,7 +83,7 @@ def run_single_case(case_data):
     inputs = case_data["input"]
     rope_type = inputs.get("rope_type", "multimodal")
     
-    dtype = dtype_map[inputs["q"]["dtype"]]
+    dtype = dtype_map.get(inputs["q"]["dtype"], torch.float16)
     
     q = torch.randn(inputs["q"]["shape"], dtype=dtype).npu()
     k = torch.randn(inputs["k"]["shape"], dtype=dtype).npu()
@@ -135,7 +131,7 @@ def run_single_case(case_data):
     
     expected_q_shape = case_data["output"]["q_shape"]
     expected_k_shape = case_data["output"]["k_shape"]
-    expected_dtype = dtype_map[case_data["output"]["dtype"]]
+    expected_dtype = dtype_map.get(case_data["output"]["dtype"], torch.float16)
     
     assert q_impl.shape == torch.Size(expected_q_shape), \
         f"q shape mismatch: {q_impl.shape} vs {expected_q_shape}"

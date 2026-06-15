@@ -169,18 +169,18 @@ def gen_golden(inputs: GmmGoldenInputs) -> torch.Tensor:
         # Extract input tensor for current group based on transposition
         if a_trans:
             x = a[begin:end, :]
-            scaled_x_golden = scaled_a[scale_offset : scale_offset + scale_length, :, :]
+            scaled_x_golden = scaled_a[scale_offset: scale_offset + scale_length, :, :]
         else:
             x = a[:, begin:end]
-            scaled_x_golden = scaled_a[:, scale_offset : scale_offset + scale_length, :]
+            scaled_x_golden = scaled_a[:, scale_offset: scale_offset + scale_length, :]
 
         # Extract weight tensor for current group based on transposition
         if b_trans:
             weight = b[:, begin:end]  # b is [N, K], split K-axis = split second dimension
-            scaled_weight_golden = scaled_b[:, scale_offset : scale_offset + scale_length, :]
+            scaled_weight_golden = scaled_b[:, scale_offset: scale_offset + scale_length, :]
         else:
             weight = b[begin:end, :]  # b is [K, N], split K-axis = split first dimension
-            scaled_weight_golden = scaled_b[scale_offset : scale_offset + scale_length, :, :]
+            scaled_weight_golden = scaled_b[scale_offset: scale_offset + scale_length, :, :]
 
         # Compute golden result for current group
         golden_temp = compute_golden_result(

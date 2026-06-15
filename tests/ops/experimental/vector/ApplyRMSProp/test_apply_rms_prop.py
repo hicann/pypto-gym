@@ -12,14 +12,13 @@ import argparse
 import importlib
 import logging
 import os
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 import torch_npu  # noqa: F401
 
-import sys
-import os
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)

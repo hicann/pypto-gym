@@ -28,8 +28,8 @@ import torch_npu
 
 def rotate_half_torch(x):
     """rotate_half torch实现"""
-    x1 = x[..., :x.shape[-1]//2]
-    x2 = x[..., x.shape[-1]//2:]
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
     return torch.cat([-x2, x1], dim=-1)
 
 

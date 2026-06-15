@@ -20,8 +20,9 @@ Template notes:
   - Exported function Sigmoid_golden() for test_sigmoid.py.
 """
 
-import torch
 from typing import List
+
+import torch
 
 
 def Sigmoid_golden(x: torch.Tensor) -> torch.Tensor:

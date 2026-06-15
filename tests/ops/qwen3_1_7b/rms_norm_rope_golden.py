@@ -18,6 +18,7 @@ Qwen3-1.7B RMSNorm + RoPE Golden 参考实现
 2. RoPE (Rotary Position Embedding)
 """
 
+import logging
 import torch
 
 
@@ -95,6 +96,7 @@ def rms_norm_rope_golden(
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     torch.manual_seed(42)
     
     S, N_q, N_k, D = 16, 16, 8, 128
@@ -109,12 +111,12 @@ if __name__ == "__main__":
     out_q = rms_norm_rope_golden(x_q, cos, sin, w_norm, eps)
     out_k = rms_norm_rope_golden(x_k, cos, sin, w_norm, eps)
     
-    print(f"Input Q shape: {x_q.shape}, dtype: {x_q.dtype}")
-    print(f"Input K shape: {x_k.shape}, dtype: {x_k.dtype}")
-    print(f"Output Q shape: {out_q.shape}, dtype: {out_q.dtype}")
-    print(f"Output K shape: {out_k.shape}, dtype: {out_k.dtype}")
+    logging.info(f"Input Q shape: {x_q.shape}, dtype: {x_q.dtype}")
+    logging.info(f"Input K shape: {x_k.shape}, dtype: {x_k.dtype}")
+    logging.info(f"Output Q shape: {out_q.shape}, dtype: {out_q.dtype}")
+    logging.info(f"Output K shape: {out_k.shape}, dtype: {out_k.dtype}")
     
     assert out_q.shape == torch.Size([S, N_q, D])
     assert out_k.shape == torch.Size([S, N_k, D])
     
-    print("Golden 自检通过")
+    logging.info("Golden 自检通过")

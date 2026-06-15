@@ -42,18 +42,18 @@ Test cases (8 total, mixed Nv=4/8):
     - aligned_single_chunk_L32 (B=1, Nqk=2, Nv=4, T=32)
 """
 
+import json
+import logging
 import os
 import re
 import sys
-import json
 import time
-import logging
+from pathlib import Path
 
+import numpy as np
 import torch
 import torch_npu
-import numpy as np
 from numpy.testing import assert_allclose
-from pathlib import Path
 
 _CUR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_CUR))
@@ -62,7 +62,6 @@ sys.path.insert(0, str(_IMPL))
 
 from chunked_gated_delta_rule_golden import chunked_gated_delta_rule_golden
 from chunked_gated_delta_rule_impl import chunked_gated_delta_rule_wrapper
-
 
 # ═══════════════════════════════════════════════════════════════════
 # Inlined perf_test_utils: Environment configuration

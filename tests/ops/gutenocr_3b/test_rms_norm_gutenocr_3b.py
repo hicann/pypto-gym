@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import json
+import logging
 import pytest
 import torch
 import torch_npu
@@ -68,9 +69,9 @@ def run_single_case(case_data):
     case_id = case_data["id"]
     description = case_data.get("description", "")
 
-    print("\n" + "=" * 60)
-    print(f"Test: {case_id} — {description}")
-    print("=" * 60)
+    logging.info("\n" + "=" * 60)
+    logging.info(f"Test: {case_id} — {description}")
+    logging.info("=" * 60)
 
     if torch.npu.is_available():
         dev_id = os.environ.get('TILE_FWK_DEVICE_ID', '0')
@@ -97,9 +98,9 @@ def run_single_case(case_data):
 
     output_impl = rms_norm_pto_native(hidden_states_npu, weight_npu, eps)
 
-    print("\n[精度验证 - output]")
+    logging.info("\n[精度验证 - output]")
     output_diff = torch.abs(output_golden - output_impl).max().item()
-    print(f"  Max diff: {output_diff:.6e}")
+    logging.info(f"  Max diff: {output_diff:.6e}")
 
     rtol = case_data.get("rtol", 1e-2)
     atol = case_data.get("atol", 1e-2)
@@ -110,14 +111,16 @@ def run_single_case(case_data):
         assert_allclose(output_impl_fp32.numpy(), output_golden_fp32.numpy(), rtol=rtol, atol=atol)
     else:
         assert_allclose(output_impl.cpu().numpy(), output_golden.cpu().numpy(), rtol=rtol, atol=atol)
-    print(f"[PRECISION_PASS] output diff < {rtol}")
+    logging.info(f"[PRECISION_PASS] output diff < {rtol}")
 
     outputs = case_data["output"]
 
     expected_output_shape = torch.Size(outputs["output"]["shape"])
     expected_output_dtype = dtype_map[outputs["output"]["dtype"]]
-    assert output_impl.shape == expected_output_shape, f"output shape mismatch: {output_impl.shape} vs {expected_output_shape}"
-    assert output_impl.dtype == expected_output_dtype, f"output dtype mismatch: {output_impl.dtype} vs {expected_output_dtype}"
+    assert output_impl.shape == expected_output_shape, \
+        f"output shape mismatch: {output_impl.shape} vs {expected_output_shape}"
+    assert output_impl.dtype == expected_output_dtype, \
+        f"output dtype mismatch: {output_impl.dtype} vs {expected_output_dtype}"
 
 
 @pytest.mark.parametrize("case_data", load_test_cases(), ids=lambda c: c["id"])
@@ -126,4 +129,5 @@ def test_rms_norm(case_data):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     pytest.main([__file__, "-v", "-s"])

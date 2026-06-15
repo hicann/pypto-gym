@@ -27,8 +27,8 @@ Usage:
   python TEST/test_bsa_fwd.py --cases quick       # only S256+S512+B2S256 (fast)
 """
 
-import sys
 import os
+import sys
 import time
 
 import torch
@@ -65,19 +65,23 @@ for _sub in ('common', 'FWD', 'BWD'):
         sys.path.insert(0, _p)
 
 from bsa_test_utils import (
-    _check_env, logger, cfg, get_device,
-    gen_inputs, _compare_tensors,
-    _take_perf_timestamp, _collect_updated_dirs, _record_perf_from_dirs,
-    _print_perf_summary, _perf_records,
+    _check_env,
+    _collect_updated_dirs,
+    _compare_tensors,
+    _perf_records,
+    _print_perf_summary,
+    _record_perf_from_dirs,
+    _take_perf_timestamp,
+    cfg,
+    gen_inputs,
+    get_device,
+    logger,
 )
-_check_env()
 
 from bsa_fwd_golden import bsa_forward_golden
-from bsa_fwd_impl import (
-    block_sparse_attention_forward,
-    block_sparse_attention_forward_concurrent,
-)
+from bsa_fwd_impl import block_sparse_attention_forward, block_sparse_attention_forward_concurrent
 
+_check_env()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Test Cases

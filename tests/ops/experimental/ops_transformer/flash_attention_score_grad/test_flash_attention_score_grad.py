@@ -16,8 +16,9 @@ FlashAttentionScoreGrad PyPTO 算子测试
 """
 
 
-import sys
 import os
+import sys
+
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -26,21 +27,24 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import argparse
 import logging
+
+import numpy as np
 import torch
 import torch_npu  # noqa: F401
-import numpy as np
 from numpy.testing import assert_allclose
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-from flash_attention_score_grad_golden import (
-    AttentionGradInputs, generate_forward_data,
-    ForwardDataConfig, ForwardDataResult,
-    flash_attention_score_grad_golden,
-)
 from experimental.ops_transformer.flash_attention_score_grad.flash_attention_score_grad_impl import (
-    flash_attention_score_grad_wrapper
+    flash_attention_score_grad_wrapper,
+)
+from flash_attention_score_grad_golden import (
+    AttentionGradInputs,
+    ForwardDataConfig,
+    ForwardDataResult,
+    flash_attention_score_grad_golden,
+    generate_forward_data,
 )
 
 

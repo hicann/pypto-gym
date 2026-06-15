@@ -30,8 +30,9 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import sys
 import os
+import sys
+
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -51,12 +52,11 @@ from numpy.testing import assert_allclose
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+from experimental.vector.InplaceAddRmsNorm.inplace_add_rms_norm_impl import npu_inplace_add_rms_norm  # noqa: E402
 from inplace_add_rms_norm_golden import inplace_add_rms_norm_golden
-from experimental.vector.InplaceAddRmsNorm.inplace_add_rms_norm_impl import npu_inplace_add_rms_norm        # noqa: E402
-
 
 DTYPE_MAP = {
-    "float16":  torch.float16,
+    "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
 

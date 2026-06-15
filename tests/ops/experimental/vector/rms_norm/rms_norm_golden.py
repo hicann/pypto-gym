@@ -20,8 +20,9 @@ Template notes:
   - Exported function RMSNorm_golden() for test_rms_norm.py.
 """
 
-import torch
 from typing import Optional
+
+import torch
 
 # ─────────────────────────────────────────────
 # Golden reference (pure torch)
@@ -61,6 +62,7 @@ def RMSNorm_golden(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
 
 _PMARK = "\u2713 PASS"
 _FMARK = "\u2717 FAIL"
+
 
 def _validate_typical_cases():
     """Validate typical P0 cases."""

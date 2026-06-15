@@ -296,6 +296,52 @@ def _ref_segs_chunk_gated_delta_rule(query, key, value, gate, beta, act_seq_len,
     return final_attn, final_state
 
 
+def _run_single_validation_case(config, chunk_len, head_dim, mask, tril_mask, eye_aligned, eye_unaligned):
+    """Validate a single test case and return True if passed."""
+    name = config["name"]
+    batch_size = config["B"]
+    num_qk_heads = config["Nqk"]
+    num_v_heads = config["Nv"]
+    seq_len = config["T"]
+    torch.manual_seed(42)
+    query = torch.rand(seq_len, num_qk_heads, head_dim, dtype=torch.float32) * (1.3655 + 0.2785) - (1.3655 + 0.2785)
+    key = torch.rand(seq_len, num_qk_heads, head_dim, dtype=torch.float32) * (1.4664 + 0.2785) - (1.4664 + 0.2785)
+    value = torch.rand(seq_len, num_v_heads, head_dim, dtype=torch.float32) * (1.6488 + 0.2785) - (1.6488 + 0.2785)
+    beta = torch.rand(seq_len, num_v_heads, dtype=torch.float32) * (0.8927 - 0.0889) - (0.8927 - 0.0889)
+    gate = torch.rand(seq_len, num_v_heads, dtype=torch.float32) * (-0.1343 + 37.5452) - (-0.1343 + 37.5452)
+    states = torch.zeros(batch_size, num_v_heads, head_dim, head_dim, dtype=torch.float32)
+    seq_per_batch = seq_len // batch_size
+    act_seq_len = torch.tensor([i * seq_per_batch for i in range(batch_size + 1)], dtype=torch.int32)
+    is_aligned = all((int(act_seq_len[i + 1]) - int(act_seq_len[i])) % chunk_len == 0 for i in range(batch_size))
+    eye = eye_aligned if is_aligned else eye_unaligned
+    try:
+        core_attn_out, last_state_data = chunked_gated_delta_rule_golden(
+            query, key, value, beta, gate, states, mask, tril_mask, eye, act_seq_len, chunk_size=chunk_len)
+        shape_ok = (core_attn_out.shape == (seq_len, num_v_heads, head_dim) and
+                    last_state_data.shape == (batch_size, num_v_heads, head_dim, head_dim))
+        nan_ok = (not torch.isnan(core_attn_out).any() and not torch.isinf(core_attn_out).any() and
+                  not torch.isnan(last_state_data).any() and not torch.isinf(last_state_data).any())
+        nonzero_ok = core_attn_out.abs().sum().item() > 0
+        if shape_ok and nan_ok and nonzero_ok:
+            print(f"  {name}: batch_size={batch_size}, num_qk_heads={num_qk_heads}, "
+                  f"num_v_heads={num_v_heads}, seq_len={seq_len} ({config['desc']}) ... ✓ PASS")
+            return True
+        reasons = []
+        if not shape_ok:
+            reasons.append("shape mismatch")
+        if not nan_ok:
+            reasons.append("NaN/Inf detected")
+        if not nonzero_ok:
+            reasons.append("output is all zeros")
+        print(f"  {name}: batch_size={batch_size}, num_qk_heads={num_qk_heads}, "
+              f"num_v_heads={num_v_heads}, seq_len={seq_len} ... ✗ FAIL: {', '.join(reasons)}")
+        return False
+    except Exception as e:
+        print(f"  {name}: batch_size={batch_size}, num_qk_heads={num_qk_heads}, "
+              f"num_v_heads={num_v_heads}, seq_len={seq_len} ... ✗ FAIL: {e}")
+        return False
+
+
 def _validate_typical_cases(L, D, mask, tril_mask, all_passed):
     """Run typical case validation."""
     inverse_shape = L // 8
@@ -305,47 +351,15 @@ def _validate_typical_cases(L, D, mask, tril_mask, all_passed):
     configs = [
         {"name": "功能_P0_single_aligned", "B": 1, "Nqk": 2, "Nv": 4, "T": 128, "desc": "1 chunk, aligned, no GQA"},
         {"name": "功能_P0_multi_chunk_aligned", "B": 1, "Nqk": 2, "Nv": 4, "T": 256, "desc": "2 chunks, aligned"},
-        {"name": "功能_P0_unaligned", "B": 1, "Nqk": 2, "Nv": 4, "T": 130, "desc": "unaligned (1 full + 1 partial chunk)"},
+        {"name": "功能_P0_unaligned", "B": 1, "Nqk": 2, "Nv": 4, "T": 130,
+         "desc": "unaligned (1 full + 1 partial chunk)"},
         {"name": "功能_P0_GQA", "B": 1, "Nqk": 2, "Nv": 4, "T": 128, "desc": "GQA group=2"},
         {"name": "性能_P0_multi_batch", "B": 2, "Nqk": 2, "Nv": 4, "T": 512, "desc": "multi-batch + GQA, aligned"},
     ]
 
     print("\n[典型 case 验证]")
     for config in configs:
-        name = config["name"]
-        B = config["B"]
-        Nqk = config["Nqk"]
-        Nv = config["Nv"]
-        T = config["T"]
-        torch.manual_seed(42)
-        query = torch.rand(T, Nqk, D, dtype=torch.float32) * (1.3655 + 0.2785) - (1.3655 + 0.2785)
-        key = torch.rand(T, Nqk, D, dtype=torch.float32) * (1.4664 + 0.2785) - (1.4664 + 0.2785)
-        value = torch.rand(T, Nv, D, dtype=torch.float32) * (1.6488 + 0.2785) - (1.6488 + 0.2785)
-        beta = torch.rand(T, Nv, dtype=torch.float32) * (0.8927 - 0.0889) - (0.8927 - 0.0889)
-        gate = torch.rand(T, Nv, dtype=torch.float32) * (-0.1343 + 37.5452) - (-0.1343 + 37.5452)
-        states = torch.zeros(B, Nv, D, D, dtype=torch.float32)
-        seq_per_batch = T // B
-        act_seq_len = torch.tensor([i * seq_per_batch for i in range(B + 1)], dtype=torch.int32)
-        is_aligned = all((int(act_seq_len[i + 1]) - int(act_seq_len[i])) % L == 0 for i in range(B))
-        eye = eye_aligned if is_aligned else eye_unaligned
-        try:
-            core_attn_out, last_state_data = chunked_gated_delta_rule_golden(
-                query, key, value, beta, gate, states, mask, tril_mask, eye, act_seq_len, chunk_size=L)
-            shape_ok = (core_attn_out.shape == (T, Nv, D) and last_state_data.shape == (B, Nv, D, D))
-            nan_ok = (not torch.isnan(core_attn_out).any() and not torch.isinf(core_attn_out).any() and
-                      not torch.isnan(last_state_data).any() and not torch.isinf(last_state_data).any())
-            nonzero_ok = core_attn_out.abs().sum().item() > 0
-            if shape_ok and nan_ok and nonzero_ok:
-                print(f"  {name}: B={B}, Nqk={Nqk}, Nv={Nv}, T={T} ({config['desc']}) ... ✓ PASS")
-            else:
-                reasons = []
-                if not shape_ok: reasons.append(f"shape mismatch")
-                if not nan_ok: reasons.append("NaN/Inf detected")
-                if not nonzero_ok: reasons.append("output is all zeros")
-                print(f"  {name}: B={B}, Nqk={Nqk}, Nv={Nv}, T={T} ... ✗ FAIL: {', '.join(reasons)}")
-                all_passed = False
-        except Exception as e:
-            print(f"  {name}: B={B}, Nqk={Nqk}, Nv={Nv}, T={T} ... ✗ FAIL: {e}")
+        if not _run_single_validation_case(config, L, D, mask, tril_mask, eye_aligned, eye_unaligned):
             all_passed = False
     return all_passed
 

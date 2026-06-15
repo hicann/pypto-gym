@@ -32,8 +32,9 @@
     - 这些可选参数在 SPEC.md 中标记为 P2 优先级，本 golden 实现暂不处理
 """
 
-import torch
 from typing import Optional
+
+import torch
 
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）

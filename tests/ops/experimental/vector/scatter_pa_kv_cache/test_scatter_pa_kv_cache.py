@@ -159,7 +159,6 @@ def _compare_results(result_key_cache_cpu, result_value_cache_cpu,
     """Compare kernel results with golden and report precision."""
     import numpy as np
     import gc
-    import sys
     from numpy.testing import assert_allclose
 
     result_key_np = result_key_cache_cpu.float().numpy()

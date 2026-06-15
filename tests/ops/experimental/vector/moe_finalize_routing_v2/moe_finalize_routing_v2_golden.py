@@ -42,13 +42,14 @@
 
 """
 
-import torch
 from typing import Optional
 
+import torch
 
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）
 # ─────────────────────────────────────────────
+
 
 def moe_finalize_routing_v2_golden(
     expanded_x: torch.Tensor,

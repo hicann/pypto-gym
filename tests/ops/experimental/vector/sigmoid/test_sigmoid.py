@@ -10,13 +10,13 @@
 
 """PyPTO Sigmoid operator test."""
 
+import argparse
 import json
 import os
 import sys
-import argparse
 
-import torch
 import numpy as np
+import torch
 import torch_npu  # noqa: F401
 from numpy.testing import assert_allclose
 
@@ -28,13 +28,13 @@ sys.path.insert(0, os.path.join(_P, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-from sigmoid_golden import Sigmoid_golden  # noqa: E402
 from experimental.vector.sigmoid.sigmoid_impl import Sigmoid_wrapper  # noqa: E402
-
+from sigmoid_golden import Sigmoid_golden  # noqa: E402
 
 # ─────────────────────────────────────────────
 # 1. environment utilities
 # ─────────────────────────────────────────────
+
 
 def get_device_id():
     """Get TILE_FWK_DEVICE_ID from environment."""

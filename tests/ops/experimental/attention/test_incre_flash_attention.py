@@ -9,28 +9,25 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-import os
 import logging
 import math
+import os
+import sys
 from dataclasses import dataclass, replace
 
 import torch
 import torch_npu
 
-import sys
-import os
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
-import torch.nn.functional as F
 import numpy as np
-from numpy.testing import assert_allclose
-
+import torch.nn.functional as F
 from experimental.attention.incre_flash_attention_impl import incre_flash_attention
-
+from numpy.testing import assert_allclose
 
 # Configure logger for the module
 logger = logging.getLogger(__name__)

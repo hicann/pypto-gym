@@ -153,10 +153,10 @@ class AttentionGradInputs:
 
 
 def _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                    S, S_TILE, D, scale, dq_out, b, n):
+                    S, s_tile, D, scale, dq_out, b, n):
     """Pass 1: compute dQ for head (b, n)."""
-    for s1_start in range(0, S, S_TILE):
-        s1_end = min(s1_start + S_TILE, S)
+    for s1_start in range(0, S, s_tile):
+        s1_end = min(s1_start + s_tile, S)
         q_i = q_bn[s1_start:s1_end]
         dy_i = dy_bn[s1_start:s1_end]
         attn_i = attn_bn[s1_start:s1_end]
@@ -164,8 +164,8 @@ def _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
         ssum_i = ssum_bn[s1_start:s1_end]
         d_i = (dy_i * attn_i).float().sum(dim=-1, keepdim=True)
         dq_acc = None
-        for s2_start in range(0, S, S_TILE):
-            s2_end = min(s2_start + S_TILE, S)
+        for s2_start in range(0, S, s_tile):
+            s2_end = min(s2_start + s_tile, S)
             k_j = k_bn[s2_start:s2_end]
             v_j = v_bn[s2_start:s2_end]
             scores = (q_i.float() @ k_j.float().T) * scale
@@ -182,16 +182,16 @@ def _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
 
 
 def _grad_pass2_dkdv(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                      S, S_TILE, D, scale, dk_out, dv_out, b, n):
+                      S, s_tile, D, scale, dk_out, dv_out, b, n):
     """Pass 2: compute dK and dV for head (b, n)."""
-    for s2_start in range(0, S, S_TILE):
-        s2_end = min(s2_start + S_TILE, S)
+    for s2_start in range(0, S, s_tile):
+        s2_end = min(s2_start + s_tile, S)
         k_j = k_bn[s2_start:s2_end]
         v_j = v_bn[s2_start:s2_end]
         dk_acc = None
         dv_acc = None
-        for s1_start in range(0, S, S_TILE):
-            s1_end = min(s1_start + S_TILE, S)
+        for s1_start in range(0, S, s_tile):
+            s1_end = min(s1_start + s_tile, S)
             q_i = q_bn[s1_start:s1_end]
             dy_i = dy_bn[s1_start:s1_end]
             attn_i = attn_bn[s1_start:s1_end]

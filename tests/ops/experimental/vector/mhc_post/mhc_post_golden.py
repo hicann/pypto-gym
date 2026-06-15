@@ -20,8 +20,9 @@
     output = (h_post_term + h_comb_term).to(torch.bfloat16)
 """
 
-import torch
 from typing import Optional
+
+import torch
 
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）

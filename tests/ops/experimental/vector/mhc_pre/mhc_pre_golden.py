@@ -42,9 +42,10 @@ Golden 参考实现 - MHC Pre-processing 算子
   - hc_eps: float32, 默认 1e-6, sigmoid 输出的精度保护
 """
 
+from typing import Tuple
+
 import torch
 import torch.nn.functional as F
-from typing import Tuple
 
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）
@@ -90,7 +91,7 @@ def mhc_pre_golden(
             weight = h_mix * inv_rms
 
         Step 4 - Split & Unflatten:
-            h_pre, h_post, h_res = weight.split([N, N, N*N], dim=-1)
+    h_pre, h_post, h_res = weight.split([N, N, N * N], dim=-1)
             
         Step 5 - Branch Pre:
             h_res = h_res.unflatten(-1, (N, N))
@@ -137,11 +138,11 @@ def mhc_pre_golden(
 
 
     # 6. Branch Post: [B*S, N]
-    h_post = 2 * F.sigmoid(h_post * alpha[1] + bias[N:2*N].unsqueeze(0))
+    h_post = 2 * F.sigmoid(h_post * alpha[1] + bias[N:2 * N].unsqueeze(0))
 
     # 7. Branch Res: [B*S, N, N]
     # bias[2*N:].view(N, N) 是 [N, N]，会广播到 [B*S, N, N]
-    h_res = h_res * alpha[2] + bias[2*N:].view(N, N).unsqueeze(0)
+    h_res = h_res * alpha[2] + bias[2 * N:].view(N, N).unsqueeze(0)
 
     # 8. Weighted Sum: 生成 h_in
 

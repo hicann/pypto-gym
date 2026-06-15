@@ -14,12 +14,12 @@ MLA KV Prolog 精度测试脚本
 遍历 test_cases.json 执行精度对比
 """
 
+import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
-import json
-import argparse
 import torch
 import torch_npu  # noqa: F401
 
@@ -29,10 +29,9 @@ _IMPL = Path(__file__).resolve().parents[3] / "src/pypto_gym/ops/pypto_tile/deep
 sys.path.insert(0, str(_IMPL))
 
 import numpy as np
-from numpy.testing import assert_allclose
-
-from mla_prolog_golden import mla_prolog_golden
 from mla_prolog import mla_prolog_hybrid_optimized
+from mla_prolog_golden import mla_prolog_golden
+from numpy.testing import assert_allclose
 
 
 def get_device():
@@ -57,20 +56,20 @@ def _prepare_case_inputs(case_data):
 
     inputs = case_data["input"]
 
-    hidden_dtype = dtype_map[inputs["hidden_states"]["dtype"]]
+    hidden_dtype = dtype_map.get(inputs["hidden_states"]["dtype"], torch.float16)
     hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=hidden_dtype, device="cpu")
 
     kv_a_weight = torch.randn(inputs["kv_a_weight"]["shape"],
-                              dtype=dtype_map[inputs["kv_a_weight"]["dtype"]], device="cpu")
+                               dtype=dtype_map.get(inputs["kv_a_weight"]["dtype"], torch.float16), device="cpu")
     kv_b_weight = torch.randn(inputs["kv_b_weight"]["shape"],
-                              dtype=dtype_map[inputs["kv_b_weight"]["dtype"]], device="cpu")
+                               dtype=dtype_map.get(inputs["kv_b_weight"]["dtype"], torch.float16), device="cpu")
     ln_weight = torch.randn(inputs["ln_weight"]["shape"],
-                            dtype=dtype_map[inputs["ln_weight"]["dtype"]], device="cpu")
+                             dtype=dtype_map.get(inputs["ln_weight"]["dtype"], torch.float16), device="cpu")
     eps = inputs["eps"]["value"]
-    cos = torch.randn(inputs["cos"]["shape"], dtype=dtype_map[inputs["cos"]["dtype"]], device="cpu")
-    sin = torch.randn(inputs["sin"]["shape"], dtype=dtype_map[inputs["sin"]["dtype"]], device="cpu")
+    cos = torch.randn(inputs["cos"]["shape"], dtype=dtype_map.get(inputs["cos"]["dtype"], torch.float16), device="cpu")
+    sin = torch.randn(inputs["sin"]["shape"], dtype=dtype_map.get(inputs["sin"]["dtype"], torch.float16), device="cpu")
 
-    pos_ids_dtype = int_dtype_map[inputs["pos_ids"]["dtype"]]
+    pos_ids_dtype = int_dtype_map.get(inputs["pos_ids"]["dtype"], torch.long)
     bsz = inputs["hidden_states"]["shape"][0]
     seq_len = inputs["hidden_states"]["shape"][1]
     pos_ids = torch.arange(seq_len, dtype=pos_ids_dtype, device="cpu").unsqueeze(0).expand(bsz, -1)
@@ -118,21 +117,21 @@ def _verify_output_shapes(k_nope_impl, value_impl, k_pe_impl, case_data):
     outputs = case_data["output"]
 
     expected_k_nope_shape = torch.Size(outputs["k_nope"]["shape"])
-    expected_k_nope_dtype = dtype_map[outputs["k_nope"]["dtype"]]
+    expected_k_nope_dtype = dtype_map.get(outputs["k_nope"]["dtype"], torch.float16)
     assert k_nope_impl.shape == expected_k_nope_shape, \
         f"k_nope shape mismatch: {k_nope_impl.shape} vs {expected_k_nope_shape}"
     assert k_nope_impl.dtype == expected_k_nope_dtype, \
         f"k_nope dtype mismatch: {k_nope_impl.dtype} vs {expected_k_nope_dtype}"
 
     expected_value_shape = torch.Size(outputs["value"]["shape"])
-    expected_value_dtype = dtype_map[outputs["value"]["dtype"]]
+    expected_value_dtype = dtype_map.get(outputs["value"]["dtype"], torch.float16)
     assert value_impl.shape == expected_value_shape, \
         f"value shape mismatch: {value_impl.shape} vs {expected_value_shape}"
     assert value_impl.dtype == expected_value_dtype, \
         f"value dtype mismatch: {value_impl.dtype} vs {expected_value_dtype}"
 
     expected_k_pe_shape = torch.Size(outputs["k_pe"]["shape"])
-    expected_k_pe_dtype = dtype_map[outputs["k_pe"]["dtype"]]
+    expected_k_pe_dtype = dtype_map.get(outputs["k_pe"]["dtype"], torch.float16)
     assert k_pe_impl.shape == expected_k_pe_shape, \
         f"k_pe shape mismatch: {k_pe_impl.shape} vs {expected_k_pe_shape}"
     assert k_pe_impl.dtype == expected_k_pe_dtype, \

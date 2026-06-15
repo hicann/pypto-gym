@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# ... (license unchanged)
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance of the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 """
 Flash Attention Forward with Dynamic Variable Length Sequences
@@ -38,7 +43,8 @@ HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 Q_TILE = 320
 K_TILE = 320
 
-MhaInputs = collections.namedtuple("MhaInputs", ["q", "k", "v", "cu_seqlens_q", "cu_seqlens_k", "q_seqlens", "kv_seqlens"])
+MhaInputs = collections.namedtuple("MhaInputs",
+    ["q", "k", "v", "cu_seqlens_q", "cu_seqlens_k", "q_seqlens", "kv_seqlens"])
 AttentionForwardOutput = collections.namedtuple("AttentionForwardOutput", ["o", "m", "l"])
 
 
@@ -67,7 +73,9 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     cu_seqlens_q = torch.tensor([0] + list(np.cumsum(q_seqlens)), dtype=torch.int32, device=device)
     cu_seqlens_k = torch.tensor([0] + list(np.cumsum(kv_seqlens)), dtype=torch.int32, device=device)
 
-    return MhaInputs(q=q, k=k, v=v, cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
+    return MhaInputs(q=q, k=k, v=v,
+                     cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k,
+                     q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
 
 def attention_forward_golden_noflash(q, k, v, scale):
@@ -331,12 +339,18 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     torch.npu.set_device(int(device_id))
     device = f'npu:{device_id}'
 
-    if batch_size is None: batch_size = 1
-    if num_heads is None: num_heads = NUM_HEADS
-    if s1_size is None: s1_size = 320
-    if s2_size is None: s2_size = s1_size
-    if dim is None: dim = HEAD_DIM
-    if tile_config is None: tile_config = _get_default_tile_config(perf_910)
+    if batch_size is None:
+        batch_size = 1
+    if num_heads is None:
+        num_heads = NUM_HEADS
+    if s1_size is None:
+        s1_size = 320
+    if s2_size is None:
+        s2_size = s1_size
+    if dim is None:
+        dim = HEAD_DIM
+    if tile_config is None:
+        tile_config = _get_default_tile_config(perf_910)
 
     hidden_dim = num_heads * dim
     scale = 1.0 / (dim ** 0.5)

@@ -20,13 +20,15 @@ RoPE Golden 参考实现（纯 PyTorch）
 """
 
 from typing import Tuple
+
+import logging
 import torch
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
-    y1 = x[..., x.shape[-1] // 2 :]
+    y1 = x[..., x.shape[-1] // 2:]
     return torch.cat((-y1, x1), dim=-1)
 
 
@@ -100,9 +102,10 @@ def apply_multimodal_rotary_pos_emb_golden(
 
 
 if __name__ == "__main__":
-    print("=== RoPE Golden 参考实现 ===")
-    print("包含函数:")
-    print("  - rotate_half(x)")
-    print("  - apply_rotary_pos_emb_vision_golden(q, k, cos, sin)")
-    print("  - apply_multimodal_rotary_pos_emb_golden(q, k, cos, sin, mrope_section)")
-    print("\n场景：场景A（纯 PyTorch，直接复制原始代码）")
+    logging.basicConfig(level=logging.INFO)
+    logging.info("=== RoPE Golden 参考实现 ===")
+    logging.info("包含函数:")
+    logging.info("  - rotate_half(x)")
+    logging.info("  - apply_rotary_pos_emb_vision_golden(q, k, cos, sin)")
+    logging.info("  - apply_multimodal_rotary_pos_emb_golden(q, k, cos, sin, mrope_section)")
+    logging.info("\n场景：场景A（纯 PyTorch，直接复制原始代码）")

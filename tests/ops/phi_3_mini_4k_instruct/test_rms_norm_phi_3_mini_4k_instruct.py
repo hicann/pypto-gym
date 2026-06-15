@@ -15,6 +15,7 @@ import os
 import sys
 import json
 import argparse
+import logging
 
 import torch
 import torch_npu  # noqa: F401
@@ -51,9 +52,9 @@ def run_single_case(case_data):
     case_id = case_data["id"]
     description = case_data.get("description", "")
 
-    print("=" * 60)
-    print(f"Test: {case_id} — {description}")
-    print("=" * 60)
+    logging.info("=" * 60)
+    logging.info(f"Test: {case_id} — {description}")
+    logging.info("=" * 60)
 
     torch.manual_seed(case_data.get("seed", 42))
 
@@ -70,16 +71,16 @@ def run_single_case(case_data):
     output_impl = rms_norm_wrapper(hidden_states, weight_raw, eps)
 
     max_diff = torch.abs(output_golden - output_impl).max().item()
-    print(f"  Max diff: {max_diff:.6e}")
+    logging.info(f"  Max diff: {max_diff:.6e}")
 
     rtol = case_data.get("rtol", 1e-3)
     atol = case_data.get("atol", 1e-3)
 
     try:
         assert_allclose(output_impl.cpu().numpy(), output_golden.cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] diff < {rtol}")
+        logging.info(f"[PRECISION_PASS] diff < {rtol}")
     except AssertionError as e:
-        print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
+        logging.info(f"[PRECISION_FAIL] {e}", file=sys.stderr)
         raise
 
     expected_shape = case_data["output"]["shape"]
@@ -98,9 +99,9 @@ def test_rms_norm_phi_3_mini_4k_instruct():
     cases = test_cases.get("test_cases", [])
 
     if args.list:
-        print(f"\nTest cases from test_cases.json:\n")
+        logging.info(f"\nTest cases from test_cases.json:\n")
         for case in cases:
-            print(f"  {case['id']} — {case.get('description', '')}")
+            logging.info(f"  {case['id']} — {case.get('description', '')}")
         return
 
     device = get_device()
@@ -112,13 +113,14 @@ def test_rms_norm_phi_3_mini_4k_instruct():
     try:
         for case_data in to_run:
             run_single_case(case_data)
-        print("\n" + "=" * 60)
-        print("All tests passed!")
-        print("=" * 60)
+        logging.info("\n" + "=" * 60)
+        logging.info("All tests passed!")
+        logging.info("=" * 60)
     except Exception as e:
-        print(f"\nError: {e}")
+        logging.info(f"\nError: {e}")
         raise
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     test_rms_norm_phi_3_mini_4k_instruct()

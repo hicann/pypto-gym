@@ -20,6 +20,7 @@ from pathlib import Path
 
 import json
 import argparse
+import logging
 import torch
 import torch_npu
 
@@ -55,13 +56,12 @@ def run_single_case(case_data, device):
     description = case_data.get("description", "")
     kernel_name = case_data.get("kernel", "qwen3_qk_rope_q")
 
-    print("=" * 60)
-    print(f"Test: {case_id} — {description}")
-    print(f"Kernel: {kernel_name}")
-    print("=" * 60)
+    logging.info("=" * 60)
+    logging.info(f"Test: {case_id} — {description}")
+    logging.info(f"Kernel: {kernel_name}")
+    logging.info("=" * 60)
 
     if torch.npu.is_available():
-        import os
         dev_id = os.environ.get('TILE_FWK_DEVICE_ID', '0')
         torch.npu.set_device(f'npu:{dev_id}')
 
@@ -97,18 +97,18 @@ def run_single_case(case_data, device):
     kernel = qwen3_qk_rope_q if kernel_name == "qwen3_qk_rope_q" else qwen3_qk_rope_k
     kernel(x_npu, cos_npu, sin_npu, w_norm_npu, out_impl)
 
-    print("\n[精度验证 - out]")
+    logging.info("\n[精度验证 - out]")
     out_diff = torch.abs(out_golden - out_impl).max().item()
-    print(f"  Max diff: {out_diff:.6e}")
+    logging.info(f"  Max diff: {out_diff:.6e}")
 
     rtol = case_data.get("rtol", 0.1)
     atol = case_data.get("atol", 0.1)
 
     try:
         assert_allclose(out_impl.float().cpu().numpy(), out_golden.float().cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] out diff < {rtol}")
+        logging.info(f"[PRECISION_PASS] out diff < {rtol}")
     except AssertionError as e:
-        print(f"[PRECISION_FAIL] out: {e}", file=sys.stderr)
+        logging.info(f"[PRECISION_FAIL] out: {e}", file=sys.stderr)
         raise
 
     outputs = case_data["output"]
@@ -129,9 +129,9 @@ def test_qwen3_1_7b_rms_norm_rope():
     cases = test_cases.get("test_cases", [])
 
     if args.list:
-        print(f"\nTest cases from test_cases.json:\n")
+        logging.info(f"\nTest cases from test_cases.json:\n")
         for case in cases:
-            print(f"  {case['id']} — {case.get('description', '')} [{case.get('kernel', 'qwen3_qk_rope_q')}]")
+            logging.info(f"  {case['id']} — {case.get('description', '')} [{case.get('kernel', 'qwen3_qk_rope_q')}]")
         return
 
     device = get_device()
@@ -143,13 +143,14 @@ def test_qwen3_1_7b_rms_norm_rope():
     try:
         for case_data in to_run:
             run_single_case(case_data, device)
-        print("\n" + "=" * 60)
-        print("All tests passed!")
-        print("=" * 60)
+        logging.info("\n" + "=" * 60)
+        logging.info("All tests passed!")
+        logging.info("=" * 60)
     except Exception as e:
-        print(f"\nError: {e}")
+        logging.info(f"\nError: {e}")
         raise
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     test_qwen3_1_7b_rms_norm_rope()

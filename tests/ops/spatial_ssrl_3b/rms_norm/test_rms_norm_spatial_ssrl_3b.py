@@ -23,6 +23,7 @@ from pathlib import Path
 
 import json
 import argparse
+import logging
 import torch
 import torch_npu
 
@@ -64,9 +65,9 @@ def run_single_case(case_data):
     case_id = case_data["id"]
     description = case_data.get("description", "")
     
-    print("=" * 60)
-    print(f"Test: {case_id} — {description}")
-    print("=" * 60)
+    logging.info("=" * 60)
+    logging.info(f"Test: {case_id} — {description}")
+    logging.info("=" * 60)
     
     torch.manual_seed(case_data.get("seed", 42))
     
@@ -85,17 +86,17 @@ def run_single_case(case_data):
     max_diff = torch.abs(output_golden - output_impl).max().item()
     mean_diff = torch.abs(output_golden - output_impl).mean().item()
     
-    print(f"  Max diff: {max_diff:.6e}")
-    print(f"  Mean diff: {mean_diff:.6e}")
+    logging.info(f"  Max diff: {max_diff:.6e}")
+    logging.info(f"  Mean diff: {mean_diff:.6e}")
     
     rtol = case_data.get("rtol", 1e-2)
     atol = case_data.get("atol", 1e-2)
     
     try:
         assert_allclose(output_impl.cpu().numpy(), output_golden.cpu().numpy(), rtol=rtol, atol=atol)
-        print(f"[PRECISION_PASS] diff < {rtol}")
+        logging.info(f"[PRECISION_PASS] diff < {rtol}")
     except AssertionError as e:
-        print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
+        logging.info(f"[PRECISION_FAIL] {e}", file=sys.stderr)
         raise
     
     expected_shape = case_data["output"]["shape"]
@@ -104,15 +105,15 @@ def run_single_case(case_data):
     assert output_impl.dtype == expected_dtype, f"Dtype mismatch: {output_impl.dtype} vs {expected_dtype}"
     
     if not torch.isnan(output_impl).any():
-        print("[NaN_CHECK_PASS] No NaN in output")
+        logging.info("[NaN_CHECK_PASS] No NaN in output")
     else:
-        print("[NaN_CHECK_FAIL] NaN detected in output")
+        logging.info("[NaN_CHECK_FAIL] NaN detected in output")
         raise RuntimeError("NaN detected in PyPTO kernel output")
     
     if not torch.isinf(output_impl).any():
-        print("[INF_CHECK_PASS] No Inf in output")
+        logging.info("[INF_CHECK_PASS] No Inf in output")
     else:
-        print("[INF_CHECK_FAIL] Inf detected in output")
+        logging.info("[INF_CHECK_FAIL] Inf detected in output")
         raise RuntimeError("Inf detected in PyPTO kernel output")
 
 
@@ -126,34 +127,35 @@ def test_rms_norm_spatial_ssrl_3b():
     cases = test_cases.get("test_cases", [])
     
     if args.list:
-        print(f"\nTest cases from test_cases.json:\n")
+        logging.info(f"\nTest cases from test_cases.json:\n")
         for case in cases:
-            print(f"  {case['id']} — {case.get('description', '')}")
+            logging.info(f"  {case['id']} — {case.get('description', '')}")
         return
     
     device = get_device()
     if device.startswith("npu"):
         torch.npu.set_device(int(device.split(":")[1]))
     
-    print("\n验证真正的 PyPTO kernel:")
-    print("  - @pypto.frontend.jit 装饰器")
-    print("  - pypto.rms_norm() 融合 kernel")
-    print("  - 不是 PyTorch fallback 版本")
-    print("")
+    logging.info("\n验证真正的 PyPTO kernel:")
+    logging.info("  - @pypto.frontend.jit 装饰器")
+    logging.info("  - pypto.rms_norm() 融合 kernel")
+    logging.info("  - 不是 PyTorch fallback 版本")
+    logging.info("")
     
     to_run = cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]
     
     try:
         for case_data in to_run:
             run_single_case(case_data)
-        print("\n" + "=" * 60)
-        print("All tests passed!")
-        print("真正的 PyPTO kernel验证成功")
-        print("=" * 60)
+        logging.info("\n" + "=" * 60)
+        logging.info("All tests passed!")
+        logging.info("真正的 PyPTO kernel验证成功")
+        logging.info("=" * 60)
     except Exception as e:
-        print(f"\nError: {e}")
+        logging.info(f"\nError: {e}")
         raise
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     test_rms_norm_spatial_ssrl_3b()

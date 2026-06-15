@@ -9,11 +9,12 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import os
+import sys
+
+import pypto
 import torch_npu  # noqa: F401  # must come before pypto kernel imports
 
-import sys
-import os
-import pypto
 _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
@@ -23,10 +24,14 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 from dataclasses import dataclass
 from typing import List
-from numpy.testing import assert_allclose
+
 import torch
-from experimental.matmul.transpose_quant_batch_matmul.transpose_quant_batch_matmul_impl import ShapeConfig, transpose_quant_batch_mat_mul_kernel
-from transpose_quant_batch_matmul_golden import gen_golden, TqbmmGoldenInputs
+from experimental.matmul.transpose_quant_batch_matmul.transpose_quant_batch_matmul_impl import (
+    ShapeConfig,
+    transpose_quant_batch_mat_mul_kernel,
+)
+from numpy.testing import assert_allclose
+from transpose_quant_batch_matmul_golden import TqbmmGoldenInputs, gen_golden
 
 
 @dataclass
