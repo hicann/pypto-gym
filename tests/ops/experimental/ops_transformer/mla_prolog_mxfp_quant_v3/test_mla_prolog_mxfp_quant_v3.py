@@ -57,8 +57,8 @@ QUANT_MX_SCALE_GROUP_COLS = 64
 
 
 def prep_env():
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
-    torch.npu.set_device(1)
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', '0'))
+    torch.npu.set_device(device_id)
     torch_npu.npu.config.allow_internal_format = True
 
 
@@ -650,6 +650,7 @@ def _prepare_mla_prolog_tensors(shapes, input_tensors, golden_data, dtype, is_qu
         w_dq_scale_data = input_tensors["w_dq_scale"].npu()
         w_dkvkr_scale_data = input_tensors["w_dkvkr_scale"].npu()
     else:
+        x_scale_data = torch.Tensor().npu()
         w_dq_scale_data = torch.Tensor().npu()
         w_dkvkr_scale_data = torch.Tensor().npu()
 

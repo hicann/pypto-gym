@@ -38,6 +38,7 @@ while not os.path.isdir(os.path.join(_p, "src")):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, "src"))
 sys.path.insert(0, os.path.join(_p, "src", "pypto_gym", "ops", "pypto_tile"))
+sys.path.insert(0, os.path.dirname(__file__))
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 LOGGER = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ DTYPE_MAP = {
     "bfloat16": torch.bfloat16,
 }
 
-REQUIRED_LEVELS = tuple(f"level{idx}" for idx in range(8))
+REQUIRED_LEVELS = tuple(f"level{idx}" for idx in range(5))
 
 
 def _device() -> str:
@@ -193,6 +194,7 @@ def test_level4(device: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Precision test for apply_adam_w_v2 PyPTO custom op")
     parser.add_argument("cases", nargs="*", help="case ids from test_cases.json, e.g. level0 level1")
+    parser.add_argument("--device", type=int, default=None, help="NPU device id override")
     parser.add_argument("--list", action="store_true", help="list available cases and exit")
     args = parser.parse_args()
 
@@ -203,7 +205,12 @@ def main() -> int:
                 LOGGER.info("%s: %s", case["id"], case.get("description", ""))
             return 0
         selected_cases = _select_cases(cases, args.cases)
-        device = _device()
+        if args.device is not None:
+            device_id = args.device
+        else:
+            device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", "0"))
+        torch.npu.set_device(device_id)
+        device = f"npu:{device_id}"
         LOGGER.info("Using device: %s", device)
 
         all_ok = True

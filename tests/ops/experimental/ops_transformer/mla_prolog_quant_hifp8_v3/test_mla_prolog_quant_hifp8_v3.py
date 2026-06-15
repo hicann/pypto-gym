@@ -734,13 +734,13 @@ def _compare_mla_outputs(output_q_nope_data, output_q_rope_data, output_kv_cache
 
     ########### compare #######
     logging.info("qNope =======")
-    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", 0.005, 0.0078125, 0.005)
+    compare(output_q_nope_data.cpu(), golden1.cpu(), "qNope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     logging.info("qRope =======")
-    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", 0.005, 0.0078125, 0.005)
+    compare(output_q_rope_data.cpu(), golden2.cpu(), "qRope", atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     logging.info("kv =======")
-    compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", 0.0001, 0.0078125, 0)
+    compare(output_kv_cache_data.cpu(), golden3.cpu(), "kv", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
     logging.info("kr =======")
-    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", 0.0001, 0.0078125, 0)
+    compare(output_kr_cache_data.cpu(), golden4.cpu(), "kr", atol=0.0001, rtol=0.0078125, max_error_ratio=0)
 
 
 def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, \
