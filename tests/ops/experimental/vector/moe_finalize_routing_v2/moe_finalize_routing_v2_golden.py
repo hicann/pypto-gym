@@ -42,14 +42,13 @@
 
 """
 
+import torch
 from typing import Optional
 
-import torch
 
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）
 # ─────────────────────────────────────────────
-
 
 def moe_finalize_routing_v2_golden(
     expanded_x: torch.Tensor,
@@ -60,6 +59,8 @@ def moe_finalize_routing_v2_golden(
     scales: Optional[torch.Tensor] = None,
     expert_idx: Optional[torch.Tensor] = None,
     drop_pad_mode: int = 2,
+    num_rows: Optional[int] = None,
+    num_k: Optional[int] = None,
 ) -> torch.Tensor:
     """PyTorch 参考实现。
 
@@ -75,6 +76,8 @@ def moe_finalize_routing_v2_golden(
         scales: 路由权重，可选，shape为 (NUM_ROWS, K)，dtype=BFLOAT16
         expert_idx: 专家索引，可选，shape为 (NUM_ROWS, K)，dtype=INT32
         drop_pad_mode: 控制扩展行索引的排列方式，默认值为 2
+        num_rows: 输出行数，可选，若提供则直接使用，无需从辅助输入推导
+        num_k: 路由专家数，可选，若提供则直接使用，无需从辅助输入推导
 
     Returns:
         out: 聚合后的输出结果，shape为 (NUM_ROWS, H)，dtype=BFLOAT16
@@ -93,23 +96,26 @@ def moe_finalize_routing_v2_golden(
     # 将 expanded_x reshape 为 2D (NUM_ROWS*K, H)
     expanded_x = expanded_x.reshape(-1, h)
 
-    # 确定 K 值和 num_rows
-    # 优先从 scales 推导；若无 scales，则从 x1/x2 的行数推导 num_rows，再反推 K
-    if scales is not None:
-        K = scales.shape[1]
-        num_rows = bsk // K
+    # 确定 num_k 值和 num_rows
+    # 优先使用外部传入值；若无，则从辅助输入推导；最后回退到 num_k=1
+    if num_rows is not None and num_k is not None:
+        # 外部直接传入，无需推导
+        pass
+    elif scales is not None:
+        num_k = scales.shape[1]
+        num_rows = bsk // num_k
     elif x1 is not None:
         num_rows = x1.shape[0]
-        K = bsk // num_rows
+        num_k = bsk // num_rows
     elif x2 is not None:
         num_rows = x2.shape[0]
-        K = bsk // num_rows
+        num_k = bsk // num_rows
     elif expert_idx is not None:
         num_rows = expert_idx.shape[0]
-        K = expert_idx.shape[1]
+        num_k = expert_idx.shape[1]
     else:
-        # 无任何辅助信息，默认 K=1
-        K = 1
+        # 无任何辅助信息，默认 num_k=1
+        num_k = 1
         num_rows = bsk
 
     # 初始化输出 tensor（在与输入相同的设备上）
@@ -123,16 +129,16 @@ def moe_finalize_routing_v2_golden(
     if x2 is not None:
         out = out + x2.to(out_dtype)
 
-    # 主计算循环：遍历 num_rows 和 K
+    # 主计算循环：遍历 num_rows 和 num_k
     for i in range(num_rows):
-        for k in range(K):
+        for k in range(num_k):
             # 根据 drop_pad_mode 计算索引位置
             if drop_pad_mode == 0 or drop_pad_mode == 1:
                 # 按列排列
                 expanded_row_idx_idx = k * num_rows + i
             else:
                 # 按行排列
-                expanded_row_idx_idx = i * K + k
+                expanded_row_idx_idx = i * num_k + k
 
             # 获取 expanded_row_idx_value
             expanded_row_idx_value = expanded_row_idx[expanded_row_idx_idx].item()
