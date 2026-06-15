@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# coding: utf-8
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+"""
+RMSNorm Golden 参考实现
+来源：GutenOCR-3B RMSNorm层的标准实现
+
+数学公式:
+    RMS = sqrt(mean(x^2) + eps)
+    output = (x / RMS) * weight
+"""
+
+import torch
+import torch_npu
+
+
+def rms_norm_golden(
+    hidden_states: torch.Tensor,
+    weight: torch.Tensor,
+    eps: float = 1e-6
+) -> torch.Tensor:
+    """
+    RMSNorm Golden实现
+    
+    Args:
+        hidden_states: [batch, seq_len, hidden_size]
+        weight: [hidden_size]
+        eps: float (数值稳定性常数)
+    
+    Returns:
+        output: [batch, seq_len, hidden_size]
+    """
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
+    hidden_states = hidden_states * torch.rsqrt(variance + eps)
+    return weight * hidden_states
+
+
+if __name__ == "__main__":
+    torch.manual_seed(42)
+    
+    batch, seq_len, hidden_size = 2, 4, 2048
+    
+    hidden = torch.randn(batch, seq_len, hidden_size, dtype=torch.float16).npu()
+    weight = torch.randn(hidden_size, dtype=torch.float16).npu()
+    eps = 1e-6
+    
+    output = rms_norm_golden(hidden, weight, eps)
+    

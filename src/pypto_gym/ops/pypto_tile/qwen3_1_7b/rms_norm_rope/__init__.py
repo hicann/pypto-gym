@@ -19,6 +19,6 @@ Qwen3-1.7B RoPE PyPTO Kernel - 实际集成版本
 输出: [S, N, D] - 经过 RMSNorm + RoPE 的 Q/K
 """
 
-from .rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
+from .rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
 
 __all__ = ['qwen3_qk_rope_q', 'qwen3_qk_rope_k']

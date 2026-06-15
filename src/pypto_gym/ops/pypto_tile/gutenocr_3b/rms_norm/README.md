@@ -105,7 +105,7 @@ python3 scripts/ask_gutenocr_3b_compile.py --batch 16 --use_dynamic_config --dev
 ✅ Golden编写
 ✅ 单算子精度验证
 ✅ 单算子性能采集（+60%）
-✅ 模型集成（已集成到modeling_qwen2_5_vl.py）
+✅ 模型集成（已集成到modeling_gutenocr_3b.py）
 ✅ 端到端验证（真实性能测试）
 ❌ **推荐禁用**（固化开销抵消优化）
 
@@ -113,7 +113,7 @@ python3 scripts/ask_gutenocr_3b_compile.py --batch 16 --use_dynamic_config --dev
 
 ### 模型集成位置
 
-文件: `modeling_qwen2_5_vl.py`
+文件: `modeling_gutenocr_3b.py`
 类: `Qwen2RMSNorm`
 行号: Line 47
 

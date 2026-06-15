@@ -1,0 +1,76 @@
+{
+    "test_cases": [
+        {
+            "id": "q_rope_basic",
+            "description": "Q RoPE with N=16 heads basic test",
+            "seed": 42,
+            "input": {
+                "x": {"shape": [16, 16, 128], "dtype": "bfloat16"},
+                "cos": {"shape": [16, 128], "dtype": "bfloat16"},
+                "sin": {"shape": [16, 128], "dtype": "bfloat16"},
+                "w_norm": {"shape": [128], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "out": {"shape": [16, 16, 128], "dtype": "bfloat16"}
+            },
+            "kernel": "qwen3_qk_rope_q",
+            "rtol": 5e-2,
+            "atol": 5e-2
+        },
+        {
+            "id": "k_rope_basic",
+            "description": "K RoPE with N=8 heads basic test",
+            "seed": 42,
+            "input": {
+                "x": {"shape": [16, 8, 128], "dtype": "bfloat16"},
+                "cos": {"shape": [16, 128], "dtype": "bfloat16"},
+                "sin": {"shape": [16, 128], "dtype": "bfloat16"},
+                "w_norm": {"shape": [128], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "out": {"shape": [16, 8, 128], "dtype": "bfloat16"}
+            },
+            "kernel": "qwen3_qk_rope_k",
+            "rtol": 5e-2,
+            "atol": 5e-2
+        },
+        {
+            "id": "q_rope_long_seq",
+            "description": "Q RoPE with longer sequence",
+            "seed": 123,
+            "input": {
+                "x": {"shape": [64, 16, 128], "dtype": "bfloat16"},
+                "cos": {"shape": [64, 128], "dtype": "bfloat16"},
+                "sin": {"shape": [64, 128], "dtype": "bfloat16"},
+                "w_norm": {"shape": [128], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "out": {"shape": [64, 16, 128], "dtype": "bfloat16"}
+            },
+            "kernel": "qwen3_qk_rope_q",
+            "rtol": 5e-2,
+            "atol": 5e-2
+        },
+        {
+            "id": "k_rope_long_seq",
+            "description": "K RoPE with longer sequence",
+            "seed": 456,
+            "input": {
+                "x": {"shape": [64, 8, 128], "dtype": "bfloat16"},
+                "cos": {"shape": [64, 128], "dtype": "bfloat16"},
+                "sin": {"shape": [64, 128], "dtype": "bfloat16"},
+                "w_norm": {"shape": [128], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "out": {"shape": [64, 8, 128], "dtype": "bfloat16"}
+            },
+            "kernel": "qwen3_qk_rope_k",
+            "rtol": 5e-2,
+            "atol": 5e-2
+        }
+    ]
+}

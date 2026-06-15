@@ -25,8 +25,8 @@ spatial_ssrl_3b/
 ├── video_preprocessor_config.json
 ├── chat_template.jinja
 ├── core/                                # 定制化模型代码
-│   ├── modeling_qwen2_5_vl.py
-│   └── configuration_qwen2_5_vl.py
+│   ├── modeling_spatial_ssrl_3b.py
+│   └── configuration_spatial_ssrl_3b.py
 ├── spatial_ssrl_3b_pto_kernels/         # PyPTO融合算子
 │   ├── rms_norm/
 │   └── rope/
@@ -85,7 +85,7 @@ python3 scripts/ask_spatial_ssrl_3b.py --device 0 --sentence_file prompts.txt
 
 ## 注意事项
 
-- 本模型为多模态视觉语言模型（Qwen2.5-VL架构，model_type=qwen2_5_vl）
+- 本模型为多模态视觉语言模型（Qwen2.5-VL架构，model_type=spatial_ssrl_3b）
 - 纯文本推理可通过 processor.apply_chat_template 实现
 - 模型参数量约3B，float16精度下单卡64GB HBM可运行
 - auto_map 配置指向本地 core/ 目录下的定制化实现

@@ -6,7 +6,7 @@
 |------|------|
 | HuggingFace原版 | [rootsautomation/GutenOCR-3B](https://huggingface.co/rootsautomation/GutenOCR-3B) |
 | 权重目录 | /path/to/gutenocr_3b |
-| 代码来源 | transformers包（内置，model_type=qwen2_5_vl） + PyPTO算子集成 |
+| 代码来源 | transformers包（内置，model_type=gutenocr_3b_vl） + PyPTO算子集成 |
 | transformers版本 | 4.40.0+ |
 | PyPTO版本 | CANN 9.0.0 |
 | 运行命令 | `python3 scripts/ask_gutenocr_3b_compile.py --device 1 --batch 16 --use_dynamic_config` |
@@ -41,7 +41,7 @@ gutenocr_3b/
 ├── tokenizer.json / tokenizer_config.json
 ├── vocab.json / merges.txt
 ├── generation_config.json
-├── modeling_qwen2_5_vl.py              # 模型文件（已集成PyPTO算子）
+├── modeling_gutenocr_3b_vl.py              # 模型文件（已集成PyPTO算子）
 ├── pto_kernels/                        # PyPTO算子库
 │   ├── __init__.py                     # 算子开关配置
 │   ├── rms_norm/                       # RMSNorm算子
