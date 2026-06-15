@@ -52,14 +52,14 @@ def get_device_id():
     """从环境变量获取 TILE_FWK_DEVICE_ID。"""
     if "TILE_FWK_DEVICE_ID" not in os.environ:
         logger.info("Please set: export TILE_FWK_DEVICE_ID=0")
-        return None
+        return 0
     try:
         return int(os.environ["TILE_FWK_DEVICE_ID"])
     except ValueError:
         logger.info(
             "ERROR: TILE_FWK_DEVICE_ID must be int, got: %s",
             os.environ["TILE_FWK_DEVICE_ID"])
-        return None
+        return 0
 
 
 class TestConfig:

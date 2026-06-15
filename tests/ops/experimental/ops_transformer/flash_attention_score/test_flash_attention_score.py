@@ -35,7 +35,8 @@ _MERE_EXEMPT = 2.0 ** (-8)
 
 
 def _set_device() -> None:
-    torch.npu.set_device(int(os.environ["TILE_FWK_DEVICE_ID"]))
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
 
 
 def _precision_verify(impl_out, gold_out, tag):
