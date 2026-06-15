@@ -447,14 +447,15 @@ def sparse_flash_attention_quant_d_950(
 
 
 @pypto.frontend.jit(
-    pass_options={
-        "cube_l1_reuse_setting": {-1: 2},
-    },
-    runtime_options={
-        "stitch_function_max_num": 128,
-        "device_sched_mode": 3,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
-    }
+    pass_options={	 
+         "vec_nbuffer_setting": {-1: 2, 0: 8},	 
+         "cube_l1_reuse_setting": {-1: 2},	 
+     },	 
+     runtime_options={	 
+         "stitch_function_max_num": 128,	 
+         "device_sched_mode": 3,	 
+         "ready_on_host_tensors": ["block_table", "kv_act_seqs"]	 
+     }
 )
 def sparse_flash_attention_quant_d(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
