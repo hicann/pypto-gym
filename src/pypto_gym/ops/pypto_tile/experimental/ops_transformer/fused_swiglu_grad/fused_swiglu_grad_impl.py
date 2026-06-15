@@ -56,20 +56,25 @@ def fused_swiglu_bwd_b_kernel(
         fc_tile = pypto.view(fc, [tile_m, n], [tile_offset, 0], valid_shape=[valid_m, n])
 
         pypto.set_vec_tile_shapes(128, 128)
-        exp_g = pypto.exp(g_tile)
+        dy_fp32 = pypto.cast(dy_tile, pypto.DT_FP32)
+        g_fp32 = pypto.cast(g_tile, pypto.DT_FP32)
+        fc_fp32 = pypto.cast(fc_tile, pypto.DT_FP32)
+        exp_g = pypto.exp(g_fp32)
         sigmoid_g = pypto.div(exp_g, (1.0 + exp_g), precision_type=pypto.PrecisionType.INTRINSIC)
-        silu_g = g_tile * sigmoid_g
-        dy_mul_fc = dy_tile * fc_tile
-        silu_bwd = sigmoid_g * (1.0 + g_tile * (1.0 - sigmoid_g))
-        dg_tile = dy_mul_fc * silu_bwd
-        dfc_tile = dy_tile * silu_g
+        silu_g = g_fp32 * sigmoid_g
+        dy_mul_fc = dy_fp32 * fc_fp32
+        silu_bwd = sigmoid_g * (1.0 + g_fp32 * (1.0 - sigmoid_g))
+        dg_fp32 = dy_mul_fc * silu_bwd
+        dfc_fp32 = dy_fp32 * silu_g
+        dg_tile = pypto.cast(dg_fp32, pypto.DT_BF16)
+        dfc_tile = pypto.cast(dfc_fp32, pypto.DT_BF16)
         dg[tile_offset:, 0:] = dg_tile
         dfc[tile_offset:, 0:] = dfc_tile
 
-        dg_sum = pypto.sum(dg_tile, dim=0, keepdim=True)
-        dfc_sum = pypto.sum(dfc_tile, dim=0, keepdim=True)
-        db_g[:] = db_g + dg_sum
-        db_fc[:] = db_fc + dfc_sum
+        dg_sum = pypto.sum(dg_fp32, dim=0, keepdim=True)
+        dfc_sum = pypto.sum(dfc_fp32, dim=0, keepdim=True)
+        db_g[:] = db_g + pypto.cast(dg_sum, pypto.DT_BF16)
+        db_fc[:] = db_fc + pypto.cast(dfc_sum, pypto.DT_BF16)
 
 
 @pypto.frontend.jit(
@@ -105,12 +110,16 @@ def fused_swiglu_bwd_w_kernel(
         x_tile = pypto.view(x, [tile_m, k], [tile_offset, 0], valid_shape=[valid_m, k])
         dg_tile = pypto.view(dg, [tile_m, n], [tile_offset, 0], valid_shape=[valid_m, n])
         dfc_tile = pypto.view(dfc, [tile_m, n], [tile_offset, 0], valid_shape=[valid_m, n])
-        pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 256])
-        dw_g_tile = pypto.matmul(x_tile, dg_tile, pypto.DT_BF16, a_trans=True, b_trans=False)
-        dw_fc_tile = pypto.matmul(x_tile, dfc_tile, pypto.DT_BF16, a_trans=True, b_trans=False)
         pypto.set_vec_tile_shapes(128, 128)
-        dw_g[:] = dw_g + dw_g_tile
-        dw_fc[:] = dw_fc + dw_fc_tile
+        x_fp32 = pypto.cast(x_tile, pypto.DT_FP32)
+        dg_fp32 = pypto.cast(dg_tile, pypto.DT_FP32)
+        dfc_fp32 = pypto.cast(dfc_tile, pypto.DT_FP32)
+        pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 256])
+        dw_g_fp32 = pypto.matmul(x_fp32, dg_fp32, pypto.DT_FP32, a_trans=True, b_trans=False)
+        dw_fc_fp32 = pypto.matmul(x_fp32, dfc_fp32, pypto.DT_FP32, a_trans=True, b_trans=False)
+        pypto.set_vec_tile_shapes(128, 128)
+        dw_g[:] = dw_g + pypto.cast(dw_g_fp32, pypto.DT_BF16)
+        dw_fc[:] = dw_fc + pypto.cast(dw_fc_fp32, pypto.DT_BF16)
 
 
 @pypto.frontend.jit(
@@ -144,12 +153,14 @@ def fused_swiglu_bwd_x_kernel(
         valid_m = (m - tile_offset).min(tile_m)
         dg_tile = pypto.view(dg, [tile_m, n], [tile_offset, 0], valid_shape=[valid_m, n])
         dfc_tile = pypto.view(dfc, [tile_m, n], [tile_offset, 0], valid_shape=[valid_m, n])
+        pypto.set_vec_tile_shapes(128, 128)
+        dg_fp32 = pypto.cast(dg_tile, pypto.DT_FP32)
+        dfc_fp32 = pypto.cast(dfc_tile, pypto.DT_FP32)
+        w_g_fp32 = pypto.cast(w_g, pypto.DT_FP32)
+        w_fc_fp32 = pypto.cast(w_fc, pypto.DT_FP32)
         pypto.set_cube_tile_shapes([128, 128], [64, 256], [256, 256])
-        dx_g_tile = pypto.matmul(dg_tile, w_g, pypto.DT_BF16, a_trans=False, b_trans=True)
-        dx_fc_tile = pypto.matmul(dfc_tile, w_fc, pypto.DT_BF16, a_trans=False, b_trans=True)
-        if pypto.platform.npuarch == 'DAV_3510':
-            pypto.set_vec_tile_shapes(128, 256)
-        else:
-            pypto.set_vec_tile_shapes(128, 128)
-        dx_result = dx_g_tile + dx_fc_tile
+        dx_g_tile = pypto.matmul(dg_fp32, w_g_fp32, pypto.DT_FP32, a_trans=False, b_trans=True)
+        dx_fc_tile = pypto.matmul(dfc_fp32, w_fc_fp32, pypto.DT_FP32, a_trans=False, b_trans=True)
+        pypto.set_vec_tile_shapes(128, 128)
+        dx_result = pypto.cast(dx_g_tile + dx_fc_tile, pypto.DT_BF16)
         dx[tile_offset:, 0:] = dx_result

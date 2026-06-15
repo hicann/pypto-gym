@@ -40,15 +40,24 @@ def get_device_id():
 
 
 def golden_fused_swiglu_bwd(dy, g, fc, w_g, w_fc, x):
-    sigmoid_g = torch.sigmoid(g)
-    silu_g = g * sigmoid_g
-    dg = dy * fc * sigmoid_g * (1 + g * (1 - sigmoid_g))
-    dfc = dy * silu_g
+    dy_fp32 = dy.float()
+    g_fp32 = g.float()
+    fc_fp32 = fc.float()
+    w_g_fp32 = w_g.float()
+    w_fc_fp32 = w_fc.float()
+    x_fp32 = x.float()
+    sigmoid_g = torch.sigmoid(g_fp32)
+    silu_g = g_fp32 * sigmoid_g
+    dg = dy_fp32 * fc_fp32 * sigmoid_g * (1 + g_fp32 * (1 - sigmoid_g))
+    dfc = dy_fp32 * silu_g
     db_g = (dg.sum(dim=0, keepdim=True)).to(dy.dtype)
     db_fc = (dfc.sum(dim=0, keepdim=True)).to(dy.dtype)
-    dw_g = (x.T @ dg).to(dy.dtype)
-    dw_fc = (x.T @ dfc).to(dy.dtype)
-    dx = (dg @ w_g.T + dfc @ w_fc.T).to(dy.dtype)
+  
+    dw_g = (x_fp32.to(dy.dtype).float().T @ dg.to(dy.dtype).float()).to(dy.dtype)
+    dw_fc = (x_fp32.to(dy.dtype).float().T @ dfc.to(dy.dtype).float()).to(dy.dtype)
+  
+    dx = (dg.to(dy.dtype).float() @ w_g_fp32.to(dy.dtype).float().T + \
+            dfc.to(dy.dtype).float() @ w_fc_fp32.to(dy.dtype).float().T).to(dy.dtype)
     return dx, dw_g, dw_fc, db_g, db_fc
 
 
