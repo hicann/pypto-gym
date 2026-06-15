@@ -131,6 +131,7 @@ USE_PTO_MROPE = True       # 启用MRoPE
 ### 算子推荐
 
 **启用**:
+
 - SwiGLU MLP（所有batch）
 - MRoPE（仅Batch≤4）
 
