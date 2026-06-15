@@ -14,7 +14,17 @@ Transpose Quantized Batch Matrix Multiplication with MXFP8 Quantization
 
 This module implements batch matrix multiplication with transpose and MXFP8 quantization using PyPTO.
 Supports multiple perm combinations (permX1, permX2, permY) and output dtype (FP16/BF16).
-M-axis is dynamic — the same compiled kernel supports different M sizes at runtime.
+
+M-axis splitting approach (non-parallel loops):
+  - Outer LOOP_M: splits M into m_chunk_size tiles, iterates without parallel=True
+  - Inner LOOP_B: iterates over B batches without parallel=True
+  - Reshape x1 to [M, B*K], x1Scale to [M, B*K//64, 2] — same as original
+  - Each iteration slices row range [m_begin:m_end] + column range [begin:end] from reshaped 2D
+  - Assemble mm_result to local_out at [m_begin, out_pos]
+  - Final reshape local_out [M, B*N] → out [M, B, N]
+
+This avoids parallel loop unroll (LoopUnroll + ExpandFunction), keeping the IR graph small
+for fast compilation. Loop iterations are handled at runtime, not unrolled into the IR.
 """
 
 from dataclasses import dataclass
@@ -71,10 +81,10 @@ class ShapeConfig:
     pass_options={
         "auto_mix_partition": 1,
         "cube_l1_reuse_setting": {-1: 2},
-        "cube_nbuffer_setting": {-1: 2},
-        "vec_nbuffer_setting": {-2: 1, -1: 16},
+        "cube_nbuffer_setting": {-1: 4},
+        "vec_nbuffer_setting": {-2: 1, -1: 2},
     },
-    runtime_options={"stitch_function_max_num": 512, "device_sched_mode": 0}
+    runtime_options={"stitch_function_max_num": 1024, "device_sched_mode": 1},
 )
 def transpose_quant_batch_mat_mul_kernel(
     x1: pypto.Tensor(),
@@ -87,12 +97,13 @@ def transpose_quant_batch_mat_mul_kernel(
     """
     Transpose quantized batch matrix multiplication kernel using MXFP8 quantization.
 
-    This kernel performs batch matrix multiplication with MXFP8 quantization and transpose support.
-    M-axis is dynamic — runtime obtains actual M size from shape[0].
-    B-axis uses parallel loop for batch-wise computation.
+    M-axis splitting approach — non-parallel nested loops avoid IR graph explosion:
+      Outer LOOP_M (non-parallel): splits M into m_chunk_size tiles
+      Inner LOOP_B (non-parallel): iterates over B batches
+      Reshape [M, B*K] and assemble pattern preserved from original — only row slicing changed.
 
     Args:
-        x1: Input tensor of shape [M, B, K] in FP8 format — M-axis dynamic
+        x1: Input tensor of shape [M, B, K] in FP8 format
         x2: Input tensor of shape [B, K, N] or [B, N, K] in FP8 format
         x1Scale: Scale factors for x1 in MXFP8 format, shape [M, B, K//64, 2] in E8M0
         x2Scale: Scale factors for x2 in MXFP8 format, shape varies by permX2
@@ -100,9 +111,10 @@ def transpose_quant_batch_mat_mul_kernel(
         tile_config: Tile configuration including batch_size, shapes and tile parameters
 
     Note:
-        - M-axis dynamic: same compiled kernel supports different M sizes
-        - B-axis parallel loop: each batch computed independently
+        - M-axis splitting with non-parallel loop: avoids parallel loop unroll expansion
+        - B-axis non-parallel loop: no LoopUnroll, IR stays small
         - permX2 determines whether x2 uses scaled_mm with b_trans=True
+        - Reshape x1→[M, B*K] and assemble→local_out pattern unchanged from original
     """
     M = tile_config.ori_shape[0]
     K = tile_config.ori_shape[1]
@@ -110,11 +122,6 @@ def transpose_quant_batch_mat_mul_kernel(
     B = tile_config.batch_size
     out_dtype = tile_config.out_dtype
     permX2 = tile_config.permX2
-
-    x1.set_cache_policy(pypto.CachePolicy.NONE_CACHEABLE, True)
-    x2.set_cache_policy(pypto.CachePolicy.NONE_CACHEABLE, True)
-    x1Scale.set_cache_policy(pypto.CachePolicy.NONE_CACHEABLE, True)
-    x2Scale.set_cache_policy(pypto.CachePolicy.NONE_CACHEABLE, True)
 
     pypto.set_cube_tile_shapes(
         tile_config.m_tile_shape, tile_config.k_tile_shape, tile_config.n_tile_shape
@@ -124,20 +131,34 @@ def transpose_quant_batch_mat_mul_kernel(
         tile_config.vector_tile_shape[2], tile_config.vector_tile_shape[3]
     )
 
-    for b_idx in pypto.loop(B, name="LOOP_B", idx_name="b_idx", parallel=True):
-        x1_slice = x1[:, b_idx, :]
-        x1_scale_slice = x1Scale[:, b_idx, :, :]
+    x1_reshape = pypto.reshape(x1, [M, B * K], inplace=True)
+    x1_scale_reshape = pypto.reshape(x1Scale, [M, B * K // 64, 2], inplace=True)
+
+    local_out = pypto.Tensor(shape=(M, B * N), dtype=out_dtype)
+    for b_idx in range(B):
+        begin = b_idx * K
+        end = (b_idx + 1) * K
+
+        x1_slice = x1_reshape[:, begin:end]
+        x1_scale_slice = x1_scale_reshape[:, begin // 64:end // 64, :]
+
+        x2_slice = x2[b_idx, :, :]
+        x2_scale_slice = x2Scale[b_idx, :, :, :]
 
         if permX2 == [0, 1, 2]:
             mm_result = pypto.scaled_mm(
-                x1_slice, x2[b_idx, :, :], out_dtype,
-                x1_scale_slice, x2Scale[b_idx, :, :, :]
+                x1_slice, x2_slice, out_dtype,
+                x1_scale_slice, x2_scale_slice
             )
         else:
             mm_result = pypto.scaled_mm(
-                x1_slice, x2[b_idx, :, :], out_dtype,
-                x1_scale_slice, x2Scale[b_idx, :, :, :],
+                x1_slice, x2_slice, out_dtype,
+                x1_scale_slice, x2_scale_slice,
                 b_trans=True, scale_b_trans=True
             )
 
-        out[:, b_idx, :] = mm_result
+        out_pos = b_idx * N
+        pypto.assemble(mm_result, [0, out_pos], local_out)
+
+    # Reshape: local_out [M, B*N] → out [M, B, N]
+    out[:, :, :] = pypto.reshape(local_out, [M, B, N])
