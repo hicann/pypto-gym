@@ -20,7 +20,7 @@ arguments and dispatches.
 
 import collections
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Sequence, Tuple
 
 import pypto
 import torch
@@ -77,149 +77,31 @@ GENERIC_KERNEL_TILE_CONFIG = [
     1,
 ]
 
-ScatterContiguousParams = collections.namedtuple(
-    "ScatterContiguousParams",
-    ["cache_out", "src", "tokens", "num_heads", "dim", "c0", "vec_token_tile"],
+ScatterGroupParams = collections.namedtuple(
+    "ScatterGroupParams",
+    ["cache_out", "src", "tokens", "num_heads", "dim", "c0", "head_start", "vec_token_tile"],
 )
-
-ScatterIndexedParams = collections.namedtuple(
-    "ScatterIndexedParams",
-    [
-        "cache_in",
-        "cache_out",
-        "index",
-        "src",
-        "tokens",
-        "group_heads",
-        "dim",
-        "c0",
-        "head_start",
-        "vec_token_tile",
-    ],
-)
-
 QGroupParams = collections.namedtuple(
     "QGroupParams",
-    [
-        "qkv",
-        "q_gamma",
-        "cos_fp32",
-        "sin_fp32",
-        "q_out_out",
-        "tokens",
-        "num_q",
-        "dim",
-        "epsilon",
-        "group_heads",
-        "vec_token_tile",
-    ],
+    ["qkv", "q_gamma", "cos_fp32", "sin_fp32", "q_out_out", "tokens", "num_q", "dim", "epsilon",
+     "group_heads", "vec_token_tile"],
 )
-
-KvGroupParams = collections.namedtuple(
-    "KvGroupParams",
-    [
-        "qkv",
-        "k_gamma",
-        "cos_fp32",
-        "sin_fp32",
-        "index",
-        "k_cache",
-        "v_cache",
-        "k_scale",
-        "v_scale",
-        "k_cache_out",
-        "v_cache_out",
-        "tokens",
-        "q_size",
-        "k_size",
-        "num_k",
-        "num_v",
-        "dim",
-        "c0",
-        "epsilon",
-        "group_heads",
-        "vec_token_tile",
-    ],
+QTokenParams = collections.namedtuple("QTokenParams", QGroupParams._fields + ("token_tile",))
+KvTokenParams = collections.namedtuple(
+    "KvTokenParams",
+    ["qkv", "k_gamma", "cos_fp32", "sin_fp32", "index", "k_scale", "v_scale", "k_cache_out",
+     "v_cache_out", "tokens", "q_size", "k_size", "num_k", "num_v", "dim", "c0", "epsilon"],
 )
-
 QuantParams = collections.namedtuple(
     "QuantParams",
-    [
-        "qkv",
-        "q_gamma",
-        "k_gamma",
-        "cos",
-        "sin",
-        "index",
-        "k_cache",
-        "v_cache",
-        "k_scale",
-        "v_scale",
-        "q_out_out",
-        "k_cache_out",
-        "v_cache_out",
-        "qkv_size",
-        "head_nums",
-        "epsilon",
-        "q_group_heads",
-        "q_vec_token_tile",
-        "kv_vec_token_tile",
-    ],
+    ["qkv", "q_gamma", "k_gamma", "cos", "sin", "index", "k_cache", "v_cache", "k_scale", "v_scale",
+     "q_out_out", "k_cache_out", "v_cache_out", "qkv_size", "head_nums", "epsilon",
+     "q_group_heads", "q_vec_token_tile", "kv_vec_token_tile"],
 )
-
-QuantGenericParams = collections.namedtuple(
-    "QuantGenericParams",
-    QuantParams._fields + ("kv_group_heads",),
+QuantGenericParams = collections.namedtuple("QuantGenericParams", QuantParams._fields + ("kv_group_heads",))
+QkvMeta = collections.namedtuple(
+    "QkvMeta", ["tokens", "c0", "num_q", "num_k", "num_v", "dim", "q_size", "k_size"]
 )
-
-QKV_RUNTIME_ARG_NAMES = (
-    "index", "q_out", "k_cache", "v_cache", "k_scale", "v_scale", "k_offset",
-    "v_offset", "qkv_size", "head_nums", "epsilon", "cache_mode", "is_output_qkv",
-)
-QkvRuntimeArgs = collections.namedtuple("QkvRuntimeArgs", QKV_RUNTIME_ARG_NAMES)
-
-
-def _pop_cos_sin_args(args: tuple, kwargs: dict) -> tuple[torch.Tensor, torch.Tensor, tuple]:
-    values = []
-    rest = args
-    for name in ("cos", "sin"):
-        if rest:
-            values.append(rest[0])
-            rest = rest[1:]
-        elif name in kwargs:
-            values.append(kwargs.pop(name))
-        else:
-            raise TypeError(f"missing required argument: {name}")
-    return values[0], values[1], rest
-
-
-def _parse_qkv_runtime_args(args: tuple, kwargs: dict) -> QkvRuntimeArgs:
-    defaults = {
-        "k_scale": None,
-        "v_scale": None,
-        "k_offset": None,
-        "v_offset": None,
-        "qkv_size": (),
-        "head_nums": (),
-        "epsilon": 1e-6,
-        "cache_mode": "PA_NZ",
-        "is_output_qkv": False,
-    }
-    required = QKV_RUNTIME_ARG_NAMES[:4]
-    if len(args) > len(QKV_RUNTIME_ARG_NAMES):
-        raise TypeError("too many positional arguments")
-    values = dict(defaults)
-    for name, value in zip(QKV_RUNTIME_ARG_NAMES, args):
-        values[name] = value
-    for name in QKV_RUNTIME_ARG_NAMES:
-        if name in kwargs:
-            values[name] = kwargs.pop(name)
-    if kwargs:
-        raise TypeError(f"unexpected keyword argument(s): {sorted(kwargs)}")
-    missing = [name for name in required if name not in values]
-    if missing:
-        raise TypeError(f"missing required argument(s): {missing}")
-    return QkvRuntimeArgs(*(values[name] for name in QKV_RUNTIME_ARG_NAMES))
 
 
 def _rotate_half(x: pypto.Tensor) -> pypto.Tensor:
@@ -237,7 +119,6 @@ def _rotate_half(x: pypto.Tensor) -> pypto.Tensor:
 
 
 def _rope_fp32(x: pypto.Tensor, cos_fp32: pypto.Tensor, sin_fp32: pypto.Tensor, vec_token_tile: int) -> pypto.Tensor:
-    dtype = x.dtype
     t = x.shape[0]
     n = x.shape[1]
     d = x.shape[2]
@@ -245,24 +126,43 @@ def _rope_fp32(x: pypto.Tensor, cos_fp32: pypto.Tensor, sin_fp32: pypto.Tensor, 
     cos_3d = pypto.reshape(cos_fp32, [t, 1, d], valid_shape=[t, 1, d])
     sin_3d = pypto.reshape(sin_fp32, [t, 1, d], valid_shape=[t, 1, d])
     pypto.set_vec_tile_shapes(vec_token_tile, n, d)
-    return pypto.cast(x_fp32 * cos_3d + _rotate_half(x_fp32) * sin_3d, dtype)
+    x_cos = pypto.mul(x_fp32, cos_3d)
+    rotated_sin = pypto.mul(_rotate_half(x_fp32), sin_3d)
+    return pypto.add(x_cos, rotated_sin)
 
 
 def _rope(x: pypto.Tensor, cos: pypto.Tensor, sin: pypto.Tensor, vec_token_tile: int) -> pypto.Tensor:
-    return _rope_fp32(x, pypto.cast(cos, pypto.DT_FP32), pypto.cast(sin, pypto.DT_FP32), vec_token_tile)
+    rope_fp32 = _rope_fp32(x, pypto.cast(cos, pypto.DT_FP32), pypto.cast(sin, pypto.DT_FP32), vec_token_tile)
+    return pypto.cast(rope_fp32, x.dtype, pypto.CastMode.CAST_RINT)
 
 
-def _rms_norm(x: pypto.Tensor, gamma: pypto.Tensor, epsilon: float) -> pypto.Tensor:
-    dtype = x.dtype
+def _rms_norm_fp32(x: pypto.Tensor, gamma: pypto.Tensor, epsilon: float, vec_token_tile: int) -> pypto.Tensor:
     dim = x.shape[len(x.shape) - 1]
     gamma_shape = [1] * len(x.shape)
     gamma_shape[len(x.shape) - 1] = dim
     x_fp32 = pypto.cast(x, pypto.DT_FP32)
     gamma_fp32 = pypto.cast(pypto.reshape(gamma, gamma_shape), pypto.DT_FP32)
     square = x_fp32 * x_fp32
-    mean = pypto.sum(square, -1, keepdim=True) * (1.0 / dim)
-    inv_rms = pypto.div(pypto.full(mean.shape, 1.0, pypto.DT_FP32), pypto.sqrt(mean + epsilon))
-    return pypto.cast(x_fp32 * inv_rms * gamma_fp32, dtype)
+    if dim == 128:
+        half_shape = list(x.shape)
+        half_shape[len(x.shape) - 1] = 64
+        right_offsets = [0] * len(x.shape)
+        right_offsets[len(x.shape) - 1] = 64
+        left_square = pypto.view(square, half_shape, [0] * len(x.shape))
+        right_square = pypto.view(square, half_shape, right_offsets)
+        mean = pypto.sum(left_square + right_square, -1, keepdim=True) * (1.0 / dim)
+    else:
+        mean = pypto.sum(square, -1, keepdim=True) * (1.0 / dim)
+    if len(x.shape) == 3:
+        pypto.set_vec_tile_shapes(vec_token_tile, x.shape[1], 1)
+    rms = pypto.sqrt(mean + epsilon)
+    if len(x.shape) == 3:
+        pypto.set_vec_tile_shapes(vec_token_tile, x.shape[1], dim)
+    return pypto.div(x_fp32, rms, pypto.PrecisionType.INTRINSIC) * gamma_fp32
+
+
+def _rms_norm(x: pypto.Tensor, gamma: pypto.Tensor, epsilon: float) -> pypto.Tensor:
+    return pypto.cast(_rms_norm_fp32(x, gamma, epsilon, 1), x.dtype, pypto.CastMode.CAST_RINT)
 
 
 def _quant_int8(x: pypto.Tensor, scale: pypto.Tensor) -> pypto.Tensor:
@@ -279,192 +179,187 @@ def _quant_int8(x: pypto.Tensor, scale: pypto.Tensor) -> pypto.Tensor:
     return pypto.cast(quant_fp16, pypto.DT_INT8, pypto.CastMode.CAST_TRUNC, satmode=pypto.SaturationMode.ON)
 
 
-def _scatter_pa_nz_int8_contiguous_page0(params: ScatterContiguousParams):
-    cache_out, src, tokens, num_heads, dim, c0, vec_token_tile = params
-    d1_per_head = dim // c0
-    c1 = num_heads * d1_per_head
-    pypto.set_vec_tile_shapes(vec_token_tile, c1, c0)
-    src_3d = pypto.reshape(src, [tokens, c1, c0])
-    pypto.set_vec_tile_shapes(vec_token_tile, c1, c0)
+def _scatter_pa_nz_int8_contiguous_page0(params: ScatterGroupParams):
+    d1_per_head = params.dim // params.c0
+    c1 = params.num_heads * d1_per_head
+    pypto.set_vec_tile_shapes(params.vec_token_tile, c1, params.c0)
+    src_3d = pypto.reshape(params.src, [params.tokens, c1, params.c0])
+    pypto.set_vec_tile_shapes(params.vec_token_tile, c1, params.c0)
     src_c1_t_c0 = pypto.transpose(src_3d, 0, 1)
-    pypto.set_vec_tile_shapes(1, c1, vec_token_tile, c0)
-    src_pa_nz = pypto.reshape(src_c1_t_c0, [1, c1, tokens, c0])
-    pypto.assemble(src_pa_nz, [0, 0, 0, 0], cache_out)
+    pypto.set_vec_tile_shapes(1, c1, params.vec_token_tile, params.c0)
+    src_pa_nz = pypto.reshape(src_c1_t_c0, [1, c1, params.tokens, params.c0])
+    pypto.assemble(src_pa_nz, [0, params.head_start * d1_per_head, 0, 0], params.cache_out)
 
 
-def _scatter_pa_nz_int8_indexed_group(params: ScatterIndexedParams):
-    cache_in, cache_out, index, src, tokens, group_heads, dim, c0, head_start, vec_token_tile = params
-    d1_per_head = dim // c0
-    c1 = group_heads * d1_per_head
-    c1_offset = head_start * d1_per_head
-    block_num = cache_in.shape[0]
+def _scatter_pa_nz_int8_indexed_group(params: ScatterGroupParams, cache_in: pypto.Tensor, index: pypto.Tensor):
+    d1_per_head = params.dim // params.c0
+    c1 = params.num_heads * d1_per_head
+    c1_offset = params.head_start * d1_per_head
     block_size = cache_in.shape[2]
 
-    pypto.set_vec_tile_shapes(vec_token_tile, c1, c0)
-    src_3d = pypto.reshape(src, [tokens, c1, c0])
-    pypto.set_vec_tile_shapes(tokens, group_heads * dim)
-    src_flat = pypto.reshape(src_3d, [tokens, group_heads * dim])
-
-    cache_group = pypto.view(cache_in, [block_num, c1, block_size, c0], [0, c1_offset, 0, 0])
-    pypto.set_vec_tile_shapes(1, block_size, c1, c0)
-    cache_block_c1 = pypto.transpose(cache_group, 1, 2)
-    pypto.set_vec_tile_shapes(block_num * block_size, group_heads * dim)
-    cache_scatter = pypto.reshape(cache_block_c1, [block_num * block_size, group_heads * dim])
-    updated = pypto.scatter(cache_scatter, 0, index, src_flat)
-    pypto.set_vec_tile_shapes(1, block_size, c1, c0)
-    updated_block_c1 = pypto.reshape(updated, [block_num, block_size, c1, c0])
-    updated_group = pypto.transpose(updated_block_c1, 1, 2)
-    pypto.assemble(updated_group, [0, c1_offset, 0, 0], cache_out)
+    pypto.set_vec_tile_shapes(params.vec_token_tile, c1, params.c0)
+    src_3d = pypto.reshape(params.src, [params.tokens, c1, params.c0])
+    pypto.set_vec_tile_shapes(params.vec_token_tile, c1, params.c0)
+    src_c1_t_c0 = pypto.transpose(src_3d, 0, 1)
+    for token_idx in pypto.loop(params.tokens, name="LOOP_INDEXED_CACHE_GROUP", idx_name="token_idx"):
+        page_offset = index[token_idx]
+        page_id = page_offset // block_size
+        token_offset = page_offset % block_size
+        token_tile = pypto.view(src_c1_t_c0, [c1, 1, params.c0], [0, token_idx, 0])
+        pypto.assemble(
+            pypto.reshape(token_tile, [1, c1, 1, params.c0]),
+            [page_id, c1_offset, token_offset, 0],
+            params.cache_out,
+        )
 
 
 def _compute_q_grouped(params: QGroupParams):
-    qkv, q_gamma, cos_fp32, sin_fp32, q_out_out, tokens, num_q, dim, epsilon, group_heads, vec_token_tile = params
-    for head_start in range(0, num_q, group_heads):
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads * dim)
-        q_2d = pypto.view(qkv, [tokens, group_heads * dim], [0, head_start * dim])
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads, dim)
-        q_3d = pypto.reshape(q_2d, [tokens, group_heads, dim])
-        q_norm = _rms_norm(q_3d, q_gamma, epsilon)
-        cos_q = pypto.view(cos_fp32, [tokens, dim], [0, 0])
-        sin_q = pypto.view(sin_fp32, [tokens, dim], [0, 0])
-        q_rope = _rope_fp32(q_norm, cos_q, sin_q, vec_token_tile)
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads * dim)
-        q_res = pypto.reshape(q_rope, [tokens, group_heads * dim])
-        pypto.assemble(q_res, [0, head_start * dim], q_out_out)
+    for head_start in range(0, params.num_q, params.group_heads):
+        pypto.set_vec_tile_shapes(params.vec_token_tile, params.group_heads * params.dim)
+        q_2d = pypto.view(params.qkv, [params.tokens, params.group_heads * params.dim],
+                          [0, head_start * params.dim])
+        pypto.set_vec_tile_shapes(params.vec_token_tile, params.group_heads, params.dim)
+        q_3d = pypto.reshape(q_2d, [params.tokens, params.group_heads, params.dim])
+        q_norm = _rms_norm_fp32(q_3d, params.q_gamma, params.epsilon, params.vec_token_tile)
+        cos_q = pypto.view(params.cos_fp32, [params.tokens, params.dim], [0, 0])
+        sin_q = pypto.view(params.sin_fp32, [params.tokens, params.dim], [0, 0])
+        q_rope = _rope_fp32(q_norm, cos_q, sin_q, params.vec_token_tile)
+        pypto.set_vec_tile_shapes(params.vec_token_tile, params.group_heads * params.dim)
+        q_res = pypto.reshape(q_rope, [params.tokens, params.group_heads * params.dim])
+        q_res_bf16 = pypto.cast(q_res, pypto.DT_BF16, pypto.CastMode.CAST_RINT)
+        pypto.assemble(q_res_bf16, [0, head_start * params.dim], params.q_out_out)
 
 
-def _compute_kv_grouped_fallback(params: KvGroupParams):
-    (
-        qkv,
-        k_gamma,
-        cos_fp32,
-        sin_fp32,
-        index,
-        k_cache,
-        v_cache,
-        k_scale,
-        v_scale,
-        k_cache_out,
-        v_cache_out,
-        tokens,
-        q_size,
-        k_size,
-        num_k,
-        num_v,
-        dim,
-        c0,
-        epsilon,
-        group_heads,
-        vec_token_tile,
-    ) = params
-    for head_start in range(0, num_k, group_heads):
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads * dim)
-        k_2d = pypto.view(qkv, [tokens, group_heads * dim], [0, q_size + head_start * dim])
-        v_2d = pypto.view(qkv, [tokens, group_heads * dim], [0, q_size + k_size + head_start * dim])
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads, dim)
-        k_3d = pypto.reshape(k_2d, [tokens, group_heads, dim])
-        v_3d = pypto.reshape(v_2d, [tokens, group_heads, dim])
-        k_norm = _rms_norm(k_3d, k_gamma, epsilon)
-        cos_k = pypto.view(cos_fp32, [tokens, dim], [0, 0])
-        sin_k = pypto.view(sin_fp32, [tokens, dim], [0, 0])
-        k_rope = _rope_fp32(k_norm, cos_k, sin_k, vec_token_tile)
-        k_scale_group = pypto.view(k_scale, [group_heads, dim], [head_start, 0])
-        v_scale_group = pypto.view(v_scale, [group_heads, dim], [head_start, 0])
-        pypto.set_vec_tile_shapes(vec_token_tile, group_heads, dim)
-        k_quant = _quant_int8(k_rope, k_scale_group)
-        v_quant = _quant_int8(v_3d, v_scale_group)
-        _scatter_pa_nz_int8_indexed_group(
-            ScatterIndexedParams(
-                k_cache, k_cache_out, index, k_quant, tokens, group_heads, dim, c0, head_start, vec_token_tile
-            )
-        )
-        _scatter_pa_nz_int8_indexed_group(
-            ScatterIndexedParams(
-                v_cache, v_cache_out, index, v_quant, tokens, group_heads, dim, c0, head_start, vec_token_tile
-            )
-        )
+def _compute_q_token_fallback(params: QTokenParams):
+    for token_base in pypto.loop(0, params.tokens, params.token_tile, name="LOOP_Q_TOKEN", idx_name="token_base"):
+        for head_start in range(0, params.num_q, params.group_heads):
+            pypto.set_vec_tile_shapes(params.token_tile, params.group_heads * params.dim)
+            q_2d = pypto.view(params.qkv, [params.token_tile, params.group_heads * params.dim],
+                              [token_base, head_start * params.dim])
+            pypto.set_vec_tile_shapes(params.token_tile, params.group_heads, params.dim)
+            q_3d = pypto.reshape(q_2d, [params.token_tile, params.group_heads, params.dim])
+            q_norm = _rms_norm_fp32(q_3d, params.q_gamma, params.epsilon, params.token_tile)
+            cos_q = pypto.view(params.cos_fp32, [params.token_tile, params.dim], [token_base, 0])
+            sin_q = pypto.view(params.sin_fp32, [params.token_tile, params.dim], [token_base, 0])
+            q_rope = _rope_fp32(q_norm, cos_q, sin_q, params.token_tile)
+            pypto.set_vec_tile_shapes(params.token_tile, params.group_heads * params.dim)
+            q_res = pypto.reshape(q_rope, [params.token_tile, params.group_heads * params.dim])
+            q_res_bf16 = pypto.cast(q_res, pypto.DT_BF16, pypto.CastMode.CAST_RINT)
+            pypto.assemble(q_res_bf16, [token_base, head_start * params.dim], params.q_out_out)
 
 
-def _cos_sin_fp32(
-    cos: pypto.Tensor,
-    sin: pypto.Tensor,
-    static_tokens: int,
-    dim: int,
-    vec_token_tile: int,
-) -> tuple[pypto.Tensor, pypto.Tensor]:
-    pypto.set_vec_tile_shapes(vec_token_tile, dim)
-    cos_static = pypto.view(cos, [static_tokens, dim], [0, 0])
-    sin_static = pypto.view(sin, [static_tokens, dim], [0, 0])
+def _compute_kv_token_fallback(params: KvTokenParams):
+    k_c1 = params.num_k * params.dim // params.c0
+    v_c1 = params.num_v * params.dim // params.c0
+    block_size = params.k_cache_out.shape[2]
+
+    for token_idx in pypto.loop(params.tokens, name="LOOP_INDEXED_CACHE_FULL", idx_name="token_idx"):
+        page_offset = params.index[token_idx]
+        page_id = page_offset // block_size
+        token_offset = page_offset % block_size
+
+        pypto.set_vec_tile_shapes(1, params.k_size)
+        k_2d = pypto.view(params.qkv, [1, params.k_size], [token_idx, params.q_size])
+        pypto.set_vec_tile_shapes(1, params.num_k, params.dim)
+        k_3d = pypto.reshape(k_2d, [1, params.num_k, params.dim])
+        k_norm = _rms_norm_fp32(k_3d, params.k_gamma, params.epsilon, 1)
+        cos_token = pypto.view(params.cos_fp32, [1, params.dim], [token_idx, 0])
+        sin_token = pypto.view(params.sin_fp32, [1, params.dim], [token_idx, 0])
+        k_rope = _rope_fp32(k_norm, cos_token, sin_token, 1)
+        k_quant = _quant_int8(k_rope, params.k_scale)
+        pypto.set_vec_tile_shapes(1, k_c1, 1, params.c0)
+        k_tile = pypto.reshape(k_quant, [1, k_c1, 1, params.c0])
+        pypto.assemble(k_tile, [page_id, 0, token_offset, 0], params.k_cache_out)
+
+        pypto.set_vec_tile_shapes(1, params.num_v * params.dim)
+        v_2d = pypto.view(params.qkv, [1, params.num_v * params.dim],
+                          [token_idx, params.q_size + params.k_size])
+        pypto.set_vec_tile_shapes(1, params.num_v, params.dim)
+        v_3d = pypto.reshape(v_2d, [1, params.num_v, params.dim])
+        v_quant = _quant_int8(v_3d, params.v_scale)
+        pypto.set_vec_tile_shapes(1, v_c1, 1, params.c0)
+        v_tile = pypto.reshape(v_quant, [1, v_c1, 1, params.c0])
+        pypto.assemble(v_tile, [page_id, 0, token_offset, 0], params.v_cache_out)
+
+
+def _qkv_meta(params: QuantParams):
+    static_tokens = params.qkv_size[0] * params.qkv_size[1]
+    c0 = params.k_cache.shape[3]
+    num_q = params.head_nums[0]
+    num_k = params.head_nums[1]
+    num_v = params.head_nums[2]
+    dim = params.qkv_size[3]
+    q_size = num_q * dim
+    k_size = num_k * dim
+    return QkvMeta(static_tokens, c0, num_q, num_k, num_v, dim, q_size, k_size)
+
+
+def _cos_sin_fp32(params: QuantParams, static_tokens: int, dim: int):
+    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, dim)
+    cos_static = pypto.view(params.cos, [static_tokens, dim], [0, 0])
+    sin_static = pypto.view(params.sin, [static_tokens, dim], [0, 0])
     return pypto.cast(cos_static, pypto.DT_FP32), pypto.cast(sin_static, pypto.DT_FP32)
 
 
-def _compute_quant(params: QuantParams):
-    static_tokens = params.qkv_size[0] * params.qkv_size[1]
-    c0 = params.k_cache.shape[3]
-    num_q = params.head_nums[0]
-    num_k = params.head_nums[1]
-    num_v = params.head_nums[2]
-    dim = params.qkv_size[3]
-    q_size = num_q * dim
-    k_size = num_k * dim
-    v_size = num_v * dim
-    cos_fp32, sin_fp32 = _cos_sin_fp32(params.cos, params.sin, static_tokens, dim, params.kv_vec_token_tile)
-
-    _compute_q_grouped(
-        QGroupParams(
-            params.qkv, params.q_gamma, cos_fp32, sin_fp32, params.q_out_out,
-            static_tokens, num_q, dim, params.epsilon, params.q_group_heads, params.q_vec_token_tile,
-        )
+def _q_group_params(params: QuantParams, cos_sin: tuple[pypto.Tensor, pypto.Tensor], meta: QkvMeta) -> QGroupParams:
+    cos_fp32, sin_fp32 = cos_sin
+    return QGroupParams(
+        params.qkv, params.q_gamma, cos_fp32, sin_fp32, params.q_out_out,
+        meta.tokens, meta.num_q, meta.dim, params.epsilon, params.q_group_heads, params.q_vec_token_tile,
     )
 
-    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, k_size)
-    k_2d_all = pypto.view(params.qkv, [static_tokens, k_size], [0, q_size])
-    v_2d_all = pypto.view(params.qkv, [static_tokens, v_size], [0, q_size + k_size])
-    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, num_k, dim)
-    k_3d_all = pypto.reshape(k_2d_all, [static_tokens, num_k, dim])
-    v_3d_all = pypto.reshape(v_2d_all, [static_tokens, num_v, dim])
-    k_norm_all = _rms_norm(k_3d_all, params.k_gamma, params.epsilon)
-    cos_all = pypto.view(cos_fp32, [static_tokens, dim], [0, 0])
-    sin_all = pypto.view(sin_fp32, [static_tokens, dim], [0, 0])
+
+def _compute_quant(params: QuantParams):
+    meta = _qkv_meta(params)
+    v_size = meta.num_v * meta.dim
+    cos_sin = _cos_sin_fp32(params, meta.tokens, meta.dim)
+    cos_fp32, sin_fp32 = cos_sin
+    _compute_q_grouped(_q_group_params(params, cos_sin, meta))
+
+    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, meta.k_size)
+    k_2d_all = pypto.view(params.qkv, [meta.tokens, meta.k_size], [0, meta.q_size])
+    v_2d_all = pypto.view(params.qkv, [meta.tokens, v_size], [0, meta.q_size + meta.k_size])
+    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, meta.num_k, meta.dim)
+    k_3d_all = pypto.reshape(k_2d_all, [meta.tokens, meta.num_k, meta.dim])
+    v_3d_all = pypto.reshape(v_2d_all, [meta.tokens, meta.num_v, meta.dim])
+    k_norm_all = _rms_norm_fp32(k_3d_all, params.k_gamma, params.epsilon, params.kv_vec_token_tile)
+    cos_all = pypto.view(cos_fp32, [meta.tokens, meta.dim], [0, 0])
+    sin_all = pypto.view(sin_fp32, [meta.tokens, meta.dim], [0, 0])
     k_rope_all = _rope_fp32(k_norm_all, cos_all, sin_all, params.kv_vec_token_tile)
 
-    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, num_k, dim)
+    pypto.set_vec_tile_shapes(params.kv_vec_token_tile, meta.num_k, meta.dim)
     k_quant_all = _quant_int8(k_rope_all, params.k_scale)
     v_quant_all = _quant_int8(v_3d_all, params.v_scale)
     _scatter_pa_nz_int8_contiguous_page0(
-        ScatterContiguousParams(
-            params.k_cache_out, k_quant_all, static_tokens, num_k, dim, c0, params.kv_vec_token_tile
-        )
+        ScatterGroupParams(params.k_cache_out, k_quant_all, meta.tokens, meta.num_k, meta.dim, meta.c0, 0,
+                           params.kv_vec_token_tile)
     )
     _scatter_pa_nz_int8_contiguous_page0(
-        ScatterContiguousParams(
-            params.v_cache_out, v_quant_all, static_tokens, num_v, dim, c0, params.kv_vec_token_tile
-        )
+        ScatterGroupParams(params.v_cache_out, v_quant_all, meta.tokens, meta.num_v, meta.dim, meta.c0, 0,
+                           params.kv_vec_token_tile)
     )
+
+
+def _select_q_token_tile(static_tokens: int, dim: int) -> int:
+    if dim > 256 or static_tokens % 2 != 0:
+        return 1
+    if dim > 256 or static_tokens % 4 != 0:
+        return 2
+    return 4
 
 
 def _compute_quant_generic_fallback(params: QuantGenericParams):
-    static_tokens = params.qkv_size[0] * params.qkv_size[1]
-    c0 = params.k_cache.shape[3]
-    num_q = params.head_nums[0]
-    num_k = params.head_nums[1]
-    num_v = params.head_nums[2]
-    dim = params.qkv_size[3]
-    q_size = num_q * dim
-    k_size = num_k * dim
-    cos_fp32, sin_fp32 = _cos_sin_fp32(params.cos, params.sin, static_tokens, dim, params.kv_vec_token_tile)
-
-    _compute_q_grouped(
-        QGroupParams(
-            params.qkv, params.q_gamma, cos_fp32, sin_fp32, params.q_out_out,
-            static_tokens, num_q, dim, params.epsilon, params.q_group_heads, params.q_vec_token_tile,
-        )
+    meta = _qkv_meta(params)
+    cos_sin = _cos_sin_fp32(params, meta.tokens, meta.dim)
+    cos_fp32, sin_fp32 = cos_sin
+    _compute_q_token_fallback(
+        QTokenParams(*_q_group_params(params, cos_sin, meta), _select_q_token_tile(meta.tokens, meta.dim))
     )
-    _compute_kv_grouped_fallback(
-        KvGroupParams(
-            params.qkv, params.k_gamma, cos_fp32, sin_fp32, params.index, params.k_cache, params.v_cache,
-            params.k_scale, params.v_scale, params.k_cache_out, params.v_cache_out, static_tokens, q_size,
-            k_size, num_k, num_v, dim, c0, params.epsilon, params.kv_group_heads, params.kv_vec_token_tile,
+    _compute_kv_token_fallback(
+        KvTokenParams(
+            params.qkv, params.k_gamma, cos_fp32, sin_fp32, params.index, params.k_scale, params.v_scale,
+            params.k_cache_out, params.v_cache_out, meta.tokens, meta.q_size, meta.k_size, meta.num_k,
+            meta.num_v, meta.dim, meta.c0, params.epsilon,
         )
     )
 
@@ -516,7 +411,7 @@ def qkv_rms_norm_rope_cache_quant_kernel_generic(
     k_gamma: pypto.Tensor([pypto.STATIC], pypto.DT_BF16),
     cos: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
     sin: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
-    index: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT64),
+    index: pypto.Tensor([pypto.STATIC], pypto.DT_INT64),
     generic_k_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
     generic_v_cache: pypto.Tensor([pypto.STATIC, pypto.STATIC, pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
     generic_k_scale: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
@@ -540,64 +435,70 @@ def qkv_rms_norm_rope_cache_quant_kernel_generic(
     )
 
 
-def _validate_qkv_runtime(qkv: torch.Tensor, runtime: QkvRuntimeArgs) -> None:
-    if qkv.dtype != torch.bfloat16:
-        raise TypeError("this PyPTO implementation currently supports BF16 qkv only")
-    if runtime.k_cache.dtype != runtime.v_cache.dtype:
-        raise TypeError("k_cache and v_cache must have the same dtype")
-    if runtime.cache_mode != "PA_NZ":
-        raise NotImplementedError("this PyPTO implementation currently supports PA_NZ cache_mode only")
-    if runtime.is_output_qkv:
-        raise NotImplementedError("this PyPTO implementation currently supports is_output_qkv=False only")
-    if runtime.k_cache.dtype != torch.int8:
-        raise TypeError("current network implementation requires int8 k_cache/v_cache")
-    if runtime.k_scale is None or runtime.v_scale is None:
-        raise ValueError("k_scale and v_scale are required for int8 cache")
-    if runtime.k_offset is not None or runtime.v_offset is not None:
-        raise NotImplementedError("asymmetric quantization is not supported yet")
-
-
-def _select_qkv_tile_config(head_nums: Tuple[int, int, int]) -> list[int]:
-    if head_nums[1] > 4 or head_nums[2] > 4 or head_nums[0] > 64:
+def _select_qkv_tile_config(head_nums: Tuple[int, int, int], dim: int) -> list[int]:
+    num_q, num_k, num_v = head_nums
+    if num_k > 4 or num_v > 4:
         return GENERIC_KERNEL_TILE_CONFIG
-    if head_nums[0] <= 16:
+    if num_q > 64 or dim > 128:
+        return GENERIC_KERNEL_TILE_CONFIG
+    if num_q <= 16:
         return TP4_KERNEL_TILE_CONFIG
     return TP1_KERNEL_TILE_CONFIG
-
-
-def _expand_qkv_index(index: torch.Tensor, qkv_size: Tuple[int, int, int, int]) -> torch.Tensor:
-    dim = int(qkv_size[3])
-    return index.reshape(index.numel(), 1).expand(index.numel(), GENERIC_KV_GROUP_HEADS * dim).contiguous()
 
 
 def qkv_rms_norm_rope_cache_wrapper(
     qkv: torch.Tensor,
     q_gamma: torch.Tensor,
     k_gamma: torch.Tensor,
-    *args,
-    **kwargs,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    index: torch.Tensor,
+    q_out: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    k_scale: Optional[torch.Tensor] = None,
+    v_scale: Optional[torch.Tensor] = None,
+    k_offset: Optional[torch.Tensor] = None,
+    v_offset: Optional[torch.Tensor] = None,
+    qkv_size: Sequence[int] = (),
+    head_nums: Sequence[int] = (),
+    epsilon: float = 1e-6,
+    cache_mode: str = "PA_NZ",
+    is_output_qkv: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Run the PyPTO kernel and return ``(q_out, k_cache, v_cache)``."""
-    cos, sin, args = _pop_cos_sin_args(args, kwargs)
-    runtime = _parse_qkv_runtime_args(args, kwargs)
-    _validate_qkv_runtime(qkv, runtime)
-    q_out_out = runtime.q_out
-    k_cache_out = runtime.k_cache
-    v_cache_out = runtime.v_cache
-    qkv_size = tuple(runtime.qkv_size)
-    head_nums = tuple(runtime.head_nums)
-    tile_config = _select_qkv_tile_config(head_nums)
+    """Run the PyPTO kernel and return ``(q_out, k_cache, v_cache)``.
+
+    ``q_out``, ``k_cache`` and ``v_cache`` are treated like AscendC in/out
+    tensors.  The public wrapper keeps these arguments in the AscendC order,
+    while the private JIT kernel only receives the writable output buffers.
+    """
+    if qkv.dtype != torch.bfloat16:
+        raise TypeError("this PyPTO implementation currently supports BF16 qkv only")
+    if k_cache.dtype != v_cache.dtype:
+        raise TypeError("k_cache and v_cache must have the same dtype")
+    if cache_mode != "PA_NZ":
+        raise NotImplementedError("this PyPTO implementation currently supports PA_NZ cache_mode only")
+    if is_output_qkv:
+        raise NotImplementedError("this PyPTO implementation currently supports is_output_qkv=False only")
+    q_out_out = q_out
+    k_cache_out = k_cache
+    v_cache_out = v_cache
+    if k_cache.dtype != torch.int8:
+        raise TypeError("current network implementation requires int8 k_cache/v_cache")
+    if k_scale is None or v_scale is None:
+        raise ValueError("k_scale and v_scale are required for int8 cache")
+    if k_offset is not None or v_offset is not None:
+        raise NotImplementedError("asymmetric quantization is not supported yet")
+    tile_config = _select_qkv_tile_config(tuple(head_nums), int(qkv_size[3]))
     if tile_config[4] == 1:
-        kernel_index = _expand_qkv_index(runtime.index, qkv_size)
         qkv_rms_norm_rope_cache_quant_kernel_generic(
-            qkv, q_gamma, k_gamma, cos, sin, kernel_index, runtime.k_cache, runtime.v_cache,
-            runtime.k_scale, runtime.v_scale, q_out_out, k_cache_out, v_cache_out,
-            list(qkv_size), list(head_nums), float(runtime.epsilon),
+            qkv, q_gamma, k_gamma, cos, sin, index, k_cache, v_cache, k_scale, v_scale,
+            q_out_out, k_cache_out, v_cache_out, list(qkv_size), list(head_nums), float(epsilon),
         )
     else:
         qkv_rms_norm_rope_cache_quant_kernel_regular(
-            qkv, q_gamma, k_gamma, cos, sin, runtime.index, runtime.k_cache, runtime.v_cache,
-            runtime.k_scale, runtime.v_scale, q_out_out, k_cache_out, v_cache_out,
-            list(qkv_size), list(head_nums), float(runtime.epsilon), list(tile_config),
+            qkv, q_gamma, k_gamma, cos, sin, index, k_cache, v_cache, k_scale, v_scale,
+            q_out_out, k_cache_out, v_cache_out, list(qkv_size), list(head_nums), float(epsilon),
+            list(tile_config),
         )
     return q_out_out, k_cache_out, v_cache_out

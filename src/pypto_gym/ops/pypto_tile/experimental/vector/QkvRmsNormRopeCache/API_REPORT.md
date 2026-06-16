@@ -11,14 +11,14 @@ feasibility: feasible_with_constraints
 
 ## 1. 概述
 
-`qkv_rms_norm_rope_cache` 拆解为 SplitVD、RMSNorm、RoPE、量化、reshape/transpose 和 PA_NZ cache 写入。当前目标功能是 INT8 cache 对称量化路径：
+`qkv_rms_norm_rope_cache` 拆解为 SplitVD、RMSNorm、RoPE、量化、reshape/transpose 和 PA_NZ cache 写入。当前目标功能是 INT8 cache 对称量化路径，包含既有 TP4/TP1 快路径和超出快路径 head 规模时使用的 generic fallback：
 
 ```text
 K: RMSNorm -> RoPE -> quant -> INT8 PA_NZ cache
 V: quant -> INT8 PA_NZ cache
 ```
 
-当前代码只保留这一路径；其他 cache dtype 会在 wrapper 中报错。
+当前代码只保留 INT8 PA_NZ 路径；其他 cache dtype 会在 wrapper 中报错。
 
 ## 2. 公式分解
 
@@ -46,14 +46,15 @@ v_quant = saturate_int8(round(v / v_scale))
 | sqrt/div/mul/add | `pypto.sqrt` / `pypto.div` / 运算符 | RMSNorm 和 RoPE |
 | concat | `pypto.concat` | `rotate_half = concat(-x2, x1)` |
 | INT8 quant | `pypto.cast(..., CAST_RINT)` + saturation | 对称量化 |
-| INT8 cache write | `pypto.reshape` + `move` | 当前网络 case 的 page0 连续写入 |
+| INT8 cache write fast path | `pypto.reshape` + `move` | 当前 TP4/TP1 网络性能 case 的 page0 连续写入 |
+| INT8 cache write fallback | `pypto.reshape` + `pypto.transpose` + `pypto.scatter` + `pypto.assemble` | Generic fallback 按 `index` 写 INT8 PA_NZ cache |
 | tiling | `pypto.set_vec_tile_shapes` | Vector tile 配置 |
 
 ## 4. 入口约束
 
 - `qkv/q_gamma/k_gamma/cos/sin/q_out` 为 BF16。
 - `index` 为 INT64。
-- 当前网络用例要求 `k_cache/v_cache` 为 INT8，并要求 `k_scale/v_scale` 非空。
+- 当前实现要求 `k_cache/v_cache` 为 INT8，并要求 `k_scale/v_scale` 非空。
 - `k_cache/v_cache` 非 INT8 时直接报错。
 - `k_offset/v_offset` 当前必须为 `None`。
 - JIT tensor 参数动态 token 轴使用 `pypto.DYNAMIC`，cache 轴保持 static。
@@ -64,15 +65,18 @@ v_quant = saturate_int8(round(v / v_scale))
 - `Nqkv == Nq + Nk + Nv`。
 - `Nk == Nv`。
 - `cache_mode == "PA_NZ"`。
-- 当前网络 case 固定 `C0=32`、`BlockSize=128`。
-- INT8 fast path 当前要求 `index=torch.arange(T)` 且 `T <= BlockSize`。
+- 当前验证 case 固定 `C0=32`、`BlockSize=128`。
+- TP4/TP1 INT8 fast path 当前要求 `index=torch.arange(T)` 且 `T <= BlockSize`。
+- Generic fallback 已验证 indexed scatter，当前覆盖 `D=128`、`C0=32`、`BlockSize=128`。
 
-## 6. 当前网络 case
+## 6. 当前验证 case
 
 | Case | qkv | qkv_size | head_nums | cache | scale |
 | --- | --- | --- | --- | --- | --- |
 | `mtp2_tp4_network_quant` | `[48,2304]` | `[16,3,18,128]` | `[16,1,1]` | `[11898,4,128,32]` INT8 | `[1,128]` |
 | `mtp2_tp1_network_quant` | `[12,9216]` | `[4,3,72,128]` | `[64,4,4]` | `[11898,16,128,32]` INT8 | `[4,128]` |
+| `pypto_qkv_rms_norm_rope_cache_id15` | `[2,49152]` | `[1,2,384,128]` | `[128,128,128]` | `[1,512,128,32]` INT8 | `[128,128]` |
+| `pypto_qkv_rms_norm_rope_cache_id15_indexed` | `[2,49152]` | `[1,2,384,128]` | `[128,128,128]` | `[2,512,128,32]` INT8 | `[128,128]` |
 
 ## 7. 泛化边界
 
@@ -94,7 +98,7 @@ T
 Nq/Nk/Nv, D, qkv_width, q_out_width, cache shape, scale shape
 ```
 
-当前 INT8 cache 写入未泛化到任意 `index`，这是功能泛化的主要缺口。
+TP4/TP1 快路径仍未泛化到任意 `index`。Generic fallback 已补充基于 `index` 的 flattened scatter 功能兜底，wrapper 在 `Nq>64` 或 `Nk/Nv>4` 时选择 generic kernel，以避免影响既有性能 case 的快路径。
 
 ## 8. 验证状态
 
@@ -103,6 +107,8 @@ Nq/Nk/Nv, D, qkv_width, q_out_width, cache shape, scale shape
 ```text
 PASS mtp2_tp4_network_quant
 PASS mtp2_tp1_network_quant
+PASS pypto_qkv_rms_norm_rope_cache_id15
+PASS pypto_qkv_rms_norm_rope_cache_id15_indexed
 [PRECISION_PASS]
 ```
 
@@ -111,6 +117,9 @@ PASS mtp2_tp1_network_quant
 ```text
 mtp2_tp4_network_quant avg_ms=0.342387 repeat=30 warmup=3 tokens=48 ms_per_token=0.007133
 mtp2_tp1_network_quant avg_ms=0.684205 repeat=30 warmup=3 tokens=12 ms_per_token=0.057017
+2026-06-11 recheck after generic fallback:
+mtp2_tp4_network_quant avg_ms=1.575635 repeat=20 warmup=3 tokens=48 ms_per_token=0.032826
+mtp2_tp1_network_quant avg_ms=0.711564 repeat=20 warmup=3 tokens=12 ms_per_token=0.059297
 ```
 
 已记录的泳道图：
@@ -127,13 +136,8 @@ mtp2_tp1_network_quant:
 
 ## 9. 风险
 
-- INT8 fast path 不是通用 PA_NZ scatter，不能覆盖任意 `index`。
+- TP4/TP1 INT8 fast path 不是通用 PA_NZ scatter，不能覆盖任意 `index`。
+- Generic fallback 使用 indexed scatter 作为功能兜底，当前目标不是替代快路径性能。
 - `k_offset/v_offset` 非对称量化未实现。
 - `is_output_qkv=True` 未实现。
 - benchmark 是 host 侧端到端平均耗时；泳道图 AICore E2E 是核侧分析口径，二者不能直接混用。
-
-## 2026-06-11 整改同步
-
-- API 映射新增 generic fallback cache 写入：`reshape/transpose` + `pypto.scatter` + `assemble`。
-- 新增 id15/id15_indexed 用例，覆盖 `head_nums=[128,128,128]` 和非连续 `index`。
-- TP4/TP1 fast path 的 `index=torch.arange(T)` 限制仍只适用于快路径，不代表整个算子功能边界。

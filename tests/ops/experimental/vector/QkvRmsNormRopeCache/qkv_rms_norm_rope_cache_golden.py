@@ -8,11 +8,14 @@
 # -----------------------------------------------------------------------------------------------------------
 
 
-"""Torch CPU reference for QkvRmsNormRopeCache.
+"""Torch reference for QkvRmsNormRopeCache.
 
 The reference follows the public AscendC operator contract, but it is written
 from the mathematical definition only:
 SplitVD -> RMSNorm(q, k) -> half-and-half RoPE(q, k) -> PA_NZ cache scatter.
+
+The functions run on the input tensors' device. NPU precision tests pass NPU
+tensors so BF16 rounding follows the torch-npu execution path.
 """
 
 from __future__ import annotations
@@ -23,58 +26,16 @@ from typing import Optional, Sequence
 import torch
 
 QkvSizeInfo = collections.namedtuple(
-    "QkvSizeInfo",
-    ["batch", "seq", "num_qkv", "dim", "num_q", "num_k", "num_v"],
+    "QkvSizeInfo", ["batch", "seq", "num_qkv", "dim", "num_q", "num_k", "num_v"]
 )
-
 QkvNormRopeCacheOutput = collections.namedtuple(
-    "QkvNormRopeCacheOutput",
-    ["q_new", "k_new", "v_new", "q_extra", "k_extra", "v_extra"],
+    "QkvNormRopeCacheOutput", ["q_new", "k_new", "v_new", "q_extra", "k_extra", "v_extra"]
 )
-
-
 QKV_GOLDEN_ARG_NAMES = (
     "index", "q_out", "k_cache", "v_cache", "k_scale", "v_scale", "k_offset",
     "v_offset", "qkv_size", "head_nums", "epsilon", "cache_mode", "is_output_qkv",
 )
 QkvGoldenArgs = collections.namedtuple("QkvGoldenArgs", QKV_GOLDEN_ARG_NAMES)
-
-
-def _pop_cos_sin_args(args: tuple, kwargs: dict) -> tuple[torch.Tensor, torch.Tensor, tuple]:
-    rest = args
-    if rest:
-        cos = rest[0]
-        rest = rest[1:]
-    elif "cos" in kwargs:
-        cos = kwargs.pop("cos")
-    else:
-        raise TypeError("missing required argument: cos")
-
-    if rest:
-        sin = rest[0]
-        rest = rest[1:]
-    elif "sin" in kwargs:
-        sin = kwargs.pop("sin")
-    else:
-        raise TypeError("missing required argument: sin")
-    return cos, sin, rest
-
-
-def _parse_golden_args(args: tuple, kwargs: dict) -> QkvGoldenArgs:
-    defaults = dict(
-        k_scale=None, v_scale=None, k_offset=None, v_offset=None,
-        qkv_size=(), head_nums=(), epsilon=1e-6, cache_mode="PA_NZ", is_output_qkv=False,
-    )
-    if len(args) > len(QKV_GOLDEN_ARG_NAMES):
-        raise TypeError("too many positional arguments")
-    values = {**defaults, **dict(zip(QKV_GOLDEN_ARG_NAMES, args))}
-    values.update({name: kwargs.pop(name) for name in list(kwargs) if name in QKV_GOLDEN_ARG_NAMES})
-    if kwargs:
-        raise TypeError(f"unexpected keyword argument(s): {sorted(kwargs)}")
-    missing = [name for name in QKV_GOLDEN_ARG_NAMES[:4] if name not in values]
-    if missing:
-        raise TypeError(f"missing required argument(s): {missing}")
-    return QkvGoldenArgs(*(values.get(name) for name in QKV_GOLDEN_ARG_NAMES))
 
 
 def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> QkvSizeInfo:
@@ -96,8 +57,14 @@ def _check_qkv_size(qkv_size: Sequence[int], head_nums: Sequence[int]) -> QkvSiz
 def rms_norm_torch(x: torch.Tensor, gamma: torch.Tensor, epsilon: float) -> torch.Tensor:
     x_fp32 = x.to(torch.float32)
     gamma_fp32 = gamma.to(torch.float32).view(*([1] * (x.dim() - 1)), gamma.numel())
-    inv_rms = torch.rsqrt(torch.mean(x_fp32 * x_fp32, dim=-1, keepdim=True) + float(epsilon))
-    return (x_fp32 * inv_rms * gamma_fp32).to(x.dtype)
+    square = x_fp32 * x_fp32
+    if x.shape[-1] == 128:
+        square_sum = (square[..., :64] + square[..., 64:]).sum(dim=-1, keepdim=True)
+        mean = square_sum * (1.0 / 128.0)
+    else:
+        mean = torch.mean(square, dim=-1, keepdim=True)
+    rms = torch.sqrt(mean + float(epsilon))
+    return (x_fp32 / rms) * gamma_fp32
 
 
 def rope_torch(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -108,10 +75,10 @@ def rope_torch(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.T
     while cos_fp32.dim() < x_fp32.dim():
         cos_fp32 = cos_fp32.unsqueeze(1)
         sin_fp32 = sin_fp32.unsqueeze(1)
-    x1 = x_fp32[..., :dim // 2]
-    x2 = x_fp32[..., dim // 2:]
+    x1 = x_fp32[..., : dim // 2]
+    x2 = x_fp32[..., dim // 2 :]
     rotated = torch.cat((-x2, x1), dim=-1)
-    return (x_fp32 * cos_fp32 + rotated * sin_fp32).to(x.dtype)
+    return x_fp32 * cos_fp32 + rotated * sin_fp32
 
 
 def quant_to_int8_torch(x: torch.Tensor, scale: torch.Tensor, offset: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -144,24 +111,62 @@ def scatter_pa_nz_torch(cache: torch.Tensor, index: torch.Tensor, src: torch.Ten
     return out
 
 
-def qkv_rms_norm_rope_cache_golden(
-    qkv: torch.Tensor,
-    q_gamma: torch.Tensor,
-    k_gamma: torch.Tensor,
-    *args,
-    **kwargs,
-):
+def _pop_cos_sin_args(args: tuple, kwargs: dict) -> tuple[torch.Tensor, torch.Tensor, tuple]:
+    rest = args
+    if rest:
+        cos = rest[0]
+        rest = rest[1:]
+    elif "cos" in kwargs:
+        cos = kwargs.pop("cos")
+    else:
+        raise TypeError("missing required argument: cos")
+
+    if rest:
+        sin = rest[0]
+        rest = rest[1:]
+    elif "sin" in kwargs:
+        sin = kwargs.pop("sin")
+    else:
+        raise TypeError("missing required argument: sin")
+    return cos, sin, rest
+
+
+def _parse_golden_args(args: tuple, kwargs: dict) -> QkvGoldenArgs:
+    defaults = {
+        "k_scale": None,
+        "v_scale": None,
+        "k_offset": None,
+        "v_offset": None,
+        "qkv_size": (),
+        "head_nums": (),
+        "epsilon": 1e-6,
+        "cache_mode": "PA_NZ",
+        "is_output_qkv": False,
+    }
+    if len(args) > len(QKV_GOLDEN_ARG_NAMES):
+        raise TypeError("too many positional arguments")
+    values = dict(defaults)
+    for name, value in zip(QKV_GOLDEN_ARG_NAMES, args):
+        values[name] = value
+    for name in QKV_GOLDEN_ARG_NAMES:
+        if name in kwargs:
+            values[name] = kwargs.pop(name)
+    if kwargs:
+        raise TypeError(f"unexpected keyword argument(s): {sorted(kwargs)}")
+    missing = [name for name in QKV_GOLDEN_ARG_NAMES[:4] if name not in values]
+    if missing:
+        raise TypeError(f"missing required argument(s): {missing}")
+    return QkvGoldenArgs(*(values[name] for name in QKV_GOLDEN_ARG_NAMES))
+
+
+def qkv_rms_norm_rope_cache_golden(qkv: torch.Tensor, q_gamma: torch.Tensor, k_gamma: torch.Tensor, *args, **kwargs):
     cos, sin, args = _pop_cos_sin_args(args, kwargs)
     runtime = _parse_golden_args(args, kwargs)
     if runtime.cache_mode != "PA_NZ":
         raise ValueError(f"only PA_NZ cache_mode is supported, got {runtime.cache_mode}")
-    result = _check_qkv_size(runtime.qkv_size, runtime.head_nums)
-    batch = result.batch
-    seq = result.seq
-    dim = result.dim
-    num_q = result.num_q
-    num_k = result.num_k
-    num_v = result.num_v
+    size_info = _check_qkv_size(runtime.qkv_size, runtime.head_nums)
+    batch, seq, dim = size_info.batch, size_info.seq, size_info.dim
+    num_q, num_k, num_v = size_info.num_q, size_info.num_k, size_info.num_v
     tokens = batch * seq
     if qkv.shape != (tokens, (num_q + num_k + num_v) * dim):
         raise ValueError(f"qkv shape mismatch: got {tuple(qkv.shape)}")
@@ -190,6 +195,8 @@ def qkv_rms_norm_rope_cache_golden(
     v_new = scatter_pa_nz_torch(runtime.v_cache, runtime.index, v_src)
 
     if runtime.is_output_qkv:
-        return QkvNormRopeCacheOutput(q_new, k_new, v_new, q_new.clone(),
-                                      k_rope.reshape(tokens, num_k * dim), v.reshape(tokens, num_v * dim))
+        return QkvNormRopeCacheOutput(
+            q_new, k_new, v_new, q_new.clone(), k_rope.reshape(tokens, num_k * dim),
+            v.reshape(tokens, num_v * dim),
+        )
     return QkvNormRopeCacheOutput(q_new, k_new, v_new, None, None, None)

@@ -27,16 +27,14 @@ import torch
 import torch_npu  # noqa: F401
 from numpy.testing import assert_allclose
 
+LOGGER = logging.getLogger(__name__)
+CASE_FILE = Path(__file__).with_name("test_cases.json")
+P0_SHAPE_MARKERS = [[8, 2304], [2, 9216]]
 QkvNormRopeInputs = collections.namedtuple(
     "QkvNormRopeInputs",
     ["qkv", "q_gamma", "k_gamma", "cos", "sin", "index",
      "q_out", "k_cache", "v_cache", "k_scale", "v_scale"],
 )
-
-
-LOGGER = logging.getLogger(__name__)
-CASE_FILE = Path(__file__).with_name("test_cases.json")
-P0_SHAPE_MARKERS = [[8, 2304], [2, 9216]]
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR
 while REPO_ROOT != REPO_ROOT.parent and not (REPO_ROOT / "src").is_dir():
@@ -94,20 +92,10 @@ def make_inputs(case: Dict, device: torch.device):
         raise ValueError("current network cases require int8 cache_dtype")
     cache_dtype = torch.int8
     k_cache = torch.zeros(
-        case["block_num"],
-        num_k * dim // c0,
-        case["block_size"],
-        c0,
-        dtype=cache_dtype,
-        device=device,
+        case["block_num"], num_k * dim // c0, case["block_size"], c0, dtype=cache_dtype, device=device
     )
     v_cache = torch.zeros(
-        case["block_num"],
-        num_v * dim // c0,
-        case["block_size"],
-        c0,
-        dtype=cache_dtype,
-        device=device,
+        case["block_num"], num_v * dim // c0, case["block_size"], c0, dtype=cache_dtype, device=device
     )
     if cache_dtype == torch.int8:
         k_scale = (torch.rand(num_k, dim, dtype=torch.float32, device=device) * 0.1) + 0.1
@@ -115,18 +103,14 @@ def make_inputs(case: Dict, device: torch.device):
     else:
         k_scale = None
         v_scale = None
-    return QkvNormRopeInputs(
-        qkv, q_gamma, k_gamma, cos, sin, index, q_out, k_cache, v_cache, k_scale, v_scale
-    )
+    return QkvNormRopeInputs(qkv, q_gamma, k_gamma, cos, sin, index, q_out, k_cache, v_cache, k_scale, v_scale)
 
 
 def run_single_case(case: Dict):
     device = npu_device()
     inputs = make_inputs(case, device)
-    golden_inputs = [x.cpu() if isinstance(x, torch.Tensor) else x for x in inputs]
     golden = qkv_rms_norm_rope_cache_golden(
-        *golden_inputs[:9],
-        k_scale=golden_inputs[9], v_scale=golden_inputs[10],
+        *inputs,
         qkv_size=case["qkv_size"],
         head_nums=case["head_nums"],
         epsilon=case["epsilon"],
@@ -142,6 +126,7 @@ def run_single_case(case: Dict):
         is_output_qkv=case["is_output_qkv"],
     )
     result = tuple(x.detach().cpu() for x in result)
+    golden = tuple(x.detach().cpu() for x in golden[:len(result)])
 
     for idx, (actual, expected) in enumerate(zip(result, golden)):
         assert actual.shape == expected.shape, f"output {idx} shape mismatch: {actual.shape} != {expected.shape}"
