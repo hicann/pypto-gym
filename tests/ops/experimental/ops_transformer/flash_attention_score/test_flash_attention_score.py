@@ -34,9 +34,10 @@ from flash_attention_score_golden import (
 _MERE_EXEMPT = 2.0 ** (-8)
 
 
-def _set_device() -> None:
+def _set_device() -> int:
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
+    return device_id
 
 
 def _precision_verify(impl_out, gold_out, tag):
@@ -160,8 +161,8 @@ def _run_kernel(inputs, shape, dev):
 
 
 def test_l0() -> None:
-    _set_device()
-    dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
+    dev_id = _set_device()
+    dev = torch.device(f"npu:{dev_id}")
 
     shape  = {"B": 1, "N": 64, "Sq": 1024, "Skv": 1024, "D": 128}
     inputs = _make_inputs(dev, seed=50, shape=shape, pse_type=1, keep_prob=1.0)
@@ -179,8 +180,8 @@ def test_l0() -> None:
 
 
 def test_l1() -> None:
-    _set_device()
-    dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
+    dev_id = _set_device()
+    dev = torch.device(f"npu:{dev_id}")
 
     shape  = {"B": 2, "N": 32, "Sq": 500, "Skv": 500, "D": 128}
     inputs = _make_inputs(dev, seed=71, shape=shape, pse_type=1, keep_prob=1.0)
@@ -198,8 +199,8 @@ def test_l1() -> None:
 
 
 def test_l2() -> None:
-    _set_device()
-    dev = torch.device(f"npu:{int(os.environ['TILE_FWK_DEVICE_ID'])}")
+    dev_id = _set_device()
+    dev = torch.device(f"npu:{dev_id}")
 
     shape  = {"B": 8, "N": 32, "Sq": 439, "Skv": 439, "D": 128}
     inputs = _make_inputs(dev, seed=99, shape=shape, pse_type=1, keep_prob=1.0)
