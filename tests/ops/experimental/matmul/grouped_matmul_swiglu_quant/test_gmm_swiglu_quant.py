@@ -113,6 +113,7 @@ def _build_test_tensors(params):
     return a, scaled_a, b, scaled_b
 
 
+@pytest.mark.soc("950")
 def test_gmm_mxfp8(params):
     """Validate the PyPTO kernel against the PyTorch reference implementation."""
     tile_config = _build_tile_config(params)

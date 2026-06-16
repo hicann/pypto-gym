@@ -67,6 +67,26 @@ def _build_finalize_routing_tensors(config, torch_dtype, scale_k):
     return x1, x2, scale, pertoken_scale, group_list, shared_input, logit, row_index, out
 
 
+TEST_CONFIGS = [
+    FinalizeRoutingConfig(
+        batch=4096, topk=9, k=4096, n=1024, num_experts=4,
+        m_tile_shape=[128, 128], k_tile_shape=[256, 256], n_tile_shape=[256, 256],
+        vector_tile_shape=[1, 4, 128, 4],
+        in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
+        description="case1 batch4096 topk9 k4096 n1024 e4",
+    ),
+    FinalizeRoutingConfig(
+        batch=112, topk=8, k=7168, n=4096, num_experts=8,
+        m_tile_shape=[128, 128], k_tile_shape=[128, 512], n_tile_shape=[128, 256],
+        vector_tile_shape=[1, 4, 128, 4],
+        in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
+        description="case2 batch112 topk8 k7168 n4096 e8",
+    ),
+]
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("config", TEST_CONFIGS)
 def test_gmm_finalize_routing(config):
     """单配置测试：构造数据、运行 golden 与 PyPTO，并执行数值对齐校验。"""
     torch_dtype_map = {
@@ -111,26 +131,6 @@ def test_gmm_finalize_routing(config):
 
     assert_allclose(golden.cpu().numpy(), result.cpu().numpy(), rtol=RTOL, atol=ATOL)
     print(config.description, "PASSED")
-
-
-TEST_CONFIGS = [
-    FinalizeRoutingConfig(
-        batch=4096, topk=9, k=4096, n=1024, num_experts=4,
-        m_tile_shape=[128, 128], k_tile_shape=[256, 256], n_tile_shape=[256, 256],
-        vector_tile_shape=[1, 4, 128, 4],
-        in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
-        description="case1 batch4096 topk9 k4096 n1024 e4",
-    ),
-    FinalizeRoutingConfig(
-        batch=112, topk=8, k=7168, n=4096, num_experts=8,
-        m_tile_shape=[128, 128], k_tile_shape=[128, 512], n_tile_shape=[128, 256],
-        vector_tile_shape=[1, 4, 128, 4],
-        in_dtype=pypto.DT_FP8E4M3, transpose_x2=True, group_list_type=1,
-        description="case2 batch112 topk8 k7168 n4096 e8",
-    ),
-]
-
-test_gmm_finalize_routing = pytest.mark.parametrize("config", TEST_CONFIGS)(test_gmm_finalize_routing)
 
 
 def main():

@@ -200,10 +200,6 @@ def main() -> None:
 
     cases = MATMUL_CASES
 
-    if not args.golden_only and os.environ.get("TILE_FWK_DEVICE_ID") is None:
-        print("Please set: export TILE_FWK_DEVICE_ID=0", file=sys.stderr)
-        raise RuntimeError("Environment check failed")
-
     total = len(cases)
     print("=" * 60)
     print("quant_batch_matmul FP8E4M3 tests")
