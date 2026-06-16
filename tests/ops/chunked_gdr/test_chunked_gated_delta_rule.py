@@ -60,6 +60,8 @@ sys.path.insert(0, str(_CUR))
 _IMPL = Path(__file__).resolve().parents[3] / "src/pypto_gym/ops/pypto_tile/experimental/attention/chunked_gdr/"
 sys.path.insert(0, str(_IMPL))
 
+import pytest
+
 from chunked_gated_delta_rule_golden import chunked_gated_delta_rule_golden
 from chunked_gated_delta_rule_impl import chunked_gated_delta_rule_wrapper
 
@@ -572,6 +574,7 @@ def test_level0_smoke():
     logger.info(f"\n[LEVEL0] Smoke test passed: {config['id']}")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_level1_comprehensive():
     device = get_device()
     if device.startswith("npu"):

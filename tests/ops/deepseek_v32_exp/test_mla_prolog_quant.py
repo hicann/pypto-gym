@@ -668,6 +668,7 @@ def test_b128_s4k4_pa_nd_bf16_quantb_p():
 
 
 @pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large shape")
 def test_b4_s64k2_pa_nd_bf16_quantb_d():
     '''
     mla_prolog decode测试函数

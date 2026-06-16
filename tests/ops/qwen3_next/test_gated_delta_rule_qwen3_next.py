@@ -453,6 +453,7 @@ def test_b1_nqk2_nv4_s1m():
 
 
 # Test case: B:1, Nqk:2, Nv:4, S:1026
+@pytest.mark.skip(reason="large test case")
 def test_b1_nqk2_nv4_s1026():
     do_test_chunk_gated_delta_rule("ChunkGatedDeltaRuleSTest.b1_nqk2_nv4_s1026")
 

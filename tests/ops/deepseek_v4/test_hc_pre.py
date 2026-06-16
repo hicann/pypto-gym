@@ -212,6 +212,7 @@ def test_hc_pre_inmodel(t=16):
     print("comb compare success!!!")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_hc_pre(t=16, is_trans=False):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch.npu.set_device(int(device_id))

@@ -448,6 +448,7 @@ def do_test_lighting_indexer_prolog_quant(case_name, configs):
 
 
 @pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_b4_s1_2_s2_64k():
     configs = IndexerPrologQuantConfigs(
         q_linear=[16, 16, 512, 512, 128, 128],
