@@ -137,7 +137,7 @@ def test_gmm_mxfp8(params):
 
 def get_params(case_name: str) -> TestParams:
     """Get test parameters for specified test case."""
-    if case_name == "testcase6":
+    if case_name == "testcase":
         return TestParams(
             m=16,
             k=512,
@@ -149,7 +149,7 @@ def get_params(case_name: str) -> TestParams:
             n_tile_shape=[256, 256],
             vector_tile_shape=[1, 8, 256, 32],
             transpose=TransposeConfig(a_trans=False, b_trans=False),
-            description="testcase6 m16 k512 n7168 g[7,9]",
+            description="testcase m16 k512 n7168 g[7,9]",
         )
     raise RuntimeError(f"Cannot get parameters for case: {case_name}")
 
@@ -160,8 +160,8 @@ def main():
         "case",
         type=str,
         nargs="?",
-        default="testcase6",
-        help="Case name (default: testcase6)",
+        default="testcase",
+        help="Case name (default: testcase)",
     )
     args = parser.parse_args()
     try:

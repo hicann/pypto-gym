@@ -69,7 +69,7 @@ def scaled_matmul_kernel(
     out_quant: pypto.Tensor(),
     group_list,
     tile_config,
-) -> None:
+):
     """Run grouped scaled matmul, then apply SwiGLU and per-token quantization."""
     num_groups = b.shape[0]
     n_size = b.shape[-1]
@@ -95,7 +95,6 @@ def scaled_matmul_kernel(
             tile_config.m_tile_shape,
             tile_config.k_tile_shape,
             tile_config.n_tile_shape,
-            enable_multi_data_load=True,
             enable_split_k=True,
         )
         current_mm_out = pypto.scaled_mm(x, weight, pypto.DT_FP32, scaled_x, scaled_weight)
