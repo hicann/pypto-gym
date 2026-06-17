@@ -20,46 +20,13 @@ Contains all shared code used by both forward and backward:
   - Mask generation (generate_block_sparse_mask)
 """
 
-import collections
 import math
+import os
+from collections import namedtuple
 from dataclasses import dataclass
-
 import torch
 
 
-# ===========================================================================
-# Namedtuples for multi-value returns (replaces bare tuples)
-# ===========================================================================
-BsaDefaults = collections.namedtuple("BsaDefaults", [
-    "B", "Hq", "Hkv", "Sq", "Skv", "D", "bx", "by", "scale", "asq", "askv",
-])
-
-SparseQkDvResult = collections.namedtuple("SparseQkDvResult", [
-    "q_compact", "do_compact", "o_compact", "lse_compact", "inner_mask", "maxInner",
-])
-
-CompactKvConfig = collections.namedtuple('CompactKvConfig', [
-    'qblock_info', 'max_sel', 'k_2d', 'v_2d', 'valid_mask',
-    'Hkv', 'Skv_pad', 'bx', 'by', 'D', 'device', 'total_qblocks',
-])
-
-SparseKvBuildConfig = collections.namedtuple('SparseKvBuildConfig', [
-    'block_sparse_mask', 'k_2d', 'v_2d',
-    'B', 'Hq', 'Hkv', 'Sq', 'Skv', 'Sq_pad', 'Skv_pad',
-    'numQB', 'numKB', 'bx', 'by', 'D', 'device',
-])
-
-CompactQConfig = collections.namedtuple('CompactQConfig', [
-    'kvblock_info', 'maxInner',
-    'q_2d', 'do_2d', 'o_2d', 'lse_2d',
-    'Hq', 'Sq_pad', 'bx', 'by', 'D', 'device', 'total_kv',
-])
-
-BlockRange = collections.namedtuple("BlockRange", ["blk", "start", "end"])
-
-
-# ===========================================================================
-# ===========================================================================
 @dataclass
 class BSAConfig:
     """Centralized configuration for BSA (Block Sparse Attention)."""
@@ -99,21 +66,124 @@ class BSAConfig:
 
 
 DEFAULT_CONFIG = BSAConfig()
+BSAForwardResult = namedtuple('BSAForwardResult', ['o', 'lse'])
+BSABackwardResult = namedtuple('BSABackwardResult', ['d_q', 'd_k', 'd_v'])
+ResolveDefaultsResult = namedtuple('ResolveDefaultsResult',
+    ['b', 'hq', 'hkv', 'sq', 'skv', 'd', 'bx', 'by', 'scale', 'asq', 'askv'])
+SparseQDkdvResult = namedtuple('SparseQDkdvResult',
+    ['q_compact', 'do_compact', 'o_compact', 'lse_compact', 'inner_mask', 'max_inner'])
+
+_SparseKVConfig = namedtuple('_SparseKVConfig',
+    ['b', 'hq', 'hkv', 'sq', 'skv', 'sq_pad', 'skv_pad',
+     'num_qb', 'num_kb', 'bx', 'by', 'd', 'device',
+     'actual_seq_lengths', 'actual_seq_lengths_kv',
+     'q_2d', 'do_2d', 'o_2d', 'lse_2d'])
+_KVFillConfig = namedtuple('_KVFillConfig',
+    ['hkv', 'skv_pad', 'bx', 'by', 'd', 'device', 'total_qblocks', 'k_2d', 'v_2d'])
+_QDkdvFillConfig = namedtuple('_QDkdvFillConfig',
+    ['hq', 'sq_pad', 'bx', 'by', 'd', 'device', 'total_kv', 'q_2d', 'do_2d', 'o_2d', 'lse_2d'])
+_KVBoundaryCfg = namedtuple('_KVBoundaryCfg', ['max_sel', 'bx', 'num_kb'])
+_QBoundaryCfg = namedtuple('_QBoundaryCfg', ['max_sel', 'bx', 'num_qb'])
+_QBoundaryInnerCfg = namedtuple('_QBoundaryInnerCfg', ['max_inner', 'bx', 'num_qb'])
+_CollectKVCfg = namedtuple('_CollectKVCfg', ['b', 'hq', 'hkv', 'num_qb', 'num_kb'])
+_CollectQCfg = namedtuple('_CollectQCfg', ['b', 'hq', 'hkv', 'num_qb', 'num_kb'])
+_ValidQForKVBlockCfg = namedtuple('_ValidQForKVBlockCfg',
+    ['b_idx', 'h_kv_idx', 'v_blk', 'group', 'num_qb', 'nkv_cols'])
+
+# Shared Q/K/V preparation result (used by both FWD and BWD impls)
+_QKVPrepared = namedtuple('_QKVPrepared',
+    ['bx', 'by', 'b', 'hq', 'hkv', 'sq', 'skv', 'd',
+     'num_qb', 'num_kb', 'sq_pad', 'skv_pad',
+     'q_2d', 'k_2d', 'v_2d'])
+
+# Sparse KV building result (used by dispatch functions in FWD and BWD)
+_SparseKVResult = namedtuple('_SparseKVResult',
+    ['k_compact', 'v_compact', 'valid_mask', 'max_sel'])
 
 
-# ===========================================================================
-# PyPTO-specific configuration (shared by fwd_impl and bwd_impl)
-# ===========================================================================
+def _prepare_and_build_sparse_kv(call_inputs):
+    """Shared Q/K/V preparation + sparse KV building (used by both FWD and BWD).
+
+    Encapsulates _prepare_qkv_2d and _build_sparse_kv_cached with default
+    FWD-style config (q_2d=None, do_2d=None, o_2d=None, lse_2d=None),
+    eliminating duplicate preparation code in fwd/bwd impl files.
+    Returns (prepared, sparse_kv_result) as namedtuples.
+    """
+    prepared = _prepare_qkv_2d(
+        call_inputs.query, call_inputs.key, call_inputs.value,
+        call_inputs.block_shape, call_inputs.cfg)
+    k_compact, v_compact, valid_mask, max_sel = _build_sparse_kv_cached(
+        call_inputs.block_sparse_mask, prepared.k_2d, prepared.v_2d,
+        _SparseKVConfig(
+            b=prepared.b, hq=prepared.hq, hkv=prepared.hkv,
+            sq=prepared.sq, skv=prepared.skv,
+            sq_pad=prepared.sq_pad, skv_pad=prepared.skv_pad,
+            num_qb=prepared.num_qb, num_kb=prepared.num_kb,
+            bx=prepared.bx, by=prepared.by, d=prepared.d,
+            device=call_inputs.query.device,
+            actual_seq_lengths=call_inputs.actual_seq_lengths,
+            actual_seq_lengths_kv=call_inputs.actual_seq_lengths_kv,
+            q_2d=None, do_2d=None, o_2d=None, lse_2d=None))
+    return prepared, _SparseKVResult(
+        k_compact=k_compact, v_compact=v_compact,
+        valid_mask=valid_mask, max_sel=max_sel)
+
+
 _VEC_TILE_LOAD = (128, 128)
 _CUBE_TILE = (128, 128)
 _VEC_TILE_OUTPUT = (16, 128, 128)
 _CUBE_TILE_LIST = list(_CUBE_TILE)
-
 _DEVICE_SCHED_MODE = 3
+_VEC_NBUFFER_SETTING = {}
+_CUBE_NBUFFER_SETTING = {-1: 4}
 _CUBE_L1_REUSE_SETTING = {-1: 16}
-_RUNTIME_DEBUG_MODE = 1
-_STITCH_FUNCTION_NUM_INITIAL = 128
-_STITCH_FUNCTION_NUM_STEP = 64
+_RUNTIME_DEBUG_MODE = int(os.environ.get('BSA_RUNTIME_DEBUG_MODE', '0'))
+_MASK_CACHE = {}
+_Q_DKDV_CACHE = {}
+
+
+def _snapshot_output_dirs(search_bases):
+    """Collect timestamped output subdirectories across all search bases."""
+    all_dirs = {}  # name -> (base, full_path)
+    for base in search_bases:
+        if not os.path.isdir(base):
+            continue
+        for name in os.listdir(base):
+            full = os.path.join(base, name)
+            if os.path.isdir(full):
+                all_dirs[name] = (base, full)
+    return all_dirs
+
+
+def _find_newest_created_dir(before, search_bases):
+    """Find the newest output dir created since *before*.
+
+    Looks for dirs with program.json (compilation marker), optionally also
+    merged_swimlane.json (runtime profiling marker). The swimlane file may
+    not exist yet at compile time — it's written after kernel execution.
+
+    Args:
+        before: dict from _snapshot_output_dirs() taken before kernel
+            compilation — keys are dir names, values are (base, full_path).
+        search_bases: list of directory paths to search for output subdirs.
+    """
+    after = _snapshot_output_dirs(search_bases)
+    created = {name: after[name] for name in after if name not in before}
+    best_dir, best_mt = None, 0.0
+    for _, (base, full) in created.items():
+        # Prefer dirs with merged_swimlane.json (runtime profiling complete),
+        # but also accept dirs with program.json (compilation happened).
+        swim = os.path.join(full, "merged_swimlane.json")
+        prog = os.path.join(full, "program.json")
+        if os.path.isfile(swim):
+            mt = os.path.getmtime(swim)
+            if mt > best_mt:
+                best_dir, best_mt = full, mt
+        elif os.path.isfile(prog) and best_dir is None:
+            mt = os.path.getmtime(prog)
+            best_dir = full
+            best_mt = mt
+    return best_dir
 
 
 def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
@@ -121,12 +191,14 @@ def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
     """Build JIT options for pypto.frontend.jit.
 
     Args:
-        extra_pass_options: optional dict merged into pass_options
-            (e.g. {"cube_l1_reuse_setting": {-1: 4}} for backward kernels).
-        extra_runtime_options: optional dict merged into runtime_options
-            (e.g. {"device_sched_mode": 1} for L2 affinity).
+        extra_pass_options: optional dict merged into pass_options.
+        extra_runtime_options: optional dict merged into runtime_options.
     """
-    pass_opts = {"cube_l1_reuse_setting": _CUBE_L1_REUSE_SETTING}
+    pass_opts = {
+        "cube_l1_reuse_setting": _CUBE_L1_REUSE_SETTING,
+        "vec_nbuffer_setting": _VEC_NBUFFER_SETTING,
+        "cube_nbuffer_setting": _CUBE_NBUFFER_SETTING,
+    }
     if extra_pass_options:
         pass_opts.update(extra_pass_options)
     rt_opts = {
@@ -141,27 +213,25 @@ def _make_jit_opts(cfg, total_outer=None, *, extra_pass_options=None,
     )
 
 
-# ===========================================================================
-# Golden helpers (shared by fwd_golden and bwd_golden)
-# ===========================================================================
 def _resolve_defaults(query, key, block_shape_x, block_shape_y,
                       actual_seq_lengths, actual_seq_lengths_kv,
                       scale_value, cfg):
     """Resolve default parameters and validate shapes."""
-    B, Hq, Sq, D = query.shape
-    _, Hkv, Skv, _ = key.shape
+    b, hq, sq, d = query.shape
+    _, hkv, skv, _ = key.shape
 
     bx = block_shape_x or cfg.block_shape_x
     by = block_shape_y or cfg.block_shape_y
     scale = scale_value if scale_value is not None else cfg.softmax_scale
-    asq = actual_seq_lengths if actual_seq_lengths is not None else torch.full([B], Sq, dtype=torch.int64)
-    askv = actual_seq_lengths_kv if actual_seq_lengths_kv is not None else torch.full([B], Skv, dtype=torch.int64)
+    asq = actual_seq_lengths if actual_seq_lengths is not None else torch.full([b], sq, dtype=torch.int64)
+    askv = actual_seq_lengths_kv if actual_seq_lengths_kv is not None else torch.full([b], skv, dtype=torch.int64)
 
-    assert D == cfg.head_dim, f"head_dim must be {cfg.head_dim}, got {D}"
-    assert Hq >= Hkv and Hq % Hkv == 0, \
-        f"GQA constraint: Hq({Hq}) >= Hkv({Hkv}) and Hq % Hkv == 0"
+    assert d == cfg.head_dim, f"head_dim must be {cfg.head_dim}, got {d}"
+    assert hq >= hkv and hq % hkv == 0, \
+        f"GQA constraint: hq({hq}) >= hkv({hkv}) and hq % hkv == 0"
 
-    return BsaDefaults(B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, D=D, bx=bx, by=by, scale=scale, asq=asq, askv=askv)
+    return ResolveDefaultsResult(b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, d=d,
+                                  bx=bx, by=by, scale=scale, asq=asq, askv=askv)
 
 
 def _block_ranges(seq_len, block_size, actual_len):
@@ -170,7 +240,7 @@ def _block_ranges(seq_len, block_size, actual_len):
     for blk in range(num_blocks):
         start = blk * block_size
         end = min(start + block_size, actual_len)
-        yield BlockRange(blk, start, end)
+        yield blk, start, end
 
 
 def _is_valid_mask(block_sparse_mask, b, h_q, u, v):
@@ -180,96 +250,161 @@ def _is_valid_mask(block_sparse_mask, b, h_q, u, v):
     return block_sparse_mask[b, h_q, u, v].item()
 
 
-# ===========================================================================
-# Impl helpers (shared by fwd_impl and bwd_impl)
-# ===========================================================================
 def _pad_to_block_aligned(tensor, block_size):
-    B, H, S, D = tensor.shape
-    S_padded = math.ceil(S / block_size) * block_size
-    if S == S_padded:
-        return tensor, S_padded
-    return torch.nn.functional.pad(tensor, (0, 0, 0, S_padded - S), mode='constant', value=0.0), S_padded
+    b, h, s, d = tensor.shape
+    s_padded = math.ceil(s / block_size) * block_size
+    if s == s_padded:
+        return tensor, s_padded
+    return torch.nn.functional.pad(tensor, (0, 0, 0, s_padded - s), mode='constant', value=0.0), s_padded
+
+
+def _prepare_qkv_2d(query, key, value, block_shape, cfg):
+    """Common setup: resolve block shapes, compute derived dims, pad & reshape Q/K/V to 2D.
+
+    Shared by both forward and backward implementations.
+    Returns _QKVPrepared namedtuple grouping all derived shape values and 2D tensors.
+    """
+    bx = block_shape[0] if block_shape else cfg.block_shape_x
+    by = block_shape[1] if block_shape else cfg.block_shape_y
+
+    b, hq, sq, d = query.shape
+    _, hkv, skv, _ = key.shape
+
+    num_qb = math.ceil(sq / bx)
+    num_kb = math.ceil(skv / by)
+    sq_pad = num_qb * bx
+    skv_pad = num_kb * by
+
+    q_pad, _ = _pad_to_block_aligned(query, bx)
+    k_pad, _ = _pad_to_block_aligned(key, by)
+    v_pad, _ = _pad_to_block_aligned(value, by)
+
+    q_2d = q_pad.reshape(b * hq * sq_pad, d)
+    k_2d = k_pad.reshape(b * hkv * skv_pad, d)
+    v_2d = v_pad.reshape(b * hkv * skv_pad, d)
+
+    return _QKVPrepared(
+        bx=bx, by=by, b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, d=d,
+        num_qb=num_qb, num_kb=num_kb, sq_pad=sq_pad, skv_pad=skv_pad,
+        q_2d=q_2d, k_2d=k_2d, v_2d=v_2d)
 
 
 def _is_dense_mask(block_sparse_mask):
     return block_sparse_mask.all().item()
 
 
-# ---------------------------------------------------------------------------
-# Boundary mask helpers (used by compacted KV/Q builders)
-# ---------------------------------------------------------------------------
-def _apply_kv_boundary_mask(valid_mask, qblock_info, max_sel, bx, numKB, remaining_kv):
-    """Zero out columns in valid_mask for the last KV block's padded rows."""
-    for i, (b, h_kv, valid_v) in enumerate(qblock_info):
-        for j, v_blk in enumerate(valid_v):
-            if v_blk == numKB - 1:
-                m_start = i * max_sel * bx + j * bx
-                valid_mask[m_start:m_start + bx, remaining_kv:] = 0.0
+def _apply_kv_boundary_mask(valid_mask, qblock_info, kv_cfg, remaining_kv_per_batch):
+    """Zero out columns in valid_mask for the last KV block's padded rows.
+
+    Supports per-batch actual_seq_lengths_kv for non-aligned sequences.
+    When all batch items have the same actual length (aligned case),
+    remaining_kv_per_batch is a single value (backward compatible).
+
+    Args:
+        kv_cfg: _KVBoundaryCfg(max_sel, bx, num_kb) namedtuple.
+        remaining_kv_per_batch: either a single int (all batches same, aligned case)
+            or a list/tensor of per-batch remaining KV lengths (non-aligned case).
+    """
+    max_sel, bx, num_kb = kv_cfg.max_sel, kv_cfg.bx, kv_cfg.num_kb
+
+    def _zero_kv_boundary(qblk_idx, valid_kv_blocks, rem_kv):
+        for j, v_blk in enumerate(valid_kv_blocks):
+            if v_blk == num_kb - 1:
+                m_start = qblk_idx * max_sel * bx + j * bx
+                valid_mask[m_start:m_start + bx, int(rem_kv):] = 0.0
+
+    if isinstance(remaining_kv_per_batch, (int, float)):
+        for i, (b_idx, h_kv_idx, valid_v) in enumerate(qblock_info):
+            _zero_kv_boundary(i, valid_v, remaining_kv_per_batch)
+    else:
+        for i, (b_idx, h_kv_idx, valid_v) in enumerate(qblock_info):
+            _zero_kv_boundary(i, valid_v, remaining_kv_per_batch[b_idx])
 
 
-def _apply_q_boundary_mask(valid_mask, total_qblocks, max_sel, bx, numQB, remaining_q):
-    """Zero out rows in valid_mask for the last Q block's padded rows."""
-    for i in range(total_qblocks):
-        if i % numQB == numQB - 1:
+def _apply_q_boundary_mask(valid_mask, total_qblocks, q_cfg, remaining_q_per_batch):
+    """Zero out rows in valid_mask for the last Q block's padded rows.
+
+    Supports per-batch actual_seq_lengths for non-aligned sequences.
+    When all batch items have the same actual length (aligned case),
+    remaining_q_per_batch is a single value (backward compatible).
+
+    Args:
+        q_cfg: _QBoundaryCfg(max_sel, bx, num_qb) namedtuple.
+        remaining_q_per_batch: either a single int (all batches same) or per-batch list/tensor.
+    """
+    max_sel, bx, num_qb = q_cfg.max_sel, q_cfg.bx, q_cfg.num_qb
+
+    def _zero_q_boundary(qblk_idx, rem_q_len):
+        if qblk_idx % num_qb == num_qb - 1 and rem_q_len < bx:
             for j in range(max_sel):
-                m_dst = i * max_sel * bx + j * bx
-                valid_mask[m_dst + remaining_q:m_dst + bx, :] = 0.0
+                m_dst = qblk_idx * max_sel * bx + j * bx
+                valid_mask[m_dst + rem_q_len:m_dst + bx, :] = 0.0
+
+    if isinstance(remaining_q_per_batch, (int, float)):
+        rem_q = int(remaining_q_per_batch)
+        for i in range(total_qblocks):
+            _zero_q_boundary(i, rem_q)
+    else:
+        b_count = len(remaining_q_per_batch)
+        hq_total = total_qblocks // (b_count * num_qb) if b_count > 0 else total_qblocks // num_qb
+        for i in range(total_qblocks):
+            b_idx = i // (hq_total * num_qb)
+            _zero_q_boundary(i, remaining_q_per_batch[b_idx])
 
 
-# ---------------------------------------------------------------------------
-# Compacted KV builders (shared by forward sparse and backward dQ)
-# ---------------------------------------------------------------------------
-def _collect_valid_kv_per_qblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
-    """Phase 1 of _build_sparse_kv: collect valid KV indices per Q block."""
-    group = Hq // Hkv
+def _collect_valid_kv_per_qblock(block_sparse_mask, kv_cfg):
+    """Phase 1 of _build_sparse_kv: collect valid KV indices per Q block.
+
+    Args:
+        kv_cfg: _CollectKVCfg(b, hq, hkv, num_qb, num_kb) namedtuple.
+    """
+    b, hq, hkv, num_qb, num_kb = kv_cfg.b, kv_cfg.hq, kv_cfg.hkv, kv_cfg.num_qb, kv_cfg.num_kb
+    group = hq // hkv
     nkv_cols = block_sparse_mask.shape[3]
     qblock_info = []
     max_sel = 0
 
-    for flat_idx in range(B * Hq):
-        b = flat_idx // Hq
-        h_q = flat_idx % Hq
-        h_kv = h_q // group
-        for u in range(numQB):
-            valid_v = [v for v in range(min(numKB, nkv_cols))
-                       if block_sparse_mask[b, h_q, u, v].item()]
+    for flat_idx in range(b * hq):
+        b_idx = flat_idx // hq
+        h_q = flat_idx % hq
+        h_kv_idx = h_q // group
+        for u in range(num_qb):
+            valid_v = [v for v in range(min(num_kb, nkv_cols))
+                       if block_sparse_mask[b_idx, h_q, u, v].item()]
             if not valid_v:
                 valid_v = [0]
-            qblock_info.append((b, h_kv, valid_v))
+            qblock_info.append((b_idx, h_kv_idx, valid_v))
             max_sel = max(max_sel, len(valid_v))
 
     return qblock_info, max(max_sel, 1)
 
 
-def _fill_compacted_kv(cfg: CompactKvConfig):
-    qblock_info = cfg.qblock_info
-    max_sel = cfg.max_sel
-    k_2d = cfg.k_2d
-    v_2d = cfg.v_2d
-    valid_mask = cfg.valid_mask  # unused, recomputed below
-    Hkv = cfg.Hkv
-    Skv_pad = cfg.Skv_pad
-    bx = cfg.bx
-    by = cfg.by
-    D = cfg.D
-    device = cfg.device
-    total_qblocks = cfg.total_qblocks
-    k_compact = torch.zeros(total_qblocks * max_sel * by, D,
-                            dtype=torch.float16, device=device)
-    v_compact = torch.zeros(total_qblocks * max_sel * by, D,
+def _fill_compacted_kv(qblock_info, max_sel, valid_mask, fill_cfg):
+    """Phase 2 of _build_sparse_kv: build compacted K/V tensors.
+
+    Args:
+        fill_cfg: _KVFillConfig namedtuple including k_2d, v_2d as data fields.
+    """
+    hkv, skv_pad, bx, by, d, device, total_qblocks, k_2d, v_2d = (
+        fill_cfg.hkv, fill_cfg.skv_pad, fill_cfg.bx, fill_cfg.by,
+        fill_cfg.d, fill_cfg.device, fill_cfg.total_qblocks,
+        fill_cfg.k_2d, fill_cfg.v_2d)
+    k_compact = torch.zeros(total_qblocks * max_sel * by, d,
+                             dtype=torch.float16, device=device)
+    v_compact = torch.zeros(total_qblocks * max_sel * by, d,
                             dtype=torch.float16, device=device)
     valid_mask_new = torch.zeros(total_qblocks * max_sel * bx, by,
-                                 dtype=torch.float32, device=device)
+                                  dtype=torch.float32, device=device)
 
-    for i, (b, h_kv, valid_v) in enumerate(qblock_info):
+    for i, (b_idx, h_kv_idx, valid_v) in enumerate(qblock_info):
         for j, v_blk in enumerate(valid_v):
-            src = (b * Hkv + h_kv) * Skv_pad + v_blk * by
+            src = (b_idx * hkv + h_kv_idx) * skv_pad + v_blk * by
             dst = i * max_sel * by + j * by
             k_compact[dst:dst + by] = k_2d[src:src + by]
             v_compact[dst:dst + by] = v_2d[src:src + by]
             valid_mask_new[i * max_sel * bx + j * bx:i * max_sel * bx + j * bx + bx, :] = 1.0
 
-        first_src = (b * Hkv + h_kv) * Skv_pad + valid_v[0] * by
+        first_src = (b_idx * hkv + h_kv_idx) * skv_pad + valid_v[0] * by
         for j in range(len(valid_v), max_sel):
             dst = i * max_sel * by + j * by
             k_compact[dst:dst + by] = k_2d[first_src:first_src + by]
@@ -278,145 +413,144 @@ def _fill_compacted_kv(cfg: CompactKvConfig):
     return k_compact, v_compact, valid_mask_new
 
 
-def _apply_skv_boundary_if_needed(cfg, valid_mask, qblock_info, max_sel, total_qblocks):
-    if cfg.Skv_pad > cfg.Skv:
-        _apply_kv_boundary_mask(
-            valid_mask, qblock_info, max_sel, cfg.bx, cfg.numKB,
-            cfg.Skv - (cfg.numKB - 1) * cfg.by)
-    if cfg.Sq_pad > cfg.Sq:
-        _apply_q_boundary_mask(valid_mask, total_qblocks, max_sel, cfg.bx, cfg.numQB,
-                               cfg.Sq - (cfg.numQB - 1) * cfg.bx)
+def _build_sparse_kv_cached(block_sparse_mask, k_2d, v_2d, shape_cfg):
+    """Build compacted K/V tensors with caching: reuse mask structure if unchanged.
+
+    Caches qblock_info/max_sel keyed on mask data_ptr + shape, so repeated calls
+    with the same mask skip the expensive Python-level block traversal.
+    Then fills compact K/V tensors and applies boundary masking for non-aligned
+    sequences.
+
+    Supports non-aligned sequences via per-batch actual_seq_lengths in shape_cfg.
+
+    Args:
+        shape_cfg: _SparseKVConfig namedtuple grouping all shape parameters,
+            including actual_seq_lengths and actual_seq_lengths_kv.
+    """
+    global _MASK_CACHE
+    b, hq, hkv, sq, skv = shape_cfg.b, shape_cfg.hq, shape_cfg.hkv, shape_cfg.sq, shape_cfg.skv
+    sq_pad, skv_pad = shape_cfg.sq_pad, shape_cfg.skv_pad
+    num_qb, num_kb = shape_cfg.num_qb, shape_cfg.num_kb
+    bx, by, d, device = shape_cfg.bx, shape_cfg.by, shape_cfg.d, shape_cfg.device
+    actual_seq_lengths = shape_cfg.actual_seq_lengths
+    actual_seq_lengths_kv = shape_cfg.actual_seq_lengths_kv
+
+    total_qblocks = b * hq * num_qb
 
 
-def _build_sparse_kv(cfg: SparseKvBuildConfig):
-    """Build compacted K/V + valid_mask for sparse forward and dQ kernels."""
-    block_sparse_mask = cfg.block_sparse_mask
-    k_2d = cfg.k_2d
-    v_2d = cfg.v_2d
-    B = cfg.B
-    Hq = cfg.Hq
-    Hkv = cfg.Hkv
-    Sq = cfg.Sq
-    Skv = cfg.Skv
-    Sq_pad = cfg.Sq_pad
-    Skv_pad = cfg.Skv_pad
-    numQB = cfg.numQB
-    numKB = cfg.numKB
-    bx = cfg.bx
-    by = cfg.by
-    D = cfg.D
-    device = cfg.device
-    total_qblocks = B * Hq * numQB
+    cache_key = (block_sparse_mask.data_ptr(), b, hq, hkv, num_qb, num_kb, bx, by)
 
-    qblock_info, max_sel = _collect_valid_kv_per_qblock(
-        block_sparse_mask, B, Hq, Hkv, numQB, numKB)
-
-    k_compact, v_compact, valid_mask = _fill_compacted_kv(CompactKvConfig(
-        qblock_info=qblock_info, max_sel=max_sel, k_2d=k_2d, v_2d=v_2d,
-        valid_mask=None, Hkv=Hkv, Skv_pad=Skv_pad, bx=bx, by=by, D=D,
-        device=device, total_qblocks=total_qblocks))
-    _apply_skv_boundary_if_needed(
-        cfg, valid_mask, qblock_info, max_sel, total_qblocks)
-
-    return k_compact, v_compact, valid_mask, max_sel
-
-
-# ===========================================================================
-# C3: Mask structure cache (reuse valid_mask/max_sel across calls)
-# ===========================================================================
-_mask_cache = {}
-
-
-def _build_sparse_kv_cached(cfg: SparseKvBuildConfig):
-    """Cached version: reuse mask structure if mask is unchanged."""
-    block_sparse_mask = cfg.block_sparse_mask
-    k_2d = cfg.k_2d
-    v_2d = cfg.v_2d
-    B = cfg.B
-    Hq = cfg.Hq
-    Hkv = cfg.Hkv
-    Sq = cfg.Sq
-    Skv = cfg.Skv
-    Sq_pad = cfg.Sq_pad
-    Skv_pad = cfg.Skv_pad
-    numQB = cfg.numQB
-    numKB = cfg.numKB
-    bx = cfg.bx
-    by = cfg.by
-    D = cfg.D
-    device = cfg.device
-    global _mask_cache
-    total_qblocks = B * Hq * numQB
-
-    # Cache key = mask hash + shape info (not k_2d/v_2d which change per call)
-    cache_key = (block_sparse_mask.data_ptr(), B, Hq, Hkv, numQB, numKB, bx, by)
-
-    cached = _mask_cache.get(cache_key)
+    kv_collect_cfg = _CollectKVCfg(b=b, hq=hq, hkv=hkv, num_qb=num_qb, num_kb=num_kb)
+    cached = _MASK_CACHE.get(cache_key)
     if cached is not None:
         qblock_info, max_sel = cached
     else:
         qblock_info, max_sel = _collect_valid_kv_per_qblock(
-            block_sparse_mask, B, Hq, Hkv, numQB, numKB)
-        _mask_cache[cache_key] = (qblock_info, max_sel)
+            block_sparse_mask, kv_collect_cfg)
+        _MASK_CACHE[cache_key] = (qblock_info, max_sel)
 
-    k_compact, v_compact, valid_mask = _fill_compacted_kv(CompactKvConfig(
-        qblock_info=qblock_info, max_sel=max_sel, k_2d=k_2d, v_2d=v_2d,
-        valid_mask=None, Hkv=Hkv, Skv_pad=Skv_pad, bx=bx, by=by, D=D,
-        device=device, total_qblocks=total_qblocks))
-    _apply_skv_boundary_if_needed(
-        cfg, valid_mask, qblock_info, max_sel, total_qblocks)
+    fill_cfg = _KVFillConfig(hkv=hkv, skv_pad=skv_pad, bx=bx, by=by,
+                              d=d, device=device, total_qblocks=total_qblocks,
+                              k_2d=k_2d, v_2d=v_2d)
+    k_compact, v_compact, valid_mask = _fill_compacted_kv(
+        qblock_info, max_sel, None, fill_cfg)
+
+    # Compute remaining KV lengths per batch
+    if actual_seq_lengths_kv is not None:
+        remaining_kv_per_batch = [
+            int(actual_seq_lengths_kv[b_idx]) - (num_kb - 1) * by
+            for b_idx in range(b)
+        ]
+    elif skv_pad > skv:
+        remaining_kv_per_batch = skv - (num_kb - 1) * by
+    else:
+        remaining_kv_per_batch = by  # aligned, no boundary
+
+    kv_boundary_cfg = _KVBoundaryCfg(max_sel=max_sel, bx=bx, num_kb=num_kb)
+    _apply_kv_boundary_mask(
+        valid_mask, qblock_info, kv_boundary_cfg, remaining_kv_per_batch)
+
+    # Compute remaining Q lengths per batch
+    if actual_seq_lengths is not None:
+        remaining_q_per_batch = [
+            int(actual_seq_lengths[b_idx]) - (num_qb - 1) * bx
+            for b_idx in range(b)
+        ]
+    elif sq_pad > sq:
+        remaining_q_per_batch = sq - (num_qb - 1) * bx
+    else:
+        remaining_q_per_batch = bx  # aligned, no boundary
+
+    q_boundary_cfg = _QBoundaryCfg(max_sel=max_sel, bx=bx, num_qb=num_qb)
+    _apply_q_boundary_mask(valid_mask, total_qblocks, q_boundary_cfg,
+                           remaining_q_per_batch)
 
     return k_compact, v_compact, valid_mask, max_sel
 
 
-# ---------------------------------------------------------------------------
-# Compacted Q builders (shared by backward dK/dV — baseline and concurrent)
-# ---------------------------------------------------------------------------
-def _collect_valid_q_per_kvblock(block_sparse_mask, B, Hq, Hkv, numQB, numKB):
-    group = Hq // Hkv
+def _collect_valid_q_for_kvblock(block_sparse_mask, cfg):
+    """Collect valid Q block indices for one KV block (extracted to reduce nesting).
+
+    Args:
+        cfg: _ValidQForKVBlockCfg(b_idx, h_kv_idx, v_blk, group, num_qb, nkv_cols).
+    """
+    b_idx, h_kv_idx, v_blk, group, num_qb, nkv_cols = (
+        cfg.b_idx, cfg.h_kv_idx, cfg.v_blk, cfg.group, cfg.num_qb, cfg.nkv_cols)
+    valid_q = []
+    for g_idx in range(group):
+        h_q = h_kv_idx * group + g_idx
+        for u in range(num_qb):
+            if v_blk < nkv_cols and block_sparse_mask[b_idx, h_q, u, v_blk].item():
+                valid_q.append((h_q, u))
+    return valid_q
+
+
+def _collect_valid_q_per_kvblock(block_sparse_mask, q_cfg):
+    """Phase 1 of _build_sparse_q_dkdv: collect valid Q indices per KV block.
+
+    Args:
+        q_cfg: _CollectQCfg(b, hq, hkv, num_qb, num_kb) namedtuple.
+    """
+    b, hq, hkv, num_qb, num_kb = q_cfg.b, q_cfg.hq, q_cfg.hkv, q_cfg.num_qb, q_cfg.num_kb
+    group = hq // hkv
     nkv_cols = block_sparse_mask.shape[3]
     kvblock_info = []
-    maxInner = 0
+    max_inner = 0
 
-    for flat_idx in range(B * Hkv):
-        b = flat_idx // Hkv
-        h_kv = flat_idx % Hkv
-        for v_blk in range(numKB):
-            valid_q = []
-            for g_idx in range(group):
-                for u in range(numQB):
-                    if v_blk < nkv_cols and block_sparse_mask[b, h_kv * group + g_idx, u, v_blk].item():
-                        valid_q.append((h_kv * group + g_idx, u))
-            kvblock_info.append((b, valid_q))
-            maxInner = max(maxInner, len(valid_q))
+    for flat_idx in range(b * hkv):
+        b_idx = flat_idx // hkv
+        h_kv_idx = flat_idx % hkv
+        for v_blk in range(num_kb):
+            valid_q = _collect_valid_q_for_kvblock(
+                block_sparse_mask, _ValidQForKVBlockCfg(
+                    b_idx=b_idx, h_kv_idx=h_kv_idx, v_blk=v_blk,
+                    group=group, num_qb=num_qb, nkv_cols=nkv_cols))
+            kvblock_info.append((b_idx, valid_q))
+            max_inner = max(max_inner, len(valid_q))
 
-    return kvblock_info, max(maxInner, 1)
+    return kvblock_info, max(max_inner, 1)
 
 
-def _fill_compacted_q(cfg: CompactQConfig):
-    kvblock_info = cfg.kvblock_info
-    maxInner = cfg.maxInner
-    q_2d = cfg.q_2d
-    do_2d = cfg.do_2d
-    o_2d = cfg.o_2d
-    lse_2d = cfg.lse_2d
-    Hq = cfg.Hq
-    Sq_pad = cfg.Sq_pad
-    bx = cfg.bx
-    by = cfg.by
-    D = cfg.D
-    device = cfg.device
-    total_kv = cfg.total_kv
-    q_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
-    do_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
-    o_compact = torch.zeros(total_kv * maxInner * bx, D, dtype=torch.float16, device=device)
-    lse_compact = torch.full([total_kv * maxInner * bx, 1], 1e30, dtype=torch.float32, device=device)
-    inner_mask = torch.zeros(total_kv * maxInner * bx, by, dtype=torch.float32, device=device)
+def _fill_compacted_q(kvblock_info, max_inner, fill_cfg):
+    """Phase 2 of _build_sparse_q_dkdv: build compacted Q/dO/O/LSE tensors.
 
-    for i, (b, valid_q) in enumerate(kvblock_info):
+    Args:
+        fill_cfg: _QDkdvFillConfig namedtuple including q_2d, do_2d, o_2d, lse_2d.
+    """
+    hq, sq_pad, bx, by, d, device, total_kv, q_2d, do_2d, o_2d, lse_2d = (
+        fill_cfg.hq, fill_cfg.sq_pad, fill_cfg.bx, fill_cfg.by,
+        fill_cfg.d, fill_cfg.device, fill_cfg.total_kv,
+        fill_cfg.q_2d, fill_cfg.do_2d, fill_cfg.o_2d, fill_cfg.lse_2d)
+    q_compact = torch.zeros(total_kv * max_inner * bx, d, dtype=torch.float16, device=device)
+    do_compact = torch.zeros(total_kv * max_inner * bx, d, dtype=torch.float16, device=device)
+    o_compact = torch.zeros(total_kv * max_inner * bx, d, dtype=torch.float16, device=device)
+    lse_compact = torch.full([total_kv * max_inner * bx, 1], 1e30, dtype=torch.float32, device=device)
+    inner_mask = torch.zeros(total_kv * max_inner * bx, by, dtype=torch.float32, device=device)
+
+    for i, (b_idx, valid_q) in enumerate(kvblock_info):
         for j, (h_q, u) in enumerate(valid_q):
-            src = (b * Hq + h_q) * Sq_pad + u * bx
-            dst = i * maxInner * bx + j * bx
+            src = (b_idx * hq + h_q) * sq_pad + u * bx
+            dst = i * max_inner * bx + j * bx
             q_compact[dst:dst + bx] = q_2d[src:src + bx]
             do_compact[dst:dst + bx] = do_2d[src:src + bx]
             o_compact[dst:dst + bx] = o_2d[src:src + bx]
@@ -425,9 +559,9 @@ def _fill_compacted_q(cfg: CompactQConfig):
 
         if valid_q:
             h_q0, u0 = valid_q[0]
-            src0 = (b * Hq + h_q0) * Sq_pad + u0 * bx
-            for j in range(len(valid_q), maxInner):
-                dst = i * maxInner * bx + j * bx
+            src0 = (b_idx * hq + h_q0) * sq_pad + u0 * bx
+            for j in range(len(valid_q), max_inner):
+                dst = i * max_inner * bx + j * bx
                 q_compact[dst:dst + bx] = q_2d[src0:src0 + bx]
                 do_compact[dst:dst + bx] = do_2d[src0:src0 + bx]
                 o_compact[dst:dst + bx] = o_2d[src0:src0 + bx]
@@ -436,71 +570,95 @@ def _fill_compacted_q(cfg: CompactQConfig):
     return q_compact, do_compact, o_compact, lse_compact, inner_mask
 
 
-def _apply_q_boundary_inner_mask(inner_mask, kvblock_info, maxInner, bx, numQB, remaining_q):
-    for i, (b, valid_q) in enumerate(kvblock_info):
-        for j, (h_q, u) in enumerate(valid_q):
-            if u == numQB - 1:
-                m_dst = i * maxInner * bx + j * bx
-                inner_mask[m_dst + remaining_q:m_dst + bx, :] = 0.0
+def _apply_q_boundary_inner_mask(inner_mask, kvblock_info, inner_cfg, remaining_q_per_batch):
+    """Zero out rows in inner_mask for the last Q block's padded rows (dK/dV path).
 
+    Supports per-batch actual_seq_lengths for non-aligned sequences.
 
-def _build_sparse_q_dkdv(block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
-                           B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
-                           bx, by, D, device):
-    total_kv = B * Hkv * numKB
+    Args:
+        inner_cfg: _QBoundaryInnerCfg(max_inner, bx, num_qb) namedtuple.
+        remaining_q_per_batch: either a single int (aligned case) or per-batch list/tensor.
+    """
+    max_inner, bx, num_qb = inner_cfg.max_inner, inner_cfg.bx, inner_cfg.num_qb
 
-    kvblock_info, maxInner = _collect_valid_q_per_kvblock(
-        block_sparse_mask, B, Hq, Hkv, numQB, numKB)
+    def _zero_inner_boundary(kvblk_idx, valid_q_blocks, rem_q_len):
+        for j, (h_q, u) in enumerate(valid_q_blocks):
+            if u == num_qb - 1 and rem_q_len < bx:
+                m_dst = kvblk_idx * max_inner * bx + j * bx
+                inner_mask[m_dst + rem_q_len:m_dst + bx, :] = 0.0
 
-    q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(CompactQConfig(
-        kvblock_info=kvblock_info, maxInner=maxInner,
-        q_2d=q_2d, do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d,
-        Hq=Hq, Sq_pad=Sq_pad, bx=bx, by=by, D=D, device=device,
-        total_kv=total_kv))
-    if Sq_pad > Sq:
-        _apply_q_boundary_inner_mask(
-            inner_mask, kvblock_info, maxInner, bx, numQB,
-            Sq - (numQB - 1) * bx)
-
-    return SparseQkDvResult(q_compact=q_compact, do_compact=do_compact, o_compact=o_compact,
-                             lse_compact=lse_compact, inner_mask=inner_mask, maxInner=maxInner)
-
-
-# ===========================================================================
-# C3: Mask structure cache for dK/dV (reuse kvblock_info/maxInner across calls)
-# ===========================================================================
-_q_dkdv_cache = {}
-
-
-def _build_sparse_q_dkdv_cached(block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
-                                  B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
-                                  bx, by, D, device):
-    """Cached version: reuse mask structure if mask is unchanged."""
-    global _q_dkdv_cache
-    total_kv = B * Hkv * numKB
-
-    cache_key = (block_sparse_mask.data_ptr(), B, Hq, Hkv, numQB, numKB, bx, by)
-
-    cached = _q_dkdv_cache.get(cache_key)
-    if cached is not None:
-        kvblock_info, maxInner = cached
+    if isinstance(remaining_q_per_batch, (int, float)):
+        rem_q = int(remaining_q_per_batch)
+        for i, (b, valid_q) in enumerate(kvblock_info):
+            _zero_inner_boundary(i, valid_q, rem_q)
     else:
-        kvblock_info, maxInner = _collect_valid_q_per_kvblock(
-            block_sparse_mask, B, Hq, Hkv, numQB, numKB)
-        _q_dkdv_cache[cache_key] = (kvblock_info, maxInner)
+        for i, (b_idx, valid_q) in enumerate(kvblock_info):
+            _zero_inner_boundary(i, valid_q, remaining_q_per_batch[b_idx])
 
-    q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(CompactQConfig(
-        kvblock_info=kvblock_info, maxInner=maxInner,
-        q_2d=q_2d, do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d,
-        Hq=Hq, Sq_pad=Sq_pad, bx=bx, by=by, D=D, device=device,
-        total_kv=total_kv))
-    if Sq_pad > Sq:
-        _apply_q_boundary_inner_mask(
-            inner_mask, kvblock_info, maxInner, bx, numQB,
-            Sq - (numQB - 1) * bx)
 
-    return SparseQkDvResult(q_compact=q_compact, do_compact=do_compact, o_compact=o_compact,
-                             lse_compact=lse_compact, inner_mask=inner_mask, maxInner=maxInner)
+def _build_sparse_q_dkdv_cached(block_sparse_mask, shape_cfg):
+    """Build compacted Q/dO/O/LSE tensors for dK/dV computation, with caching.
+
+    Caches kvblock_info/max_inner keyed on mask data_ptr + shape, so repeated
+    calls with the same mask skip the expensive Python-level block traversal.
+    Then fills compact tensors and applies boundary masking for non-aligned Q lengths.
+
+    Args:
+        shape_cfg: _SparseKVConfig namedtuple grouping all parameters,
+            including actual_seq_lengths for boundary masking,
+            and q_2d/do_2d/o_2d/lse_2d data tensors for fill.
+    """
+    global _Q_DKDV_CACHE
+    b, hq, hkv, sq, sq_pad = shape_cfg.b, shape_cfg.hq, shape_cfg.hkv, shape_cfg.sq, shape_cfg.sq_pad
+    num_qb, num_kb = shape_cfg.num_qb, shape_cfg.num_kb
+    bx, by, d, device = shape_cfg.bx, shape_cfg.by, shape_cfg.d, shape_cfg.device
+    actual_seq_lengths = shape_cfg.actual_seq_lengths
+
+    total_kv = b * hkv * num_kb
+
+    cache_key = (block_sparse_mask.data_ptr(), b, hq, hkv, num_qb, num_kb, bx, by)
+
+    q_collect_cfg = _CollectQCfg(b=b, hq=hq, hkv=hkv, num_qb=num_qb, num_kb=num_kb)
+    cached = _Q_DKDV_CACHE.get(cache_key)
+    if cached is not None:
+        kvblock_info, max_inner = cached
+    else:
+        kvblock_info, max_inner = _collect_valid_q_per_kvblock(
+            block_sparse_mask, q_collect_cfg)
+        _Q_DKDV_CACHE[cache_key] = (kvblock_info, max_inner)
+
+    q_fill_cfg = _QDkdvFillConfig(hq=hq, sq_pad=sq_pad, bx=bx, by=by,
+                                  d=d, device=device, total_kv=total_kv,
+                                  q_2d=shape_cfg.q_2d, do_2d=shape_cfg.do_2d,
+                                  o_2d=shape_cfg.o_2d, lse_2d=shape_cfg.lse_2d)
+    q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(
+        kvblock_info, max_inner, q_fill_cfg)
+
+    # Compute remaining Q lengths per batch
+    if actual_seq_lengths is not None:
+        remaining_q_per_batch = [
+            int(actual_seq_lengths[b_idx]) - (num_qb - 1) * bx
+            for b_idx in range(b)
+        ]
+    elif sq_pad > sq:
+        remaining_q_per_batch = sq - (num_qb - 1) * bx
+    else:
+        remaining_q_per_batch = bx  # aligned, no boundary
+
+    inner_cfg = _QBoundaryInnerCfg(max_inner=max_inner, bx=bx, num_qb=num_qb)
+    _apply_q_boundary_inner_mask(
+        inner_mask, kvblock_info, inner_cfg,
+        remaining_q_per_batch)
+
+
+    padded_rows = (inner_mask.sum(dim=-1) == 0)  # shape: (N,), True where entire row is padded
+    lse_compact[padded_rows] = 1e30
+    q_compact[padded_rows] = 0.0
+    do_compact[padded_rows] = 0.0
+
+    return SparseQDkdvResult(q_compact=q_compact, do_compact=do_compact,
+                                o_compact=o_compact, lse_compact=lse_compact,
+                                inner_mask=inner_mask, max_inner=max_inner)
 
 
 def generate_block_sparse_mask(

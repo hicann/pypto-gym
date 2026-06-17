@@ -12,216 +12,239 @@
 """
 BSA Backward PyPTO Kernel Implementation (Fully Dynamic Axis Pattern)
 
-Dynamic axes: B, Hq, Hkv, Sq, Skv (the 5 primitive shape dimensions that vary
-across test cases). Derived values (numQB, numKB, max_sel, maxInner, BH, BHKV,
-Sq_pad, Skv_pad) are computed inside the kernel from hint tensor shapes.
-
 Single compiled kernel handles ALL (B, Hq, Hkv, Sq, Skv) combinations — no
-per-shape re-compilation (cache key = ("bwd") only).
+per-shape re-compilation. Dynamic axes B, Hq, Hkv, Sq, Skv are passed via
+hint tensors; derived values are computed inside the kernel from data shapes.
 
-Performance optimizations:
-  B0-1: Mask preprocessing — scaled_mask + neg_inf_mask precomputed in wrapper
-  B0-2: D_row precomputed outside kernel (eliminates mul+cast+sum)
-  B0-3: Redundant inv_mask eliminated — P already masked via S_masked
-  B0-4: Simplified accumulation — consistent iteration graph for stitch merge
-  B0-5: parallel=True on outer loops for multi-core scheduling
+The kernel contains two phases in one merged dispatch:
+  - Phase 1 (LOOP_dqd_sub): compute dQ per Q block across valid KV blocks
+  - Phase 2 (LOOP_dkdvd_kblk): accumulate dK/dV per KV block across Q blocks
+
+Key optimizations: mask preprocessing, d_row precompute outside kernel,
+FP32 accumulators as kernel inputs, parallel outer loops.
 """
 
-import math
 import os
-
+from collections import namedtuple
 import torch
-import pypto
 from torch._dynamo import allow_in_graph
+import pypto
 
 from bsa_common import (
-    DEFAULT_CONFIG, SparseKvBuildConfig,
-    _pad_to_block_aligned, _build_sparse_kv_cached,
+    BSABackwardResult,
+    _pad_to_block_aligned, _prepare_qkv_2d,
+    _build_sparse_kv_cached,
     _build_sparse_q_dkdv_cached,
+    _SparseKVConfig,
     _make_jit_opts,
-    _VEC_TILE_LOAD, _CUBE_TILE, _CUBE_TILE_LIST,
+    _snapshot_output_dirs,
+    _find_newest_created_dir,
+    _VEC_TILE_LOAD, _CUBE_TILE_LIST,
+    _prepare_and_build_sparse_kv, _SparseKVResult,
 )
 
-# ===========================================================================
-# Dynamic Axis Symbols (B, Hq, Hkv, Sq, Skv + derived)
-# ===========================================================================
-# 5 primitive dynamic axes (per user requirement)
+
+BSABackwardCallInputs = namedtuple(
+    'BSABackwardCallInputs',
+    ['dout', 'query', 'key', 'value', 'attention_out', 'softmax_lse',
+     'block_sparse_mask',
+     'actual_seq_lengths', 'actual_seq_lengths_kv',
+     'block_shape', 'cfg'])
+
+# Namedtuple wrappers for multi-value returns
+_BwdHintTensors = namedtuple('_BwdHintTensors',
+    ['b_hint', 'hq_hint', 'hkv_hint', 'sq_hint', 'skv_hint',
+     'num_qb_hint', 'num_kb_hint', 'max_sel_hint', 'max_inner_hint'])
+_BwdHintConfig = namedtuple('_BwdHintConfig',
+    ['b', 'hq', 'hkv', 'sq', 'skv', 'num_qb', 'num_kb', 'max_sel', 'max_inner', 'device'])
+_BwdMasksConfig = namedtuple('_BwdMasksConfig',
+    ['valid_mask', 'inner_mask', 'softmax_scale', 'large_neg', 'do_2d', 'o_2d', 'do_c', 'o_c'])
+_BwdMasks = namedtuple('_BwdMasks',
+    ['scaled_mask_dq', 'neg_inf_mask_dq', 'd_row_dq',
+     'scaled_mask_dkdv', 'neg_inf_mask_dkdv', 'd_row_dkdv'])
+_BwdSpecificInputs = namedtuple('_BwdSpecificInputs',
+    ['do_2d', 'o_2d', 'lse_2d', 'dq_2d', 'dk_2d', 'dv_2d',
+     'q_c', 'do_c', 'o_c', 'lse_c', 'inner_mask', 'max_inner'])
+
+
 DYNAMIC_B = pypto.frontend.dynamic('DYNAMIC_B')
-DYNAMIC_Hq = pypto.frontend.dynamic('DYNAMIC_Hq')
-DYNAMIC_Hkv = pypto.frontend.dynamic('DYNAMIC_Hkv')
-DYNAMIC_Sq = pypto.frontend.dynamic('DYNAMIC_Sq')
-DYNAMIC_Skv = pypto.frontend.dynamic('DYNAMIC_Skv')
+DYNAMIC_H_Q = pypto.frontend.dynamic('DYNAMIC_H_Q')
+DYNAMIC_H_KV = pypto.frontend.dynamic('DYNAMIC_H_KV')
+DYNAMIC_S_Q = pypto.frontend.dynamic('DYNAMIC_S_Q')
+DYNAMIC_S_KV = pypto.frontend.dynamic('DYNAMIC_S_KV')
 
-# Derived dynamic axes for loop bounds (carried via hint tensors)
-DYNAMIC_numQB = pypto.frontend.dynamic('DYNAMIC_numQB')
-DYNAMIC_numKB = pypto.frontend.dynamic('DYNAMIC_numKB')
-DYNAMIC_maxSel = pypto.frontend.dynamic('DYNAMIC_maxSel')
-DYNAMIC_maxInner = pypto.frontend.dynamic('DYNAMIC_maxInner')
+DYNAMIC_NUM_QB = pypto.frontend.dynamic('DYNAMIC_NUM_QB')
+DYNAMIC_NUM_KB = pypto.frontend.dynamic('DYNAMIC_NUM_KB')
+DYNAMIC_MAX_SEL = pypto.frontend.dynamic('DYNAMIC_MAX_SEL')
+DYNAMIC_MAX_INNER = pypto.frontend.dynamic('DYNAMIC_MAX_INNER')
 
-# Derived dynamic axes for tensor dimension symbols
-DYNAMIC_TotalQ = pypto.frontend.dynamic('DYNAMIC_TotalQ')
-DYNAMIC_TotalKV_compact = pypto.frontend.dynamic('DYNAMIC_TotalKV_compact')
-DYNAMIC_TotalMask = pypto.frontend.dynamic('DYNAMIC_TotalMask')
-DYNAMIC_TotalQ_dkdv = pypto.frontend.dynamic('DYNAMIC_TotalQ_dkdv')
-DYNAMIC_TotalMask_dkdv = pypto.frontend.dynamic('DYNAMIC_TotalMask_dkdv')
-DYNAMIC_TotalKV = pypto.frontend.dynamic('DYNAMIC_TotalKV')
+DYNAMIC_TOTAL_Q = pypto.frontend.dynamic('DYNAMIC_TOTAL_Q')
+DYNAMIC_TOTAL_KV_COMPACT = pypto.frontend.dynamic('DYNAMIC_TOTAL_KV_COMPACT')
+DYNAMIC_TOTAL_MASK = pypto.frontend.dynamic('DYNAMIC_TOTAL_MASK')
+DYNAMIC_TOTAL_Q_DKDV = pypto.frontend.dynamic('DYNAMIC_TOTAL_Q_DKDV')
+DYNAMIC_TOTAL_MASK_DKDV = pypto.frontend.dynamic('DYNAMIC_TOTAL_MASK_DKDV')
+DYNAMIC_TOTAL_KV = pypto.frontend.dynamic('DYNAMIC_TOTAL_KV')
 
 _BWD_PASS_OPTS = {
     "cube_l1_reuse_setting": {-1: 64},
+    "vec_nbuffer_setting": {},
 }
 _BWD_RT_OPTS = {}
+_BWD_OPTIMAL_UNROLL = [4, 2, 1]
 
 _bwd_cache = {}
-
-_PERF_OUTPUT_BASE = os.path.abspath(os.path.join(os.getcwd(), "output"))
-
-
-def _snapshot_output_dirs():
-    if not os.path.isdir(_PERF_OUTPUT_BASE):
-        return set()
-    return {d for d in os.listdir(_PERF_OUTPUT_BASE)
-            if os.path.isdir(os.path.join(_PERF_OUTPUT_BASE, d))}
+_PERF_OUTPUT_BASE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
+# PyPTO runtime writes output to CWD-relative "output/", not to the
+# module-relative path above.  Search both so that _snapshot_output_dirs
+# and _find_newest_created_dir can find swimlane data regardless of CWD.
+_PERF_SEARCH_BASES = [_PERF_OUTPUT_BASE, os.path.abspath("output")]
+_last_backward_perf_dirs = {}
 
 
-def _find_newest_created_dir(before):
-    after = _snapshot_output_dirs()
-    created = after - before
-    best_dir, best_mt = None, 0.0
-    for name in created:
-        d = os.path.join(_PERF_OUTPUT_BASE, name)
-        swim = os.path.join(d, "merged_swimlane.json")
-        if os.path.isfile(swim):
-            mt = os.path.getmtime(swim)
-            if mt > best_mt:
-                best_dir, best_mt = d, mt
-    return best_dir
+def _snapshot_bwd_dirs():
+    """Snapshot BWD-specific output directories."""
+    return _snapshot_output_dirs(_PERF_SEARCH_BASES)
 
 
-last_backward_perf_dirs = {}
+def _find_newest_bwd_dir(before):
+    """Find newest BWD output dir created since *before*."""
+    return _find_newest_created_dir(before, _PERF_SEARCH_BASES)
 
 
-def _get_bwd_kernel(cfg):
-    key = ("bwd",)
+def _get_bwd_kernel(cfg, *, bx=None, by=None, extra_runtime_options=None, inner_unroll=None):
+    """Return the BWD kernel for given configuration.
+
+    Args:
+        inner_unroll: unroll_list for inner loops (LOOP_dqd_kblk and LOOP_dkdvd_inner).
+            None means no unroll. [4,2,1] is the optimized value for sched=3.
+            Must be None when sched=1 (compilation failure with sched=1+unroll).
+    """
+    block_x = bx if bx is not None else cfg.block_shape_x
+    block_y = by if by is not None else cfg.block_shape_y
+    _sched = (extra_runtime_options or {}).get('device_sched_mode', 3)
+    _unroll_key = tuple(inner_unroll) if inner_unroll else ()
+    key = ("bwd", block_x, block_y, _sched, _unroll_key)
     if key in _bwd_cache:
         return _bwd_cache[key]
 
-    before = _snapshot_output_dirs()
+    _bwd_rt = _BWD_RT_OPTS.copy()
+    if extra_runtime_options:
+        _bwd_rt.update(extra_runtime_options)
+
+    before = _snapshot_bwd_dirs()
 
     softmax_scale = cfg.softmax_scale
-    bx = cfg.block_shape_x
-    by = cfg.block_shape_y
-    D = cfg.head_dim
+    d = cfg.head_dim
     large_neg = cfg.large_neg
-    BLOCK = bx
-    KV_BLOCK = by
-    SUB_SPLIT = bx // 64
-    SUB_BLOCK = bx // SUB_SPLIT
+    block = block_x
+    kv_block = block_y
+    sub_split = block_x // 64
+    sub_block = block_x // sub_split
     ct = _CUBE_TILE_LIST
     vtl = _VEC_TILE_LOAD
 
     @pypto.frontend.jit(**_make_jit_opts(cfg, extra_pass_options=_BWD_PASS_OPTS,
-                                          extra_runtime_options=_BWD_RT_OPTS))
+                                          extra_runtime_options=_bwd_rt))
+    # JIT kernel: cannot be split (PyPTO DSL requirement)
     def kernel(
-        # --- Hint tensors for 5 primitive dynamic axes ---
         b_hint: pypto.Tensor([DYNAMIC_B, 1], pypto.DT_FP32),
-        hq_hint: pypto.Tensor([DYNAMIC_Hq, 1], pypto.DT_FP32),
-        hkv_hint: pypto.Tensor([DYNAMIC_Hkv, 1], pypto.DT_FP32),
-        sq_hint: pypto.Tensor([DYNAMIC_Sq, 1], pypto.DT_FP32),
-        skv_hint: pypto.Tensor([DYNAMIC_Skv, 1], pypto.DT_FP32),
-        # --- Hint tensors for derived loop-bound values ---
-        numqb_hint: pypto.Tensor([DYNAMIC_numQB, 1], pypto.DT_FP32),
-        numkb_hint: pypto.Tensor([DYNAMIC_numKB, 1], pypto.DT_FP32),
-        maxsel_hint: pypto.Tensor([DYNAMIC_maxSel, 1], pypto.DT_FP32),
-        maxinner_hint: pypto.Tensor([DYNAMIC_maxInner, 1], pypto.DT_FP32),
-        # --- Data tensors ---
-        q_2d: pypto.Tensor([DYNAMIC_TotalQ, D], pypto.DT_FP16),
-        k_compact: pypto.Tensor([DYNAMIC_TotalKV_compact, D], pypto.DT_FP16),
-        v_compact: pypto.Tensor([DYNAMIC_TotalKV_compact, D], pypto.DT_FP16),
-        do_2d: pypto.Tensor([DYNAMIC_TotalQ, D], pypto.DT_FP16),
-        lse_2d: pypto.Tensor([DYNAMIC_TotalQ, 1], pypto.DT_FP32),
-        scaled_mask_dq: pypto.Tensor([DYNAMIC_TotalMask, KV_BLOCK], pypto.DT_FP16),
-        neg_inf_mask_dq: pypto.Tensor([DYNAMIC_TotalMask, KV_BLOCK], pypto.DT_FP16),
-        d_row_dq: pypto.Tensor([DYNAMIC_TotalQ, 1], pypto.DT_FP32),
-        dq_2d: pypto.Tensor([DYNAMIC_TotalQ, D], pypto.DT_FP16),
-        q_compact: pypto.Tensor([DYNAMIC_TotalQ_dkdv, D], pypto.DT_FP16),
-        do_compact: pypto.Tensor([DYNAMIC_TotalQ_dkdv, D], pypto.DT_FP16),
-        lse_compact: pypto.Tensor([DYNAMIC_TotalQ_dkdv, 1], pypto.DT_FP32),
-        scaled_mask_dkdv: pypto.Tensor([DYNAMIC_TotalMask_dkdv, KV_BLOCK], pypto.DT_FP16),
-        neg_inf_mask_dkdv: pypto.Tensor([DYNAMIC_TotalMask_dkdv, KV_BLOCK], pypto.DT_FP16),
-        d_row_dkdv: pypto.Tensor([DYNAMIC_TotalQ_dkdv, 1], pypto.DT_FP32),
-        k_2d: pypto.Tensor([DYNAMIC_TotalKV, D], pypto.DT_FP16),
-        v_2d: pypto.Tensor([DYNAMIC_TotalKV, D], pypto.DT_FP16),
-        dk_2d: pypto.Tensor([DYNAMIC_TotalKV, D], pypto.DT_FP16),
-        dv_2d: pypto.Tensor([DYNAMIC_TotalKV, D], pypto.DT_FP16),
+        hq_hint: pypto.Tensor([DYNAMIC_H_Q, 1], pypto.DT_FP32),
+        hkv_hint: pypto.Tensor([DYNAMIC_H_KV, 1], pypto.DT_FP32),
+        sq_hint: pypto.Tensor([DYNAMIC_S_Q, 1], pypto.DT_FP32),
+        skv_hint: pypto.Tensor([DYNAMIC_S_KV, 1], pypto.DT_FP32),
+        num_qb_hint: pypto.Tensor([DYNAMIC_NUM_QB, 1], pypto.DT_FP32),
+        num_kb_hint: pypto.Tensor([DYNAMIC_NUM_KB, 1], pypto.DT_FP32),
+        max_sel_hint: pypto.Tensor([DYNAMIC_MAX_SEL, 1], pypto.DT_FP32),
+        max_inner_hint: pypto.Tensor([DYNAMIC_MAX_INNER, 1], pypto.DT_FP32),
+        q_2d: pypto.Tensor([DYNAMIC_TOTAL_Q, d], pypto.DT_FP16),
+        k_compact: pypto.Tensor([DYNAMIC_TOTAL_KV_COMPACT, d], pypto.DT_FP16),
+        v_compact: pypto.Tensor([DYNAMIC_TOTAL_KV_COMPACT, d], pypto.DT_FP16),
+        do_2d: pypto.Tensor([DYNAMIC_TOTAL_Q, d], pypto.DT_FP16),
+        lse_2d: pypto.Tensor([DYNAMIC_TOTAL_Q, 1], pypto.DT_FP32),
+        scaled_mask_dq: pypto.Tensor([DYNAMIC_TOTAL_MASK, kv_block], pypto.DT_FP16),
+        neg_inf_mask_dq: pypto.Tensor([DYNAMIC_TOTAL_MASK, kv_block], pypto.DT_FP16),
+        d_row_dq: pypto.Tensor([DYNAMIC_TOTAL_Q, 1], pypto.DT_FP32),
+        dq_2d: pypto.Tensor([DYNAMIC_TOTAL_Q, d], pypto.DT_FP32),
+        q_compact: pypto.Tensor([DYNAMIC_TOTAL_Q_DKDV, d], pypto.DT_FP16),
+        do_compact: pypto.Tensor([DYNAMIC_TOTAL_Q_DKDV, d], pypto.DT_FP16),
+        lse_compact: pypto.Tensor([DYNAMIC_TOTAL_Q_DKDV, 1], pypto.DT_FP32),
+        scaled_mask_dkdv: pypto.Tensor([DYNAMIC_TOTAL_MASK_DKDV, kv_block], pypto.DT_FP16),
+        neg_inf_mask_dkdv: pypto.Tensor([DYNAMIC_TOTAL_MASK_DKDV, kv_block], pypto.DT_FP16),
+        d_row_dkdv: pypto.Tensor([DYNAMIC_TOTAL_Q_DKDV, 1], pypto.DT_FP32),
+        k_2d: pypto.Tensor([DYNAMIC_TOTAL_KV, d], pypto.DT_FP16),
+        v_2d: pypto.Tensor([DYNAMIC_TOTAL_KV, d], pypto.DT_FP16),
+        dk_2d: pypto.Tensor([DYNAMIC_TOTAL_KV, d], pypto.DT_FP32),
+        dv_2d: pypto.Tensor([DYNAMIC_TOTAL_KV, d], pypto.DT_FP32),
     ):
         dtype = q_2d.dtype
 
         # Derive runtime dimensions from hint tensors
-        B = b_hint.shape[0]
-        Hq = hq_hint.shape[0]
-        Hkv = hkv_hint.shape[0]
-        BH = B * Hq
-        BHKV = B * Hkv
-        numQB_rt = numqb_hint.shape[0]
-        numKB_rt = numkb_hint.shape[0]
-        maxSel_rt = maxsel_hint.shape[0]
-        maxInner_rt = maxinner_hint.shape[0]
+        b_dim = b_hint.shape[0]
+        hq_dim = hq_hint.shape[0]
+        hkv_dim = hkv_hint.shape[0]
+        bh = b_dim * hq_dim
+        bhkv = b_dim * hkv_dim
+        num_qb_rt = num_qb_hint.shape[0]
+        num_kb_rt = num_kb_hint.shape[0]
+        max_sel_rt = max_sel_hint.shape[0]
+        max_inner_rt = max_inner_hint.shape[0]
 
-        Sq_pad = numQB_rt * BLOCK
-        Skv_pad = numKB_rt * KV_BLOCK
+        sq_pad = num_qb_rt * block
+        skv_pad = num_kb_rt * kv_block
 
-        TOTAL_DQ_OUTER = BH * numQB_rt * SUB_SPLIT
-        TOTAL_DKDV_OUTER = BHKV * numKB_rt
+        total_dq_outer = bh * num_qb_rt * sub_split
+        total_dkdv_outer = bhkv * num_kb_rt
 
         # ===== Phase 1: dQ computation =====
-        for outer in pypto.loop(TOTAL_DQ_OUTER, name="LOOP_dqd_sub",
+        for outer in pypto.loop(total_dq_outer, name="LOOP_dqd_sub",
                                 idx_name="dq_outer_idx", parallel=True):
-            sub = outer % SUB_SPLIT
-            rest1 = outer // SUB_SPLIT
+            sub = outer % sub_split
+            rest1 = outer // sub_split
 
-            q_row_ofs = rest1 * BLOCK + sub * SUB_BLOCK
+            q_row_ofs = rest1 * block + sub * sub_block
 
             pypto.set_vec_tile_shapes(*vtl)
-            q_sub = pypto.view(q_2d, [SUB_BLOCK, D], [q_row_ofs, 0])
-            do_sub = pypto.view(do_2d, [SUB_BLOCK, D], [q_row_ofs, 0])
-            lse_sub = pypto.view(lse_2d, [SUB_BLOCK, 1], [q_row_ofs, 0])
+            q_sub = pypto.view(q_2d, [sub_block, d], [q_row_ofs, 0])
+            do_sub = pypto.view(do_2d, [sub_block, d], [q_row_ofs, 0])
+            lse_sub = pypto.view(lse_2d, [sub_block, 1], [q_row_ofs, 0])
 
-            D_row = pypto.view(d_row_dq, [SUB_BLOCK, 1], [q_row_ofs, 0])
+            d_row = pypto.view(d_row_dq, [sub_block, 1], [q_row_ofs, 0])
 
-            dq_acc = pypto.tensor([SUB_BLOCK, D], pypto.DT_FP32, "dq_acc")
+            dq_acc = pypto.tensor([sub_block, d], pypto.DT_FP32, "dq_acc")
 
-            for v_idx in pypto.loop(maxSel_rt, name="LOOP_dqd_kblk", idx_name="v_idx"):
-                kv_row_ofs = rest1 * maxSel_rt * KV_BLOCK + v_idx * KV_BLOCK
+            for v_idx in pypto.loop(max_sel_rt, name="LOOP_dqd_kblk", idx_name="v_idx",
+                                    unroll_list=inner_unroll):
+                kv_row_ofs = rest1 * max_sel_rt * kv_block + v_idx * kv_block
 
                 pypto.set_vec_tile_shapes(*vtl)
-                k_block = pypto.view(k_compact, [KV_BLOCK, D], [kv_row_ofs, 0])
-                v_block = pypto.view(v_compact, [KV_BLOCK, D], [kv_row_ofs, 0])
+                k_block = pypto.view(k_compact, [kv_block, d], [kv_row_ofs, 0])
+                v_block = pypto.view(v_compact, [kv_block, d], [kv_row_ofs, 0])
 
-                mask_row_ofs = rest1 * maxSel_rt * BLOCK + v_idx * BLOCK + sub * SUB_BLOCK
-                scaled_mask_block = pypto.view(scaled_mask_dq, [SUB_BLOCK, KV_BLOCK],
-                                               [mask_row_ofs, 0])
-                neg_inf_block = pypto.view(neg_inf_mask_dq, [SUB_BLOCK, KV_BLOCK],
-                                           [mask_row_ofs, 0])
+                mask_row_ofs = rest1 * max_sel_rt * block + v_idx * block + sub * sub_block
+                scaled_mask_block = pypto.view(scaled_mask_dq, [sub_block, kv_block],
+                                                [mask_row_ofs, 0])
+                neg_inf_block = pypto.view(neg_inf_mask_dq, [sub_block, kv_block],
+                                            [mask_row_ofs, 0])
 
                 pypto.set_cube_tile_shapes(ct, ct, ct)
-                S = pypto.matmul(q_sub, k_block, pypto.DT_FP32,
+                s_scores = pypto.matmul(q_sub, k_block, pypto.DT_FP32,
                                 a_trans=False, b_trans=True)
 
                 scaled_mask_fp32 = pypto.cast(scaled_mask_block, pypto.DT_FP32)
                 neg_inf_fp32 = pypto.cast(neg_inf_block, pypto.DT_FP32)
-                S_masked = pypto.add(pypto.mul(S, scaled_mask_fp32), neg_inf_fp32)
+                s_masked = pypto.add(pypto.mul(s_scores, scaled_mask_fp32), neg_inf_fp32)
 
-                P = pypto.exp(pypto.sub(S_masked, lse_sub))
+                p_probs = pypto.exp(pypto.sub(s_masked, lse_sub))
 
                 pypto.set_cube_tile_shapes(ct, ct, ct)
                 do_v = pypto.matmul(do_sub, v_block, pypto.DT_FP32,
                                     a_trans=False, b_trans=True)
 
-                dP = pypto.mul(P, pypto.sub(do_v, D_row))
+                dp = pypto.mul(p_probs, pypto.sub(do_v, d_row))
 
-                dP_fp16 = pypto.cast(dP, dtype)
+                dp_fp16 = pypto.cast(dp, dtype)
                 pypto.set_cube_tile_shapes(ct, ct, ct)
-                dq_contrib = pypto.matmul(dP_fp16, k_block, pypto.DT_FP32)
+                dq_contrib = pypto.matmul(dp_fp16, k_block, pypto.DT_FP32)
                 dq_contrib = pypto.mul(dq_contrib, softmax_scale)
 
                 if pypto.is_loop_begin(v_idx):
@@ -231,62 +254,62 @@ def _get_bwd_kernel(cfg):
                     dq_acc[:] = dq_new
 
                 if pypto.is_loop_end(v_idx):
-                    dq_fp16 = pypto.cast(dq_acc, dtype)
-                    pypto.assemble(dq_fp16, [q_row_ofs, 0], dq_2d)
+                    pypto.assemble(dq_acc, [q_row_ofs, 0], dq_2d)
 
         # ===== Phase 2: dK/dV computation =====
-        for outer in pypto.loop(TOTAL_DKDV_OUTER, name="LOOP_dkdvd_kblk",
+        for outer in pypto.loop(total_dkdv_outer, name="LOOP_dkdvd_kblk",
                                 idx_name="dkdv_outer_idx", parallel=True):
-            kv_row_ofs = outer * KV_BLOCK
+            kv_row_ofs = outer * kv_block
 
             pypto.set_vec_tile_shapes(*vtl)
-            k_block = pypto.view(k_2d, [KV_BLOCK, D], [kv_row_ofs, 0])
-            v_block = pypto.view(v_2d, [KV_BLOCK, D], [kv_row_ofs, 0])
+            k_block = pypto.view(k_2d, [kv_block, d], [kv_row_ofs, 0])
+            v_block = pypto.view(v_2d, [kv_block, d], [kv_row_ofs, 0])
 
-            dk_acc = pypto.tensor([KV_BLOCK, D], pypto.DT_FP32, "dk_acc")
-            dv_acc = pypto.tensor([KV_BLOCK, D], pypto.DT_FP32, "dv_acc")
+            dk_acc = pypto.tensor([kv_block, d], pypto.DT_FP32, "dk_acc")
+            dv_acc = pypto.tensor([kv_block, d], pypto.DT_FP32, "dv_acc")
 
-            for inner in pypto.loop(maxInner_rt, name="LOOP_dkdvd_inner", idx_name="inner_idx"):
-                q_row_ofs = outer * maxInner_rt * BLOCK + inner * BLOCK
+            for inner in pypto.loop(max_inner_rt, name="LOOP_dkdvd_inner", idx_name="inner_idx",
+                                unroll_list=inner_unroll):
+                q_row_ofs = outer * max_inner_rt * block + inner * block
 
-                D_row = pypto.view(d_row_dkdv, [BLOCK, 1], [q_row_ofs, 0])
+                d_row = pypto.view(d_row_dkdv, [block, 1], [q_row_ofs, 0])
 
                 pypto.set_vec_tile_shapes(*vtl)
-                q_block = pypto.view(q_compact, [BLOCK, D], [q_row_ofs, 0])
-                do_block = pypto.view(do_compact, [BLOCK, D], [q_row_ofs, 0])
-                lse_block = pypto.view(lse_compact, [BLOCK, 1], [q_row_ofs, 0])
+                q_block = pypto.view(q_compact, [block, d], [q_row_ofs, 0])
+                do_block = pypto.view(do_compact, [block, d], [q_row_ofs, 0])
+                lse_block = pypto.view(lse_compact, [block, 1], [q_row_ofs, 0])
 
-                mask_row_ofs = outer * maxInner_rt * BLOCK + inner * BLOCK
-                scaled_mask_block = pypto.view(scaled_mask_dkdv, [BLOCK, KV_BLOCK],
-                                               [mask_row_ofs, 0])
-                neg_inf_block = pypto.view(neg_inf_mask_dkdv, [BLOCK, KV_BLOCK],
-                                           [mask_row_ofs, 0])
+                mask_row_ofs = outer * max_inner_rt * block + inner * block
+                scaled_mask_block = pypto.view(scaled_mask_dkdv, [block, kv_block],
+                                                [mask_row_ofs, 0])
+                neg_inf_block = pypto.view(neg_inf_mask_dkdv, [block, kv_block],
+                                            [mask_row_ofs, 0])
 
                 pypto.set_cube_tile_shapes(ct, ct, ct)
-                S = pypto.matmul(q_block, k_block, pypto.DT_FP32,
+                s_scores = pypto.matmul(q_block, k_block, pypto.DT_FP32,
                                 a_trans=False, b_trans=True)
 
                 scaled_mask_fp32 = pypto.cast(scaled_mask_block, pypto.DT_FP32)
                 neg_inf_fp32 = pypto.cast(neg_inf_block, pypto.DT_FP32)
-                S_masked = pypto.add(pypto.mul(S, scaled_mask_fp32), neg_inf_fp32)
+                s_masked = pypto.add(pypto.mul(s_scores, scaled_mask_fp32), neg_inf_fp32)
 
-                P = pypto.exp(pypto.sub(S_masked, lse_block))
+                p_probs = pypto.exp(pypto.sub(s_masked, lse_block))
 
                 pypto.set_cube_tile_shapes(ct, ct, ct)
                 do_v = pypto.matmul(do_block, v_block, pypto.DT_FP32,
                                     a_trans=False, b_trans=True)
 
-                dP = pypto.mul(P, pypto.sub(do_v, D_row))
+                dp = pypto.mul(p_probs, pypto.sub(do_v, d_row))
 
-                dP_fp16 = pypto.cast(dP, dtype)
+                dp_fp16 = pypto.cast(dp, dtype)
                 pypto.set_cube_tile_shapes(ct, ct, ct)
-                dk_contrib = pypto.matmul(dP_fp16, q_block, pypto.DT_FP32,
+                dk_contrib = pypto.matmul(dp_fp16, q_block, pypto.DT_FP32,
                                           a_trans=True, b_trans=False)
                 dk_contrib = pypto.mul(dk_contrib, softmax_scale)
 
-                P_fp16 = pypto.cast(P, dtype)
+                p_fp16 = pypto.cast(p_probs, dtype)
                 pypto.set_cube_tile_shapes(ct, ct, ct)
-                dv_contrib = pypto.matmul(P_fp16, do_block, pypto.DT_FP32,
+                dv_contrib = pypto.matmul(p_fp16, do_block, pypto.DT_FP32,
                                           a_trans=True, b_trans=False)
 
                 if pypto.is_loop_begin(inner):
@@ -299,159 +322,175 @@ def _get_bwd_kernel(cfg):
                     dv_acc[:] = dv_new
 
                 if pypto.is_loop_end(inner):
-                    dk_fp16 = pypto.cast(dk_acc, dtype)
-                    dv_fp16 = pypto.cast(dv_acc, dtype)
-                    pypto.assemble(dk_fp16, [kv_row_ofs, 0], dk_2d)
-                    pypto.assemble(dv_fp16, [kv_row_ofs, 0], dv_2d)
+                    pypto.assemble(dk_acc, [kv_row_ofs, 0], dk_2d)
+                    pypto.assemble(dv_acc, [kv_row_ofs, 0], dv_2d)
 
-    output_dir = _find_newest_created_dir(before)
+    output_dir = _find_newest_bwd_dir(before)
     _bwd_cache[key] = (kernel, output_dir)
     return _bwd_cache[key]
 
 
-@allow_in_graph
-def block_sparse_attention_backward(
-    dout, query, key, value, attention_out, softmax_lse, block_sparse_mask,
-    actual_seq_lengths=None, actual_seq_lengths_kv=None,
-    block_shape=None, cfg=DEFAULT_CONFIG,
-):
-    global last_backward_perf_dirs
-    last_backward_perf_dirs = {}
+def _make_bwd_hint_tensors(cfg):
+    """Create hint tensors for 5 primitive + derived dynamic axes.
 
-    bx = block_shape[0] if block_shape else cfg.block_shape_x
-    by = block_shape[1] if block_shape else cfg.block_shape_y
+    Args:
+        cfg: _BwdHintConfig(b, hq, hkv, sq, skv, num_qb, num_kb, max_sel, max_inner, device).
 
-    B, Hq, Sq, D = query.shape
-    _, Hkv, Skv, _ = key.shape
+    Returns _BwdHintTensors namedtuple grouping all hint tensors.
+    """
+    b, hq, hkv, sq, skv, num_qb, num_kb, max_sel, max_inner, device = (
+        cfg.b, cfg.hq, cfg.hkv, cfg.sq, cfg.skv, cfg.num_qb, cfg.num_kb,
+        cfg.max_sel, cfg.max_inner, cfg.device)
+    b_hint = torch.zeros(b, 1, dtype=torch.float32, device=device)
+    hq_hint = torch.zeros(hq, 1, dtype=torch.float32, device=device)
+    hkv_hint = torch.zeros(hkv, 1, dtype=torch.float32, device=device)
+    sq_hint = torch.zeros(sq, 1, dtype=torch.float32, device=device)
+    skv_hint = torch.zeros(skv, 1, dtype=torch.float32, device=device)
+    num_qb_hint = torch.zeros(num_qb, 1, dtype=torch.float32, device=device)
+    num_kb_hint = torch.zeros(num_kb, 1, dtype=torch.float32, device=device)
+    max_sel_hint = torch.zeros(max_sel, 1, dtype=torch.float32, device=device)
+    max_inner_hint = torch.zeros(max_inner, 1, dtype=torch.float32, device=device)
+    return _BwdHintTensors(
+        b_hint=b_hint, hq_hint=hq_hint, hkv_hint=hkv_hint,
+        sq_hint=sq_hint, skv_hint=skv_hint,
+        num_qb_hint=num_qb_hint, num_kb_hint=num_kb_hint,
+        max_sel_hint=max_sel_hint, max_inner_hint=max_inner_hint)
 
-    numQB = math.ceil(Sq / bx)
-    numKB = math.ceil(Skv / by)
-    Sq_pad = numQB * bx
-    Skv_pad = numKB * by
 
-    Q_pad, _ = _pad_to_block_aligned(query, bx)
-    K_pad, _ = _pad_to_block_aligned(key, by)
-    V_pad, _ = _pad_to_block_aligned(value, by)
-    dO_pad, _ = _pad_to_block_aligned(dout, bx)
-    O_pad, _ = _pad_to_block_aligned(attention_out, bx)
+def _make_bwd_masks(cfg):
+    """Precompute scaled/neg_inf masks and d_row vectors for dQ and dK/dV phases.
 
-    q_2d = Q_pad.reshape(B * Hq * Sq_pad, D)
-    k_2d = K_pad.reshape(B * Hkv * Skv_pad, D)
-    v_2d = V_pad.reshape(B * Hkv * Skv_pad, D)
-    do_2d = dO_pad.reshape(B * Hq * Sq_pad, D)
-    o_2d = O_pad.reshape(B * Hq * Sq_pad, D)
+    Args:
+        cfg: _BwdMasksConfig(valid_mask, inner_mask, softmax_scale, large_neg, do_2d, o_2d, do_c, o_c).
 
-    lse_pad = torch.full([B, Hq, Sq_pad], cfg.lse_pad_value,
-                         dtype=cfg.accum_torch_dtype, device=query.device)
-    lse_pad[:, :, :Sq] = softmax_lse
-    lse_2d = lse_pad.reshape(B * Hq * Sq_pad, 1)
-
-    dq_2d = torch.zeros(B * Hq * Sq_pad, D, dtype=cfg.torch_dtype, device=query.device)
-    dk_2d = torch.zeros(B * Hkv * Skv_pad, D, dtype=cfg.torch_dtype, device=query.device)
-    dv_2d = torch.zeros(B * Hkv * Skv_pad, D, dtype=cfg.torch_dtype, device=query.device)
-
-    # Create hint tensors for 5 primitive dynamic axes
-    b_hint = torch.zeros(B, 1, dtype=torch.float32, device=query.device)
-    hq_hint = torch.zeros(Hq, 1, dtype=torch.float32, device=query.device)
-    hkv_hint = torch.zeros(Hkv, 1, dtype=torch.float32, device=query.device)
-    sq_hint = torch.zeros(Sq, 1, dtype=torch.float32, device=query.device)
-    skv_hint = torch.zeros(Skv, 1, dtype=torch.float32, device=query.device)
-    # Derived loop-bound hints
-    numqb_hint = torch.zeros(numQB, 1, dtype=torch.float32, device=query.device)
-    numkb_hint = torch.zeros(numKB, 1, dtype=torch.float32, device=query.device)
-
-    k_compact, v_compact, valid_mask, max_sel = _build_sparse_kv_cached(SparseKvBuildConfig(
-        block_sparse_mask=block_sparse_mask, k_2d=k_2d, v_2d=v_2d,
-        B=B, Hq=Hq, Hkv=Hkv, Sq=Sq, Skv=Skv, Sq_pad=Sq_pad, Skv_pad=Skv_pad,
-        numQB=numQB, numKB=numKB, bx=bx, by=by, D=D, device=query.device))
-
-    maxsel_hint = torch.zeros(max_sel, 1, dtype=torch.float32, device=query.device)
-
-    q_result = _build_sparse_q_dkdv_cached(
-        block_sparse_mask, q_2d, do_2d, o_2d, lse_2d,
-        B, Hq, Hkv, Sq, Sq_pad, numQB, numKB,
-        bx, by, D, query.device)
-    q_c = q_result.q_compact
-    do_c = q_result.do_compact
-    o_c = q_result.o_compact
-    lse_c = q_result.lse_compact
-    inner_mask = q_result.inner_mask
-    maxInner = q_result.maxInner
-
-    torch.npu.synchronize()
-
-    maxinner_hint = torch.zeros(maxInner, 1, dtype=torch.float32, device=query.device)
-
-    softmax_scale = cfg.softmax_scale
-    large_neg = cfg.large_neg
+    Returns _BwdMasks namedtuple grouping all precomputed mask tensors.
+    """
+    valid_mask, inner_mask, softmax_scale, large_neg = (
+        cfg.valid_mask, cfg.inner_mask, cfg.softmax_scale, cfg.large_neg)
+    do_2d, o_2d, do_c, o_c = cfg.do_2d, cfg.o_2d, cfg.do_c, cfg.o_c
     scaled_mask_dq = (valid_mask * softmax_scale).to(torch.float16)
     neg_inf_mask_dq = ((1.0 - valid_mask) * large_neg).to(torch.float16)
-
     d_row_dq = (do_2d.to(torch.float32) * o_2d.to(torch.float32)).sum(dim=-1, keepdim=True)
 
     scaled_mask_dkdv = (inner_mask * softmax_scale).to(torch.float16)
     neg_inf_mask_dkdv = ((1.0 - inner_mask) * large_neg).to(torch.float16)
-
     d_row_dkdv = (do_c.to(torch.float32) * o_c.to(torch.float32)).sum(dim=-1, keepdim=True)
+
+    padded_rows_dkdv = (inner_mask.sum(dim=-1) == 0).unsqueeze(-1)
+    d_row_dkdv[padded_rows_dkdv] = 0.0
+
+    return _BwdMasks(
+        scaled_mask_dq=scaled_mask_dq, neg_inf_mask_dq=neg_inf_mask_dq,
+        d_row_dq=d_row_dq, scaled_mask_dkdv=scaled_mask_dkdv,
+        neg_inf_mask_dkdv=neg_inf_mask_dkdv, d_row_dkdv=d_row_dkdv)
+
+
+def _prepare_bwd_specific_inputs(call_inputs, prepared):
+    """BWD-specific: pad dO/O/LSE, allocate dQ/dK/dV, build sparse Q/dkdv."""
+    bx = prepared.bx
+    b, hq, hkv, sq, d = prepared.b, prepared.hq, prepared.hkv, prepared.sq, prepared.d
+    sq_pad, skv_pad = prepared.sq_pad, prepared.skv_pad
+    cfg = call_inputs.cfg
+
+    do_pad, _ = _pad_to_block_aligned(call_inputs.dout, bx)
+    o_pad, _ = _pad_to_block_aligned(call_inputs.attention_out, bx)
+
+    do_2d = do_pad.reshape(b * hq * sq_pad, d)
+    o_2d = o_pad.reshape(b * hq * sq_pad, d)
+
+    lse_pad = torch.full([b, hq, sq_pad], cfg.lse_pad_value,
+                         dtype=cfg.accum_torch_dtype, device=call_inputs.query.device)
+    lse_pad[:, :, :sq] = call_inputs.softmax_lse
+    lse_2d = lse_pad.reshape(b * hq * sq_pad, 1)
+
+    dq_2d = torch.zeros(b * hq * sq_pad, d, dtype=torch.float32, device=call_inputs.query.device)
+    dk_2d = torch.zeros(b * hkv * skv_pad, d, dtype=torch.float32, device=call_inputs.query.device)
+    dv_2d = torch.zeros(b * hkv * skv_pad, d, dtype=torch.float32, device=call_inputs.query.device)
+
+    dkdv_result = _build_sparse_q_dkdv_cached(
+        call_inputs.block_sparse_mask,
+        _SparseKVConfig(b=b, hq=hq, hkv=prepared.hkv, sq=sq, skv=prepared.skv,
+                        sq_pad=sq_pad, skv_pad=skv_pad,
+                        num_qb=prepared.num_qb, num_kb=prepared.num_kb,
+                        bx=bx, by=prepared.by, d=d, device=call_inputs.query.device,
+                        actual_seq_lengths=call_inputs.actual_seq_lengths,
+                        actual_seq_lengths_kv=None,
+                        q_2d=prepared.q_2d, do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d))
+    return _BwdSpecificInputs(
+        do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d,
+        dq_2d=dq_2d, dk_2d=dk_2d, dv_2d=dv_2d,
+        q_c=dkdv_result.q_compact, do_c=dkdv_result.do_compact,
+        o_c=dkdv_result.o_compact, lse_c=dkdv_result.lse_compact,
+        inner_mask=dkdv_result.inner_mask, max_inner=dkdv_result.max_inner)
+
+
+def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
+    """Dispatch BWD kernel: create hints, masks, run kernel, reshape outputs."""
+    global _last_backward_perf_dirs
+    _last_backward_perf_dirs = {}
+    cfg = call_inputs.cfg
+    b, hq, hkv, sq, skv, d = prepared.b, prepared.hq, prepared.hkv, prepared.sq, prepared.skv, prepared.d
+    num_qb, num_kb = prepared.num_qb, prepared.num_kb
+    sq_pad, skv_pad = prepared.sq_pad, prepared.skv_pad
+    bx, by = prepared.bx, prepared.by
+
+    hints = _make_bwd_hint_tensors(_BwdHintConfig(
+        b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, num_qb=num_qb, num_kb=num_kb,
+        max_sel=sparse_kv_result.max_sel, max_inner=bwd_inputs.max_inner,
+        device=call_inputs.query.device))
+
+    masks = _make_bwd_masks(_BwdMasksConfig(
+        valid_mask=sparse_kv_result.valid_mask, inner_mask=bwd_inputs.inner_mask,
+        softmax_scale=cfg.softmax_scale, large_neg=cfg.large_neg,
+        do_2d=bwd_inputs.do_2d, o_2d=bwd_inputs.o_2d,
+        do_c=bwd_inputs.do_c, o_c=bwd_inputs.o_c))
 
     torch.npu.synchronize()
 
-    bwd_kernel_fn, bwd_dir = _get_bwd_kernel(cfg)
-    before_bwd = _snapshot_output_dirs()
+    bwd_rt_opts = {'device_sched_mode': 3}
+    inner_unroll = _BWD_OPTIMAL_UNROLL
+
+    bwd_kernel_fn, bwd_dir = _get_bwd_kernel(cfg, bx=bx, by=by,
+                                               extra_runtime_options=bwd_rt_opts,
+                                               inner_unroll=inner_unroll)
+    before_bwd = _snapshot_bwd_dirs()
     bwd_kernel_fn(
-        b_hint, hq_hint, hkv_hint, sq_hint, skv_hint,
-        numqb_hint, numkb_hint, maxsel_hint, maxinner_hint,
-        q_2d, k_compact, v_compact, do_2d, lse_2d,
-        scaled_mask_dq, neg_inf_mask_dq, d_row_dq, dq_2d,
-        q_c, do_c, lse_c,
-        scaled_mask_dkdv, neg_inf_mask_dkdv, d_row_dkdv,
-        k_2d, v_2d, dk_2d, dv_2d)
-    new_bwd_dir = _find_newest_created_dir(before_bwd)
+        hints.b_hint, hints.hq_hint, hints.hkv_hint, hints.sq_hint, hints.skv_hint,
+        hints.num_qb_hint, hints.num_kb_hint, hints.max_sel_hint, hints.max_inner_hint,
+        prepared.q_2d, sparse_kv_result.k_compact, sparse_kv_result.v_compact,
+        bwd_inputs.do_2d, bwd_inputs.lse_2d,
+        masks.scaled_mask_dq, masks.neg_inf_mask_dq, masks.d_row_dq, bwd_inputs.dq_2d,
+        bwd_inputs.q_c, bwd_inputs.do_c, bwd_inputs.lse_c,
+        masks.scaled_mask_dkdv, masks.neg_inf_mask_dkdv, masks.d_row_dkdv,
+        prepared.k_2d, prepared.v_2d, bwd_inputs.dk_2d, bwd_inputs.dv_2d)
+    new_bwd_dir = _find_newest_bwd_dir(before_bwd)
     if new_bwd_dir:
-        key = ("bwd",)
+        _unroll_key = tuple(_BWD_OPTIMAL_UNROLL)
+        key = ("bwd", bx, by, 3, _unroll_key)
         _bwd_cache[key] = (bwd_kernel_fn, new_bwd_dir)
         bwd_dir = new_bwd_dir
-    last_backward_perf_dirs["dQ"] = bwd_dir
-    last_backward_perf_dirs["dK/dV"] = bwd_dir
+    _last_backward_perf_dirs["dQ"] = bwd_dir
+    _last_backward_perf_dirs["dK/dV"] = bwd_dir
 
-    dq = dq_2d.reshape(B, Hq, Sq_pad, D)[:, :, :Sq, :].contiguous()
-    dk = dk_2d.reshape(B, Hkv, Skv_pad, D)[:, :, :Skv, :].contiguous()
-    dv = dv_2d.reshape(B, Hkv, Skv_pad, D)[:, :, :Skv, :].contiguous()
-    return dq, dk, dv
+    dq = bwd_inputs.dq_2d.reshape(b, hq, sq_pad, d)[:, :, :sq, :].to(torch.float16).contiguous()
+    dk = bwd_inputs.dk_2d.reshape(b, hkv, skv_pad, d)[:, :, :skv, :].to(torch.float16).contiguous()
+    dv = bwd_inputs.dv_2d.reshape(b, hkv, skv_pad, d)[:, :, :skv, :].to(torch.float16).contiguous()
+    return BSABackwardResult(d_q=dq, d_k=dk, d_v=dv)
 
 
 @allow_in_graph
-def block_sparse_attention_backward_concurrent(
-    dout, query, key, value, attention_out, softmax_lse, block_sparse_mask,
-    actual_seq_lengths=None, actual_seq_lengths_kv=None,
-    block_shape=None, cfg=DEFAULT_CONFIG,
-    extra_pass_options=None, extra_runtime_options=None,
-):
-    """Per-BH concurrent BWD: now uses the single combined kernel (merged dQ+dK/dV).
+def block_sparse_attention_backward(call_inputs):
+    """BSA Backward — merged dQ+dK/dV single kernel with auto-configured sched.
 
-    Since dK/dV requires contributions from all BH for accumulation,
-    per-BH/BHKV streaming is not feasible with a single kernel.
-    This function delegates to the baseline combined kernel.
+    Args:
+        call_inputs: BSABackwardCallInputs namedtuple containing:
+            dout, query, key, value, attention_out, softmax_lse,
+            block_sparse_mask, actual_seq_lengths, actual_seq_lengths_kv,
+            block_shape, cfg
+
+    Returns:
+        BSABackwardResult(d_q, d_k, d_v) where gradients are [B, H, S, D] FP16
     """
-    return block_sparse_attention_backward(
-        dout, query, key, value, attention_out, softmax_lse, block_sparse_mask,
-        actual_seq_lengths, actual_seq_lengths_kv,
-        block_shape, cfg)
-
-
-# ===========================================================================
-# BWD Auto-Dispatch (now delegates to baseline only)
-# ===========================================================================
-
-@allow_in_graph
-def block_sparse_attention_backward_auto(
-    dout, query, key, value, attention_out, softmax_lse, block_sparse_mask,
-    actual_seq_lengths=None, actual_seq_lengths_kv=None,
-    block_shape=None, cfg=DEFAULT_CONFIG,
-    extra_pass_options=None, extra_runtime_options=None,
-):
-    """Auto-dispatch: now uses baseline only (single merged kernel)."""
-    return block_sparse_attention_backward(
-        dout, query, key, value, attention_out, softmax_lse, block_sparse_mask,
-        actual_seq_lengths, actual_seq_lengths_kv,
-        block_shape, cfg)
+    prepared, sparse_kv_result = _prepare_and_build_sparse_kv(call_inputs)
+    bwd_inputs = _prepare_bwd_specific_inputs(call_inputs, prepared)
+    return _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result)

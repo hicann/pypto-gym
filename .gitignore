@@ -44,6 +44,8 @@ htmlcov/
 
 # Build outputs
 output/
+output_fwd/
+output_bwd/
 PROF_*/
 *.o
 *.bin
