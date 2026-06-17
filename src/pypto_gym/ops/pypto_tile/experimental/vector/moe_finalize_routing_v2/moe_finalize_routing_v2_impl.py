@@ -69,7 +69,7 @@ expanded_x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     tile_h = H
     pypto.set_vec_tile_shapes(1, tile_h)
 
-    for i in pypto.loop(NUM_ROWS, name="rows_loop", idx_name="i", unroll_list=[64, 16, 4, 1]):
+    for i in pypto.loop(NUM_ROWS, name="rows_loop", idx_name="i", unroll_list=[16, 4, 1]):
         out_row_fp32 = pypto.tensor([1, tile_h], pypto.DT_FP32, "out_row_fp32")
 
         for k in range(K):
