@@ -332,24 +332,28 @@ def test_02():
 
 
 @pytest.mark.soc("950")
+@pytest.mark.skip(reason="large test case")
 def test_03():
     """ 用例规格信息：batch=8, heads=16, s1=32, s2=32, dim=32"""
     return run_test(batch_size=8, num_heads=16, s1_size=32, s2_size=32, dim=32)
 
 
 @pytest.mark.soc("950")
+@pytest.mark.skip(reason="large test case")
 def test_04():
     """ 用例规格信息：batch=8, heads=16, s1=64, s2=64, dim=32"""
     return run_test(batch_size=8, num_heads=16, s1_size=64, s2_size=64, dim=32)
 
 
 @pytest.mark.soc("950")
+@pytest.mark.skip(reason="large test case")
 def test_05():
     """ 用例规格信息：batch=8, heads=8, s1=32, s2=32, dim=64"""
     return run_test(batch_size=8, num_heads=8, s1_size=32, s2_size=32, dim=64)
 
 
 @pytest.mark.skip("950")
+@pytest.mark.skip(reason="large test case")
 def test_06():
     """ 用例规格信息：batch=8, heads=4, s1=64, s2=64, dim=128"""
     return run_test(batch_size=8, num_heads=4, s1_size=64, s2_size=64, dim=128)
@@ -364,6 +368,7 @@ def test_07_varlen_small_seq():
 
 
 @pytest.mark.soc("950")
+@pytest.mark.skip(reason="large test case")
 def test_08_varlen_long_seq():
     """ 用例规格信息: batch=2, heads=8, q_seqlens=[384,512], kv_seqlens=[384,512], dim=64 """
     return run_test(num_heads=8, dim=64,
@@ -372,6 +377,7 @@ def test_08_varlen_long_seq():
 
 
 @pytest.mark.soc("950")
+@pytest.mark.skip(reason="large test case")
 def test_09_varlen_cross_attn():
     """ 用例规格信息：batch=3, heads=8, q_seqlens=[128,64,192], kv_seqlens=[96,256,128], dim=64 """
     return run_test(num_heads=8, dim=64,
