@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 from experimental.attention.incre_flash_attention_gqa_antiquant.utils import create_logger, get_device, compare
 from experimental.attention.incre_flash_attention_gqa_antiquant.incre_flash_attention_gqa_antiquant_impl import (
-    incre_flash_attention_gqa_antiquant
+    incre_flash_attention_gqa_antiquant, AttentionTileConfig
 )
 
 
@@ -129,12 +129,14 @@ def kv_cache_concat(cache_tensor: torch.Tensor,
 def gen_block_table(ifa_gqa_config: IfaGqaConfig,
                     kv_actual_seqs: torch.Tensor,
                     max_s2: int,
+                    s2_tile: int,
                     device: str) -> torch.Tensor:
     """Generate a block table for paged KV cache.
 
     Args:
         ifa_gqa_config: IFA GQA configuration.
         kv_actual_seqs: Actual sequence lengths for each batch.
+        s2_tile: s2_tile
         max_s2: max kv actual sequence length
         device: Device to create tensors on.
 
@@ -146,7 +148,7 @@ def gen_block_table(ifa_gqa_config: IfaGqaConfig,
 
     block_size = ifa_gqa_config.block_size
     block_table_batch = ifa_gqa_config.b
-    max_num_blocks_per_query = math.ceil(max_s2 / block_size)
+    max_num_blocks_per_query = math.ceil(max_s2 / s2_tile) * (s2_tile // block_size)
     block_table_shape = [block_table_batch, max_num_blocks_per_query]
 
     # Calculate number of blocks needed for each batch element
@@ -171,7 +173,7 @@ def gen_block_table(ifa_gqa_config: IfaGqaConfig,
             block_idx += 1
         block_table_batch_idx += 1
 
-    return block_table
+    return block_table, block_num
 
 
 def create_query_tensor(ifa_gqa_config: IfaGqaConfig, device: str) -> torch.Tensor:
@@ -192,20 +194,18 @@ def create_query_tensor(ifa_gqa_config: IfaGqaConfig, device: str) -> torch.Tens
 
 
 def create_kv_cache_tensors(
-    ifa_gqa_config: IfaGqaConfig, max_s2: int, device: str
+    ifa_gqa_config: IfaGqaConfig, kv_num_blocks: int, device: str
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Create key and value cache tensors with proper initialization.
 
     Args:
         ifa_gqa_config: IFA GQA configuration.
-        max_s2: max kv actual sequence length
+        kv_num_blocks: kv cache num blocks
         device: Device to create tensors on.
 
     Returns:
         Tuple of (key_cache, value_cache) tensors.
     """
-    max_num_blocks_per_query = math.ceil(max_s2 / ifa_gqa_config.block_size)
-    kv_num_blocks = ifa_gqa_config.b * max_num_blocks_per_query
     # PA_BnNBsD format
     kv_cache_shape = [kv_num_blocks, ifa_gqa_config.n2, ifa_gqa_config.block_size, ifa_gqa_config.kv_d] 
 
@@ -265,7 +265,7 @@ def log_input_info(inputs: Dict[str, torch.Tensor], ifa_gqa_config: IfaGqaConfig
                 f"dtype {inputs['value_antiquant_scale'].dtype}")
 
 
-def gen_inputs(ifa_gqa_config: IfaGqaConfig,
+def gen_inputs(ifa_gqa_config: IfaGqaConfig, tile_config: AttentionTileConfig,
                device: str) -> Dict[str, torch.Tensor]:
     """Generate input tensors for IFA GQA computation.
 
@@ -283,9 +283,10 @@ def gen_inputs(ifa_gqa_config: IfaGqaConfig,
     else:
         max_s2 = ifa_gqa_config.s2
         kv_actual_seqs = torch.tensor([ifa_gqa_config.s2] * ifa_gqa_config.b, dtype=torch.int32, device=device)
-    key_cache, value_cache = create_kv_cache_tensors(ifa_gqa_config, max_s2, device)
-
-    block_table = gen_block_table(ifa_gqa_config, kv_actual_seqs, max_s2, device)
+    
+    s2_tile = tile_config.s2_tile
+    block_table, kv_num_blocks = gen_block_table(ifa_gqa_config, kv_actual_seqs, max_s2, s2_tile, device)
+    key_cache, value_cache = create_kv_cache_tensors(ifa_gqa_config, kv_num_blocks, device)
 
     key = kv_cache_concat(key_cache, kv_actual_seqs, block_table, ifa_gqa_config, max_s2, device)
     value = kv_cache_concat(value_cache, kv_actual_seqs, block_table, ifa_gqa_config, max_s2, device)
@@ -369,9 +370,9 @@ def ifa_gqa_antiquant_golden(ifa_gqa_config: IfaGqaConfig,
             for n2_idx in range(n2):
                 q_head_start = n2_idx * group
                 q_head_end = (n2_idx + 1) * group
-                q_cur = query[b_idx:b_idx + 1, q_head_start:q_head_end, s1_idx:s1_idx + 1, :].float()
-                k_cur = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
-                v_cur = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                q_cur = query[b_idx:b_idx + 1, q_head_start:q_head_end, s1_idx:s1_idx + 1, :]
+                k_cur = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :]
+                v_cur = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :]
 
                 k_expanded = k_cur.repeat_interleave(group, dim=1)
                 v_expanded = v_cur.repeat_interleave(group, dim=1)
@@ -432,7 +433,34 @@ def get_case_config(case_name):
 
     return case_config
 
-    
+
+def get_tile_config(case_config):
+
+    m_tile = 128
+    k_tile = 128
+    n_tile = 128
+    s2_tile = 2048
+
+    n1 = case_config.n1
+    n2 = case_config.n2
+    group = n1 // n2
+
+    g_tile = group
+
+    if group in [64, 128]:
+        g_tile = 8
+
+    tile_config = AttentionTileConfig(
+        g_tile=g_tile,
+        s2_tile=s2_tile,
+        c1_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
+        v1_tile=[m_tile, s2_tile],
+        c2_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
+        v2_tile=[m_tile, m_tile]
+    )
+    return tile_config
+
+
 def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
     """Execute test for incremental flash attention GQA with anti-quantization.
 
@@ -446,7 +474,8 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
     device = get_device()
 
     case_config = get_case_config(case_name)
-    ifa_gqa_inputs = gen_inputs(case_config, device)
+    tile_config = get_tile_config(case_config)
+    ifa_gqa_inputs = gen_inputs(case_config, tile_config, device)
 
     gqa_antiquant_golden = ifa_gqa_antiquant_golden(case_config, ifa_gqa_inputs)
 
@@ -458,6 +487,7 @@ def do_test_incre_flash_attention_gqa_antiquant(case_name: str) -> None:
         value_antiquant_scale=ifa_gqa_inputs['value_antiquant_scale'],
         kv_actual_seqs=ifa_gqa_inputs['kv_actual_seqs'],
         block_table=ifa_gqa_inputs['block_table'],
+        tile_config=tile_config
     )
     pypto_atten_out = incre_flash_attention_gqa_antiquant(**pypto_kernel_inputs)
     compare(pypto_atten_out.cpu(), gqa_antiquant_golden.cpu(), "pypto_atten_out",

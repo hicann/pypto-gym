@@ -231,32 +231,6 @@ def reshape_qkv_to_2d(query, key, value, kernel_cfg):
     return q_2d, k_2d, v_2d
 
 
-def get_ifa_tile_cfg(group):
-    """
-    Get tile configuration for IFA computation.
-
-    Args:
-        group: Number of query heads per KV head (n1 // n2)
-
-    Returns:
-        AttentionTileConfig: Tile configuration with optimal sizes
-    """
-    m_tile = 128
-    k_tile = 128
-    n_tile = 128
-    s2_tile = 2048
-
-    tile_cfg = AttentionTileConfig(
-        g_tile=group,
-        s2_tile=s2_tile,
-        c1_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
-        v1_tile=[m_tile, s2_tile],
-        c2_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
-        v2_tile=[m_tile, m_tile]
-    )
-    return tile_cfg
-
-
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 256,
@@ -276,7 +250,8 @@ def incre_flash_attention_gqa_antiquant_kernel(
     value_antiquant_scale: pypto.Tensor([...], pypto.DT_BF16),
     kv_actual_seqs: pypto.Tensor([pypto.DYNAMIC], pypto.DT_INT32),
     block_table: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_INT32),
-    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
+    atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
+    tile_cfg
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
 
@@ -284,10 +259,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
     dtype = query.dtype
     kernel_cfg = init_kernel_cfg(query, key, block_table)
 
-    # Step 2: Get tile configuration
-    tile_cfg = get_ifa_tile_cfg(kernel_cfg.group)
-
-    # Step 3: Reshape Q, K, V to 2D
+    # Step 2: Reshape Q, K, V to 2D
     q_2d, k_2d, v_2d = reshape_qkv_to_2d(query, key, value, kernel_cfg)
 
     loop_tensors = LoopTensor(q_2d, k_2d, v_2d, block_table, kv_actual_seqs, atten_out,
@@ -303,7 +275,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
         loop_size=loop_size
     )
 
-    # Step 4: Implement kernel logic with nested loops
+    # Step 3: Implement kernel logic with nested loops
     # Loop over batch dimension
     for b_idx in pypto.loop(kernel_cfg.b, name="LOOP_b", idx_name="b_idx"):
         loop_index = LoopIndex(b_idx=b_idx)
@@ -690,7 +662,7 @@ def finalize_output(dtype, ctx_params):
     """
 
     d = ctx_params.kernel_cfg.d
-    group = ctx_params.kernel_cfg.group
+    n1g_ofs = ctx_params.loop_ofs.n1g_ofs
     v2_tile = ctx_params.tile_cfg.v2_tile
     g_tile = ctx_params.tile_cfg.g_tile
     out_update = ctx_params.temp_update_tensors.out_update
@@ -705,10 +677,8 @@ def finalize_output(dtype, ctx_params):
     oi_final_4d = pypto.cast(pypto.reshape(oi_final, [1, g_tile, 1, d]), dtype)
 
     b_idx = ctx_params.loop_index.b_idx
-    n2_idx = ctx_params.loop_index.n2_idx
     s1_idx = ctx_params.loop_index.s1_idx
-    n2_idx_start = n2_idx * group
-    out_ofs = [b_idx, n2_idx_start, s1_idx, 0]
+    out_ofs = [b_idx, n1g_ofs, s1_idx, 0]
     pypto.assemble(oi_final_4d, out_ofs, atten_out)
 
 
@@ -721,9 +691,10 @@ def incre_flash_attention_gqa_antiquant(
     value_antiquant_scale: torch.Tensor,
     kv_actual_seqs: torch.Tensor,
     block_table: torch.Tensor,
+    tile_config
 ):
     atten_out = torch.zeros_like(query)
     input_values = [query, key, value, key_antiquant_scale, value_antiquant_scale, kv_actual_seqs, 
-                    block_table, atten_out]
+                    block_table, atten_out, tile_config]
     incre_flash_attention_gqa_antiquant_kernel(*input_values)
     return atten_out

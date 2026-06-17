@@ -36,7 +36,7 @@ from experimental.attention.incre_flash_attention_mla.incre_flash_attention_mla_
 logger = create_logger(__name__)
 
 
-def gen_inputs(mla_config: MlaConfig, device: str):
+def gen_inputs(mla_config: MlaConfig, tile_config: AttentionTileConfig, device: str):
     dtype = torch.bfloat16
     query_shape = [mla_config.b, mla_config.s1, mla_config.n1, mla_config.q_d]  # BSND
     query = torch.empty(query_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
@@ -50,8 +50,7 @@ def gen_inputs(mla_config: MlaConfig, device: str):
         max_s2 = mla_config.s2
         kv_actual_seqs = torch.tensor([mla_config.s2] * mla_config.b, dtype=torch.int32, device=device)
 
-    max_num_blocks_per_query = math.ceil(max_s2 / mla_config.block_size)
-    kv_num_blocks = mla_config.b * max_num_blocks_per_query
+    block_table, kv_num_blocks = gen_block_table(mla_config, tile_config, kv_actual_seqs, device)
     key_cache_shape = [kv_num_blocks, mla_config.n2, mla_config.block_size, mla_config.kv_d]  # PA_BnNBsD format
     key_cache = torch.empty(key_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
     value_cache = key_cache
@@ -62,7 +61,6 @@ def gen_inputs(mla_config: MlaConfig, device: str):
     ]
     key_rope_cache = torch.empty(key_rope_cache_shape, dtype=dtype).uniform_(-1, 1).to(device=device)
 
-    block_table = gen_block_table(mla_config, kv_actual_seqs, device)
 
     key = kv_cache_concat(key_cache, kv_actual_seqs, block_table, mla_config, device)
     value = key
@@ -95,7 +93,7 @@ def gen_inputs(mla_config: MlaConfig, device: str):
     return mla_inputs
 
 
-def gen_block_table(mla_config, kv_actual_seqs, device: str):
+def gen_block_table(mla_config, tile_config, kv_actual_seqs, device: str):
     """
     Generate a block table for paged KV cache.
 
@@ -118,7 +116,8 @@ def gen_block_table(mla_config, kv_actual_seqs, device: str):
     block_size = mla_config.block_size
     block_table_batch = mla_config.b
     max_s2 = kv_actual_seqs.max().item()
-    max_num_blocks_per_query = math.ceil(max_s2 / block_size)
+    s2_tile = tile_config.s2_tile
+    max_num_blocks_per_query = math.ceil(max_s2 / s2_tile) * (s2_tile // block_size)
     block_table_shape = [block_table_batch, max_num_blocks_per_query]
 
     # Calculate number of blocks needed for each batch element
@@ -140,7 +139,7 @@ def gen_block_table(mla_config, kv_actual_seqs, device: str):
             block_table[block_table_batch_idx][j] = block_idx_list[block_idx]
             block_idx += 1
         block_table_batch_idx += 1
-    return block_table
+    return block_table, block_num
 
 
 def kv_cache_concat(cache_tensor, kv_actual_seqs, block_table, mla_config, device: str):
@@ -201,17 +200,17 @@ def ifa_mla_golden(query, key, value, query_rope, key_rope, kv_actual_seqs):
             for n2_idx in range(n2):
                 q_nope = query[
                     b_idx:b_idx + 1, s1_idx:s1_idx + 1,
-                    n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                    n2_idx * group_size:(n2_idx + 1) * group_size, :]
                 q_rope_cur = query_rope[
                     b_idx:b_idx + 1, s1_idx:s1_idx + 1,
-                    n2_idx * group_size:(n2_idx + 1) * group_size, :].float()
+                    n2_idx * group_size:(n2_idx + 1) * group_size, :]
                 q_full = torch.cat([q_nope, q_rope_cur], dim=-1)
 
-                k_nope = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
-                k_rope_cur = key_rope[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                k_nope = key[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :]
+                k_rope_cur = key_rope[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :]
                 k_full = torch.cat([k_nope, k_rope_cur], dim=-1)
 
-                v_head = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :].float()
+                v_head = value[b_idx:b_idx + 1, n2_idx:n2_idx + 1, :cur_s2, :]
 
                 qk_mm_res = torch.matmul(q_full, k_full.transpose(-2, -1))
                 qk_ele_res = qk_mm_res * softmax_scale
@@ -288,7 +287,8 @@ def do_test_incre_flash_attention_mla(case_name):
     device = get_device()
     
     case_config = get_case_config(case_name)
-    mla_inputs = gen_inputs(case_config, device)
+    tile_config = get_tile_config(case_config)
+    mla_inputs = gen_inputs(case_config, tile_config, device)
 
     query = mla_inputs['query']
     key = mla_inputs['key']
@@ -298,7 +298,6 @@ def do_test_incre_flash_attention_mla(case_name):
 
     mla_golden = ifa_mla_golden(query, key, value, query_rope, key_rope, mla_inputs['kv_actual_seqs'])
 
-    tile_config = get_tile_config(case_config)
     pypto_kernel_inputs = dict(
         query=mla_inputs['query'],
         key=mla_inputs['key_cache'],
