@@ -744,8 +744,8 @@ def gen_inputs_non_aligned(config):
     mask = generate_block_sparse_mask(
         b, hq, num_qb, num_kb, sparsity=sparsity, device=device, seed=seed)
 
-    asq = torch.tensor(actual_seq_lengths_q, dtype=torch.int64, device=device)
-    askv = torch.tensor(actual_seq_lengths_kv, dtype=torch.int64, device=device)
+    asq = torch.tensor(asq_list, dtype=torch.int64, device=device)
+    askv = torch.tensor(askv_list, dtype=torch.int64, device=device)
 
     return BSATestInputs(q=q, k=k, v=v, d_o=d_o, mask=mask, asq=asq, askv=askv)
 
