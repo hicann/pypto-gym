@@ -33,7 +33,7 @@ pto_kernels/                        # 算子库顶层
 │   ├── __init__.py                 # 导出 xxx_wrapper
 │   ├── xxx_impl.py                 # PyPTO kernel（带前缀）
 │   ├── xxx_golden.py               # Golden参考（带前缀）
-│   ├── README.md                   # 算子文档
+│   ├── README.md                   # 算子文档（必须）
 │   └── test/
 │       ├── test_xxx.py             # 测试脚本（带前缀）
 │       └── test_cases.json         # 测试用例
@@ -41,6 +41,36 @@ pto_kernels/                        # 算子库顶层
 └── utils/                          # 通用工具（可选）
     └── DESIGN.md                   # 设计文档
 ```
+
+**算子 README 模板（`{op}/README.md`）：**
+
+```markdown
+# {算子} 算子集成 ({model_name})
+
+## 概述
+{一句话说明替代了什么原始实现。D={hidden_size}，{dtype}。}
+
+## 测试
+```bash
+export TILE_FWK_DEVICE_ID={device_id}
+python3 test/test_{op}.py
+```
+
+## 测试用例来源
+从模型打点采集的真实 shape/dtype：{列举各场景}
+
+## 技术说明
+| 项目 | 说明 |
+|------|------|
+| 场景 | A/B — {golden 来源说明} |
+| 实现 | {PyPTO 实现要点（tiling、动态轴等）} |
+| ACLGraph | {是否已注册 torch.library，支持 --use-acl-graph} |
+
+## 状态
+✅ 单算子精度 | ✅ 整网集成 | {ACLGraph 状态} | ⏳ 性能调优
+```
+
+> 必填项：概述、测试命令、场景判断、状态。其余按实际内容裁剪。
 
 **命名规则：**
 - 目录名：抽象命名（如 `rms_norm`、`ffn`）
@@ -50,16 +80,35 @@ pto_kernels/                        # 算子库顶层
 ## 归档到 pypto-gym 仓库后的结构
 
 ```
-src/pypto_gym/ops/pypto_tile/qwen3_1_7b/
+src/pypto_gym/ops/pypto_tile/{model_name}/
   __init__.py              # USE_PTO 开关 + 适配层函数
-  rms_norm/
-    rms_norm_impl.py        # PyPTO kernel 实现
-    rms_norm_pypto_impl.py  # ModelNew 桥接类（可选）
-    SPEC.md                 # 算子规格（可选）
-tests/ops/qwen3_1_7b/
-  rms_norm_golden.py        # PyTorch 参考实现
-  test_rms_norm.py          # 单算子精度测试
+  {op}/
+    {op}_impl.py            # PyPTO kernel 实现
+    {op}_pypto_impl.py      # ModelNew 桥接类（可选）
+src/pypto_gym/transformers/{model_name}/
+  config.json               # 模型配置（含 auto_map、dtype 等）
+  modeling_*.py             # 融合后网络结构（trust_remote_code 模式）
+  configuration_*.py        # 模型配置类（trust_remote_code 模式）
+tests/ops/{model_name}/
+  {op}_golden.py            # PyTorch 参考实现
+  test_{op}.py              # 单算子精度测试
+modeling/transformers/{model_name}/
+  ask_{model_name}.py       # 推理脚本
+  bench_{model_name}.sh     # 基准测试脚本
+  prof_{model_name}.sh      # msprof 采集脚本 [可选]
+  sample_inputs.txt         # 示例提示词
+  README.md                 # 迁移说明 + 环境版本 + 归档映射
 ```
+
+## 文件版权声明
+
+| 文件类型 | 版权模版 | 参考 |
+|---------|---------|------|
+| `configuration_*.py`、`modeling_*.py`（开源库拷贝） | 保留原始 Apache 2.0，末尾追加华为修改声明 | `src/pypto_gym/transformers/qwen3_1_7b/configuration_qwen3.py` |
+| `ask_*.py`、`bench_*.sh`、`prof_*.sh`、`*.md` 等自有文件 | CANN Open Software License | `modeling/transformers/qwen3_1_7b/ask_Qwen3-1.7B.py` |
+| `*_impl.py`、`__init__.py`（PyPTO kernel） | CANN Open Software License | `src/pypto_gym/ops/pypto_tile/qwen3_1_7b/__init__.py` |
+
+> 开源库拷贝的文件必须在保留原始版权行的前提下，于末尾 `# NOTICE:` 标注华为修改。
 
 ## 变量定义
 
@@ -78,6 +127,36 @@ tests/ops/qwen3_1_7b/
 | 权重目录 | 模型权重存放的实际路径 |
 | 代码来源 | trust_remote_code 或 transformers包 |
 | 运行命令 | 执行脚本的具体命令 |
+
+**环境信息（必须）：**
+
+| 字段 | 说明 |
+|------|------|
+| torch | `python3 -c "import torch; print(torch.__version__)"` |
+| torch_npu | `python3 -c "import torch_npu; print(torch_npu.__version__)"` |
+| torchvision | `python3 -c "import torchvision; print(torchvision.__version__)"` |
+| transformers | `python3 -c "import transformers; print(transformers.__version__)"` |
+| CANN | `ls /usr/local/Ascend/ascend-toolkit/latest` 或 `npu-smi info` 显示的版本 |
+| NPU | `npu-smi info` 显示的芯片型号 |
+
+> 如模型 HF README 指定了 transformers 版本要求，应在环境信息中注明「HF 要求: transformers==X.X.X」。
+
+**性能对比（必须）：**
+
+README 末尾追加性能对比表格和复现命令，方便用户 run：
+
+```markdown
+## 性能对比
+
+| 模式 | 命令 | 模型加载 | 推理耗时 | 吞吐 | 峰值显存 |
+|------|------|---------|---------|------|---------|
+| baseline | `python3 scripts/ask_{model_name}.py --prompt "你好" --device <id> --output_length 50` | 7.4s | 3.1s | 9.7 tok/s | 7313 MB |
+| pto | `python3 scripts/ask_{model_name}.py --prompt "你好" --device <id> --output_length 50 --use_pypto` | 7.0s | 10.0s | 3.0 tok/s | 7313 MB |
+
+> 单算子替换时 PTO 比基线慢 2-3x 属正常（JIT 首编 + kernel launch 开销），收益来自多算子融合。
+```
+
+> 表格数据从 `--report-file` 输出的 JSON 中提取，命令与表格一一对应。如被替换算子名不同或使用 `--use-acl-graph`，应收录对应命令和数据行。
 
 **情况B（transformers内置模式）额外必须包含：**
 

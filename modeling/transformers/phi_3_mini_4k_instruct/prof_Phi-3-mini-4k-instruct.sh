@@ -9,7 +9,7 @@ set -e
 
 MSPROF="$(which msprof 2>/dev/null || echo 'msprof')"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODEL_PATH="/npu/s00454010/models/Phi-3-mini-4k-instruct"
+MODEL_PATH="${PHI3_MODEL_PATH:?请设置环境变量 PHI3_MODEL_PATH，指向模型权重目录}"
 INPUT_FILE="&#36;{SCRIPT_DIR}/sample_inputs.txt"
 OUTPUT_LENGTH=20
 PROF_OUTPUT="&#36;{SCRIPT_DIR}/msprof_output"

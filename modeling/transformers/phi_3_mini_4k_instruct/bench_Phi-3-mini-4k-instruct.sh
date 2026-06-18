@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL_ID="Phi-3-mini-4k-instruct"
-MODEL_PATH="/npu/s00454010/models/Phi-3-mini-4k-instruct"
+MODEL_PATH="${PHI3_MODEL_PATH:?请设置环境变量 PHI3_MODEL_PATH，指向模型权重目录}"
 INPUT_FILE="&#36;{SCRIPT_DIR}/sample_inputs.txt"
 OUTPUT_LENGTH=100
 BASELINE_REPORT="&#36;{SCRIPT_DIR}/bench_baseline.json"

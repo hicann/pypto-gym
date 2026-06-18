@@ -17,6 +17,7 @@ Phi-3-mini-4k-instruct 推理脚本 (with benchmark instrumentation)
 """
 
 import argparse
+import os
 import sys
 import json
 import time
@@ -26,7 +27,8 @@ import torch_npu
 parser = argparse.ArgumentParser(description="Phi-3-mini-4k-instruct 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/npu/s00454010/models/Phi-3-mini-4k-instruct", help="模型权重路径")
+parser.add_argument("--model-path", default=os.environ.get("PHI3_MODEL_PATH"),
+                    help="模型权重路径（默认读取 PHI3_MODEL_PATH 环境变量）")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
 parser.add_argument("--use_pypto", action="store_true", help="PyPTO融合算子模式（占位）")
@@ -79,7 +81,8 @@ torch.npu.reset_peak_memory_stats()
 t0 = time.perf_counter()
 model = AutoModelForCausalLM.from_pretrained(
     args.model_path, torch_dtype=torch.float16,
-    device_map={"": f"npu:{args.device}"}, local_files_only=True, trust_remote_code=True
+    device_map={"": f"npu:{args.device}"}, local_files_only=True, trust_remote_code=True,
+    attn_implementation="eager"
 )
 torch.npu.synchronize()
 metrics["model_load_s"] = round(time.perf_counter() - t0, 3)

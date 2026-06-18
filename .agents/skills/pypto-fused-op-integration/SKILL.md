@@ -142,6 +142,18 @@ pip install transformers accelerate sentencepiece protobuf
 python3 -c "import torch; import torch_npu; print(f'torch: {torch.__version__}'); print(f'NPU可用: {torch.npu.is_available()}')"
 ```
 
+**⚠️ 根据模型 HF 页面确认软件版本要求：**
+
+不同模型对 transformers 版本有具体要求。先抓取模型 README 中的版本声明：
+
+```bash
+curl -sk "https://hf-mirror.com/{repo_id}/raw/main/README.md" | grep -iE "transformers.*[0-9]+\.[0-9]+|pip install|require"
+```
+
+如 README 指定了版本（如 `transformers==4.41.2`），**必须安装对应版本**，否则可能出现 KV cache 不兼容、API 参数变更等问题。
+
+**⚠️ 版本冲突必须先问用户：** 当新模型要求的 transformers / torch 版本与当前环境不兼容时，AI 禁止直接 `pip install`。必须展示版本差异并询问：A）当前环境升级 B）新建 conda 环境 C）放弃迁移。用户确认后才能操作。
+
 ---
 
 #### 步骤 3：下载模型
@@ -153,7 +165,8 @@ python3 -c "import torch; import torch_npu; print(f'torch: {torch.__version__}')
 - 含 auto_map → trust_remote_code 模式（优先）
 - 不含 auto_map → transformers 内置实现
 
-**创建目录并下载：**
+**方法一：snapshot_download（默认）**
+
 ```bash
 mkdir -p {model_weight_dir}
 
@@ -169,10 +182,21 @@ snapshot_download(
 " > {model_weight_dir}/download.log 2>&1 &
 ```
 
+**方法二：git clone + git lfs pull（推荐，代理环境下大文件更稳定）**
+
+```bash
+apt-get install -y git-lfs 2>/dev/null || yum install -y git-lfs 2>/dev/null
+GIT_SSL_NO_VERIFY=1 git clone https://hf-mirror.com/{repo_id} {model_weight_dir}
+GIT_SSL_NO_VERIFY=1 git -C {model_weight_dir} lfs pull
+```
+
+> git clone 只拉 LFS 指针；lfs pull 分片下载权重，自带断点续传。
+
 **检查下载进度：**
 ```bash
-ps aux | grep snapshot_download
+ps aux | grep "snapshot_download\|git.lfs"
 du -sh {model_weight_dir}/
+ls -lh {model_weight_dir}/*.safetensors {model_weight_dir}/*.bin 2>/dev/null
 ```
 
 ---
@@ -247,7 +271,22 @@ git commit -m "migrate {model_name} to NPU — baseline before pto integration"
 
 检测 `{model_weight_dir}/config.json` 的 auto_map 字段判断网络结构来源。
 
-**README必须字段：** 见 `references/directory_structure.md`
+**README必须字段及环境版本：** 见 `references/directory_structure.md`
+**文件版权声明：** 见 `references/directory_structure.md`
+
+创建 README 前，先采集当前环境版本：
+
+```bash
+echo "torch:       $(python3 -c 'import torch; print(torch.__version__)')"            > /tmp/versions.txt
+echo "torch_npu:   $(python3 -c 'import torch_npu; print(torch_npu.__version__)')"  >> /tmp/versions.txt
+echo "torchvision: $(python3 -c 'import torchvision; print(torchvision.__version__)' 2>/dev/null || echo N/A)" >> /tmp/versions.txt
+echo "transformers:$(python3 -c 'import transformers; print(transformers.__version__)')" >> /tmp/versions.txt
+echo "CANN:        $(ls /usr/local/Ascend/ascend-toolkit/latest 2>/dev/null || npu-smi info 2>/dev/null | head -1)" >> /tmp/versions.txt
+```
+
+将 `/tmp/versions.txt` 内容写入 README 的环境信息部分。
+
+> 如模型 HF README 指定了 transformers 版本（步骤 2 已检查），在 README 中标注「HF 要求: transformers==X.X.X」。
 
 ---
 
@@ -868,14 +907,33 @@ print(json.dumps(result, indent=2))
 
 **变量定义：** 见 `references/directory_structure.md`
 
-**文件映射：**
+**归档前检查已有文件：**
 
-| 来源 (`{model_dir}/`) | 目标 (`{pypto_gym_repo}/`) | 操作 |
-|---|---|---|
-| `scripts/*` | `modeling/transformers/{model_name}/` | 全量覆盖 |
-| `core/` 全部 .py | `src/pypto_gym/transformers/{model_name}/` | 全量覆盖 |
-| `{model}_pto_kernels/`（除去 `*/golden*.py` + `*/test/`） | `src/pypto_gym/ops/pypto_tile/{model_name}/` | 顶层覆盖，子目录新建 |
-| `{model}_pto_kernels/*/golden*.py` + `*/test/` | `tests/ops/{model_name}/` | 新建 |
+```bash
+ls -d {pypto_gym_repo}/src/pypto_gym/ops/pypto_tile/*/ {pypto_gym_repo}/tests/ops/*/ 2>/dev/null
+```
+
+如已有 `{model_name}` 或近邻名称的归档，**必须先询问用户确认**，再删除。**这一步不可跳过——已有归档意味着之前做过方案，不确认就直接覆盖会丢失旧实现、引入不兼容变更。**：
+
+```bash
+rm -rf {pypto_gym_repo}/src/pypto_gym/ops/pypto_tile/{model_name} \
+       {pypto_gym_repo}/src/pypto_gym/transformers/{model_name} \
+       {pypto_gym_repo}/tests/ops/{model_name}
+find {pypto_gym_repo}/modeling/transformers/{model_name} -mindepth 1 -delete 2>/dev/null
+```
+
+**文件映射（文件夹级别）：**
+
+| 来源 (`{model_dir}/`) | 目标 (`{pypto_gym_repo}/`) |
+|---|---|
+| `scripts/` | `modeling/transformers/{model_name}/` |
+| `config.json` | `src/pypto_gym/transformers/{model_name}/` |
+| `core/` | `src/pypto_gym/transformers/{model_name}/` |
+| `{model}_pto_kernels/` | `src/pypto_gym/ops/pypto_tile/{model_name}/` |
+
+**归档后写入 `modeling/transformers/{model_name}/README.md`**，追加归档映射记录（内容同上表，保持文件夹粒度）和当前环境版本信息。
+
+> ⚠️ **强制检查：** 归档完成后 grep 确认 `## 归档映射` 存在；同时检查每个算子子目录是否有 `README.md`，缺失按 `references/directory_structure.md` 模板补齐。
 
 **test 文件 import 改造：**
 
@@ -891,22 +949,67 @@ from {op}_golden import {op}_golden
 
 **归档验证：** `python3 tests/ops/{model_name}/test_{op}.py` → `[PRECISION_PASS]` + `All tests passed!`
 
+**⚠️ 工号/个人路径检查（强制）：** 提交前扫描硬编码个人路径
+（`/npu/xxx/`、`/home/zhangsan/` 等）：
+
+```bash
+cd {pypto_gym_repo}
+grep -rPn "(/[nN][pP][uU]/|/[hH][oO][mM][eE]/)" \
+    modeling/transformers/{model_name}/ \
+    src/pypto_gym/transformers/{model_name}/ \
+    src/pypto_gym/ops/pypto_tile/{model_name}/ \
+    tests/ops/{model_name}/
+```
+
+**处理：** 硬编码路径 → 环境变量或占位符。
+无法自动处理时询问用户。通过标准：输出为空。
+
 **提交 PR [可选]：** 使用 `pypto-pr-creator` skill。
 
 ---
 
 #### 步骤 27：还原重建指南 [可选]
 
-将归档文件 + 下载的权重重建为可运行环境。完整命令见原版 SKILL.md 或按以下核心步骤执行：
+将 pypto-gym 归档文件 + 已下载的权重重建为可运行的 PTO 融合模型。
+
+> ⚠️ **强制前置：先对齐 Python 环境，再拷贝文件。** 仅 `transformers` 大版本必须与归档 README 一致（大版本 API 不兼容会导致 modeling 代码报错）。`torch` / `torch_npu` / `CANN` 不强绑，但 `torch` 与 `torch_npu` minor 版本须一致。
+
+**① 安装 Python 环境 ★（不可跳过）** — 读取 `{pypto_gym_repo}/modeling/transformers/{model_name}/README.md` 环境版本表。**先向用户展示版本对比，确认后再安装：**
 
 ```bash
-MODEL_DIR=/path/to/weights
-mkdir -p $MODEL_DIR/core $MODEL_DIR/{model}_name_pto_kernels $MODEL_DIR/scripts
+# 版本冲突时新建 conda 环境代替直接 pip
+pip install torch==<README torch版本> torch-npu==<README torch-npu版本> \
+    transformers==<README transformers版本> accelerate sentencepiece protobuf \
+    -i https://mirrors.huaweicloud.com/repository/pypi/simple --trusted-host mirrors.huaweicloud.com
 
-# 1. 复制归档文件（transformers/ops/scripts）
-# 2. 修复 auto_map（从 config.json 动态提取 model_type 和 architectures）
-# 3. 运行验证：python3 $MODEL_DIR/scripts/ask_{model_name}.py --prompt "你好" 和 --use-pto
+python3 -c "import torch; import torch_npu; print(f'torch: {torch.__version__} NPU: {torch.npu.is_available()}')"
 ```
+
+**② 反向归档映射拷贝 ★** — 按步骤 26 的表逆向拷贝：
+
+| 来源 (`{pypto_gym_repo}/`) | 目标 (`{model_weight_dir}/`) |
+|---|---|
+| `modeling/transformers/{model_name}/` | `scripts/` |
+| `src/pypto_gym/transformers/{model_name}/` | 按文件类型：`.py` → `core/`，`config.json` → 根目录 |
+| `src/pypto_gym/ops/pypto_tile/{model_name}/` | `{model}_pto_kernels/` |
+
+拷贝后调整测试脚本的 `sys.path` 使其引用 `pto_kernels/` 内的 impl：
+
+```python
+# 测试脚本开头改为：
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from rms_norm_golden import rms_norm_golden
+from rms_norm.rms_norm_impl import rms_norm_wrapper
+```
+
+**③ 运行验证** — 确认 auto_map 指向 `core/`，然后双模式跑通：
+
+```bash
+python3 {model_weight_dir}/scripts/ask_{model_name}.py --prompt "你好" --device <NPU卡号>           # baseline
+python3 {model_weight_dir}/scripts/ask_{model_name}.py --prompt "你好" --device <NPU卡号> --use_pypto  # PTO
+```
+
+通过标准：两次均加载成功、输出自然语言、PTO 模式无 `pto_kernels` import 错误。
 
 ---
 
@@ -930,10 +1033,17 @@ git commit -m "pto integration: add fused kernel for {model_name}"
 
 ---
 
-**Skill 版本：** v3.6  
-**最后更新：** 2026-06-04  
+**Skill 版本：** v3.13  
+**最后更新：** 2026-06-17  
 **维护者：** PyPTO Team  
 **更新说明：** 
+- v3.13: 步骤26新增算子 README 检查 — 归档后检查每个算子子目录是否有 README.md，缺失按模板补齐
+- v3.12: 步骤26/27归档映射精简为文件夹级别 — 去掉冗余子文件列表和"操作"列，映射每行是目录/文件名，不展开内部文件；README 映射同步简化
+- v3.11: 步骤26归档映射记录改为强制项 — README 缺失 `## 归档映射` 视为遗漏，步骤27(还原重建)依赖此映射
+- v3.10: 步骤26新增工号/个人路径扫描检查 — grep 工号模式后强制改为环境变量或占位符
+- v3.9: 步骤27强制前置环境对齐 — 归档 README 环境版本必须优先检查并安装，否则跳过直接拷贝会导致 torch_npu/CANN 版本冲突或 transformers 大版本 API 不兼容而失败
+- v3.8: 步骤27全面重写 — 增加从 README 提取环境版本→安装 Python 环境→归档反向映射文件拷贝→import 适配→验证的完整还原流程
+- v3.7: 步骤3新增方法二 git clone + git lfs pull 下载方式 — 代理环境大文件截断/SSL报错的稳定替代方案，自带断点续传
 - v3.6: 步骤25新增方法四 — torch_npu profiler + parse_prof 整网 PyPTO kernel 级分析；步骤4补充 --profile-dir 参数说明
 - v3.5: 8路并行迁移交叉验证 — 补充 golden 操作顺序要求、FP16 JIT 首编崩溃重试、CANN 多版本 set_env.sh 选择
 - v3.4: 三路并行迁移实测 — tokenizer检查、CANN多版本诊断、单op延迟预期
