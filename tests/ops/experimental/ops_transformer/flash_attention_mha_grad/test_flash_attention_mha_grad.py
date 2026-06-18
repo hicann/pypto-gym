@@ -50,10 +50,11 @@ logging.basicConfig(level=logging.INFO, format='%(message)s', force=True)
 
 NUM_HEADS_DEFAULT = 8
 HEAD_DIM_DEFAULT = 64
-S1_TILE = 1024
-S2_TILE = 1024
+S1_TILE = 512
+S2_TILE = 512
 
-MhaGradInputs = collections.namedtuple("MhaGradInputs", ["q", "k", "v", "actual_q", "actual_kv", "q_seqlens", "kv_seqlens"])
+MhaGradInputs = collections.namedtuple("MhaGradInputs", \
+    ["q", "k", "v", "actual_q", "actual_kv", "q_seqlens", "kv_seqlens"])
 AttentionBackwardOutput = collections.namedtuple("AttentionBackwardOutput", ["dq", "dk", "dv"])
 
 
@@ -157,9 +158,12 @@ def _default_tile_config():
     return FlashAttentionGradTileShapeConfig(
         s1_tile=S1_TILE,
         s2_tile=S2_TILE,
-        c_tile=[[128, 512], [128, 512], [256, 512]],
-        v_tile_s=[64, 256],
+        c_tile_mm=[[128, 128], [128, 256], [256, 256]],
+        c_tile_dq=[[128, 128], [128, 256], [128, 128]],
+        c_tile_dkv=[[256, 256], [64, 128], [128, 128]],
         v_tile_d=[64, 256],
+        v_tile_q=[64, 128],
+        v_tile_kv=[128, 128],
     )
 
 
