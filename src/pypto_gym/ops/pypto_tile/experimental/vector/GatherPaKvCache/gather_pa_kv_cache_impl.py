@@ -13,7 +13,10 @@ import pypto
 import torch
 
 INT32_MAX = 2**31 - 1
-DEFAULT_GATHER_TILE_CONFIG = [16, 32]
+DEFAULT_GATHER_TILE_CONFIG = {
+    "DAV_3510": [8, 16],
+    "DEFAULT": [16, 32],
+}
 LARGE_TOKEN_GATHER_TILE_CONFIG = [8, 8]
 
 GatherRequest = collections.namedtuple(
@@ -310,7 +313,7 @@ def _make_gather_request(inputs: GatherInputs, refs: GatherRefs, seq_offset: tor
 def _select_gather_tile_config(key_num_heads: int, key_dim: int, value_num_heads: int, value_dim: int) -> list[int]:
     if key_num_heads * key_dim > 4096 or value_num_heads * value_dim > 4096:
         return LARGE_TOKEN_GATHER_TILE_CONFIG
-    return DEFAULT_GATHER_TILE_CONFIG
+    return DEFAULT_GATHER_TILE_CONFIG.get(pypto.platform.npuarch, DEFAULT_GATHER_TILE_CONFIG["DEFAULT"])
 
 
 def gather_pa_kv_cache_out(
