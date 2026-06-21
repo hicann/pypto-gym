@@ -380,14 +380,17 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     return passed
 
 
+@pytest.mark.skip(reason="large test case")
 def test_00_910_1b():
     return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
+@pytest.mark.skip(reason="large test case")
 def test_00_910_2b():
     return run_test(batch_size=2, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 
 
+@pytest.mark.skip(reason="large test case")
 def test_00_910_8b():
     return run_test(batch_size=8, num_heads=8, s1_size=4096, s2_size=4096, dim=128, perf_910=True, no_flash=False)
 

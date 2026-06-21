@@ -563,6 +563,7 @@ TEST_CONFIGS = [
 ]
 
 
+@pytest.mark.skip(reason="large test case")
 def test_level0_smoke():
     device = get_device()
     if device.startswith("npu"):

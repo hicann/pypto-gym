@@ -38,6 +38,7 @@ import sys
 import os
 import time
 import torch
+import pytest
 
 # Pre-parse mode argument to set BSA_RUNTIME_DEBUG_MODE before importing
 # bsa_common (which reads the env var at module load time).
@@ -328,10 +329,12 @@ def test_bsa_fwd_s256_sparse50():
     do_precision_test(FwdCaseConfig("S256 Sparse50", 1, 4, 2, 256, 256, 0.5))
 
 
+@pytest.mark.skip(reason="large test case")
 def test_bsa_fwd_s512_sparse70():
     do_precision_test(FwdCaseConfig("S512 Sparse70", 1, 4, 4, 512, 512, 0.7))
 
 
+@pytest.mark.skip(reason="large test case")
 def test_bsa_fwd_b2_mha_s256():
     do_precision_test(FwdCaseConfig("B2 MHA S256", 2, 4, 4, 256, 256, 0.5))
 

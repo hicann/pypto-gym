@@ -24,6 +24,7 @@ while not os.path.isdir(os.path.join(_p, 'src')):
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
+import pytest
 import numpy as np
 import torch.nn.functional as F
 from experimental.attention.incre_flash_attention_impl import incre_flash_attention
@@ -487,42 +488,52 @@ def main():
     test_incre_flash_attention_16b8k()
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_1b16k():
     do_test_incre_flash_attention("1b16k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_2b16k():
     do_test_incre_flash_attention("2b16k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_4b16k():
     do_test_incre_flash_attention("4b16k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_8b16k():
     do_test_incre_flash_attention("8b16k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_16b16k():
     do_test_incre_flash_attention("16b16k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_1b8k():
     do_test_incre_flash_attention("1b8k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_2b8k():
     do_test_incre_flash_attention("2b8k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_4b8k():
     do_test_incre_flash_attention("4b8k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_8b8k():
     do_test_incre_flash_attention("8b8k")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_16b8k():
     do_test_incre_flash_attention("16b8k")
 

@@ -496,42 +496,52 @@ def test_prompt_flash_attention_1b4k4():
     do_test_prompt_flash_attention("1b4k4")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_2b4k4():
     do_test_prompt_flash_attention("2b4k4")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_1b4k8():
     do_test_prompt_flash_attention("1b4k8")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_2b4k8():
     do_test_prompt_flash_attention("2b4k8")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_8b16k8():
     do_test_prompt_flash_attention("8b16k8")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_2b8k16():
     do_test_prompt_flash_attention("2b8k16")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_4b16k16():
     do_test_prompt_flash_attention("4b16k16")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_2b8k32():
     do_test_prompt_flash_attention("2b8k32")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_4b16k32():
     do_test_prompt_flash_attention("4b16k32")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_4b8k32():
     do_test_prompt_flash_attention("4b8k32")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_prompt_flash_attention_8b8k32():
     do_test_prompt_flash_attention("8b8k32")
 

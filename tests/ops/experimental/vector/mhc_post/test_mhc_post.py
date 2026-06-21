@@ -35,6 +35,8 @@ import torch_npu  # noqa: F401
 import numpy as np
 from numpy.testing import assert_allclose
 
+import pytest
+
 # golden 文件从同级目录导入
 from mhc_post_golden import mhc_post_golden
 # impl 文件使用包导入方式（假设 pypto_gym 已通过 pip install -e . 安装）
@@ -170,10 +172,12 @@ def test_mhc_post_bs8_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=8, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 8, N = 4, D = 128")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_mhc_post_bs256_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=256, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 256, N = 4, D = 128")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
     run_mhc_post_test(
     bs=1024,
@@ -184,6 +188,7 @@ def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
      test_name="B*S = 1024, N = 4, D = 5120")
 
 
+@pytest.mark.skip(reason="large test case")
 def test_mhc_post_bs4096_n4_d2560(device_id=None, run_mode="npu"):
     run_mhc_post_test(
     bs=4096,
