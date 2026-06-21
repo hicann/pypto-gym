@@ -1,5 +1,12 @@
 # Sparse Attention Anti-Quantization FP8
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：不支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：不支持
+
 ## 算子概述
 
 本算子实现了面向 **DeepSeek V32 Multi-head Latent Attention (MLA)** 架构的 **Sparse Flash Attention with FP8 Anti-Quantization (反量化)**，运行于华为昇腾 NPU 上。

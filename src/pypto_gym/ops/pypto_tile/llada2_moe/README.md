@@ -5,6 +5,13 @@ Three PyPTO NPU kernels that together replace the forward path of
 glm_v4_5/`glm_moe_fusion_impl.py`, with quantization removed (BF16 in,
 BF16 out, FP32 accumulation).
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## Algorithm mapping
 
 `LLaDA2MoeSparseMoeBlock.forward` in

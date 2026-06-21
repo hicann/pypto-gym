@@ -1,5 +1,12 @@
 # attention_pre_quant
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 `attention_pre_quant` 算子对应 GLM-4.5 网络中 Attention 模块的前序计算逻辑，融合了以下关键操作：
@@ -126,6 +133,13 @@ def attention_pre_quant(
 
 # attention
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 `attention` 算子是基于先进的分页思想设计的注意力机制优化技术，专为大模型推理场景而生。它有效解决了传统注意力机制在处理长序列和动态批处理时面临的三大核心挑战：
@@ -190,6 +204,13 @@ def attention(
 
 # gate
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 `gate` 算子对应GLM4.5网络中进入专家选择前的matmul操作，将模型主维度由d_model投影到路由器专用维度d_router
@@ -230,6 +251,13 @@ def gate(
 
 
 # select_experts
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -299,6 +327,13 @@ def select_experts(
 
 # ffn_shared_expert_quant
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 `ffn_shared_expert_quant` 算子对应GLM4.5网络中MoE共享专家的计算逻辑，包含`symmetric_quantization_per_token`、`matmul`、`dequant_dynamic`和`swiglu`，用于进行单个共享专家的量化前向传播计算，通过在不同任务或数据流之间复用同一组权重参数，以学习通用的特征表示，同时减少模型的参数总量。
@@ -359,6 +394,13 @@ def ffn_shared_expert_quant(
 
 
 # attention_fusion
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -490,6 +532,13 @@ def attention(
 
 
 # moe_fusion
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 

@@ -2,6 +2,13 @@
 
 Multi-Head Latent Attention (MLA) 前处理算子的 PyPTO 实现，支持动态序列长度。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 MLA Prolog 是 MLA (Multi-Head Latent Attention) 的前处理算子，用于推理场景。主要计算 Query 和 Key 的预处理，支持动态序列长度。

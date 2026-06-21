@@ -1,5 +1,12 @@
 # GutenOCR-3B RMSNorm 算子集成
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 概述
 
 将 RMSNorm 算子从原始 torch 实现替换为 PyPTO 融合算子，提升 NPU 上的推理性能。

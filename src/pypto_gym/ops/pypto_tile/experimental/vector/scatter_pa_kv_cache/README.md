@@ -1,5 +1,12 @@
 # scatter_pa_kv_cache 算子实现
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 scatter_pa_kv_cache 算子用于在 Paged Attention 推理场景中更新 KV cache。将当前 step 生成的多个 token 的 key 和 value 数据，按照 slot_mapping 指定的位置，散布到对应的 cache block 中。

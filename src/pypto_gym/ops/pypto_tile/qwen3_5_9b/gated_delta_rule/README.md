@@ -5,6 +5,13 @@ Qwen3.5-9B prefill. Replaces the upstream
 `fla.ops.gated_delta_rule.chunk_gated_delta_rule` (or the torch fallback)
 called from `Qwen3_5GatedDeltaNet.forward`.
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## Parameter glossary
 
 | Symbol | Meaning | Value / constraint |

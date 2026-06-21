@@ -2,6 +2,13 @@
 
 本目录包含了 PyPTO Qwen3Next 模型的开发样例代码。我们对 Qwen3Next 的核心注意力机制进行了实现，交付了 **Chunk Gated Delta Rule** 算子，该算子是一种高效的线性注意力机制，专为长序列建模场景设计。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 参数说明/约束
 
 - shape 格式字段含义说明
@@ -19,6 +26,13 @@
 ---
 
 # chunk_gated_delta_rule
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 

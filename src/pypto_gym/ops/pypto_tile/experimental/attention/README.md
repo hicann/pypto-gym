@@ -1,5 +1,12 @@
 # incre_flash_attention
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 为不断优化提升增量推理性能, 提出支持增量推理的incre_flash_attention融合算子需求。
 

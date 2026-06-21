@@ -2,6 +2,13 @@
 
 PyPTO 自定义算子：融合 elementwise add + RMSNorm，所有计算结果**原地写回**输入 buffer。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 **计算公式**

@@ -1,5 +1,12 @@
 # mhc_sinkhorn 算子说明
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子语义
 
 `mhc_sinkhorn` 实现 **Sinkhorn-Knopp 双随机矩阵迭代归一化算法**，用于将矩阵通过交替行列归一化迭代转换为双随机矩阵（每行每列元素和均为 1 的矩阵）。

@@ -1,5 +1,12 @@
 # Incre Flash Attention GQA Anti-Quant 算子说明文档
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：不支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：不支持
+
 ## 算子概述
 
 **算子名称**: incre_flash_attention_gqa_antiquant (Incre Flash Attention with Grouped Query Attention and Anti-Quantization)

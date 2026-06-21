@@ -1,6 +1,13 @@
 # deepseek V3.2 样例 (Examples)
 
 本目录包含了一系列 PyPTO deepseek V3.2 EXP 的开发样例代码，我们对 DeepSeek-V3.2-Exp 进行了拆解，交付了五个算子：mla prolog, lightning indexer prolog, sparese flash attention, mla_indexer_prolog和lightning indexer。
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 参数说明/约束
 -  shape 格式字段含义说明
     | 字段名       | 英文全称/含义                  | 取值规则与说明                                                                 |
@@ -23,6 +30,13 @@
     | block_size    | PagedAttention 场景下的块大小  | 取值范围：128                                                           |
     | t            | BS 合轴后的大小                | 取值范围：b * s1|
 # mla_polog_quant
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -118,6 +132,13 @@ def mla_prolog_quant_compute(token_x, w_dq, w_uq_qr, dequant_scale, w_uk, w_dkv_
 - 详见算子实现 [mla_prolog_quant_impl.py](mla_prolog_quant_impl.py)，测试用例见 [tests/ops/deepseek_v32_exp/test_mla_prolog_quant.py](../../../../../tests/ops/deepseek_v32_exp/test_mla_prolog_quant.py)
 
 # lightning_indexer_prolog
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 用于 Deepseek IndexerAttention 中，计算 Lightning Indexer 所需要的 query，key 和 weights。
@@ -194,6 +215,13 @@ def lightning_indexer_prolog_quant_compute(x_in, q_norm_in, q_norm_scale_in, w_q
 
 # sparse_flash_attention_quant
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 对于每个查询 token $\bold{x}_i$，索引模块会为每个键值缓存项（表示键值对或 MLA 潜在表示）计算一个相关性得分 $I_{i,j}$。然后，通过将注意力机制应用于查询 token $\bold{x}_i$ 以及得分最高的前 $k$ 个缓存项，来计算输出 $\bold{o}_i$：
@@ -242,6 +270,13 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
 
 # sparse_attention_antiquant
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 sa_antiquant是在sfa_quant基础上做的 存8算16 优化。在sfa_quant场景中，key_nope_2d，key_rope_2d 和 k_nope_scales 分别是 int8，bf16 和 fp32 类型；在后续 attention 的计算上，会离散地存储这三个 tensor，需要调三次离散访存指令去分别调用进行反量化和 concat；而 sa_antiquant 会将同一个 token 的 nope，rope 和 nope_scale 按尾轴合并在一起，仅需一条离散访存指令，总计可以节省 b * s * topk 次离散访存命令，节省搬运指令，提升搬运效率。
@@ -281,6 +316,13 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
 
 
 # mla_indexer_polog_quant
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -358,6 +400,13 @@ def mla_indexer_prolog_quant_compute(
 - 详见算子实现 [mla_indexer_prolog_quant_impl.py](mla_indexer_prolog_quant_impl.py)，测试用例见 [tests/ops/deepseek_v32_exp/test_mla_indexer_prolog_quant.py](../../../../../tests/ops/deepseek_v32_exp/test_mla_indexer_prolog_quant.py)
 
 # lightning indexer
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 

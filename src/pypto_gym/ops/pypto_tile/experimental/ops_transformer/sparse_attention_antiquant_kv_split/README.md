@@ -2,13 +2,11 @@
 
 ## 产品支持情况
 
-|产品      | 是否支持 |
-|:----------------------------|:-----------:|
-|<term>Ascend 950PR/Ascend 950DT</term>|      √     |
-|<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|    √     |
-|<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|    √     |
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：不支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：不支持
 
-核心功能：
+## 核心功能
 1. 基于 PagedAttention 机制，通过 top-k 索引从分页 KV cache 中 gather 选定的 KV 条目
 2. 对 FP8 量化的 key-nope 进行在线反量化（per-group FP32 scales）
 3. 组装完整的 Q/K 并执行标准 Attention 计算：`O = softmax(Q @ K^T / sqrt(d)) @ V`

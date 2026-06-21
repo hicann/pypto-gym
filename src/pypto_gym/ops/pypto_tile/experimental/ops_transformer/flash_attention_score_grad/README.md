@@ -1,5 +1,12 @@
 # FlashAttentionScoreGrad PyPTO 实现
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 本目录包含 FlashAttentionScoreGrad 算子的 PyPTO 实现，用于计算 Flash Attention 前向传播的反向梯度。

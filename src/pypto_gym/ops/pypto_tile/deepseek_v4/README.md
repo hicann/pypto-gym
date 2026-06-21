@@ -1,5 +1,12 @@
 # Compressed_Flash_Attention
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 - API功能：`CompressedFlashAttention`算子旨在完成以下公式描述的Attention计算，支持Compressed Attention。
@@ -57,6 +64,13 @@ python3  tests/ops/deepseek_v4/test_compress_flash_attention.py
 ```
 
 # Compressor
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 - API功能：Compressor将每4或128个token的 KV cache 压缩成一个，然后每个token与这些压缩的 KV cache进行 DSA 计算。在长序列的情况下，Compressor可以有效地减少计算开销。
@@ -127,6 +141,13 @@ python3  tests/ops/deepseek_v4/test_compressor.py
 ```
 
 # Quant_Lightning_Indexer_Prolog
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -204,6 +225,13 @@ python3  tests/ops/deepseek_v4/test_lightning_indexer_prolog_quant.py
 ```
 
 # Mla_Prolog
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -296,6 +324,13 @@ python3  tests/ops/deepseek_v4/test_mla_prolog_v4.py
 
 # Sliding_Window_Attention
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 - API功能：`SlidingWindowAttention`算子旨在完成以下公式描述的Attention计算，支持Sliding Window Attention。
@@ -352,6 +387,13 @@ python3  tests/ops/deepseek_v4/test_win_attention.py
 ```
 
 # Sparse_Compress_Flash_Attention
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 
@@ -419,6 +461,13 @@ python3  tests/ops/deepseek_v4/test_sparse_compress_flash_attention.py
 ```
 
 # hc_pre
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 功能说明
 

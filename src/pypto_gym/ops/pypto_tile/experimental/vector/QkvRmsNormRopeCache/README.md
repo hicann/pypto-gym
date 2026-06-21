@@ -1,5 +1,12 @@
 # qkv_rms_norm_rope_cache
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子说明
 
 `qkv_rms_norm_rope_cache` 是 PyPTO 自定义融合算子，完成：

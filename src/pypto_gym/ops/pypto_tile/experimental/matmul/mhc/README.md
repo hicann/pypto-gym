@@ -2,6 +2,13 @@
 
 本目录包含 mHC (Multi-Head Computation) 算子集的 PyPTO 实现，用于在华为昇腾 AI 处理器上执行多路流计算。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 mHC 算子集包含三个核心算子，实现多路流之间的转换和混合操作：

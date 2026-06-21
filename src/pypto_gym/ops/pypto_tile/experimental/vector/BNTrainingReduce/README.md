@@ -1,5 +1,12 @@
 # BNTrainingReduce 算子说明
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 1. 算子概述
 
 `BNTrainingReduce` 用于 BatchNorm 训练阶段的归约计算。输入为 `NCHW` 格式的 `fp32` 张量，输出每个通道的：

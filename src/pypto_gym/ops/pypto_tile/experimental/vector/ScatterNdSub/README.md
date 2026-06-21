@@ -1,5 +1,12 @@
 # scatter_nd_sub
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 功能说明
 
 `scatter_nd_sub` 算子实现了对目标张量指定位置的减法更新操作。该算子将 updates 张量中的值从 target 张量的指定索引位置减去，支持对同一位置的多次更新（累加模式）。

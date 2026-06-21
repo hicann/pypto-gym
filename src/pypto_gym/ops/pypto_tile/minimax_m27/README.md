@@ -23,6 +23,13 @@ UB-fitting value (`PYPTO_VEC_TILE`, default 128).
 > needs a **native FP8** grouped GEMM (reuse `experimental/matmul/
 > grouped_matmul_swiglu_quant`). See the modeling README for status.
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## Model specs
 
 | Parameter | MiniMax M2.7 | LLaDA2.0-mini |

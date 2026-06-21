@@ -2,6 +2,13 @@
 
 PyPTO 自定义算子：对 4D 特征张量沿最后一维 D（D=64）按 **interleave 模式** 应用 RoPE 旋转位置编码。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 中间数学（interleave 模式 RoPE，对每对相邻元素 `(x[2k], x[2k+1])`）：

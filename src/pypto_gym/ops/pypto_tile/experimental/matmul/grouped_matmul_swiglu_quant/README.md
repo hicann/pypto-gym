@@ -1,5 +1,12 @@
 # grouped_matmul_swiglu_quant 算子说明
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：不支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：不支持
+
 ## 算子语义
 
 `grouped_matmul_swiglu_quant` 是 MoE 场景中的 grouped matmul 后处理融合算子，用于完成 MXFP8 grouped matmul、SwiGLU 激活以及 per-token INT8 动态量化。

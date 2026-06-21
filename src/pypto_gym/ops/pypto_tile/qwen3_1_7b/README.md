@@ -2,6 +2,13 @@
 
 Qwen3-1.7B 模型的 PyPTO 融合 kernel 算子库。当前实际集成的算子为 Q/K channel 的 RMSNorm + RoPE 部分融合 kernel。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 目录结构
 
 ```

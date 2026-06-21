@@ -1,5 +1,12 @@
 # BSA Forward 算子说明
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子语义
 
 BSA Forward（`aclnnBlockSparseAttention`）实现块稀疏注意力的前向计算。通过块级稀疏掩码 `blockSparseMask` 标记有效块对，仅对掩码为 1 的 Q-KV 块对执行注意力计算，大幅降低长序列场景下的计算与内存开销。采用 Online Softmax 分块迭代策略，逐 KV 块维护运行最大值和指数和，保证分块计算与全量计算数学完全等价。

@@ -2,6 +2,13 @@
 
 基于 PyPTO 框架实现的 MLA (Multi-Head Latent Attention) Prolog 量化算子，运行于 Ascend NPU，支持 HiFP8 量化格式，用于 DeepSeek V32 模型推理。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：不支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：不支持
+
 ## 文件说明
 
 | 文件 | 说明 |

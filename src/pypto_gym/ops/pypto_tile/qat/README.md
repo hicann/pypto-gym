@@ -2,6 +2,13 @@
 
 本文档包含量化感知训练（Quantization-Aware Training, QAT）相关的算子接口说明，涵盖对称量化和非对称量化两种方式。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 目录
 
 1. [ai_infra_qat_symmetric_per_tensor](#ai_infra_qat_symmetric_per_tensor) - 对称张量级量化算子
@@ -15,6 +22,13 @@
 对称量化感知训练（Quantization-Aware Training, QAT）算子，包含正向和反向两个算子。该算子用于对权重进行对称量化模拟，在训练过程中引入量化噪声，使模型能够适应量化带来的精度损失。
 
 适用于 Embedding 层场景，scale 为标量形式（shape 为 (1,1)），所有权重元素共享同一个缩放系数。
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 正向算子：ai_infra_qat_symmetric_per_tensor
 
@@ -277,6 +291,13 @@ print(f"Scale梯度形状: {grad_scale.shape}")
 
 适用于 Lm Head 层场景，scale 为向量形式（shape 为 (N,1)），每个输出通道对应一个独立的缩放系数。
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 正向算子：ai_infra_qat_symmetric_per_channel
 
 ### 功能描述
@@ -517,6 +538,13 @@ print(f"Scale梯度形状: {grad_scale.shape}")
 非对称量化感知训练（Asymmetric Quantization-Aware Training, QAT）算子，包含正向和反向两个算子。该算子用于对权重进行非对称量化模拟，支持分组量化（Group Quantization）和可学习的偏移量（offset）。
 
 适用于 Transformer Linear 层场景，通过分组量化实现更精细的量化粒度，提高量化后模型的精度。非对称量化相比对称量化能够更好地适应权重分布的不对称性。
+
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
 ## 正向算子：ai_infra_qat_asymmetric_per_group
 

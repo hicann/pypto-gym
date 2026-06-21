@@ -1,26 +1,30 @@
 # PyPTO-Gym
 
-PyPTO-Gym 是基于 [PyPTO](https://gitcode.com/cann/pypto) 编程框架构建的算子与模型样例仓库。收录了基于 PyPTO 开发的一系列高性能融合算子与典型大模型结构实现，作为 PyPTO 的"算子训练场"，方便开发者学习、复用、压测与对比。
+## 🔥最新动态
+- 2026/06：PyPTO-GYM 项目首次上线，本仓原为 [PyPTO](https://gitcode.com/cann/pypto) 仓的 `models` 目录，现已拆分为独立仓，与主仓解耦演进。
 
-> 本仓原为 `pypto/models/` 目录，现已拆分为独立仓，与 PyPTO 主仓解耦演进。
+## 🚀概述
 
-## 概述
-
-PyPTO-Gym 是面向华为昇腾（Ascend）AI 处理器的算子示例与基准库，围绕 PyPTO 的 Tile 编程模型，提供端到端可运行的融合算子样例和大模型关键结构实现。
+PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾（Ascend）AI 处理器，使用 PyPTO 的 Tile 编程模型，提供融合算子开发样例和大模型适配样例。这些样例均基于CANNBot完成设计、开发与调优工作。本仓作为 PyPTO 的"算子训练场"，方便开发者学习、复用、压测与对比。
 
 - **硬件目标**：华为昇腾（Ascend）AI 处理器
 - **编程框架**：PyPTO，基于 Tile 的编程模型
-- **内容**：融合算子样例 + 大模型关键结构（Attention、MoE、Delta-Rule、RMSNorm、RoPE 等）
+- **内容**：融合算子样例 + 大模型适配样例
 
-## 特性
+## 核心特性
 
-- 覆盖 DeepSeek V3.2 / V4、GLM V4.5、Gemma4-31B-it、Qwen3 系列（1.7B / 3.5-9B / 3.6-27B / Next / VL-8B）、LLaDA2-MoE 等模型的关键算子实现
-- 提供实验性目录 `experimental/` 收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
-- 算子实现与测试分离：kernel 实现位于 `src/pypto_gym/ops/pypto_tile/<model>/`，对应测试位于 `tests/ops/<model>/`
-- 提供 `modeling/transformers/` 端到端模型推理与性能基准脚本
-- 复用 PyPTO 自带的多卡/多 SoC 测试调度 `conftest.py`（`@pytest.mark.soc`、`@pytest.mark.world_size`）
+- **大模型核心算子样例**：覆盖 DeepSeek V3.2 / V4、GLM V4.5、Gemma4-31B-it、Qwen3 系列（1.7B / 3.5-9B / 3.6-27B / Next / VL-8B）、LLaDA2-MoE 等模型的关键算子实现
+- **实验性算子样例**：基于实验性目录 `experimental`，收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
+- **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
+- **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
 
 ## 环境准备
+
+当前仓库支持的 CANN 版本如下：
+
+| CANN 版本 | 支持情况 |
+|----------|----------|
+| 9.1.0 | 支持 |
 
 pypto-gym 无需单独安装。请先参照 PyPTO 文档完成环境部署：
 
@@ -36,50 +40,40 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 # 指定运行的 NPU 设备 ID（根据实际可用 chip 设置）
 export TILE_FWK_DEVICE_ID=0
 
-# 指定 pto-isa 代码路径（用于 JIT 编译）
+# 指定 pto-isa 代码路径（当pypto使用源码编译安装时需要关注）
 export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 ```
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
 
-## 快速上手
+## ⚡️快速上手
 
-### 1. 运行单个模型的测试
-
-```bash
-# GLM V4.5 Attention / MoE
-pytest tests/ops/glm_v4_5 -v
-
-# DeepSeek V4 MLA / Compressor / Window Attention
-pytest tests/ops/deepseek_v4 -v
-
-# QAT 量化感知训练
-pytest tests/ops/qat -v
-```
-
-### 2. 运行全部（非 experimental）测试
+### 1. 运行部分算子测试
 
 ```bash
-pytest -v
+# 直接执行 GLM V4.5 Attention
+python tests/ops/glm_v4_5/test_glm_attention.py
+
+# 使用 pytest 执行 GLM V4.5 Attention
+pytest tests/ops/glm_v4_5/test_glm_attention.py
+
+# 使用 pytest 执行 GLM V4.5 目录所有算子测试
+pytest tests/ops/glm_v4_5 -v --forked
 ```
 
-`pytest.ini` 已配置：
-
-- `testpaths`：`src/pypto_gym/ops`、`tests/ops`
-- `norecursedirs`：自动排除 `experimental/` 目录
-- `python_files`：匹配 `test_*.py`
-
-如需运行实验性算子：
+### 2. 运行全部算子测试
 
 ```bash
-pytest tests/ops/experimental/<category>/<op_name> -v
+pytest -v --forked
 ```
+
+具体测试范围参考 [pytest.ini](./pytest.ini) 配置
 
 ### 3. 多卡 / 指定 SoC
 
 ```bash
 # 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
-pytest tests/ops/glm_v4_5 -v --device 1
+pytest tests/ops/glm_v4_5 -v --forked --device 1
 
 # 多卡（2 卡）分布式样例
 pytest tests/ops/experimental/distributed --device 0 1 --cards-per-case 2
@@ -87,13 +81,9 @@ pytest tests/ops/experimental/distributed --device 0 1 --cards-per-case 2
 
 ### 4. 用例筛选说明
 
-测试用例通过 `@pytest.mark.soc` 标注适用芯片，conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例通过 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
+测试用例通过 `@pytest.mark.soc` 标注适用芯片，conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例默认已使用 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
 
 ## 常见问题排查
-
-**Q: 报错 `key: runtime.stitch_cfgcache_size does not exist`**
-
-该 key 为新版 PyPTO 引入，需确保 PyPTO 编译版本与 impl 文件版本一致。建议始终保持 pypto、pypto-gym、pto-isa 三仓同步到最新版本后重新编译安装 PyPTO。
 
 **Q: 报错 `NPU out of memory`**
 
@@ -107,10 +97,6 @@ TBE（Tensor Boost Engine）初始化失败，通常由缺少 Python 依赖导�
 pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
-**Q: 部分 GLM 用例报 `TypeError: set_pass_options() got an unexpected keyword argument 'pg_upper_bound'`**
-
-`pg_upper_bound` 在新版 PyPTO 中已改为自动推导，从 `set_pass_options()` 调用中移除该参数即可。建议同步 pypto 主仓最新的 impl 文件。
-
 **Q: 编译 PyPTO 时找不到 pto-isa 头文件**
 
 确认 `PTO_TILE_LIB_CODE_PATH` 指向 pto-isa 仓库根目录（含 `include/` 子目录），且 pto-isa 版本与 PyPTO 兼容（建议两仓同步到最新）。
@@ -120,19 +106,15 @@ pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 ```
 pypto-gym/
 ├── docs/                                    # 文档资源
-├── modeling/                                # 模型端到端执行脚本与样例输入
-│   └── transformers/                        # HuggingFace 模型推理示例
+├── modeling/                                # 模型端到端执行脚本
+│   └── transformers/                        # 大模型推理示例
 │       ├── infer.py                         # 通用推理入口
 │       ├── deepseek-v2-lite-chat/           # DeepSeek V2 Lite Chat
 │       ├── gemma4_31b_it/                   # Gemma4-31B-it
-│       ├── gutenocr_3b/                     # GutenOCR-3B
 │       ├── llada2_moe/                      # LLaDA2-MoE
-│       ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct
 │       ├── qwen3_1_7b/                      # Qwen3-1.7B
 │       ├── qwen3_5_9b/                      # Qwen3.5-9B
-│       ├── qwen3_6_27b/                     # Qwen3.6-27B
-│       ├── qwen3_vl_8b_instruct_.../        # Qwen3-VL-8B-Instruct
-│       ├── spatial_ssrl_3b/                 # Spatial-SSRL-3B
+│       ├── ...
 │       └── sample_inputs/                   # 公共样例输入
 ├── src/
 │   └── pypto_gym/
@@ -144,42 +126,34 @@ pypto-gym/
 │       │   │   ├── deepseek_v4/             # DeepSeek V4 MLA / Compressor / Window Attention
 │       │   │   ├── gemma4_31b_it/           # Gemma4-31B-it GQA Decode Attention / Softmax
 │       │   │   ├── glm_v4_5/                # GLM V4.5 Attention / MoE / FFN / Gate
-│       │   │   ├── gutenocr_3b/             # GutenOCR-3B SwiGLU MLP / RMSNorm / MRoPE
 │       │   │   ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
-│       │   │   ├── phi_3_mini_4k_instruct/  # Phi-3-mini RMSNorm
 │       │   │   ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
 │       │   │   ├── qwen3_1_7b/              # Qwen3-1.7B RMSNorm + RoPE
 │       │   │   ├── qwen3_5_9b/              # Qwen3.5-9B Gated Delta Rule
-│       │   │   ├── qwen3_6_27b/             # Qwen3.6-27B Gated Delta Rule
-│       │   │   ├── qwen3_next/              # Qwen3-Next Chunk Gated Delta Rule
-│       │   │   ├── qwen3_vl_8b_instruct_.../ # Qwen3-VL-8B RMSNorm
-│       │   │   ├── spatial_ssrl_3b/         # Spatial-SSRL-3B RMSNorm / RoPE
-│       │   │   └── experimental/            # 实验性算子（默认不跑）
+│       │   │   ├── ...
+│       │   │   └── experimental/            # 实验性算子
 │       │   │       ├── attention/           # BSA / Chunked GDR / Flash Attention 等
 │       │   │       ├── distributed/         # 分布式配置与分析
 │       │   │       ├── matmul/              # GMM / 量化矩阵乘 / MXFP8 等
 │       │   │       ├── ops_transformer/     # Flash Attention / MLA Prolog / SwiGLU / Sparse Attention 等
 │       │   │       └── vector/              # RMSNorm / RoPE / AdamW / Sigmoid / MoE 等
 │       │   └── ...
-│       └── transformers/                    # HuggingFace 模型结构定义
+│       └── transformers/                    # 各个模型结构定义
 │           ├── gemma4_31b_it/
-│           ├── gutenocr_3b/
 │           ├── llada2_moe/
-│           ├── phi_3_mini_4k_instruct/
 │           ├── qwen3_1_7b/
 │           ├── qwen3_5_9b/
-│           ├── qwen3_6_27b/
-│           ├── qwen3_vl_8b_instruct_.../
+│           ├── ...
 │           └── spatial_ssrl_3b/
-├── tests/                                   # 测试用例
-│   └── ops/                                 # 与 ops/ 对应
-│       ├── arctic/                          # Arctic LSTM 测试
-│       ├── deepseek_v32_exp/                # DeepSeek V3.2 测试
-│       ├── deepseek_v4/                     # DeepSeek V4 测试
-│       ├── gemma4_31b_it/                   # Gemma4-31B-it 测试
-│       ├── glm_v4_5/                        # GLM V4.5 测试
-│       ├── llada2_moe/                      # LLaDA2-MoE 测试
-│       ├── qat/                             # QAT 测试
+├── tests/                                   # 算子测试用例
+│   └── ops/                                 # 与 src/pypto_gym/ops/ 对应
+│       ├── arctic/                          # Arctic LSTM 算子测试
+│       ├── deepseek_v32_exp/                # DeepSeek V3.2 算子测试
+│       ├── deepseek_v4/                     # DeepSeek V4 算子测试
+│       ├── gemma4_31b_it/                   # Gemma4-31B-it 算子测试
+│       ├── glm_v4_5/                        # GLM V4.5 算子测试
+│       ├── llada2_moe/                      # LLaDA2-MoE 算子测试
+│       ├── qat/                             # QAT 算子测试
 │       ├── utils/                           # 测试工具函数
 │       └── experimental/                    # 实验性算子测试
 │           ├── attention/
@@ -226,7 +200,7 @@ pypto-gym/
 2. 编写 kernel 实现文件，命名建议为 `*_impl.py`，对外暴露入口函数 / 配置类。
 3. 在 `tests/ops/` 下新建同名子目录，添加 `test_*.py`，通过绝对路径引用 kernel。
 4. 用 `@pytest.mark.soc("950", "910")` 标注适用 SoC，用 `@pytest.mark.world_size(N)` 标注多卡需求。
-5. 补一份 `README.md` 说明算子语义、shape 范围与预期性能，以及对应测试文件路径。
+5. 编写 `README.md` 说明算子语义、shape 范围与预期性能，以及对应测试文件路径。
 
 详细规范参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

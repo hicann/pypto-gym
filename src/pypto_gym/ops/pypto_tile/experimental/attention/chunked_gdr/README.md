@@ -4,6 +4,13 @@
 
 ---
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 本算子实现 Chunked Gated Delta Rule Linear Attention 机制，用于 Qwen3-Next 等模型的注意力层。通过按可配置 chunk_size (L=32/64/128) 分块处理序列，在每个 chunk 内执行 L2 归一化、预注意力、矩阵求逆、累积衰减和循环状态注意力，实现 O(n) 复杂度的线性注意力。

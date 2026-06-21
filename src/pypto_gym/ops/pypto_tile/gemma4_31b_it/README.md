@@ -2,6 +2,13 @@
 
 Custom PyPTO fused kernels for `google/gemma-4-31b-it` on Ascend NPU.
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## Kernel List
 
 | Directory | Description | Input -> Output | Replaces |

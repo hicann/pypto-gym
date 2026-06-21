@@ -1,5 +1,12 @@
 # AttentionWorkerCombine PyPTO 算子
 
+
+## 产品支持情况
+
+- Ascend 950PR：支持
+- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+
 ## 算子概述
 
 将多个计算单元处理的注意力 token 数据进行融合，结合专家权重对结果进行加权，输出最终的注意力融合结果。
