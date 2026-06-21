@@ -458,7 +458,7 @@ def chunk_gated_delta_rule_aligned(b, nqk, nv, d, l, enable_perf_debug=False,
             s = act_seq_len[b_idx + 1] - act_seq_len[b_idx]
             b_ofs = act_seq_len[b_idx]
 
-            for nv_idx in pypto.loop(nv, name="LOOP_Nv_TND", idx_name="nv_idx", parallel=True):
+            for nv_idx in pypto.loop(nv, name="LOOP_Nv_TND", idx_name="nv_idx", parallel=False):
                 nqk_idx = nv_idx // group
                 pypto.set_vec_tile_shapes(16, 16, 128, 128)
                 last_state = states[b_idx, nv_idx]
@@ -582,7 +582,7 @@ def chunk_gated_delta_rule_unaligned(b, nqk, nv, d, l, enable_perf_debug=False,
             s = act_seq_len[b_idx + 1] - act_seq_len[b_idx]
             b_ofs = act_seq_len[b_idx]
 
-            for nv_idx in pypto.loop(nv, name="LOOP_Nv_TND", idx_name="nv_idx", parallel=True):
+            for nv_idx in pypto.loop(nv, name="LOOP_Nv_TND", idx_name="nv_idx", parallel=False):
                 nqk_idx = nv_idx // group
                 pypto.set_vec_tile_shapes(16, 16, 128, 128)
                 last_state = states[b_idx, nv_idx]
