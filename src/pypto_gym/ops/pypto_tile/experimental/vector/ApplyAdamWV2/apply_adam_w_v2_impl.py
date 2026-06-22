@@ -24,7 +24,7 @@ while the wrapper selects tile configuration for [7168, K] style network
 shapes without duplicating kernel bodies.
 """
 from typing import Tuple
-
+                                                                                      
 import pypto
 import torch
 
@@ -98,10 +98,11 @@ def apply_adam_w_v2_kernel_fp32(
             m_new = pypto.add(pypto.mul(m_state, beta1), pypto.mul(g_tile, one_m_b1))
             grad_sq = pypto.mul(g_tile, g_tile)
             v_new = pypto.add(pypto.mul(v_state, beta2), pypto.mul(grad_sq, one_m_b2))
-            m_hat = pypto.div(m_new, bc1)
-            v_hat = pypto.div(v_new, bc2)
+            m_hat = pypto.div(m_new, bc1, precision_type=pypto.PrecisionType.INTRINSIC)
+            v_hat = pypto.div(v_new, bc2, precision_type=pypto.PrecisionType.INTRINSIC)
             denom = pypto.add(pypto.sqrt(v_hat), eps)
-            update = pypto.add(pypto.div(m_hat, denom), pypto.mul(w_tile, weight_decay))
+            update = pypto.add(pypto.div(m_hat, denom, precision_type=pypto.PrecisionType.INTRINSIC),
+                               pypto.mul(w_tile, weight_decay))
             w_new = pypto.sub(w_tile, pypto.mul(update, lr))
 
             pypto.assemble(w_new, [m_offset, n_offset], weight_out)
@@ -158,10 +159,11 @@ def apply_adam_w_v2_kernel_bf16(
             m_new = pypto.add(pypto.mul(m_state, beta1_bf16), pypto.mul(g_f32, one_m_beta1_bf16))
             grad_sq = pypto.mul(g_f32, g_f32)
             v_new = pypto.add(pypto.mul(v_state, beta2_bf16), pypto.mul(grad_sq, one_m_beta2_bf16))
-            m_hat = pypto.div(m_new, bc1_bf16)
-            v_hat = pypto.div(v_new, bc2_bf16)
+            m_hat = pypto.div(m_new, bc1_bf16, precision_type=pypto.PrecisionType.INTRINSIC)
+            v_hat = pypto.div(v_new, bc2_bf16, precision_type=pypto.PrecisionType.INTRINSIC)
             denom = pypto.add(pypto.sqrt(v_hat), eps_bf16)
-            update = pypto.add(pypto.div(m_hat, denom), pypto.mul(w_f32, weight_decay_bf16))
+            update = pypto.add(pypto.div(m_hat, denom, precision_type=pypto.PrecisionType.INTRINSIC),
+                               pypto.mul(w_f32, weight_decay_bf16))
             w_new_f32 = pypto.sub(w_f32, pypto.mul(update, lr_bf16))
             w_new_bf16 = pypto.cast(w_new_f32, pypto.DT_BF16)
 
