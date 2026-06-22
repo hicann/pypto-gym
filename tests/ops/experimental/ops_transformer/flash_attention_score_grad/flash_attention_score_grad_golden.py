@@ -21,7 +21,7 @@ FlashAttentionScoreGrad Golden 参考实现
   dk = ds^T @ Q * scale
   dv = p^T @ dY
 
-与 PyPTO kernel (S_TILE=128) 计算流完全对齐。
+与 PyPTO kernel (s_tile=128) 计算流完全对齐。
 
 
 ========================================================
@@ -30,7 +30,7 @@ FlashAttentionScoreGrad Golden 参考实现
 """
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Any
 import torch
 
 S_TILE = 128
@@ -68,34 +68,34 @@ _BLOCK_KV = 64
 
 def _compute_forward(q, k, v, scale, cfg: ForwardDataConfig):
     """在线 softmax 前向计算，与 flash_attention_score kernel 对齐。"""
-    B, N, S, D = cfg.batch_size, cfg.num_heads, cfg.seq_len, cfg.head_dim
+    b_val, n_val, s_val, d_dim = cfg.batch_size, cfg.num_heads, cfg.seq_len, cfg.head_dim
 
-    softmax_max = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
-    softmax_sum = torch.zeros(B, N, S, 8, dtype=torch.float32, device=cfg.device)
-    attention_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=cfg.device)
+    softmax_max = torch.zeros(b_val, n_val, s_val, 8, dtype=torch.float32, device=cfg.device)
+    softmax_sum = torch.zeros(b_val, n_val, s_val, 8, dtype=torch.float32, device=cfg.device)
+    attention_out = torch.zeros(b_val, n_val, s_val, d_dim, dtype=torch.bfloat16, device=cfg.device)
 
-    n_kv = (S + _BLOCK_KV - 1) // _BLOCK_KV
-    n_q = (S + _BLOCK_Q - 1) // _BLOCK_Q
+    n_kv = (s_val + _BLOCK_KV - 1) // _BLOCK_KV
+    n_q = (s_val + _BLOCK_Q - 1) // _BLOCK_Q
 
-    for b in range(B):
-        for n in range(N):
+    for b in range(b_val):
+        for n in range(n_val):
             q_bn, k_bn, v_bn = q[b, n], k[b, n], v[b, n]
             for qi in range(n_q):
                 qs = qi * _BLOCK_Q
-                qn = min(_BLOCK_Q, S - qs)
-                q2d = q_bn[qs:qs + qn].reshape(qn, D)
+                qn = min(_BLOCK_Q, s_val - qs)
+                q2d = q_bn[qs:qs + qn].reshape(qn, d_dim)
                 mi = torch.full((qn, 1), float('-inf'), dtype=torch.float32, device=cfg.device)
                 li = torch.zeros(qn, 1, dtype=torch.float32, device=cfg.device)
-                oi = torch.zeros(qn, D, dtype=torch.float32, device=cfg.device)
+                oi = torch.zeros(qn, d_dim, dtype=torch.float32, device=cfg.device)
                 for ki in range(n_kv):
                     ks = ki * _BLOCK_KV
-                    kn = min(_BLOCK_KV, S - ks)
-                    k2d = k_bn[ks:ks + kn].reshape(kn, D)
+                    kn = min(_BLOCK_KV, s_val - ks)
+                    k2d = k_bn[ks:ks + kn].reshape(kn, d_dim)
                     scores = (q2d.float() @ k2d.float().T) * scale
                     mij = scores.amax(dim=-1, keepdim=True)
                     pij = torch.exp(scores - mij)
                     lij = pij.sum(dim=-1, keepdim=True)
-                    v2d = v_bn[ks:ks + kn].reshape(kn, D).float()
+                    v2d = v_bn[ks:ks + kn].reshape(kn, d_dim).float()
                     oij = pij @ v2d
                     if ki == 0:
                         mi, li, oi = mij, lij, oij
@@ -152,23 +152,40 @@ class AttentionGradInputs:
         self.scale_value = scale_value
 
 
-def _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                    S, s_tile, D, scale, dq_out, b, n):
-    """Pass 1: compute dQ for head (b, n)."""
-    for s1_start in range(0, S, s_tile):
-        s1_end = min(s1_start + s_tile, S)
-        q_i = q_bn[s1_start:s1_end]
-        dy_i = dy_bn[s1_start:s1_end]
-        attn_i = attn_bn[s1_start:s1_end]
-        smax_i = smax_bn[s1_start:s1_end]
-        ssum_i = ssum_bn[s1_start:s1_end]
+@dataclass
+class _GradPass1DqInputs:
+    q_bn: Any
+    k_bn: Any
+    v_bn: Any
+    dy_bn: Any
+    attn_bn: Any
+    smax_bn: Any
+    ssum_bn: Any
+    s_val: Any
+    s_tile: Any
+    d_dim: Any
+    scale: Any
+    dq_out: Any
+    b: Any
+    n: Any
+
+
+def _grad_pass1_dq(inputs: _GradPass1DqInputs):
+    """Pass 1: compute dQ for head (inputs.b, inputs.n)."""
+    for s1_start in range(0, inputs.s_val, inputs.s_tile):
+        s1_end = min(s1_start + inputs.s_tile, inputs.s_val)
+        q_i = inputs.q_bn[s1_start:s1_end]
+        dy_i = inputs.dy_bn[s1_start:s1_end]
+        attn_i = inputs.attn_bn[s1_start:s1_end]
+        smax_i = inputs.smax_bn[s1_start:s1_end]
+        ssum_i = inputs.ssum_bn[s1_start:s1_end]
         d_i = (dy_i * attn_i).float().sum(dim=-1, keepdim=True)
         dq_acc = None
-        for s2_start in range(0, S, s_tile):
-            s2_end = min(s2_start + s_tile, S)
-            k_j = k_bn[s2_start:s2_end]
-            v_j = v_bn[s2_start:s2_end]
-            scores = (q_i.float() @ k_j.float().T) * scale
+        for s2_start in range(0, inputs.s_val, inputs.s_tile):
+            s2_end = min(s2_start + inputs.s_tile, inputs.s_val)
+            k_j = inputs.k_bn[s2_start:s2_end]
+            v_j = inputs.v_bn[s2_start:s2_end]
+            scores = (q_i.float() @ k_j.float().T) * inputs.scale
             p_ij = torch.exp(scores - smax_i) / ssum_i
             dp_ij = dy_i.float() @ v_j.float().T
             ds_ij = p_ij * (dp_ij - d_i)
@@ -178,27 +195,45 @@ def _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
                 dq_acc = dq_tile
             else:
                 dq_acc += dq_tile
-        dq_out[b, n, s1_start:s1_end] = (dq_acc * scale).to(torch.bfloat16)
+        inputs.dq_out[inputs.b, inputs.n, s1_start:s1_end] = (dq_acc * inputs.scale).to(torch.bfloat16)
 
 
-def _grad_pass2_dkdv(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                      S, s_tile, D, scale, dk_out, dv_out, b, n):
-    """Pass 2: compute dK and dV for head (b, n)."""
-    for s2_start in range(0, S, s_tile):
-        s2_end = min(s2_start + s_tile, S)
-        k_j = k_bn[s2_start:s2_end]
-        v_j = v_bn[s2_start:s2_end]
+@dataclass
+class _GradPass2DkdvInputs:
+    q_bn: Any
+    k_bn: Any
+    v_bn: Any
+    dy_bn: Any
+    attn_bn: Any
+    smax_bn: Any
+    ssum_bn: Any
+    s_val: Any
+    s_tile: Any
+    d_dim: Any
+    scale: Any
+    dk_out: Any
+    dv_out: Any
+    b: Any
+    n: Any
+
+
+def _grad_pass2_dkdv(inputs: _GradPass2DkdvInputs):
+    """Pass 2: compute dK and dV for head (inputs.b, inputs.n)."""
+    for s2_start in range(0, inputs.s_val, inputs.s_tile):
+        s2_end = min(s2_start + inputs.s_tile, inputs.s_val)
+        k_j = inputs.k_bn[s2_start:s2_end]
+        v_j = inputs.v_bn[s2_start:s2_end]
         dk_acc = None
         dv_acc = None
-        for s1_start in range(0, S, s_tile):
-            s1_end = min(s1_start + s_tile, S)
-            q_i = q_bn[s1_start:s1_end]
-            dy_i = dy_bn[s1_start:s1_end]
-            attn_i = attn_bn[s1_start:s1_end]
-            smax_i = smax_bn[s1_start:s1_end]
-            ssum_i = ssum_bn[s1_start:s1_end]
+        for s1_start in range(0, inputs.s_val, inputs.s_tile):
+            s1_end = min(s1_start + inputs.s_tile, inputs.s_val)
+            q_i = inputs.q_bn[s1_start:s1_end]
+            dy_i = inputs.dy_bn[s1_start:s1_end]
+            attn_i = inputs.attn_bn[s1_start:s1_end]
+            smax_i = inputs.smax_bn[s1_start:s1_end]
+            ssum_i = inputs.ssum_bn[s1_start:s1_end]
             d_i = (dy_i * attn_i).float().sum(dim=-1, keepdim=True)
-            scores = (q_i.float() @ k_j.float().T) * scale
+            scores = (q_i.float() @ k_j.float().T) * inputs.scale
             p_ij = torch.exp(scores - smax_i) / ssum_i
             dp_ij = dy_i.float() @ v_j.float().T
             ds_ij = p_ij * (dp_ij - d_i)
@@ -212,8 +247,8 @@ def _grad_pass2_dkdv(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
             else:
                 dk_acc += dk_tile
                 dv_acc += dv_tile
-        dk_out[b, n, s2_start:s2_end] = (dk_acc * scale).to(torch.bfloat16)
-        dv_out[b, n, s2_start:s2_end] = dv_acc.to(torch.bfloat16)
+        inputs.dk_out[inputs.b, inputs.n, s2_start:s2_end] = (dk_acc * inputs.scale).to(torch.bfloat16)
+        inputs.dv_out[inputs.b, inputs.n, s2_start:s2_end] = dv_acc.to(torch.bfloat16)
 
 
 def flash_attention_score_grad_golden(
@@ -232,18 +267,20 @@ def flash_attention_score_grad_golden(
     scale = inputs.scale_value
     s_max = inputs.softmax_max[:, :, :, 0:1]
     s_sum = inputs.softmax_sum[:, :, :, 0:1]
-    B, N, S, D = q.shape
-    dq_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
-    dk_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
-    dv_out = torch.zeros(B, N, S, D, dtype=torch.bfloat16, device=q.device)
+    b_val, n_val, s_val, d_dim = q.shape
+    dq_out = torch.zeros(b_val, n_val, s_val, d_dim, dtype=torch.bfloat16, device=q.device)
+    dk_out = torch.zeros(b_val, n_val, s_val, d_dim, dtype=torch.bfloat16, device=q.device)
+    dv_out = torch.zeros(b_val, n_val, s_val, d_dim, dtype=torch.bfloat16, device=q.device)
 
-    for b in range(B):
-        for n in range(N):
+    for b in range(b_val):
+        for n in range(n_val):
             q_bn, k_bn, v_bn = q[b, n], k[b, n], v[b, n]
             dy_bn, attn_bn = dy[b, n], attn_out[b, n]
             smax_bn, ssum_bn = s_max[b, n], s_sum[b, n]
-            _grad_pass1_dq(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                           S, S_TILE, D, scale, dq_out, b, n)
-            _grad_pass2_dkdv(q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
-                             S, S_TILE, D, scale, dk_out, dv_out, b, n)
+            _grad_pass1_dq(_GradPass1DqInputs(
+                q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
+                           s_val, S_TILE, d_dim, scale, dq_out, b, n))
+            _grad_pass2_dkdv(_GradPass2DkdvInputs(
+                q_bn, k_bn, v_bn, dy_bn, attn_bn, smax_bn, ssum_bn,
+                             s_val, S_TILE, d_dim, scale, dk_out, dv_out, b, n))
     return dq_out, dk_out, dv_out

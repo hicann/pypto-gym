@@ -10,11 +10,13 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+from dataclasses import dataclass
 import os
 import sys
 import math
 import logging
 from pathlib import Path
+from typing import Any
 import torch
 import torch_npu
 
@@ -262,9 +264,9 @@ def gen_mla_prolog_quant_v32_inputs(params, dtypes, actual_seq, is_quant=(False,
     res[0] = torch.empty([b, s, h]).uniform_(-1, 1).to(dtype)
     res[4] = dict()
 
-    w_dq, w_uqqr, w_dkvkr, _res = _prepare_weights(
+    w_dq, w_uqqr, w_dkvkr, _res = _prepare_weights(_PrepareWeightsInputs(
         h, q_lora_rank, n, q_head_dim, kv_lora_rank, qk_rope_head_dim,
-        w_dtype, is_quant_a, is_quant_b, is_nz, has_smooth, res)
+        w_dtype, is_quant_a, is_quant_b, is_nz, has_smooth, res))
     if _res is not None:
         res = _res
 
@@ -284,34 +286,55 @@ def gen_mla_prolog_quant_v32_inputs(params, dtypes, actual_seq, is_quant=(False,
     return res
 
 
-def _prepare_weights(h, q_lora_rank, n, q_head_dim, kv_lora_rank, qk_rope_head_dim,
-                     w_dtype, is_quant_a, is_quant_b, is_nz, has_smooth, res):
-    """Prepare and quantize weight matrices for MLA prolog."""
-    w_dq = torch.empty([h, q_lora_rank]).uniform_(-0.1, 0.1).to(w_dtype)
-    w_uqqr = torch.empty([q_lora_rank, n * q_head_dim]).uniform_(-0.1, 0.1).to(w_dtype)
-    w_dkvkr = torch.empty([h, kv_lora_rank + qk_rope_head_dim]).uniform_(-0.1, 0.1).to(w_dtype)
+@dataclass
+class _PrepareWeightsInputs:
+    h: Any
+    q_lora_rank: Any
+    n: Any
+    q_head_dim: Any
+    kv_lora_rank: Any
+    qk_rope_head_dim: Any
+    w_dtype: Any
+    is_quant_a: Any
+    is_quant_b: Any
+    is_nz: Any
+    has_smooth: Any
+    res: Any
 
-    if is_quant_a:
+
+def _prepare_weights(inputs: _PrepareWeightsInputs):
+
+
+    """Prepare and quantize weight matrices for MLA prolog."""
+    w_dq = torch.empty([inputs.h, inputs.q_lora_rank]).uniform_(-0.1, 0.1).to(inputs.w_dtype)
+    w_uqqr = torch.empty([inputs.q_lora_rank, inputs.n * inputs.q_head_dim]).uniform_(-0.1, 0.1).to(inputs.w_dtype)
+    w_dkvkr = torch.empty(
+            [inputs.h, inputs.kv_lora_rank + inputs.qk_rope_head_dim]
+            ).uniform_(-0.1, 0.1).to(inputs.w_dtype)
+
+    if inputs.is_quant_a:
         w_dq, w_qa_scale = quant(w_dq, False)
         w_dkvkr, w_kva_scale = quant(w_dkvkr, False)
-        res[4]['w_dq'] = w_qa_scale
-        res[4]['w_dkvkr'] = w_kva_scale
-        if is_nz:
-            w_dq = w_dq.reshape(h, q_lora_rank // 32, 32).permute(1, 0, 2)
-            w_dkvkr = w_dkvkr.reshape(h, (kv_lora_rank + qk_rope_head_dim) // 32, 32).permute(1, 0, 2)
-    elif is_nz:
-        w_dq = w_dq.reshape(h, q_lora_rank // 16, 16).permute(1, 0, 2)
-        w_dkvkr = w_dkvkr.reshape(h, (kv_lora_rank + qk_rope_head_dim) // 16, 16).permute(1, 0, 2)
+        inputs.res[4]['w_dq'] = w_qa_scale
+        inputs.res[4]['w_dkvkr'] = w_kva_scale
+        if inputs.is_nz:
+            w_dq = w_dq.reshape(inputs.h, inputs.q_lora_rank // 32, 32).permute(1, 0, 2)
+            w_dkvkr = w_dkvkr.reshape(
+            inputs.h, (inputs.kv_lora_rank + inputs.qk_rope_head_dim) // 32, 32
+            ).permute(1, 0, 2)
+    elif inputs.is_nz:
+        w_dq = w_dq.reshape(inputs.h, inputs.q_lora_rank // 16, 16).permute(1, 0, 2)
+        w_dkvkr = w_dkvkr.reshape(inputs.h, (inputs.kv_lora_rank + inputs.qk_rope_head_dim) // 16, 16).permute(1, 0, 2)
 
-    if is_quant_b:
+    if inputs.is_quant_b:
         w_uqqr, w_qb_scale = quant(w_uqqr, False)
-        res[4]['w_uqqr'] = w_qb_scale
-        if has_smooth:
-            smooth_cq = torch.empty([1, q_lora_rank]).uniform_(-1, 1).to(torch.float32)
-            res[3] = smooth_cq
-        if is_nz:
-            w_uqqr = w_uqqr.reshape(q_lora_rank, n * q_head_dim // 32, 32).permute(1, 0, 2)
-    return w_dq, w_uqqr, w_dkvkr, res
+        inputs.res[4]['w_uqqr'] = w_qb_scale
+        if inputs.has_smooth:
+            smooth_cq = torch.empty([1, inputs.q_lora_rank]).uniform_(-1, 1).to(torch.float32)
+            inputs.res[3] = smooth_cq
+        if inputs.is_nz:
+            w_uqqr = w_uqqr.reshape(inputs.q_lora_rank, inputs.n * inputs.q_head_dim // 32, 32).permute(1, 0, 2)
+    return w_dq, w_uqqr, w_dkvkr, inputs.res
 
 
 def _prepare_kv_cache(k_bsnd, b, block_size, block_table, block_num,
@@ -388,42 +411,60 @@ def gen_indexer_prolog_inputs(params, block_num, block_table, mla_inputs, mla_go
     }
 
 
-def _mla_compute_q_path(x, w_dq, w_uqqr, w_uk, gamma_cq, cos, is_quant_a, is_quant_b,
-                       has_smooth, smooth_cq, w_qa_scale, w_qb_scale, dtype):
-    b, s, h = x.shape
-    qk_rope_head_dim = cos.shape[2]
-    n, qk_nope_head_dim, kv_lora_rank = w_uk.shape
+@dataclass
+class _MlaComputeQPathInputs:
+    x: Any
+    w_dq: Any
+    w_uqqr: Any
+    w_uk: Any
+    gamma_cq: Any
+    cos: Any
+    is_quant_a: Any
+    is_quant_b: Any
+    has_smooth: Any
+    smooth_cq: Any
+    w_qa_scale: Any
+    w_qb_scale: Any
+    dtype: Any
+
+
+def _mla_compute_q_path(inputs: _MlaComputeQPathInputs):
+
+
+    b, s, h = inputs.x.shape
+    qk_rope_head_dim = inputs.cos.shape[2]
+    n, qk_nope_head_dim, kv_lora_rank = inputs.w_uk.shape
     q_head_dim = qk_nope_head_dim + qk_rope_head_dim
-    x_2d = x.reshape(b * s, h)
-    if is_quant_a:
+    x_2d = inputs.x.reshape(b * s, h)
+    if inputs.is_quant_a:
         x_2d_quant, x_2d_scale_dequant = quant(x_2d, True)
-        q_a_proj = torch.matmul(x_2d_quant.to(torch.int32), w_dq.to(torch.int32))
+        q_a_proj = torch.matmul(x_2d_quant.to(torch.int32), inputs.w_dq.to(torch.int32))
         q_a_proj_fp32 = q_a_proj.to(torch.float32)
         q_a_proj_fp32_dequant = q_a_proj_fp32 * x_2d_scale_dequant
-        q_a_proj = q_a_proj_fp32_dequant * w_qa_scale
+        q_a_proj = q_a_proj_fp32_dequant * inputs.w_qa_scale
     else:
-        q_a_proj = torch.matmul(x_2d.to(torch.float32), w_dq.to(torch.float32))
+        q_a_proj = torch.matmul(x_2d.to(torch.float32), inputs.w_dq.to(torch.float32))
     q_a_proj = q_a_proj.to(torch.bfloat16)
-    q_a_layernorm = rms_norm(q_a_proj, gamma_cq)
+    q_a_layernorm = rms_norm(q_a_proj, inputs.gamma_cq)
     q_a_layernorm_scale_dequant = None
-    if is_quant_b:
-        if has_smooth:
-            q_a_layernorm, q_a_layernorm_scale_dequant = quant(q_a_layernorm, True, True, smooth_cq)
+    if inputs.is_quant_b:
+        if inputs.has_smooth:
+            q_a_layernorm, q_a_layernorm_scale_dequant = quant(q_a_layernorm, True, True, inputs.smooth_cq)
         else:
             q_a_layernorm, q_a_layernorm_scale_dequant = quant(q_a_layernorm, True)
-        q_b_proj = torch.matmul(q_a_layernorm.to(torch.int32), w_uqqr.to(torch.int32)).to(q_a_layernorm.device)
+        q_b_proj = torch.matmul(q_a_layernorm.to(torch.int32), inputs.w_uqqr.to(torch.int32)).to(q_a_layernorm.device)
         q_b_proj_fp32 = q_b_proj.to(torch.float32)
         q_b_proj_fp32_dequant = q_b_proj_fp32 * q_a_layernorm_scale_dequant
-        q_b_proj = q_b_proj_fp32_dequant * w_qb_scale
+        q_b_proj = q_b_proj_fp32_dequant * inputs.w_qb_scale
     else:
-        q_b_proj = torch.matmul(q_a_layernorm.to(torch.float32), w_uqqr.to(torch.float32))
-    q_b_proj = q_b_proj.to(dtype)
+        q_b_proj = torch.matmul(q_a_layernorm.to(torch.float32), inputs.w_uqqr.to(torch.float32))
+    q_b_proj = q_b_proj.to(inputs.dtype)
     q_reshape = q_b_proj.reshape(b, s, n, q_head_dim)
     q_nope = q_reshape[:, :, :, 0:qk_nope_head_dim]
     q_nope_r = q_nope.reshape(b * s, n, qk_nope_head_dim)
     q_nope_t = q_nope_r.permute(1, 0, 2)
-    q_nope_new = torch.matmul(q_nope_t.to(torch.float32), w_uk.to(torch.float32))
-    q_nope_new = q_nope_new.to(dtype)
+    q_nope_new = torch.matmul(q_nope_t.to(torch.float32), inputs.w_uk.to(torch.float32))
+    q_nope_new = q_nope_new.to(inputs.dtype)
     q_nope_new_t = q_nope_new.permute(1, 0, 2)
     q_nope = q_nope_new_t.reshape(b, s, n, kv_lora_rank)
     return q_nope, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant, x_2d
@@ -454,26 +495,42 @@ def _mla_compute_kv_path(x_2d, w_dkvkr, gamma_ckv, is_quant_a, w_kva_scale,
     return kv_a_proj, kv_reshape, k_nope, compressed_kv_quant_scale
 
 
-def _mla_compute_rope_cache(q_reshape, kv_reshape, cos, sin, k_nope, compressed_kv_quant_scale,
-                             kv_cache, kr_cache, cache_index, kv_quant_scale_cache, is_quant_b):
-    qk_nope_head_dim = q_reshape.shape[-1] - cos.shape[2]
-    qk_rope_head_dim = cos.shape[2]
-    kv_lora_rank = kv_reshape.shape[-1] - qk_rope_head_dim
-    b, s = q_reshape.shape[0], q_reshape.shape[1]
-    q_pe = q_reshape[:, :, :, qk_nope_head_dim:]
-    k_pe = kv_reshape[:, :, kv_lora_rank:]
+@dataclass
+class _MlaComputeRopeCacheInputs:
+    q_reshape: Any
+    kv_reshape: Any
+    cos: Any
+    sin: Any
+    k_nope: Any
+    compressed_kv_quant_scale: Any
+    kv_cache: Any
+    kr_cache: Any
+    cache_index: Any
+    kv_quant_scale_cache: Any
+    is_quant_b: Any
+
+
+def _mla_compute_rope_cache(inputs: _MlaComputeRopeCacheInputs):
+
+
+    qk_nope_head_dim = inputs.q_reshape.shape[-1] - inputs.cos.shape[2]
+    qk_rope_head_dim = inputs.cos.shape[2]
+    kv_lora_rank = inputs.kv_reshape.shape[-1] - qk_rope_head_dim
+    b, s = inputs.q_reshape.shape[0], inputs.q_reshape.shape[1]
+    q_pe = inputs.q_reshape[:, :, :, qk_nope_head_dim:]
+    k_pe = inputs.kv_reshape[:, :, kv_lora_rank:]
     k_pe_r = k_pe.reshape(b, s, 1, qk_rope_head_dim)
-    q_embed, k_embed = apply_rotary_pos_emb_v2(q_pe, k_pe_r, cos, sin, 2)
+    q_embed, k_embed = apply_rotary_pos_emb_v2(q_pe, k_pe_r, inputs.cos, inputs.sin, 2)
     k_embed_r = k_embed.reshape(b * 1 * s, qk_rope_head_dim)
-    kv_cache_tmp = kv_cache.clone()
-    kv_cache_out = scatter_update_4d(kv_cache_tmp, k_nope, cache_index, -2)
-    kr_cache_tmp = kr_cache.clone()
-    kr_cache_out = scatter_update_4d(kr_cache_tmp, k_embed_r, cache_index, -2)
-    if is_quant_b:
-        compressed_kv_quant_scale = compressed_kv_quant_scale.reshape(-1, 4)
-        kv_quant_scale_cache_tmp = kv_quant_scale_cache.clone()
+    kv_cache_tmp = inputs.kv_cache.clone()
+    kv_cache_out = scatter_update_4d(kv_cache_tmp, inputs.k_nope, inputs.cache_index, -2)
+    kr_cache_tmp = inputs.kr_cache.clone()
+    kr_cache_out = scatter_update_4d(kr_cache_tmp, k_embed_r, inputs.cache_index, -2)
+    if inputs.is_quant_b:
+        compressed_kv_quant_scale = inputs.compressed_kv_quant_scale.reshape(-1, 4)
+        kv_quant_scale_cache_tmp = inputs.kv_quant_scale_cache.clone()
         kv_quant_scale_cache_out = \
-            scatter_update_4d(kv_quant_scale_cache_tmp, compressed_kv_quant_scale, cache_index, -2)
+            scatter_update_4d(kv_quant_scale_cache_tmp, inputs.compressed_kv_quant_scale, inputs.cache_index, -2)
     else:
         kv_quant_scale_cache_out = None
     return q_embed, kv_cache_out, kr_cache_out, kv_quant_scale_cache_out
@@ -512,8 +569,9 @@ def mla_prolog_quant_v32_compute(inputs):
             smooth_cq = inputs.get('smooth_cq')
 
     q_nope, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant, x_2d = \
-        _mla_compute_q_path(x, w_dq, w_uqqr, w_uk, gamma_cq, cos, is_quant_a, is_quant_b,
-                            has_smooth, smooth_cq, w_qa_scale, w_qb_scale, dtype)
+        _mla_compute_q_path(_MlaComputeQPathInputs(
+            x, w_dq, w_uqqr, w_uk, gamma_cq, cos, is_quant_a, is_quant_b,
+            has_smooth, smooth_cq, w_qa_scale, w_qb_scale, dtype))
 
     b, s, h = x.shape
     qk_rope_head_dim = cos.shape[2]
@@ -524,9 +582,10 @@ def mla_prolog_quant_v32_compute(inputs):
                              is_quant_b, dtype, b, s, kv_lora_rank, qk_rope_head_dim)
 
     q_embed, kv_cache_out, kr_cache_out, kv_quant_scale_cache_out = \
-        _mla_compute_rope_cache(q_reshape, kv_reshape, cos, sin, k_nope,
-                                compressed_kv_quant_scale, kv_cache, kr_cache,
-                                cache_index, kv_quant_scale_cache, is_quant_b)
+        _mla_compute_rope_cache(_MlaComputeRopeCacheInputs(
+            q_reshape, kv_reshape, cos, sin, k_nope,
+            compressed_kv_quant_scale, kv_cache, kr_cache,
+            cache_index, kv_quant_scale_cache, is_quant_b))
 
     res = [q_nope, q_embed, q_a_layernorm, q_a_layernorm_scale_dequant, kv_cache_out,
             kr_cache_out, kv_quant_scale_cache_out]
@@ -1006,7 +1065,6 @@ def test_t_512_tilebs_128_p():
         block_size=128, t_sub_tile=2, chunk_size=1, vec_nbuffer_setting={-1: 1})
     do_test("mla_prolog_indexer_prolog_prefill.test_t_512_tilebs_128", params, mla_epsilon_cq, mla_epsilon_ckv,
             mla_cache_mode, mla_tile_config, ip_attrs, ip_configs, rope_tile_shape, True)
-
 
 
 if __name__ == '__main__':

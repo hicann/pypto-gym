@@ -14,6 +14,7 @@ import os
 import math
 import logging
 from dataclasses import dataclass
+from typing import Any
 import torch
 import torch_npu
 
@@ -35,26 +36,41 @@ from deepseek_v32_exp.sparse_flash_attention_quant_impl \
 from common_utils import compare, gen_uniform_data
 
 
+@dataclass
+class _GatherKvCacheInputs:
+    s2_tile_cur: Any
+    topk_indices_tmp: Any
+    kn: Any
+    kr: Any
+    kn_scales: Any
+    block_size: Any
+    block_table: Any
+    b_idx: Any
+    s2_start: Any
+    dk: Any
+    dv: Any
+    input_dtype: Any
+    kn_dtype: Any
 
-def _gather_kv_cache(s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,
-                      block_size, block_table, b_idx, s2_start, dk, dv, input_dtype, kn_dtype):
+
+def _gather_kv_cache(inputs: _GatherKvCacheInputs):
     """Gather KV cache entries for attention computation."""
-    slc_kn = torch.zeros([s2_tile_cur, dk], dtype=kn_dtype)
-    slc_kr = torch.zeros([s2_tile_cur, dv], dtype=input_dtype)
-    slc_kn_scales = torch.zeros([s2_tile_cur, 4], dtype=torch.float32)
-    offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
-    for cur_s2_idx in range(s2_tile_cur):
-        s2_idx_tmp = s2_start + cur_s2_idx
-        topk_index = topk_indices_tmp[s2_idx_tmp]
-        block_idx_in_batch = topk_index // block_size
-        slc_block_idx = block_table[b_idx, block_idx_in_batch]
-        tail = topk_index % block_size
-        offset[cur_s2_idx] = slc_block_idx * block_size + tail
-    for cur_s2_idx in range(s2_tile_cur):
+    slc_kn = torch.zeros([inputs.s2_tile_cur, inputs.dk], dtype=inputs.kn_dtype)
+    slc_kr = torch.zeros([inputs.s2_tile_cur, inputs.dv], dtype=inputs.input_dtype)
+    slc_kn_scales = torch.zeros([inputs.s2_tile_cur, 4], dtype=torch.float32)
+    offset = torch.zeros([inputs.s2_tile_cur], dtype=torch.int32)
+    for cur_s2_idx in range(inputs.s2_tile_cur):
+        s2_idx_tmp = inputs.s2_start + cur_s2_idx
+        topk_index = inputs.topk_indices_tmp[s2_idx_tmp]
+        block_idx_in_batch = topk_index // inputs.block_size
+        slc_block_idx = inputs.block_table[inputs.b_idx, block_idx_in_batch]
+        tail = topk_index % inputs.block_size
+        offset[cur_s2_idx] = slc_block_idx * inputs.block_size + tail
+    for cur_s2_idx in range(inputs.s2_tile_cur):
         slc_idx = offset[cur_s2_idx]
-        slc_kn[cur_s2_idx, :] = kn[slc_idx, :]
-        slc_kr[cur_s2_idx, :] = kr[slc_idx, :]
-        slc_kn_scales[cur_s2_idx, :] = kn_scales[slc_idx, :]
+        slc_kn[cur_s2_idx, :] = inputs.kn[slc_idx, :]
+        slc_kr[cur_s2_idx, :] = inputs.kr[slc_idx, :]
+        slc_kn_scales[cur_s2_idx, :] = inputs.kn_scales[slc_idx, :]
     return slc_kn, slc_kr, slc_kn_scales
 
 
@@ -82,35 +98,50 @@ def _compute_s2_tile_attention(qi, slc_kn, slc_kr, slc_kn_scales, scalar,
     return q1, tilda_lij, tilda_mij
 
 
-def _flash_update(oi_tmp, li_update, mi_update, q1, tilda_lij, tilda_mij,
-                  bn_per_batch, s2_idx, n1, tmp_out, b_idx, s1_idx):
+@dataclass
+class _FlashUpdateInputs:
+    oi_tmp: Any
+    li_update: Any
+    mi_update: Any
+    q1: Any
+    tilda_lij: Any
+    tilda_mij: Any
+    bn_per_batch: Any
+    s2_idx: Any
+    n1: Any
+    tmp_out: Any
+    b_idx: Any
+    s1_idx: Any
+
+
+def _flash_update(inputs: _FlashUpdateInputs):
     """Online flash attention update step."""
-    if s2_idx == 0:
-        oi_tmp = q1
-        if bn_per_batch == 1:
-            oi_update = oi_tmp / tilda_lij
+    if inputs.s2_idx == 0:
+        oi_tmp = inputs.q1
+        if inputs.bn_per_batch == 1:
+            oi_update = inputs.oi_tmp / inputs.tilda_lij
         else:
-            oi_update = oi_tmp
-        li_update = tilda_lij
-        mi_update = tilda_mij
-        tmp_out[b_idx, s1_idx, :] = tilda_lij.reshape(n1)
-        return oi_tmp, oi_update, li_update, mi_update
-    mi_new = torch.maximum(mi_update, tilda_mij)
-    t1 = mi_update - mi_new
+            oi_update = inputs.oi_tmp
+        li_update = inputs.tilda_lij
+        mi_update = inputs.tilda_mij
+        inputs.tmp_out[inputs.b_idx, inputs.s1_idx, :] = inputs.tilda_lij.reshape(inputs.n1)
+        return inputs.oi_tmp, oi_update, inputs.li_update, inputs.mi_update
+    mi_new = torch.maximum(inputs.mi_update, inputs.tilda_mij)
+    t1 = inputs.mi_update - mi_new
     t2 = torch.exp(t1)
-    t3 = tilda_mij - mi_new
+    t3 = inputs.tilda_mij - mi_new
     t4 = torch.exp(t3)
-    t5 = t4 * tilda_lij
-    t6 = t2 * li_update
+    t5 = t4 * inputs.tilda_lij
+    t6 = t2 * inputs.li_update
     li_new = t6 + t5
-    q3 = oi_tmp * t2
-    q2 = q1 * t4
+    q3 = inputs.oi_tmp * t2
+    q2 = inputs.q1 * t4
     oi_tmp = q3 + q2
-    if s2_idx == bn_per_batch - 1:
-        oi_update = oi_tmp / li_new
+    if inputs.s2_idx == inputs.bn_per_batch - 1:
+        oi_update = inputs.oi_tmp / li_new
     else:
-        oi_update = oi_tmp
-    return oi_tmp, oi_update, li_new, mi_new
+        oi_update = inputs.oi_tmp
+    return inputs.oi_tmp, oi_update, li_new, mi_new
 
 
 def compute_attention(input_data, params, s2_tile):
@@ -142,13 +173,16 @@ def compute_attention(input_data, params, s2_tile):
                 s2_start = s2_tile * s2_idx
                 topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_start + s2_tile_cur]
                 slc_kn, slc_kr, slc_kn_scales = _gather_kv_cache(
-                    s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,
-                    block_size, block_table, b_idx, s2_start, dk, dv, input_dtype, kn_dtype)
+                    _GatherKvCacheInputs(
+                        s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,
+                        block_size, block_table, b_idx, s2_start, dk, dv,
+                        input_dtype, kn_dtype))
                 q1, tilda_lij, tilda_mij = _compute_s2_tile_attention(
                     qi, slc_kn, slc_kr, slc_kn_scales, scalar, input_dtype, dk, is_kn_quant, dv)
                 oi_tmp, oi_update, li_update, mi_update = _flash_update(
-                    oi_tmp, li_update, mi_update, q1, tilda_lij, tilda_mij,
-                    bn_per_batch, s2_idx, n1, tmp_out, b_idx, s1_idx)
+                    _FlashUpdateInputs(
+                        oi_tmp, li_update, mi_update, q1, tilda_lij, tilda_mij,
+                        bn_per_batch, s2_idx, n1, tmp_out, b_idx, s1_idx))
             attention_output[b_idx, s1_idx, :, :] = oi_update.to(input_dtype)
     return attention_output, tmp_out
 
@@ -182,8 +216,10 @@ def compute_attention_no_flash(input_data, params, s2_tile):
                 s2_start = s2_tile * s2_idx
                 topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_start + s2_tile_cur]
                 slc_kn, slc_kr, slc_kn_scales = _gather_kv_cache(
-                    s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,
-                    block_size, block_table, b_idx, s2_start, dk, dv, input_dtype, kn_dtype)
+                    _GatherKvCacheInputs(
+                        s2_tile_cur, topk_indices_tmp, kn, kr, kn_scales,
+                        block_size, block_table, b_idx, s2_start, dk, dv,
+                        input_dtype, kn_dtype))
                 if is_kn_quant:
                     kn_bs = slc_kn.reshape(-1, 128).to(torch.float)
                     kn_scales_tmp = slc_kn_scales.reshape(-1, 1)
@@ -341,22 +377,50 @@ def gen_gather_select_attention_golden(dtype, bn1n2s1, is_kn_quant, actual_seq):
     atten_out, _ = compute_attention_no_flash(input_data, params, s2_tile)
 
     q_nope, q_rope, input_params, input_data_map = _build_output_params(
-        q_bsnd, kn, kr, kn_scales, topk_indices, block_table, actual_seq,
-        b, s_q, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num,
-        block_size, topk, is_kn_quant, scalar)
+        _BuildOutputParamsInputs(
+            q_bsnd, kn, kr, kn_scales, topk_indices, block_table, actual_seq,
+            b, s_q, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num,
+            block_size, topk, is_kn_quant, scalar))
 
     return input_params, input_data_map, atten_out
 
 
-def _build_output_params(q_bsnd, kn, kr, kn_scales, topk_indices, block_table,
-                          actual_seq, b, s_q, n_q, n_kv, max_kv_seq, kv_lora_rank,
-                          qk_rope_dim, block_num, block_size, topk, is_kn_quant, scalar):
+@dataclass
+class _BuildOutputParamsInputs:
+    q_bsnd: Any
+    kn: Any
+    kr: Any
+    kn_scales: Any
+    topk_indices: Any
+    block_table: Any
+    actual_seq: Any
+    b: Any
+    s_q: Any
+    n_q: Any
+    n_kv: Any
+    max_kv_seq: Any
+    kv_lora_rank: Any
+    qk_rope_dim: Any
+    block_num: Any
+    block_size: Any
+    topk: Any
+    is_kn_quant: Any
+    scalar: Any
+
+
+def _build_output_params(inputs: _BuildOutputParamsInputs):
     """Build output parameter lists from computed data."""
-    q_nope = q_bsnd[:, :, :, :kv_lora_rank].reshape(b * s_q * n_q, kv_lora_rank)
-    q_rope = q_bsnd[:, :, :, kv_lora_rank:].reshape(b * s_q * n_q, qk_rope_dim)
-    input_params = [b, s_q, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num, block_size, topk,
-                    is_kn_quant, scalar]
-    input_data_map = [q_nope, q_rope, kn, kr, kn_scales, topk_indices, block_table, actual_seq]
+    q_nope = inputs.q_bsnd[:, :, :, :inputs.kv_lora_rank].reshape(
+        inputs.b * inputs.s_q * inputs.n_q, inputs.kv_lora_rank)
+    q_rope = inputs.q_bsnd[:, :, :, inputs.kv_lora_rank:].reshape(
+        inputs.b * inputs.s_q * inputs.n_q, inputs.qk_rope_dim)
+    input_params = [
+        inputs.b, inputs.s_q, inputs.n_q, inputs.n_kv, inputs.max_kv_seq,
+        inputs.kv_lora_rank, inputs.qk_rope_dim, inputs.block_num,
+        inputs.block_size, inputs.topk, inputs.is_kn_quant, inputs.scalar]
+    input_data_map = [
+        q_nope, q_rope, inputs.kn, inputs.kr, inputs.kn_scales,
+        inputs.topk_indices, inputs.block_table, inputs.actual_seq]
     return q_nope, q_rope, input_params, input_data_map
 
 

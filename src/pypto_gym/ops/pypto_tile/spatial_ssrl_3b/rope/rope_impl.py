@@ -39,7 +39,7 @@ def apply_rotary_pos_emb_vision_kernel(
 ):
     """Vision RoPE kernel implementation"""
     rank = q.dim
-    tile_shapes = [64 for _ in range(rank)]
+    tile_shapes = [32 for _ in range(rank)]
     pypto.set_vec_tile_shapes(*tile_shapes)
     
     head_dim = q.shape[-1]
@@ -81,7 +81,7 @@ def apply_rotary_pos_emb_kernel(
 ):
     """通用 RoPE kernel implementation"""
     rank = q.dim
-    tile_shapes = [64 for _ in range(rank)]
+    tile_shapes = [32 for _ in range(rank)]
     pypto.set_vec_tile_shapes(*tile_shapes)
 
     head_dim = q.shape[-1]

@@ -33,6 +33,7 @@ This file is pure torch — NO PyPTO imports.
 """
 
 import os
+from typing import Any
 import torch
 from dataclasses import dataclass
 
@@ -58,49 +59,89 @@ class FlashAttentionInputs:
     scale_value: float        # attention scale, typically 1/sqrt(D)
 
 
-def _process_kv_block(q_block_fp32, k_block_2d, kv_head_idx, b_idx, kv_start,
-                      cur_block_size, query, key, value, pse, atten_mask_fp32,
-                      drop_mask, pse_type, scale, n_idx, q_start, cur_q_size,
-                      mi_update, li_update, oi_update, kv_block_idx, d, skv):
-    cur_block_size_loc = cur_block_size
-    k_block_fp32 = k_block_2d.float()
+@dataclass
+class _ProcessKvBlockInputs:
+    q_block_fp32: Any
+    k_block_2d: Any
+    kv_head_idx: Any
+    b_idx: Any
+    kv_start: Any
+    cur_block_size: Any
+    query: Any
+    key: Any
+    value: Any
+    pse: Any
+    atten_mask_fp32: Any
+    drop_mask: Any
+    pse_type: Any
+    scale: Any
+    n_idx: Any
+    q_start: Any
+    cur_q_size: Any
+    mi_update: Any
+    li_update: Any
+    oi_update: Any
+    kv_block_idx: Any
+    d: Any
+    skv: Any
+
+
+def _process_kv_block(inputs: _ProcessKvBlockInputs):
+    cur_block_size_loc = inputs.cur_block_size
+    k_block_fp32 = inputs.k_block_2d.float()
     k_block_transposed = torch.transpose(k_block_fp32, 1, 0)
-    scores = torch.matmul(q_block_fp32, k_block_transposed)
-    pse_block_2d = pse[b_idx, n_idx,
-                       q_start:q_start + cur_q_size,
-                       kv_start:kv_start + cur_block_size_loc].reshape(cur_q_size, cur_block_size_loc)
+    scores = torch.matmul(inputs.q_block_fp32, k_block_transposed)
+    pse_block_2d = inputs.pse[
+        inputs.b_idx, inputs.n_idx,
+        inputs.q_start:inputs.q_start + inputs.cur_q_size,
+        inputs.kv_start:inputs.kv_start + cur_block_size_loc
+    ].reshape(inputs.cur_q_size, cur_block_size_loc)
     pse_fp32 = pse_block_2d.float()
-    if pse_type == 1:
+    if inputs.pse_type == 1:
         scores_with_pse = scores + pse_fp32
-        scores_scaled = scores_with_pse * scale
+        scores_scaled = scores_with_pse * inputs.scale
     else:
-        scores_scaled_val = scores * scale
+        scores_scaled_val = scores * inputs.scale
         scores_scaled = scores_scaled_val + pse_fp32
-    mask_block = atten_mask_fp32[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size_loc]
+    mask_block = inputs.atten_mask_fp32[
+        inputs.q_start:inputs.q_start + inputs.cur_q_size,
+        inputs.kv_start:inputs.kv_start + cur_block_size_loc]
     valid_mask = (mask_block + (-1.0)) * (-1.0)
     m_ij = torch.amax(scores_scaled, dim=-1, keepdim=True)
     s_ij_sub_m = scores_scaled - m_ij
     p_ij = torch.exp(s_ij_sub_m)
     p_ij = p_ij * valid_mask
-    drop_mask_block = drop_mask[q_start:q_start + cur_q_size, kv_start:kv_start + cur_block_size_loc]
+    drop_mask_block = inputs.drop_mask[
+        inputs.q_start:inputs.q_start + inputs.cur_q_size,
+        inputs.kv_start:inputs.kv_start + cur_block_size_loc]
     p_ij = p_ij * drop_mask_block
     l_ij = torch.sum(p_ij, dim=-1, keepdim=True)
-    v_block_2d = value[b_idx, kv_head_idx,
-                       kv_start:kv_start + cur_block_size_loc, :].reshape(cur_block_size_loc, d)
+    v_block_2d = inputs.value[inputs.b_idx, inputs.kv_head_idx,
+                       inputs.kv_start:inputs.kv_start + cur_block_size_loc, :].reshape(cur_block_size_loc, inputs.d)
     v_block_fp32 = v_block_2d.float()
     o_ij = torch.matmul(p_ij, v_block_fp32)
-    if kv_block_idx == 0:
+    if inputs.kv_block_idx == 0:
         mi_update = m_ij
         li_update = l_ij
         oi_update = o_ij
     else:
-        mi_new = torch.maximum(mi_update, m_ij)
-        alpha = torch.exp(mi_update - mi_new)
+        mi_new = torch.maximum(inputs.mi_update, m_ij)
+        alpha = torch.exp(inputs.mi_update - mi_new)
         beta = torch.exp(m_ij - mi_new)
-        li_update = alpha * li_update + beta * l_ij
-        oi_update = alpha * oi_update + beta * o_ij
+        li_update = alpha * inputs.li_update + beta * l_ij
+        oi_update = alpha * inputs.oi_update + beta * o_ij
         mi_update = mi_new
     return mi_update, li_update, oi_update
+
+
+@dataclass
+class _MoveTensorsToDeviceOutputs:
+    query: Any
+    key: Any
+    value: Any
+    atten_mask: Any
+    pse: Any
+    drop_mask: Any
 
 
 def _move_tensors_to_device(inputs, npu):
@@ -121,7 +162,18 @@ def _move_tensors_to_device(inputs, npu):
         atten_mask = inputs.atten_mask    # [Sq, Skv] int32/bool/bf16
         pse = inputs.pse                  # [B, N, Sq, Skv] bf16
         drop_mask = inputs.drop_mask      # [Sq, Skv] bf16
-    return query, key, value, atten_mask, pse, drop_mask
+    return _MoveTensorsToDeviceOutputs(query, key, value, atten_mask, pse, drop_mask)
+
+
+@dataclass
+class _InitOutputsAndSymbolsOutputs:
+    output: Any
+    softmax_max: Any
+    softmax_sum: Any
+    group: Any
+    scale: Any
+    num_blocks_kv: Any
+    num_blocks_q: Any
 
 
 def _init_outputs_and_symbols(query, key, inputs, b, n, sq, d, n_kv, skv):
@@ -137,41 +189,66 @@ def _init_outputs_and_symbols(query, key, inputs, b, n, sq, d, n_kv, skv):
         b, n, sq, 1, dtype=torch.float32, device=query.device)   # [B, N, Sq, 1] fp32
     num_blocks_kv = (skv + BLOCK_SIZE_KV - 1) // BLOCK_SIZE_KV
     num_blocks_q = (sq + BLOCK_SIZE_Q - 1) // BLOCK_SIZE_Q
-    return output, softmax_max, softmax_sum, group, scale, num_blocks_kv, num_blocks_q
+    return _InitOutputsAndSymbolsOutputs(output, softmax_max, softmax_sum, group, scale, num_blocks_kv, num_blocks_q)
 
 
-def _process_q_block(query, key, value, pse, atten_mask_fp32, drop_mask,
-                     b_idx, kv_head_idx, group_idx, group, q_block_idx,
-                     num_blocks_q, num_blocks_kv, sq, skv, d, scale,
-                     pse_type, keep_prob, mi_update_init, li_update_init, oi_update_init,
-                     output, softmax_max, softmax_sum):
+@dataclass
+class _ProcessQBlockInputs:
+    query: Any
+    key: Any
+    value: Any
+    pse: Any
+    atten_mask_fp32: Any
+    drop_mask: Any
+    b_idx: Any
+    kv_head_idx: Any
+    group_idx: Any
+    group: Any
+    q_block_idx: Any
+    num_blocks_q: Any
+    num_blocks_kv: Any
+    sq: Any
+    skv: Any
+    d: Any
+    scale: Any
+    pse_type: Any
+    keep_prob: Any
+    mi_update_init: Any
+    li_update_init: Any
+    oi_update_init: Any
+    output: Any
+    softmax_max: Any
+    softmax_sum: Any
+
+
+def _process_q_block(inputs: _ProcessQBlockInputs):
     """Process a single Q-block: extract Q, run KV loop, write outputs."""
-    n_idx = kv_head_idx * group + group_idx   # query head index
-    q_start = q_block_idx * BLOCK_SIZE_Q
-    cur_q_size = min(BLOCK_SIZE_Q, sq - q_start)
-    q_block_2d = query[b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, d)
-    mi_update, li_update, oi_update = mi_update_init, li_update_init, oi_update_init
+    n_idx = inputs.kv_head_idx * inputs.group + inputs.group_idx   # inputs.query head index
+    q_start = inputs.q_block_idx * BLOCK_SIZE_Q
+    cur_q_size = min(BLOCK_SIZE_Q, inputs.sq - q_start)
+    q_block_2d = inputs.query[inputs.b_idx, n_idx, q_start:q_start + cur_q_size, :].reshape(cur_q_size, inputs.d)
+    mi_update, li_update, oi_update = inputs.mi_update_init, inputs.li_update_init, inputs.oi_update_init
 
-    for kv_block_idx in range(num_blocks_kv):
+    for kv_block_idx in range(inputs.num_blocks_kv):
         kv_start = kv_block_idx * BLOCK_SIZE_KV
-        cur_block_size = min(BLOCK_SIZE_KV, skv - kv_start)
-        k_block_2d = key[b_idx, kv_head_idx,
-                         kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, d)
+        cur_block_size = min(BLOCK_SIZE_KV, inputs.skv - kv_start)
+        k_block_2d = inputs.key[inputs.b_idx, inputs.kv_head_idx,
+                         kv_start:kv_start + cur_block_size, :].reshape(cur_block_size, inputs.d)
         q_block_fp32 = q_block_2d.float()
-        mi_update, li_update, oi_update = _process_kv_block(
-            q_block_fp32, k_block_2d, kv_head_idx, b_idx, kv_start,
-            cur_block_size, query, key, value, pse, atten_mask_fp32,
-            drop_mask, pse_type, scale, n_idx, q_start, cur_q_size,
-            mi_update, li_update, oi_update, kv_block_idx, d, skv)
+        mi_update, li_update, oi_update = _process_kv_block(_ProcessKvBlockInputs(
+            q_block_fp32, k_block_2d, inputs.kv_head_idx, inputs.b_idx, kv_start,
+            cur_block_size, inputs.query, inputs.key, inputs.value, inputs.pse, inputs.atten_mask_fp32,
+            inputs.drop_mask, inputs.pse_type, inputs.scale, n_idx, q_start, cur_q_size,
+            mi_update, li_update, oi_update, kv_block_idx, inputs.d, inputs.skv))
 
     o_final = oi_update / li_update                     # [cur_q, D] fp32
     o_final_bf16 = o_final.to(torch.bfloat16)           # [cur_q, D] bf16
-    output[b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final_bf16.reshape(cur_q_size, d)
-    softmax_max[b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
+    inputs.output[inputs.b_idx, n_idx, q_start:q_start + cur_q_size, :] = o_final_bf16.reshape(cur_q_size, inputs.d)
+    inputs.softmax_max[inputs.b_idx, n_idx, q_start:q_start + cur_q_size, :] = mi_update.reshape(cur_q_size, 1)
     l_out = li_update                                   # [cur_q, 1] fp32
-    if keep_prob < 1.0:
-        l_out = l_out * (1.0 / keep_prob)               # [cur_q, 1] fp32
-    softmax_sum[b_idx, n_idx, q_start:q_start + cur_q_size, :] = l_out.reshape(cur_q_size, 1)
+    if inputs.keep_prob < 1.0:
+        l_out = l_out * (1.0 / inputs.keep_prob)               # [cur_q, 1] fp32
+    inputs.softmax_sum[inputs.b_idx, n_idx, q_start:q_start + cur_q_size, :] = l_out.reshape(cur_q_size, 1)
 
 
 def flash_attention_score_golden(inputs: FlashAttentionInputs, npu: bool = False) -> tuple:
@@ -218,12 +295,12 @@ def flash_attention_score_golden(inputs: FlashAttentionInputs, npu: bool = False
                                        dtype=torch.float32, device=dev)
                     oi_u = torch.zeros(min(BLOCK_SIZE_Q, sq - q_block_idx * BLOCK_SIZE_Q), d,
                                        dtype=torch.float32, device=dev)
-                    _process_q_block(
+                    _process_q_block(_ProcessQBlockInputs(
                         query, key, value, pse, atten_mask_fp32, drop_mask,
                         b_idx, kv_head_idx, group_idx, group, q_block_idx,
                         num_blocks_q, num_blocks_kv, sq, skv, d, scale,
                         pse_type, keep_prob, mi_u, li_u, oi_u,
-                        output, softmax_max, softmax_sum)
+                        output, softmax_max, softmax_sum))
 
     if npu:
         output = output.cpu()

@@ -26,6 +26,7 @@ import os
 import math
 from dataclasses import dataclass
 
+from typing import Any
 import torch
 import torch_npu
 import pytest
@@ -222,36 +223,51 @@ def kv_cache_concat_bsnd(kv_cache_out, cmp_block_table, actual_seqs):
     return cmp_kv
 
 
-def _flash_ori_window(qi, kv_win_2d, ori_block_table, b_idx, s1, s1_idx, win, block_size,
-                       seqused_kv, dtype, scale, d):
+@dataclass
+class _FlashOriWindowInputs:
+    qi: Any
+    kv_win_2d: Any
+    ori_block_table: Any
+    b_idx: Any
+    s1: Any
+    s1_idx: Any
+    win: Any
+    block_size: Any
+    seqused_kv: Any
+    dtype: Any
+    scale: Any
+    d: Any
+
+
+def _flash_ori_window(inputs: _FlashOriWindowInputs):
     """Compute attention for the original window (ori_kv) portion in ifa_flash_torch."""
     fp32 = torch.float32
-    valid_len = seqused_kv[b_idx] - (s1 - s1_idx - 1)
-    valid_win_len = min(valid_len, win)
+    valid_len = inputs.seqused_kv[inputs.b_idx] - (inputs.s1 - inputs.s1_idx - 1)
+    valid_win_len = min(valid_len, inputs.win)
     valid_start_pos = valid_len - valid_win_len
     valid_end_pos = valid_len - 1
-    start_offset = valid_start_pos % block_size
+    start_offset = valid_start_pos % inputs.block_size
 
-    start_block = valid_start_pos // block_size
-    end_block = valid_end_pos // block_size
+    start_block = valid_start_pos // inputs.block_size
+    end_block = valid_end_pos // inputs.block_size
     kv_list = []
 
     for block_idx in range(start_block, end_block + 1):
-        block_idx_valid = max(ori_block_table[b_idx, block_idx], 0)
-        block_offset = block_idx_valid * block_size
-        kv_block = kv_win_2d[block_offset: block_offset + block_size, :]
+        block_idx_valid = max(inputs.ori_block_table[inputs.b_idx, block_idx], 0)
+        block_offset = block_idx_valid * inputs.block_size
+        kv_block = inputs.kv_win_2d[block_offset: block_offset + inputs.block_size, :]
         kv_list.append(kv_block)
 
     kv_cur = torch.cat(kv_list, axis=0)
     kv_cur = kv_cur[start_offset: start_offset + valid_win_len, :]
 
-    mm1 = matmul_proxy(qi, kv_cur.t())
-    muls_res = mm1 * scale
+    mm1 = matmul_proxy(inputs.qi, kv_cur.t())
+    muls_res = mm1 * inputs.scale
     tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
     tsub = muls_res - tilda_mij
     tilda_pij = torch.exp(tsub)
     tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
-    oi_tmp = matmul_proxy(tilda_pij.to(dtype), kv_cur)
+    oi_tmp = matmul_proxy(tilda_pij.to(inputs.dtype), kv_cur)
     oi_upd = oi_tmp
     li_upd = tilda_lij.squeeze(-1)
     mi_upd = tilda_mij.squeeze(-1)
@@ -291,89 +307,128 @@ def _flash_subsequent_kv(qi, kvj, oi_upd, li_upd, mi_upd, scale, dtype):
     return oi_upd, li_upd, mi_upd
 
 
-def _process_group_block(b_idx, s1_idx, g_idx, g_tile, d, device, fp32, n1,
-                         q_2d, kv_2d, cmp_block_table, block_size, seqused_kv,
-                         s1, s2_loop, cur_seq, scale, dtype, win,
-                         ori_kv, ori_block_table, sinks, output_flash,
-                         is_new_sink):
+@dataclass
+class _ProcessGroupBlockInputs:
+    b_idx: Any
+    s1_idx: Any
+    g_idx: Any
+    g_tile: Any
+    d: Any
+    device: Any
+    fp32: Any
+    n1: Any
+    q_2d: Any
+    kv_2d: Any
+    cmp_block_table: Any
+    block_size: Any
+    seqused_kv: Any
+    s1: Any
+    s2_loop: Any
+    cur_seq: Any
+    scale: Any
+    dtype: Any
+    win: Any
+    ori_kv: Any
+    ori_block_table: Any
+    sinks: Any
+    output_flash: Any
+    is_new_sink: Any
+
+
+def _process_group_block(inputs: _ProcessGroupBlockInputs):
     """Process one group-block: init accumulators, run ori window + s2 loop."""
-    oi_upd = torch.zeros((g_tile, d), device=device, dtype=fp32)
-    li_upd = torch.zeros(g_tile, device=device, dtype=fp32)
-    mi_upd = torch.zeros(g_tile, device=device, dtype=fp32)
-    bs_ofs = b_idx * s1 + s1_idx
-    n2g_ofs = g_idx * g_tile
-    qi_start = bs_ofs * n1 + n2g_ofs
-    qi_end = qi_start + g_tile
-    qi = q_2d[qi_start:qi_end, :]
-    if ori_kv is not None and ori_block_table is not None:
-        kv_win_2d = ori_kv.reshape(-1, d)
+    oi_upd = torch.zeros((inputs.g_tile, inputs.d), device=inputs.device, dtype=inputs.fp32)
+    li_upd = torch.zeros(inputs.g_tile, device=inputs.device, dtype=inputs.fp32)
+    mi_upd = torch.zeros(inputs.g_tile, device=inputs.device, dtype=inputs.fp32)
+    bs_ofs = inputs.b_idx * inputs.s1 + inputs.s1_idx
+    n2g_ofs = inputs.g_idx * inputs.g_tile
+    qi_start = bs_ofs * inputs.n1 + n2g_ofs
+    qi_end = qi_start + inputs.g_tile
+    qi = inputs.q_2d[qi_start:qi_end, :]
+    if inputs.ori_kv is not None and inputs.ori_block_table is not None:
+        kv_win_2d = inputs.ori_kv.reshape(-1, inputs.d)
         oi_upd, li_upd, mi_upd = _flash_ori_window(
-            qi, kv_win_2d, ori_block_table, b_idx, s1, s1_idx, win, block_size,
-            seqused_kv, dtype, scale, d)
-        if s2_loop == 0:
-            flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype,
-                    is_new_sink=is_new_sink)
-    for s2_idx in range(s2_loop):
-        kvj = get_block_kv(kv_2d, cmp_block_table, b_idx, s2_idx, block_size, cur_seq)
-        if s2_idx == 0 and ori_kv is None:
-            oi_upd, li_upd, mi_upd = _flash_first_kv(qi, kvj, scale, dtype)
+            _FlashOriWindowInputs(
+            qi=qi, kv_win_2d=kv_win_2d, ori_block_table=inputs.ori_block_table,
+            b_idx=inputs.b_idx, s1=inputs.s1, s1_idx=inputs.s1_idx, win=inputs.win,
+            block_size=inputs.block_size, seqused_kv=inputs.seqused_kv,
+            dtype=inputs.dtype, scale=inputs.scale, d=inputs.d))
+        if inputs.s2_loop == 0:
+            flash_end(inputs.output_flash, inputs.sinks, li_upd, mi_upd,
+                    oi_upd, n2g_ofs, inputs.g_tile, bs_ofs, inputs.dtype,
+                    is_new_sink=inputs.is_new_sink)
+    for s2_idx in range(inputs.s2_loop):
+        kvj = get_block_kv(
+            inputs.kv_2d, inputs.cmp_block_table, inputs.b_idx, s2_idx,
+            inputs.block_size, inputs.cur_seq)
+        if s2_idx == 0 and inputs.ori_kv is None:
+            oi_upd, li_upd, mi_upd = _flash_first_kv(qi, kvj, inputs.scale, inputs.dtype)
         else:
-            oi_upd, li_upd, mi_upd = _flash_subsequent_kv(qi, kvj, oi_upd, li_upd, mi_upd, scale, dtype)
-        if s2_idx == s2_loop - 1:
-            flash_end(output_flash, sinks, li_upd, mi_upd, oi_upd, n2g_ofs, g_tile, bs_ofs, dtype,
-                    is_new_sink=is_new_sink)
+            oi_upd, li_upd, mi_upd = _flash_subsequent_kv(qi, kvj, oi_upd, li_upd, mi_upd, inputs.scale, inputs.dtype)
+        if s2_idx == inputs.s2_loop - 1:
+            flash_end(inputs.output_flash, inputs.sinks, li_upd, mi_upd,
+                    oi_upd, n2g_ofs, inputs.g_tile, bs_ofs, inputs.dtype,
+                    is_new_sink=inputs.is_new_sink)
 
 
-def ifa_flash_torch(
-    q,
-    cmp_kv,
-    sinks,
-    cmp_block_table,
-    seqused_kv,
-    output_flash,
-    tmp_out,
-    cmp_ratio=128,
-    is_new_sink=False,
-    ori_kv=None,
-     ori_block_table=None):
+@dataclass
+class IfaFlashTorchInputs:
+    q: Any
+    cmp_kv: Any
+    sinks: Any
+    cmp_block_table: Any
+    seqused_kv: Any
+    output_flash: Any
+    tmp_out: Any
+    cmp_ratio: Any = 128
+    is_new_sink: Any = False
+    ori_kv: Any = None
+    ori_block_table: Any = None
+
+
+def ifa_flash_torch(inputs: IfaFlashTorchInputs):
     """
     Args:
-        q: Query [batch_size * s1, num_head, head_size]
+        inputs.q: Query [batch_size * s1, num_head, head_size]
         k: Key cache [num_blocks, block_size, kv_head_num, head_size]
         v: Value cache [num_blocks, block_size, kv_head_num, head_size]
-        cmp_block_table: Block mapping table for compress cmp_kv cache [batch_size, max_num_blocks_per_query]
+         inputs.cmp_block_table: Block mapping for compress cache
+            [batch_size, max_num_blocks_per_query]
         start_pos: Actual start position [batch_size], satisify start_pos + s1 = original actual seq
         out: Output [batch_size * s1, num_head, head_size]
     """
     fp32 = torch.float32
-    device = q.device
-    dtype = q.dtype
-    q_shape = q.shape
+    device = inputs.q.device
+    dtype = inputs.q.dtype
+    q_shape = inputs.q.shape
     bs1, n1, d = q_shape[0], q_shape[1], q_shape[2]
-    b = seqused_kv.shape[0]
+    b = inputs.seqused_kv.shape[0]
     s1 = bs1 // b
-    k_shape = cmp_kv.shape
+    k_shape = inputs.cmp_kv.shape
     _, block_size, n2, _ = k_shape
     g = n1 // n2
     g_tile = g
-    kv_2d = cmp_kv.reshape(-1, d)
-    q_2d = q.reshape(-1, d)
+    kv_2d = inputs.cmp_kv.reshape(-1, d)
+    q_2d = inputs.q.reshape(-1, d)
     scale = d ** -0.5
     win = 128
 
     for b_idx in range(b):
         for s1_idx in range(s1):
-            cur_seq = (seqused_kv[b_idx] - (s1 - 1 - s1_idx)) // cmp_ratio
+            cur_seq = (inputs.seqused_kv[b_idx] - (s1 - 1 - s1_idx)) // inputs.cmp_ratio
             cur_seq = max(cur_seq, 0)
             s2_loop = math.ceil(cur_seq / block_size)
             for g_idx in range(g // g_tile):
                 _process_group_block(
-                    b_idx, s1_idx, g_idx, g_tile, d, device, fp32, n1,
-                    q_2d, kv_2d, cmp_block_table, block_size, seqused_kv,
-                    s1, s2_loop, cur_seq, scale, dtype, win,
-                    ori_kv, ori_block_table, sinks, output_flash,
-                    is_new_sink)
-    return output_flash
+                    _ProcessGroupBlockInputs(
+                    b_idx=b_idx, s1_idx=s1_idx, g_idx=g_idx, g_tile=g_tile, d=d,
+                    device=device, fp32=fp32, n1=n1, q_2d=q_2d, kv_2d=kv_2d,
+                    cmp_block_table=inputs.cmp_block_table, block_size=block_size,
+                    seqused_kv=inputs.seqused_kv, s1=s1, s2_loop=s2_loop, cur_seq=cur_seq,
+                    scale=scale, dtype=dtype, win=win, ori_kv=inputs.ori_kv,
+                    ori_block_table=inputs.ori_block_table, sinks=inputs.sinks,
+                    output_flash=inputs.output_flash, is_new_sink=inputs.is_new_sink))
+    return inputs.output_flash
 
 
 def _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, cmp_ratio, is_new_sink,
@@ -418,12 +473,24 @@ def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_
                                  output_flash, cmp_ratio, is_new_sink, ori_kv, ori_block_table)
     else:
         output_flash = ifa_flash_torch(
-            q=q, cmp_kv=cmp_kv, sinks=sinks, cmp_block_table=cmp_block_table,
-            seqused_kv=seqused_kv, output_flash=output_flash, tmp_out=tmp_out,
+            IfaFlashTorchInputs(q=q, cmp_kv=cmp_kv, sinks=sinks,
+            cmp_block_table=cmp_block_table, seqused_kv=seqused_kv,
+            output_flash=output_flash, tmp_out=tmp_out,
             cmp_ratio=cmp_ratio, is_new_sink=is_new_sink,
-            ori_kv=ori_kv, ori_block_table=ori_block_table,
+            ori_kv=ori_kv, ori_block_table=ori_block_table)
         )
         return output_flash
+
+
+@dataclass
+class _C128CreateTensorsOutputs:
+    q: Any
+    cmp_kv: Any
+    sinks: Any
+    ori_kv: Any
+    ori_block_table: Any
+    tmp_out_golden: Any
+    output_flash: Any
 
 
 def _c128_create_tensors(attn_cfg, torch_dtype, device):
@@ -457,7 +524,7 @@ def _c128_create_tensors(attn_cfg, torch_dtype, device):
     tmp_out_golden = torch.zeros((b * s1 * 2 * block_size, q_shape[2]), **empty_kwargs) + 1
     output_flash = torch.zeros(q_shape, **empty_kwargs)
 
-    return q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash
+    return _C128CreateTensorsOutputs(q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash)
 
 
 def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device: str, attn_cfg: AttentionConfig):
@@ -466,8 +533,10 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
     seqused_kv = attn_cfg.actual_seq
     q_shape = [attn_cfg.b * attn_cfg.s1, attn_cfg.n1, attn_cfg.q_d]
 
-    q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash = \
-        _c128_create_tensors(attn_cfg, torch_dtype, device)
+    _t = _c128_create_tensors(attn_cfg, torch_dtype, device)
+    q, cmp_kv, sinks, ori_kv, ori_block_table, tmp_out_golden, output_flash = (
+        _t.q, _t.cmp_kv, _t.sinks, _t.ori_kv,
+        _t.ori_block_table, _t.tmp_out_golden, _t.output_flash)
 
     cmp_block_table = gen_block_table(seqused_kv, attn_cfg.block_size,
         [attn_cfg.block_table_batch, attn_cfg.max_blocks], cmp_ratio=cmp_ratio)

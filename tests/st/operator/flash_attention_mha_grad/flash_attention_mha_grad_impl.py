@@ -26,6 +26,7 @@ Flash Attention MHA Backward
 """
 
 from dataclasses import dataclass
+from typing import Any
 import pypto
 
 
@@ -39,6 +40,97 @@ class FlashAttentionGradTileShapeConfig:
     v_tile_d: list
     v_tile_q: list
     v_tile_kv: list
+
+
+@dataclass
+class _FaGradReshapeAllOutputs:
+    q_2d: Any
+    k_2d: Any
+    v_2d: Any
+    o_2d: Any
+    do_2d: Any
+    l_2d: Any
+    m_2d: Any
+
+
+def _fa_grad_reshape_all(q, k, v, o, do, l_input, m_input, total, num_heads):
+    """Reshape all 3D tensors to 2D inplace."""
+    hidden_dim = num_heads * q.shape[2]
+    q_2d = pypto.reshape(q, [total, hidden_dim], inplace=True)
+    k_2d = pypto.reshape(k, [total, hidden_dim], inplace=True)
+    v_2d = pypto.reshape(v, [total, hidden_dim], inplace=True)
+    o_2d = pypto.reshape(o, [total, hidden_dim], inplace=True)
+    do_2d = pypto.reshape(do, [total, hidden_dim], inplace=True)
+    l_2d = pypto.reshape(l_input, [total, num_heads], inplace=True)
+    m_2d = pypto.reshape(m_input, [total, num_heads], inplace=True)
+    return _FaGradReshapeAllOutputs(q_2d, k_2d, v_2d, o_2d, do_2d, l_2d, m_2d)
+
+
+def _fa_grad_compute_tile(
+    q_2d, k_2d, v_2d, o_2d, do_2d, m_2d, l_2d,
+    q_start, s1_tile, s1, kv_start, s2_tile, s2, head_dim,
+    n_idx, s1_idx, s2_idx, c_tile, v_tile_s, v_tile_d,
+    dq, dk, dv, _ws, _ws_dq, scale,
+):
+    """Single (s1, s2) tile: compute dQ, dK, dV contributions."""
+    h_ofs = n_idx * head_dim
+    s1_off = q_start + s1_idx * s1_tile
+    actual_s1 = (s1 - s1_idx * s1_tile).min(s1_tile)
+    s2_off = kv_start + s2_idx * s2_tile
+    actual_s2 = (s2 - s2_idx * s2_tile).min(s2_tile)
+
+    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+    q_i = pypto.view(q_2d, [s1_tile, head_dim], [s1_off, h_ofs], valid_shape=[actual_s1, head_dim])
+    k_j = pypto.view(k_2d, [s2_tile, head_dim], [s2_off, h_ofs], valid_shape=[actual_s2, head_dim])
+    v_j = pypto.view(v_2d, [s2_tile, head_dim], [s2_off, h_ofs], valid_shape=[actual_s2, head_dim])
+    do_i = pypto.view(do_2d, [s1_tile, head_dim], [s1_off, h_ofs], valid_shape=[actual_s1, head_dim])
+    o_i = pypto.view(o_2d, [s1_tile, head_dim], [s1_off, h_ofs], valid_shape=[actual_s1, head_dim])
+    m_i = pypto.view(m_2d, [s1_tile, 1], [s1_off, n_idx], valid_shape=[actual_s1, 1])
+    l_i = pypto.view(l_2d, [s1_tile, 1], [s1_off, n_idx], valid_shape=[actual_s1, 1])
+
+    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+    s_ij = pypto.matmul(q_i, k_j, pypto.DT_FP32, b_trans=True)
+    dp_ij = pypto.matmul(do_i, v_j, pypto.DT_FP32, b_trans=True)
+
+    pypto.assemble(s_ij, [n_idx * s2_tile, 0], _ws)
+
+    pypto.set_pass_options(sg_set_scope=2)
+    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+    do_i_fp32 = pypto.cast(do_i, pypto.DT_FP32)
+    o_i_fp32 = pypto.cast(o_i, pypto.DT_FP32)
+    do_mul_oi = pypto.mul(o_i_fp32, do_i_fp32)
+    pypto.set_vec_tile_shapes(32, 1024)
+    d_i = pypto.sum(do_mul_oi, -1, keepdim=True)
+    pypto.set_pass_options(sg_set_scope=-1)
+
+    pypto.set_pass_options(sg_set_scope=3)
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    s_ij = pypto.mul(s_ij, scale)
+    p_ij = pypto.exp(pypto.sub(s_ij, m_i))
+    p_ij = pypto.div(p_ij, l_i, precision_type=pypto.PrecisionType.INTRINSIC)
+
+    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
+    ds_ij = pypto.mul(p_ij, pypto.sub(dp_ij, d_i))
+    pypto.assemble(ds_ij, [n_idx * s2_tile, 0], _ws)
+
+    ds_bf16 = pypto.cast(ds_ij, pypto.DT_BF16)
+    p_bf16 = pypto.cast(p_ij, pypto.DT_BF16)
+    pypto.set_pass_options(sg_set_scope=-1)
+
+    pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
+    dv_tile = pypto.matmul(p_bf16, do_i, pypto.DT_FP32, a_trans=True)
+
+    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+    dq_tile = pypto.matmul(ds_bf16, k_j, pypto.DT_FP32)
+    dk_tile = pypto.matmul(ds_bf16, q_i, pypto.DT_FP32, a_trans=True)
+
+    dq_final = pypto.mul(dq_tile, scale)
+    dk_final = pypto.mul(dk_tile, scale)
+    pypto.assemble(dq_final, [n_idx * s2_tile, 0], _ws_dq)
+
+    pypto.atomic_add(dq_final, [s1_off, h_ofs], dq)
+    pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
+    pypto.atomic_add(dk_final, [s2_off, h_ofs], dk)
 
 
 @pypto.frontend.jit(

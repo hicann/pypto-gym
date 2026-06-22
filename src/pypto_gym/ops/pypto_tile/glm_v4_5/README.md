@@ -585,22 +585,24 @@ $
 ## 函数原型
 
 ```
-def moe_fusion(
-        gate_weight: torch.Tensor,
-        hidden_states: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        topk_group: int,
-        num_expert_group: int,
-        e_score_bias: torch.Tensor,
-        w13: torch.Tensor,
-        w13_scale: torch.Tensor,
-        w2: torch.Tensor,
-        w2_scale: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
-        ffn_res: torch.Tensor
-):
+@dataclass
+class MoeFusionInputs:
+    gate_weight: torch.Tensor
+    hidden_states: torch.Tensor
+    top_k: int
+    renormalize: bool
+    topk_group: int
+    num_expert_group: int
+    e_score_bias: torch.Tensor
+    w13: torch.Tensor
+    w13_scale: torch.Tensor
+    w2: torch.Tensor
+    w2_scale: torch.Tensor
+    topk_weights: torch.Tensor
+    topk_ids: torch.Tensor
+    ffn_res: torch.Tensor
+
+def moe_fusion(inputs: MoeFusionInputs):
 ```
 
 ## 参数说明

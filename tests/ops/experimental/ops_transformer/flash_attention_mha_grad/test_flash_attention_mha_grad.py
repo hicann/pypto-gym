@@ -34,6 +34,7 @@ import collections
 import logging
 from dataclasses import dataclass
 
+from typing import Any
 import numpy as np
 from numpy.testing import assert_allclose
 import pytest
@@ -134,6 +135,17 @@ def compute_l_m_o(q, k, v, scale):
     return l_val, m, o.to(torch.bfloat16)
 
 
+@dataclass
+class _ResolveParamsOutputs:
+    batch_size: Any
+    num_heads: Any
+    s1_size: Any
+    s2_size: Any
+    dim: Any
+    q_seqlens: Any
+    kv_seqlens: Any
+
+
 def _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens):
     if batch_size is None:
         batch_size = 1
@@ -151,7 +163,7 @@ def _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_
     if kv_seqlens is not None:
         assert len(kv_seqlens) == batch_size, "kv_seqlens must match batch_size"
         s2_size = max(kv_seqlens)
-    return batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens
+    return _ResolveParamsOutputs(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens)
 
 
 def _default_tile_config():
@@ -187,58 +199,105 @@ def _log_case(batch_size, num_heads, s1_size, s2_size, dim, hidden_dim, scale,
     logging.info("=" * 60)
 
 
-def _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum,
-                       l_out, m_out, o_out, scale):
-    for b in range(batch_size):
-        q_off = q_cumsum[b]
-        kv_off = kv_cumsum[b]
-        sq = q_cumsum[b + 1] - q_off
-        skv = kv_cumsum[b + 1] - kv_off
-        for h in range(num_heads):
+@dataclass
+class _PrecomputeLMOInputs:
+    batch_size: Any
+    num_heads: Any
+    q: Any
+    k: Any
+    v: Any
+    q_cumsum: Any
+    kv_cumsum: Any
+    l_out: Any
+    m_out: Any
+    o_out: Any
+    scale: Any
+
+
+def _precompute_l_m_o(inputs: _PrecomputeLMOInputs):
+    for b in range(inputs.batch_size):
+        q_off = inputs.q_cumsum[b]
+        kv_off = inputs.kv_cumsum[b]
+        sq = inputs.q_cumsum[b + 1] - q_off
+        skv = inputs.kv_cumsum[b + 1] - kv_off
+        for h in range(inputs.num_heads):
             l_h, m_h, o_h = compute_l_m_o(
-                q[q_off: q_off + sq, h, :],
-                k[kv_off: kv_off + skv, h, :],
-                v[kv_off: kv_off + skv, h, :],
-                scale)
-            l_out[q_off: q_off + sq, h, :] = l_h
-            m_out[q_off: q_off + sq, h, :] = m_h
-            o_out[q_off: q_off + sq, h, :] = o_h
+                inputs.q[q_off: q_off + sq, h, :],
+                inputs.k[kv_off: kv_off + skv, h, :],
+                inputs.v[kv_off: kv_off + skv, h, :],
+                inputs.scale)
+            inputs.l_out[q_off: q_off + sq, h, :] = l_h
+            inputs.m_out[q_off: q_off + sq, h, :] = m_h
+            inputs.o_out[q_off: q_off + sq, h, :] = o_h
 
 
-def _compute_golden(batch_size, num_heads, dim, q, k, v, o_out, do_t,
-                     q_cumsum, kv_cumsum, total_q, total_kv, device, scale):
-    dq_golden = torch.empty(total_q, num_heads * dim, dtype=torch.float32, device=device)
-    dk_golden = torch.empty(total_kv, num_heads * dim, dtype=torch.float32, device=device)
-    dv_golden = torch.empty(total_kv, num_heads * dim, dtype=torch.float32, device=device)
-    for b in range(batch_size):
-        q_off = q_cumsum[b]
-        kv_off = kv_cumsum[b]
-        sq = q_cumsum[b + 1] - q_off
-        skv = kv_cumsum[b + 1] - kv_off
-        for h in range(num_heads):
-            h_off = h * dim
+@dataclass
+class _ComputeGoldenInputs:
+    batch_size: Any
+    num_heads: Any
+    dim: Any
+    q: Any
+    k: Any
+    v: Any
+    o_out: Any
+    do_t: Any
+    q_cumsum: Any
+    kv_cumsum: Any
+    total_q: Any
+    total_kv: Any
+    device: Any
+    scale: Any
+
+
+def _compute_golden(inputs: _ComputeGoldenInputs):
+    dq_golden = torch.empty(inputs.total_q, inputs.num_heads * inputs.dim, dtype=torch.float32, device=inputs.device)
+    dk_golden = torch.empty(inputs.total_kv, inputs.num_heads * inputs.dim, dtype=torch.float32, device=inputs.device)
+    dv_golden = torch.empty(inputs.total_kv, inputs.num_heads * inputs.dim, dtype=torch.float32, device=inputs.device)
+    for b in range(inputs.batch_size):
+        q_off = inputs.q_cumsum[b]
+        kv_off = inputs.kv_cumsum[b]
+        sq = inputs.q_cumsum[b + 1] - q_off
+        skv = inputs.kv_cumsum[b + 1] - kv_off
+        for h in range(inputs.num_heads):
+            h_off = h * inputs.dim
             dq_g, dk_g, dv_g = attention_backward_golden(
-                q[q_off: q_off + sq, h, :],
-                k[kv_off: kv_off + skv, h, :],
-                v[kv_off: kv_off + skv, h, :],
-                o_out[q_off: q_off + sq, h, :],
-                do_t[q_off: q_off + sq, h, :],
-                scale)
-            dq_golden[q_off: q_off + sq, h_off: h_off + dim] = dq_g
-            dk_golden[kv_off: kv_off + skv, h_off: h_off + dim] = dk_g
-            dv_golden[kv_off: kv_off + skv, h_off: h_off + dim] = dv_g
+                inputs.q[q_off: q_off + sq, h, :],
+                inputs.k[kv_off: kv_off + skv, h, :],
+                inputs.v[kv_off: kv_off + skv, h, :],
+                inputs.o_out[q_off: q_off + sq, h, :],
+                inputs.do_t[q_off: q_off + sq, h, :],
+                inputs.scale)
+            dq_golden[q_off: q_off + sq, h_off: h_off + inputs.dim] = dq_g
+            dk_golden[kv_off: kv_off + skv, h_off: h_off + inputs.dim] = dk_g
+            dv_golden[kv_off: kv_off + skv, h_off: h_off + inputs.dim] = dv_g
     return dq_golden, dk_golden, dv_golden
 
 
-def _run_kernel(q, k, v, o_out, do_t, l_out, m_out, dq_out, dk_out, dv_out,
-                actual_q, actual_kv, tile_config):
+@dataclass
+class _RunKernelInputs:
+    q: Any
+    k: Any
+    v: Any
+    o_out: Any
+    do_t: Any
+    l_out: Any
+    m_out: Any
+    dq_out: Any
+    dk_out: Any
+    dv_out: Any
+    actual_q: Any
+    actual_kv: Any
+    tile_config: Any
+
+
+def _run_kernel(inputs: _RunKernelInputs):
     logging.info("  Running kernel...")
     import time
     start_time = time.time()
     flash_attention_mha_grad_kernel_impl(
-        q, k, v, o_out, do_t, l_out, m_out,
-        dq_out, dk_out, dv_out,
-        actual_q, actual_kv, tile_config)
+        inputs.q, inputs.k, inputs.v, inputs.o_out, inputs.do_t, inputs.l_out, inputs.m_out,
+        inputs.dq_out, inputs.dk_out, inputs.dv_out,
+        inputs.actual_q, inputs.actual_kv, inputs.tile_config)
     elapsed = time.time() - start_time
     logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")
 
@@ -302,19 +361,25 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     m_out = torch.empty(total_q, num_heads, 1, dtype=torch.float32, device=device)
     o_out = torch.empty(total_q, num_heads, dim, dtype=torch.bfloat16, device=device)
 
-    _precompute_l_m_o(batch_size, num_heads, q, k, v, q_cumsum, kv_cumsum,
-                       l_out, m_out, o_out, scale)
+    _precompute_l_m_o(_PrecomputeLMOInputs(
+        batch_size=batch_size, num_heads=num_heads, q=q, k=k, v=v,
+        q_cumsum=q_cumsum, kv_cumsum=kv_cumsum,
+        l_out=l_out, m_out=m_out, o_out=o_out, scale=scale))
 
     dq_out = torch.zeros(total_q, hidden_dim, dtype=torch.float32, device=device)
     dk_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
     dv_out = torch.zeros(total_kv, hidden_dim, dtype=torch.float32, device=device)
 
-    dq_golden, dk_golden, dv_golden = _compute_golden(
-        batch_size, num_heads, dim, q, k, v, o_out, do_t,
-        q_cumsum, kv_cumsum, total_q, total_kv, device, scale)
+    dq_golden, dk_golden, dv_golden = _compute_golden(_ComputeGoldenInputs(
+        batch_size=batch_size, num_heads=num_heads, dim=dim, q=q, k=k, v=v,
+        o_out=o_out, do_t=do_t,
+        q_cumsum=q_cumsum, kv_cumsum=kv_cumsum,
+        total_q=total_q, total_kv=total_kv, device=device, scale=scale))
 
-    _run_kernel(q, k, v, o_out, do_t, l_out, m_out, dq_out, dk_out, dv_out,
-                actual_q, actual_kv, tile_config)
+    _run_kernel(_RunKernelInputs(
+        q=q, k=k, v=v, o_out=o_out, do_t=do_t, l_out=l_out, m_out=m_out,
+        dq_out=dq_out, dk_out=dk_out, dv_out=dv_out,
+        actual_q=actual_q, actual_kv=actual_kv, tile_config=tile_config))
     return _verify_precision(dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden)
 
 

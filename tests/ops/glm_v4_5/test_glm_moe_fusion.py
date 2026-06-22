@@ -10,7 +10,9 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+from dataclasses import dataclass
 import os
+from typing import Any
 import torch
 import torch_npu
 
@@ -25,7 +27,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import numpy as np
 from numpy.testing import assert_allclose
 import pypto
-from glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond
+from glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond, MoeFusionInputs
 
 
 def gen_quan_per_channel_weight_nz(x):
@@ -103,42 +105,60 @@ def _compute_moe_golden(hidden_states, w13, w13_scale, w2, w2_scale, x_dtype):
     return golden
 
 
-def _run_single_moe_iter(bs, hidden_size, intermediate_size, x_dtype, ne, h_num,
-                         top_k, topk_group, num_expert_group, renormalize,
-                         enable_graph, device_id):
+@dataclass
+class _RunSingleMoeIterInputs:
+    bs: Any
+    hidden_size: Any
+    intermediate_size: Any
+    x_dtype: Any
+    ne: Any
+    h_num: Any
+    top_k: Any
+    topk_group: Any
+    num_expert_group: Any
+    renormalize: Any
+    enable_graph: Any
+    device_id: Any
+
+
+def _run_single_moe_iter(cfg: _RunSingleMoeIterInputs):
+
+
     """Run one batch-size iteration of moe_fusion test."""
-    hidden_states = torch.rand((bs, hidden_size), dtype=x_dtype, device=f'npu:{device_id}') * 0.05
-    weight_gate_upper_tensor = torch.rand((hidden_size, intermediate_size * 2),
-                                        dtype=x_dtype, device=f'npu:{device_id}') * 0.05
+    hidden_states = torch.rand(
+        (cfg.bs, cfg.hidden_size),
+        dtype=cfg.x_dtype, device=f'npu:{cfg.device_id}') * 0.05
+    weight_gate_upper_tensor = torch.rand((cfg.hidden_size, cfg.intermediate_size * 2),
+                                        dtype=cfg.x_dtype, device=f'npu:{cfg.device_id}') * 0.05
     w13, w13_scale = gen_quan_per_channel_weight_nz(weight_gate_upper_tensor)
-    w13_scale = w13_scale.reshape(-1).to(x_dtype)
-    weight_down_proj_tensor = torch.rand((intermediate_size, hidden_size),
-                                        dtype=x_dtype, device=f'npu:{device_id}') * 0.05
+    w13_scale = w13_scale.reshape(-1).to(cfg.x_dtype)
+    weight_down_proj_tensor = torch.rand((cfg.intermediate_size, cfg.hidden_size),
+                                        dtype=cfg.x_dtype, device=f'npu:{cfg.device_id}') * 0.05
     w2, w2_scale = gen_quan_per_channel_weight_nz(weight_down_proj_tensor)
-    w2_scale = w2_scale.reshape(-1).to(x_dtype)
-    ffn_res = torch.empty((bs, hidden_size), dtype=x_dtype, device=f'npu:{device_id}')
+    w2_scale = w2_scale.reshape(-1).to(cfg.x_dtype)
+    ffn_res = torch.empty((cfg.bs, cfg.hidden_size), dtype=cfg.x_dtype, device=f'npu:{cfg.device_id}')
 
-    mm_weight = torch.rand((ne, h_num), dtype=torch.float32, device=f'npu:{device_id}')
-    e_score_bias = torch.rand((ne), dtype=torch.bfloat16, device=f'npu:{device_id}')
-    topk_weights = torch.empty((bs, top_k), dtype=torch.float32, device=f'npu:{device_id}')
-    topk_ids = torch.empty((bs, top_k), dtype=torch.int32, device=f'npu:{device_id}')
+    mm_weight = torch.rand((cfg.ne, cfg.h_num), dtype=torch.float32, device=f'npu:{cfg.device_id}')
+    e_score_bias = torch.rand((cfg.ne), dtype=torch.bfloat16, device=f'npu:{cfg.device_id}')
+    topk_weights = torch.empty((cfg.bs, cfg.top_k), dtype=torch.float32, device=f'npu:{cfg.device_id}')
+    topk_ids = torch.empty((cfg.bs, cfg.top_k), dtype=torch.int32, device=f'npu:{cfg.device_id}')
 
-    inputs = [mm_weight, hidden_states, top_k, renormalize, topk_group, num_expert_group,
+    inputs = [mm_weight, hidden_states, cfg.top_k, cfg.renormalize, cfg.topk_group, cfg.num_expert_group,
               e_score_bias, w13, w13_scale, w2, w2_scale]
     outputs = [topk_weights, topk_ids, ffn_res]
 
-    if enable_graph:
+    if cfg.enable_graph:
         g = torch.npu.NPUGraph()
         with torch.npu.graph(g):
-            moe_fusion(*inputs, *outputs)
+            moe_fusion(MoeFusionInputs(*inputs, *outputs))
         g.replay()
     else:
-        moe_fusion(*inputs, *outputs)
+        moe_fusion(MoeFusionInputs(*inputs, *outputs))
 
     topk_weight_list, topk_ids_list = _compute_router_golden(
-        hidden_states, mm_weight, e_score_bias, bs, ne,
-        num_expert_group, top_k, topk_group, renormalize)
-    golden = _compute_moe_golden(hidden_states, w13, w13_scale, w2, w2_scale, x_dtype)
+        hidden_states, mm_weight, e_score_bias, cfg.bs, cfg.ne,
+        cfg.num_expert_group, cfg.top_k, cfg.topk_group, cfg.renormalize)
+    golden = _compute_moe_golden(hidden_states, w13, w13_scale, w2, w2_scale, cfg.x_dtype)
 
     assert_allclose(np.array(topk_weights.cpu().flatten().tolist()), np.array(topk_weight_list),
                     rtol=5e-3, atol=5e-3)
@@ -170,9 +190,10 @@ def test_moe_fusion():
 
     torch.manual_seed(0)
     for bs in [32, 32, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16]:
-        _run_single_moe_iter(bs, hidden_size, intermediate_size, x_dtype, ne, h_num,
-                            top_k, topk_group, num_expert_group, renormalize,
-                            enable_graph, device_id)
+        _run_single_moe_iter(_RunSingleMoeIterInputs(
+            bs, hidden_size, intermediate_size, x_dtype, ne, h_num,
+            top_k, topk_group, num_expert_group, renormalize,
+            enable_graph, device_id))
 
 
 def main():

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import os
 import logging
 import math
+from typing import Any
 import pytest
 import torch
 import torch_npu
@@ -153,36 +154,57 @@ def _init_compute_tensors(input_data_map, params):
             topk_res, first_mm, mm_out, avoid_fp32_to_fp16_overflow_scale)
 
 
-def _lightning_batch_block_loop(b, s1, n1, d, block_size, block_num,
-                                 query, key, q_scale, k_scale, weights,
-                                 act_seq, block_table, first_mm, mm_out,
-                                 avoid_fp32_to_fp16_overflow_scale):
+@dataclass
+class _LightningBatchBlockLoopInputs:
+    b: Any
+    s1: Any
+    n1: Any
+    d: Any
+    block_size: Any
+    block_num: Any
+    query: Any
+    key: Any
+    q_scale: Any
+    k_scale: Any
+    weights: Any
+    act_seq: Any
+    block_table: Any
+    first_mm: Any
+    mm_out: Any
+    avoid_fp32_to_fp16_overflow_scale: Any
+
+
+def _lightning_batch_block_loop(inputs: _LightningBatchBlockLoopInputs):
     """Main batch+block loop for lightning indexer golden compute."""
-    for b_idx in range(b):
-        cur_seq = act_seq[b_idx]
-        cur_block = (cur_seq + block_size - 1) // block_size
-        cur_qs = q_scale[b_idx * s1:(b_idx + 1) * s1, :, :]
-        cur_w = weights[b_idx * s1:(b_idx + 1) * s1, :, :]
+    for b_idx in range(inputs.b):
+        cur_seq = inputs.act_seq[b_idx]
+        cur_block = (cur_seq + inputs.block_size - 1) // inputs.block_size
+        cur_qs = inputs.q_scale[b_idx * inputs.s1:(b_idx + 1) * inputs.s1, :, :]
+        cur_w = inputs.weights[b_idx * inputs.s1:(b_idx + 1) * inputs.s1, :, :]
         w_scale = cur_qs * cur_w
 
         for block_idx in range(cur_block):
-            cur_q = query[b_idx * s1 * n1: (b_idx + 1) * s1 * n1, :]
-            cur_block_idx = block_table[b_idx][block_idx]
-            tail_seq = min(block_size, cur_seq - block_size * block_idx)
-            cur_k = key[cur_block_idx * block_size: (cur_block_idx * block_size + tail_seq), :]
+            cur_q = inputs.query[b_idx * inputs.s1 * inputs.n1: (b_idx + 1) * inputs.s1 * inputs.n1, :]
+            cur_block_idx = inputs.block_table[b_idx][block_idx]
+            tail_seq = min(inputs.block_size, cur_seq - inputs.block_size * block_idx)
+            cur_k = inputs.key[cur_block_idx * inputs.block_size: (cur_block_idx * inputs.block_size + tail_seq), :]
             qk_dot = torch.matmul(cur_q.to(torch.int32),
                                   cur_k.transpose(1, 0).to(torch.int32)).to(torch.float32).relu()
-            qk_dot = qk_dot * avoid_fp32_to_fp16_overflow_scale
+            qk_dot = qk_dot * inputs.avoid_fp32_to_fp16_overflow_scale
             qk_dot = qk_dot.to(torch.float16)
-            first_mm[b_idx * s1 * n1:(b_idx + 1) * s1 * n1, block_idx * block_size:(block_idx * \
-                                                                block_size + tail_seq)] = qk_dot
-            qk_dot = qk_dot.reshape(s1, n1, tail_seq)
-            cur_ks = k_scale[cur_block_idx:(cur_block_idx + 1), :tail_seq]
+            start_row = b_idx * inputs.s1 * inputs.n1
+            end_row = (b_idx + 1) * inputs.s1 * inputs.n1
+            start_col = block_idx * inputs.block_size
+            inputs.first_mm[start_row:end_row, start_col:(start_col + tail_seq)] = qk_dot
+            qk_dot = qk_dot.reshape(inputs.s1, inputs.n1, tail_seq)
+            cur_ks = inputs.k_scale[cur_block_idx:(cur_block_idx + 1), :tail_seq]
             cur_ks = cur_ks.to(torch.float32)
             w_qk = torch.bmm(w_scale.to(torch.float32), qk_dot.to(torch.float32))
-            w_qk = w_qk.reshape(s1, tail_seq)
+            w_qk = w_qk.reshape(inputs.s1, tail_seq)
             k_res = w_qk * cur_ks
-            mm_out[b_idx * s1:(b_idx + 1) * s1, block_idx * block_size:(block_idx * block_size + tail_seq)] = k_res
+            row_s = b_idx * inputs.s1
+            col_s = block_idx * inputs.block_size
+            inputs.mm_out[row_s:(b_idx + 1) * inputs.s1, col_s:(col_s + tail_seq)] = k_res
 
 
 def _lightning_topk_select(b, s1, selected_count, act_seq, mm_out, topk_res):
@@ -209,10 +231,11 @@ def lightning_indexer_compute(input_data_map, params):
      query, key, q_scale, k_scale, weights, act_seq, block_table,
      topk_res, first_mm, mm_out, avoid_fp32_to_fp16_overflow_scale) = _init_compute_tensors(input_data_map, params)
 
-    _lightning_batch_block_loop(b, s1, n1, d, block_size, block_num,
-                                 query, key, q_scale, k_scale, weights,
-                                 act_seq, block_table, first_mm, mm_out,
-                                 avoid_fp32_to_fp16_overflow_scale)
+    _lightning_batch_block_loop(_LightningBatchBlockLoopInputs(
+        b, s1, n1, d, block_size, block_num,
+        query, key, q_scale, k_scale, weights,
+        act_seq, block_table, first_mm, mm_out,
+        avoid_fp32_to_fp16_overflow_scale))
     _lightning_topk_select(b, s1, selected_count, act_seq, mm_out, topk_res)
     return topk_res
 
@@ -249,22 +272,37 @@ def topk_idx_compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, error_cou
     assert precision == "PASS", err_msg
 
 
-def _build_lightning_params(b, s1, n1, n2, d, dtype, s2, act_seq,
-                            block_size, block_num, max_block_num, selected_count):
+@dataclass
+class _BuildLightningParamsInputs:
+    b: Any
+    s1: Any
+    n1: Any
+    n2: Any
+    d: Any
+    dtype: Any
+    s2: Any
+    act_seq: Any
+    block_size: Any
+    block_num: Any
+    max_block_num: Any
+    selected_count: Any
+
+
+def _build_lightning_params(inputs: _BuildLightningParamsInputs):
     """Build the params dictionary for lightning_indexer."""
     params = {
-        "b": b,
-        "s1": s1,
-        "n1": n1,
-        "n2": n2,
-        "d": d,
-        "dtype": dtype,
-        "s2": s2,
-        "act_seq": act_seq,
-        "block_size": block_size,
-        "block_num": block_num,
-        "max_block_num": max_block_num,
-        "selected_count": selected_count
+        "b": inputs.b,
+        "s1": inputs.s1,
+        "n1": inputs.n1,
+        "n2": inputs.n2,
+        "d": inputs.d,
+        "dtype": inputs.dtype,
+        "s2": inputs.s2,
+        "act_seq": inputs.act_seq,
+        "block_size": inputs.block_size,
+        "block_num": inputs.block_num,
+        "max_block_num": inputs.max_block_num,
+        "selected_count": inputs.selected_count
     }
     return params
 
@@ -318,8 +356,9 @@ def lightning_indexer(case_name: str) -> bool:
     max_block_num = (s2 + block_size - 1) // block_size
     selected_count = 2048
 
-    params = _build_lightning_params(b, s1, n1, n2, d, dtype, s2, act_seq,
-                                     block_size, block_num, max_block_num, selected_count)
+    params = _build_lightning_params(_BuildLightningParamsInputs(
+        b, s1, n1, n2, d, dtype, s2, act_seq,
+        block_size, block_num, max_block_num, selected_count))
     input_data_map = gen_data_for_compute(params, is_quant=True)
 
     unroll_list = [128, 64, 32, 16, 8, 4, 1]

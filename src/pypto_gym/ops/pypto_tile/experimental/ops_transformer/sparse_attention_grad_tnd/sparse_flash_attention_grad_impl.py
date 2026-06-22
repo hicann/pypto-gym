@@ -59,6 +59,7 @@ import math
 import logging
 from dataclasses import dataclass
 import collections
+from typing import Any
 import numpy as np
 import pypto
 import torch
@@ -321,46 +322,58 @@ def sparse_flash_attention_grad(
     )
 
 
-def check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
-        actual_seq_qlen, actual_seq_kvlen):
-    assert actual_seq_kvlen is not None and actual_seq_kvlen.dim() == 1, \
-        f"actual_seq_kvlen dim num is {actual_seq_kvlen.dim()}, expected 1"
-    assert actual_seq_qlen is not None and actual_seq_qlen.dim() == 1, \
-        f"actual_seq_qlen dim num is {actual_seq_qlen.dim()}, expected 1"
-    assert sparse_idx is not None and sparse_idx.dim() == 3, \
-        f"topk_indices_npu dim num is {sparse_idx.dim()}, expected 3"
+@dataclass
+class CheckInputOutputShapeDtypeInputs:
+    q_nope: Any
+    q_pe: Any
+    k_nope: Any
+    k_pe: Any
+    value: Any
+    sparse_idx: Any
+    d_out: Any
+    out: Any
+    sm_max: Any
+    sm_sum: Any
+    actual_seq_qlen: Any
+    actual_seq_kvlen: Any
 
-    assert q_nope.dim() == 3 and q_nope.size(2) == 512 and q_nope.dtype == torch.bfloat16, \
-        f"q_nope dim num is {q_nope.dim()}, q_nope axis 2 is {q_nope.size(1)}, q_nope dtype is {q_nope.dtype}, \
-        expected 3, 512, torch.bfloat16"
-    assert q_pe.dim() == 3 and q_pe.size(2) == 64 and q_pe.dtype == torch.bfloat16, \
-        f"q_pe dim num is {q_pe.dim()}, q_pe axis 2 is {q_pe.size(1)}, q_pe dtype is {q_pe.dtype}, \
-        expected 3, 64, torch.bfloat16"
 
-    assert k_nope.dim() == 3 and k_nope.size(2) == 512 and k_nope.dtype == torch.bfloat16, \
-        f"k_nope dim num is {k_nope.dim()}, k_nope axis 2 is {k_nope.size(2)}, k_nope dtype is {k_nope.dtype}, \
-        expected 3, 512, torch.bfloat16"
-    assert k_pe.dim() == 3 and k_pe.size(2) == 64 and k_pe.dtype == torch.bfloat16, \
-        f"k_pe dim num is {k_pe.dim()}, k_pe axis 2 is {k_pe.size(2)}, k_pe dtype is {k_pe.dtype}, \
-        expected 3, 64, torch.bfloat16"
+def check_input_output_shape_dtype(inputs: CheckInputOutputShapeDtypeInputs):
+    assert inputs.actual_seq_kvlen is not None and inputs.actual_seq_kvlen.dim() == 1, \
+        f"inputs.actual_seq_kvlen dim num is {inputs.actual_seq_kvlen.dim()}, expected 1"
+    assert inputs.actual_seq_qlen is not None and inputs.actual_seq_qlen.dim() == 1, \
+        f"inputs.actual_seq_qlen dim num is {inputs.actual_seq_qlen.dim()}, expected 1"
+    assert inputs.sparse_idx is not None and inputs.sparse_idx.dim() == 3, \
+        f"topk_indices_npu dim num is {inputs.sparse_idx.dim()}, expected 3"
 
-    assert value.dim() == 3 and value.size(2) == 512 and value.dtype == torch.bfloat16, \
-        f"value dim num is {value.dim()}, value axis 2 is {value.size(2)}, value dtype is {value.dtype}, \
-        expected 3, 512, torch.bfloat16"
+    assert inputs.q_nope.dim() == 3 and inputs.q_nope.size(2) == 512 \
+        and inputs.q_nope.dtype == torch.bfloat16, \
+        (f"q_nope: dim={inputs.q_nope.dim()} size1={inputs.q_nope.size(1)} "
+         f"dtype={inputs.q_nope.dtype} (expect 3,512,bf16)")
+    assert inputs.q_pe.dim() == 3 and inputs.q_pe.size(2) == 64 \
+        and inputs.q_pe.dtype == torch.bfloat16, \
+        (f"q_pe: dim={inputs.q_pe.dim()} size1={inputs.q_pe.size(1)} "
+         f"dtype={inputs.q_pe.dtype} (expect 3,64,bf16)")
 
-    assert d_out.dim() == 3 and d_out.size(2) == 512 and d_out.dtype == torch.bfloat16, \
-        f"d_out dim num is {d_out.dim()}, d_out axis 2 is {d_out.size(2)}, d_out dtype is {d_out.dtype}, \
-        expected 3, 512, torch.bfloat16"
-    assert out.dim() == 3 and out.size(2) == 512 and out.dtype == torch.bfloat16, \
-        f"out dim num is {out.dim()}, d_out axis 2 is {out.size(2)}, out dtype is {out.dtype}, \
-        expected 3, 512, torch.bfloat16"
+    assert inputs.k_nope.dim() == 3 and inputs.k_nope.size(2) == 512 \
+        and inputs.k_nope.dtype == torch.bfloat16, \
+        (f"k_nope: dim={inputs.k_nope.dim()} size2={inputs.k_nope.size(2)} "
+         f"dtype={inputs.k_nope.dtype} (expect 3,512,bf16)")
+    assert inputs.k_pe.dim() == 3 and inputs.k_pe.size(2) == 64 and inputs.k_pe.dtype == torch.bfloat16, \
+        f"k_pe: dim={inputs.k_pe.dim()} size2={inputs.k_pe.size(2)} dtype={inputs.k_pe.dtype} (expect 3,64,bf16)"
 
-    assert sm_max.dim() == 3 and sm_max.size(0) == 1 and sm_max.dtype == torch.float32, \
-        f"sm_max dim num is {sm_max.dim()}, sm_max axis 0 is {sm_max.size(0)}, sm_max dtype is {sm_max.dtype}, \
-        expected 3, 1, torch.bfloat16"
-    assert sm_sum.dim() == 3 and sm_sum.size(0) == 1 and sm_sum.dtype == torch.float32, \
-        f"sm_sum dim num is {sm_sum.dim()}, sm_sum axis 0 is {sm_sum.size(0)}, sm_sum dtype is {sm_sum.dtype}, \
-        expected 3, 1, torch.bfloat16"
+    assert inputs.value.dim() == 3 and inputs.value.size(2) == 512 and inputs.value.dtype == torch.bfloat16, \
+        f"value: dim={inputs.value.dim()} size2={inputs.value.size(2)} dtype={inputs.value.dtype} (expect 3,512,bf16)"
+
+    assert inputs.d_out.dim() == 3 and inputs.d_out.size(2) == 512 and inputs.d_out.dtype == torch.bfloat16, \
+        f"d_out: dim={inputs.d_out.dim()} size2={inputs.d_out.size(2)} dtype={inputs.d_out.dtype} (expect 3,512,bf16)"
+    assert inputs.out.dim() == 3 and inputs.out.size(2) == 512 and inputs.out.dtype == torch.bfloat16, \
+        f"out: dim={inputs.out.dim()} size2={inputs.out.size(2)} dtype={inputs.out.dtype} (expect 3,512,bf16)"
+
+    assert inputs.sm_max.dim() == 3 and inputs.sm_max.size(0) == 1 and inputs.sm_max.dtype == torch.float32, \
+        f"sm_max: dim={inputs.sm_max.dim()} size0={inputs.sm_max.size(0)} dtype={inputs.sm_max.dtype} (expect 3,1,f32)"
+    assert inputs.sm_sum.dim() == 3 and inputs.sm_sum.size(0) == 1 and inputs.sm_sum.dtype == torch.float32, \
+        f"sm_sum: dim={inputs.sm_sum.dim()} size0={inputs.sm_sum.size(0)} dtype={inputs.sm_sum.dtype} (expect 3,1,f32)"
 
 
 @allow_in_graph
@@ -369,8 +382,10 @@ def npu_sfa_sparse_attention_grad(q_nope, q_pe, k_nope, k_pe, value, sparse_idx,
     assert not isinstance(q_nope, FakeTensor), f"q_nope is FakeTensor"
 
     # check_input_output_shape_dtype
-    check_input_output_shape_dtype(q_nope, q_pe, k_nope, k_pe, value, sparse_idx, d_out, out, sm_max, sm_sum,
-        actual_seq_qlen, actual_seq_kvlen)
+    check_input_output_shape_dtype(CheckInputOutputShapeDtypeInputs(
+        q_nope=q_nope, q_pe=q_pe, k_nope=k_nope, k_pe=k_pe, value=value, sparse_idx=sparse_idx,
+        d_out=d_out, out=out, sm_max=sm_max, sm_sum=sm_sum,
+        actual_seq_qlen=actual_seq_qlen, actual_seq_kvlen=actual_seq_kvlen))
 
     logging.info("****************** pypto npu_sfa_sparse_attention_grad *************************")
 

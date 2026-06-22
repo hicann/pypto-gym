@@ -10,6 +10,7 @@ import math
 import logging
 from dataclasses import dataclass
 
+from typing import Any
 import torch
 import torch_npu
 import pytest
@@ -45,35 +46,55 @@ class CompressSFA(torch.nn.Module):
         return sparse_compress_flash_attention_graph(args)
 
 
+@dataclass
+class _BuildKjTileInputs:
+    t_idx: Any
+    b_idx: Any
+    topk_indices: Any
+    s2_start: Any
+    s2_end: Any
+    s2_tile_cur: Any
+    compress_kv: Any
+    block_table: Any
+    origin_kv: Any
+    origin_block_table: Any
+    start_block: Any
+    end_block: Any
+    start_offset: Any
+    origin_cur_win_size: Any
+    d: Any
+    kv_dtype: Any
+    block_size: Any
 
-def _build_kj_tile(t_idx, b_idx, topk_indices, s2_start, s2_end, s2_tile_cur,
-                    compress_kv, block_table, origin_kv, origin_block_table,
-                    start_block, end_block, start_offset, origin_cur_win_size, d, kv_dtype, block_size):
+
+def _build_kj_tile(inputs: _BuildKjTileInputs):
     """Build the assembled KV tile (window + compress) for one s2 iteration."""
-    topk_indices_tmp = topk_indices[t_idx, s2_start:s2_end]
-    slc_compress_kv = torch.zeros([s2_tile_cur, d], dtype=kv_dtype)
-    offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
-    for cur_s2_idx in range(s2_tile_cur):
+    topk_indices_tmp = inputs.topk_indices[inputs.t_idx, inputs.s2_start:inputs.s2_end]
+    slc_compress_kv = torch.zeros([inputs.s2_tile_cur, inputs.d], dtype=inputs.kv_dtype)
+    offset = torch.zeros([inputs.s2_tile_cur], dtype=torch.int32)
+    for cur_s2_idx in range(inputs.s2_tile_cur):
         topk_index = topk_indices_tmp[cur_s2_idx]
-        block_idx_in_batch = topk_index // block_size
-        slc_block_idx = block_table[b_idx, block_idx_in_batch]
-        tail = topk_index % block_size
-        offset[cur_s2_idx] = slc_block_idx * block_size + tail
-    for cur_s2_idx in range(s2_tile_cur):
+        block_idx_in_batch = topk_index // inputs.block_size
+        slc_block_idx = inputs.block_table[inputs.b_idx, block_idx_in_batch]
+        tail = topk_index % inputs.block_size
+        offset[cur_s2_idx] = slc_block_idx * inputs.block_size + tail
+    for cur_s2_idx in range(inputs.s2_tile_cur):
         slc_idx = offset[cur_s2_idx]
-        slc_compress_kv[cur_s2_idx, :] = compress_kv[slc_idx, :]
+        slc_compress_kv[cur_s2_idx, :] = inputs.compress_kv[slc_idx, :]
 
     kv_list = []
-    for block_idx in range(start_block, end_block + 1):
-        physical_block_id = origin_block_table[b_idx, block_idx]
-        kv_block = origin_kv[physical_block_id * block_size: (physical_block_id + 1) * block_size, :]
+    for block_idx in range(inputs.start_block, inputs.end_block + 1):
+        physical_block_id = inputs.origin_block_table[inputs.b_idx, block_idx]
+        start = physical_block_id * inputs.block_size
+        end = (physical_block_id + 1) * inputs.block_size
+        kv_block = inputs.origin_kv[start:end, :]
         kv_list.append(kv_block)
     kv_cur = torch.cat(kv_list, axis=0)
-    win_kv_cache = kv_cur[start_offset: start_offset + origin_cur_win_size, :]
+    win_kv_cache = kv_cur[inputs.start_offset: inputs.start_offset + inputs.origin_cur_win_size, :]
 
-    kj = torch.zeros([origin_cur_win_size + s2_tile_cur, d], dtype=kv_dtype)
-    kj[0: origin_cur_win_size, :] = win_kv_cache
-    kj[origin_cur_win_size: origin_cur_win_size + s2_tile_cur, :] = slc_compress_kv
+    kj = torch.zeros([inputs.origin_cur_win_size + inputs.s2_tile_cur, inputs.d], dtype=inputs.kv_dtype)
+    kj[0: inputs.origin_cur_win_size, :] = win_kv_cache
+    kj[inputs.origin_cur_win_size: inputs.origin_cur_win_size + inputs.s2_tile_cur, :] = slc_compress_kv
     return kj
 
 
@@ -118,9 +139,15 @@ def compute_attention_no_flash(input_data, params, s2_tile):
                 s2_start = s2_tile * s2_idx
                 s2_end = s2_start + s2_tile_cur
 
-                kj = _build_kj_tile(t_idx, b_idx, topk_indices, s2_start, s2_end, s2_tile_cur,
-                    compress_kv, block_table, origin_kv, origin_block_table,
-                    start_block, end_block, start_offset, origin_cur_win_size, d, kv_dtype, block_size)
+                build_inputs = _BuildKjTileInputs(
+                    t_idx=t_idx, b_idx=b_idx, topk_indices=topk_indices,
+                    s2_start=s2_start, s2_end=s2_end, s2_tile_cur=s2_tile_cur,
+                    compress_kv=compress_kv, block_table=block_table,
+                    origin_kv=origin_kv, origin_block_table=origin_block_table,
+                    start_block=start_block, end_block=end_block,
+                    start_offset=start_offset, origin_cur_win_size=origin_cur_win_size,
+                    d=d, kv_dtype=kv_dtype, block_size=block_size)
+                kj = _build_kj_tile(build_inputs)
 
                 qi = q[t_idx, :, :].reshape(n1, d)
                 sij = torch.matmul(qi.to(torch.float32), kj.transpose(1, 0).to(torch.float32)).to(torch.float32)

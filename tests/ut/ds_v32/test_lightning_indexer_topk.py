@@ -12,7 +12,7 @@
 """
 import sys
 from dataclasses import dataclass, field
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Any
 import logging
 import pytest
 import pypto
@@ -114,6 +114,18 @@ def setup_lightning_indexer_topk_config():
                          vec_nbuffer_setting={NUM_NEG1: NUM_16})
 
 
+@dataclass
+class _BuildLightningIndexerTensorsOutputs:
+    query: Any
+    key: Any
+    weights: Any
+    act_seq_key: Any
+    block_table: Any
+    topk_res: Any
+    q_scale: Any
+    k_scale: Any
+
+
 def _build_lightning_indexer_tensors(cfg, qk_dtype, scale_dtype, max_block_num):
     """Allocate all pypto tensors for the lightning indexer."""
     d_bf16 = pypto.DT_FP16
@@ -138,7 +150,9 @@ def _build_lightning_indexer_tensors(cfg, qk_dtype, scale_dtype, max_block_num):
         pypto.tensor([cfg.block_num, cfg.block_size, cfg.n2, 1], scale_dtype, "kScale")
         if cfg.is_quant else None)
 
-    return query, key, weights, act_seq_key, block_table, topk_res, q_scale, k_scale
+    return _BuildLightningIndexerTensorsOutputs(
+    query, key, weights, act_seq_key,
+    block_table, topk_res, q_scale, k_scale)
 
 
 def _build_lightning_indexer_config(cfg):

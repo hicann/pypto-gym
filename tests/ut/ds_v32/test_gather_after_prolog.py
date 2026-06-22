@@ -12,6 +12,7 @@
 """
 from dataclasses import dataclass
 import logging
+from typing import Any
 import pytest
 import pypto
 from conftest import duration_estimate
@@ -123,6 +124,16 @@ class BuildConfig:
     s2: int = 4096
 
 
+@dataclass
+class _BuildGatherTensorsOutputs:
+    top_k_indices: Any
+    k_nope_cache: Any
+    k_rope_cache: Any
+    block_table: Any
+    act_seqs: Any
+    gather_res: Any
+
+
 def _build_gather_tensors(cfg):
     """Allocate all pypto tensors for the gather after prolog kernel."""
     cache_dtype = pypto.DT_FP16
@@ -139,7 +150,7 @@ def _build_gather_tensors(cfg):
     act_seqs = pypto.tensor([cfg.b], index_dtype, "actSeqs")
     gather_res = pypto.tensor(
         [cfg.b * cfg.s1 * cfg.topk, cfg.d_n + cfg.d_r], cache_dtype, "gatherRes")
-    return top_k_indices, k_nope_cache, k_rope_cache, block_table, act_seqs, gather_res
+    return _BuildGatherTensorsOutputs(top_k_indices, k_nope_cache, k_rope_cache, block_table, act_seqs, gather_res)
 
 
 def _build_gather_meta(cfg, cache_rows, max_block_per_batch):

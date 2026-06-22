@@ -6,6 +6,7 @@ run on the user's accelerator without hardcoding 'cuda'.
 from __future__ import annotations
 
 import os
+from typing import Optional
 import torch
 
 
@@ -25,6 +26,53 @@ def _has_npu() -> bool:
         return False
 
 
+def _try_pick_npu() -> Optional[tuple[torch.device, str]]:
+    if _has_npu():
+        return (torch.device("npu"), "npu")
+    return None
+
+
+def _try_pick_cuda() -> Optional[tuple[torch.device, str]]:
+    if torch.cuda.is_available():
+        return (torch.device("cuda"), "cuda")
+    return None
+
+
+def _try_pick_xpu() -> Optional[tuple[torch.device, str]]:
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return (torch.device("xpu"), "xpu")
+    return None
+
+
+def _try_pick_mps() -> Optional[tuple[torch.device, str]]:
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return (torch.device("mps"), "mps")
+    return None
+
+
+_DEVICE_PICKERS = [
+    ("npu", _try_pick_npu),
+    ("cuda", _try_pick_cuda),
+    ("xpu", _try_pick_xpu),
+    ("mps", _try_pick_mps),
+]
+
+
+def _pick_device_by_key(key: str) -> Optional[tuple[torch.device, str]]:
+    for picker_key, picker_fn in _DEVICE_PICKERS:
+        if picker_key == key:
+            return picker_fn()
+    return None
+
+
+def _pick_device_auto() -> tuple[torch.device, str]:
+    for _key, picker_fn in _DEVICE_PICKERS:
+        result = picker_fn()
+        if result is not None:
+            return result
+    return (torch.device("cpu"), "cpu")
+
+
 def pick_device() -> tuple[torch.device, str]:
     """Return (device, label). Order: NPU > CUDA/ROCm > XPU(Intel) > MPS(Apple) > CPU.
 
@@ -37,31 +85,12 @@ def pick_device() -> tuple[torch.device, str]:
 
     forced = os.environ.get("CONVERT_EXP_DEVICE", "").strip().lower()
 
-    if forced == "npu" or (not forced and _has_npu()):
-        if _has_npu():
-            _CACHED = (torch.device("npu"), "npu")
-            return _CACHED
+    if forced:
+        result = _pick_device_by_key(forced)
+    else:
+        result = _pick_device_auto()
 
-    if forced == "cuda" or (not forced and torch.cuda.is_available()):
-        if torch.cuda.is_available():
-            _CACHED = (torch.device("cuda"), "cuda")
-            return _CACHED
-
-    if forced == "xpu" or (not forced and hasattr(torch, "xpu") and torch.xpu.is_available()):
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
-            _CACHED = (torch.device("xpu"), "xpu")
-            return _CACHED
-
-    if forced == "mps" or (
-        not forced
-        and getattr(torch.backends, "mps", None) is not None
-        and torch.backends.mps.is_available()
-    ):
-        if torch.backends.mps.is_available():
-            _CACHED = (torch.device("mps"), "mps")
-            return _CACHED
-
-    _CACHED = (torch.device("cpu"), "cpu")
+    _CACHED = result
     return _CACHED
 
 

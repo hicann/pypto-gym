@@ -42,6 +42,7 @@
 
 """
 
+from dataclasses import dataclass
 import torch
 from typing import Optional
 
@@ -49,6 +50,56 @@ from typing import Optional
 # ─────────────────────────────────────────────
 # Golden 参考实现（纯 torch）
 # ─────────────────────────────────────────────
+
+
+@dataclass
+class DetermineKInputs:
+    expanded_row_idx: torch.Tensor
+    bsk: int
+    scales: Optional[torch.Tensor]
+    x1: Optional[torch.Tensor]
+    x2: Optional[torch.Tensor]
+    expert_idx: Optional[torch.Tensor]
+
+
+def _determine_k_and_num_rows(cfg: DetermineKInputs) -> tuple[int, int]:
+    if cfg.scales is not None:
+        k_val = cfg.scales.shape[1]
+        num_rows = cfg.bsk // k_val
+    elif cfg.x1 is not None:
+        num_rows = cfg.x1.shape[0]
+        k_val = cfg.bsk // num_rows
+    elif cfg.x2 is not None:
+        num_rows = cfg.x2.shape[0]
+        k_val = cfg.bsk // num_rows
+    elif cfg.expert_idx is not None:
+        num_rows = cfg.expert_idx.shape[0]
+        k_val = cfg.expert_idx.shape[1]
+    else:
+        k_val = 1
+        num_rows = cfg.bsk
+    return k_val, num_rows
+
+
+def _compute_expanded_idx(i: int, k: int, num_rows: int, k_top: int, drop_pad_mode: int) -> int:
+    if drop_pad_mode == 0 or drop_pad_mode == 1:
+        return k * num_rows + i
+    else:
+        return i * k_top + k
+
+
+def _should_skip_token(
+    expanded_row_idx_value: int,
+    expanded_x_shape_0: int,
+    drop_pad_mode: int,
+) -> bool:
+    if expanded_row_idx_value == -1:
+        return True
+    if drop_pad_mode != 1 and drop_pad_mode != 3:
+        if expanded_row_idx_value >= expanded_x_shape_0:
+            return True
+    return False
+
 
 def moe_finalize_routing_v2_golden(
     expanded_x: torch.Tensor,
@@ -96,27 +147,12 @@ def moe_finalize_routing_v2_golden(
     # 将 expanded_x reshape 为 2D (NUM_ROWS*K, H)
     expanded_x = expanded_x.reshape(-1, h)
 
-    # 确定 num_k 值和 num_rows
-    # 优先使用外部传入值；若无，则从辅助输入推导；最后回退到 num_k=1
+    # 确定 K 值和 num_rows
     if num_rows is not None and num_k is not None:
-        # 外部直接传入，无需推导
-        pass
-    elif scales is not None:
-        num_k = scales.shape[1]
-        num_rows = bsk // num_k
-    elif x1 is not None:
-        num_rows = x1.shape[0]
-        num_k = bsk // num_rows
-    elif x2 is not None:
-        num_rows = x2.shape[0]
-        num_k = bsk // num_rows
-    elif expert_idx is not None:
-        num_rows = expert_idx.shape[0]
-        num_k = expert_idx.shape[1]
+        k_val = num_k
     else:
-        # 无任何辅助信息，默认 num_k=1
-        num_k = 1
-        num_rows = bsk
+        k_val, num_rows = _determine_k_and_num_rows(
+            DetermineKInputs(expanded_row_idx, bsk, scales, x1, x2, expert_idx))
 
     # 初始化输出 tensor（在与输入相同的设备上）
     out = torch.zeros((num_rows, h), dtype=out_dtype, device=expanded_x.device)
@@ -129,28 +165,15 @@ def moe_finalize_routing_v2_golden(
     if x2 is not None:
         out = out + x2.to(out_dtype)
 
-    # 主计算循环：遍历 num_rows 和 num_k
+    # 主计算循环：遍历 num_rows 和 k_val
     for i in range(num_rows):
-        for k in range(num_k):
-            # 根据 drop_pad_mode 计算索引位置
-            if drop_pad_mode == 0 or drop_pad_mode == 1:
-                # 按列排列
-                expanded_row_idx_idx = k * num_rows + i
-            else:
-                # 按行排列
-                expanded_row_idx_idx = i * num_k + k
+        for k in range(k_val):
+            expanded_row_idx_idx = _compute_expanded_idx(i, k, num_rows, k_val, drop_pad_mode)
 
-            # 获取 expanded_row_idx_value
-            expanded_row_idx_value = expanded_row_idx[expanded_row_idx_idx].item()
+            expanded_row_idx_value = int(expanded_row_idx[expanded_row_idx_idx].item())
 
-            # drop_pad 场景：跳过 padding 位置（值为 -1）
-            if expanded_row_idx_value == -1:
+            if _should_skip_token(expanded_row_idx_value, expanded_x.shape[0], drop_pad_mode):
                 continue
-
-            # drop_less 场景：跳过越界索引
-            if drop_pad_mode != 1 and drop_pad_mode != 3:
-                if expanded_row_idx_value >= expanded_x.shape[0]:
-                    continue
 
             # 从 expanded_x 中获取目标行
             dst_row = expanded_x[int(expanded_row_idx_value), :].to(out_dtype)

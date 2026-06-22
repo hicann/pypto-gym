@@ -14,6 +14,7 @@ import math
 import os
 import logging
 from dataclasses import dataclass
+from typing import Any
 import torch
 import torch_npu
 
@@ -62,52 +63,72 @@ def gen_uniform_data(data_shape, min_value, max_value, dtype):
         return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
-def _compute_s2_tile_body(
-    b_idx, s1_idx, s2_idx, s2_tile, cur_seq, s2_tile_cur, s2_start, s2_end,
-    qi, topk_indices, nope_cache_2d, block_table, block_size, nq,
-    kv_lora_rank, qk_rope_dim, b, s1, scalar, input_dtype,
-):
+@dataclass
+class _ComputeS2TileBodyInputs:
+    b_idx: Any
+    s1_idx: Any
+    s2_idx: Any
+    s2_tile: Any
+    cur_seq: Any
+    s2_tile_cur: Any
+    s2_start: Any
+    s2_end: Any
+    qi: Any
+    topk_indices: Any
+    nope_cache_2d: Any
+    block_table: Any
+    block_size: Any
+    nq: Any
+    kv_lora_rank: Any
+    qk_rope_dim: Any
+    b: Any
+    s1: Any
+    scalar: Any
+    input_dtype: Any
+
+
+def _compute_s2_tile_body(inputs: _ComputeS2TileBodyInputs):
     """Compute one s2-tile iteration within the golden attention_aq."""
-    topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_end]
+    topk_indices_tmp = inputs.topk_indices[inputs.b_idx * inputs.s1 + inputs.s1_idx, inputs.s2_start:inputs.s2_end]
     slc_nope = torch.zeros(
-        [s2_tile_cur, kv_lora_rank + 2 * qk_rope_dim + 4 * 4],
+        [inputs.s2_tile_cur, inputs.kv_lora_rank + 2 * inputs.qk_rope_dim + 4 * 4],
         dtype=torch.float8_e4m3fn)
     slc_kv_up = torch.zeros(
-        [s2_tile_cur, kv_lora_rank + qk_rope_dim], dtype=input_dtype)
+        [inputs.s2_tile_cur, inputs.kv_lora_rank + inputs.qk_rope_dim], dtype=inputs.input_dtype)
 
-    offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
-    for cur_s2_idx in range(s2_tile_cur):
-        s2_idx_tmp = s2_start + cur_s2_idx
+    offset = torch.zeros([inputs.s2_tile_cur], dtype=torch.int32)
+    for cur_s2_idx in range(inputs.s2_tile_cur):
+        s2_idx_tmp = inputs.s2_start + cur_s2_idx
         topk_index = topk_indices_tmp[s2_idx_tmp]
-        block_idx_in_batch = topk_index // block_size
-        slc_block_idx = block_table[b_idx, block_idx_in_batch]
-        tail = topk_index % block_size
-        offset[cur_s2_idx] = slc_block_idx * block_size + tail
+        block_idx_in_batch = topk_index // inputs.block_size
+        slc_block_idx = inputs.block_table[inputs.b_idx, block_idx_in_batch]
+        tail = topk_index % inputs.block_size
+        offset[cur_s2_idx] = slc_block_idx * inputs.block_size + tail
 
-    for cur_s2_idx in range(s2_tile_cur):
+    for cur_s2_idx in range(inputs.s2_tile_cur):
         slc_idx = offset[cur_s2_idx]
-        slc_nope[cur_s2_idx, :] = nope_cache_2d[slc_idx, :]
+        slc_nope[cur_s2_idx, :] = inputs.nope_cache_2d[slc_idx, :]
 
-    slc_kv_fp8 = slc_nope[:, :kv_lora_rank]
-    slc_kv_scales_vfp8 = slc_nope[:, kv_lora_rank + 2 * qk_rope_dim:]
+    slc_kv_fp8 = slc_nope[:, :inputs.kv_lora_rank]
+    slc_kv_scales_vfp8 = slc_nope[:, inputs.kv_lora_rank + 2 * inputs.qk_rope_dim:]
     slc_kv_scales = slc_kv_scales_vfp8.view(torch.float32).reshape(-1, 1)
     slc_kv_fp32 = slc_kv_fp8.reshape(-1, 128).to(torch.float)
     slc_kv = slc_kv_fp32 * slc_kv_scales
-    slc_kr_vfp8 = slc_nope[:, kv_lora_rank:kv_lora_rank + 2 * qk_rope_dim]
+    slc_kr_vfp8 = slc_nope[:, inputs.kv_lora_rank:inputs.kv_lora_rank + 2 * inputs.qk_rope_dim]
 
-    slc_kv_up[:, :kv_lora_rank] = slc_kv.to(input_dtype).reshape(-1, kv_lora_rank)
-    slc_kv_up[:, kv_lora_rank:] = slc_kr_vfp8.view(input_dtype)
-    vj = slc_kv_up[:, :kv_lora_rank]
+    slc_kv_up[:, :inputs.kv_lora_rank] = slc_kv.to(inputs.input_dtype).reshape(-1, inputs.kv_lora_rank)
+    slc_kv_up[:, inputs.kv_lora_rank:] = slc_kr_vfp8.view(inputs.input_dtype)
+    vj = slc_kv_up[:, :inputs.kv_lora_rank]
 
-    sij = torch.matmul(qi.to(torch.float32),
+    sij = torch.matmul(inputs.qi.to(torch.float32),
                        slc_kv_up.transpose(1, 0).to(torch.float32)).to(torch.float32)
-    sij_scale = sij * scalar
+    sij_scale = sij * inputs.scalar
     tilda_mij = sij_scale.amax(dim=-1, keepdims=True)
     t_sub = sij_scale - tilda_mij
     tilda_pij = torch.exp(t_sub)
     tilda_lij_reduce = tilda_pij.sum(dim=-1, keepdims=True)
     t_softmax = tilda_pij / tilda_lij_reduce
-    tilda_pij_f16 = t_softmax.to(input_dtype)
+    tilda_pij_f16 = t_softmax.to(inputs.input_dtype)
     q1 = torch.matmul(tilda_pij_f16.to(torch.float32), vj.to(torch.float32)).to(torch.float32)
     return q1
 
@@ -150,10 +171,11 @@ def compute_attention_aq(input_data, params, s2_tile):
                 s2_start = s2_tile * s2_idx
                 s2_end = s2_start + s2_tile_cur
                 q1 = _compute_s2_tile_body(
-                    b_idx, s1_idx, s2_idx, s2_tile, cur_seq, s2_tile_cur,
-                    s2_start, s2_end, qi, topk_indices, nope_cache_2d,
-                    block_table, block_size, nq, kv_lora_rank, qk_rope_dim,
-                    b, s1, scalar, input_dtype)
+                    _ComputeS2TileBodyInputs(
+                        b_idx, s1_idx, s2_idx, s2_tile, cur_seq, s2_tile_cur,
+                        s2_start, s2_end, qi, topk_indices, nope_cache_2d,
+                        block_table, block_size, nq, kv_lora_rank, qk_rope_dim,
+                        b, s1, scalar, input_dtype))
 
             attention_output[b_idx, s1_idx, :, :] = q1.to(input_dtype)
 

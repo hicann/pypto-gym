@@ -8,10 +8,10 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""
-"""
-'''
-'''
+
+
+from typing import Any
+from dataclasses import dataclass
 import os
 import math
 import logging
@@ -286,6 +286,18 @@ def _get_mla_shapes(params):
     }
 
 
+@dataclass
+class _PrepareMlaInputsOutputs:
+    token_x: Any
+    wq_a: Any
+    wq_b: Any
+    wkv: Any
+    rope_cos: Any
+    rope_sin: Any
+    gamma_cq: Any
+    gamma_ckv: Any
+
+
 def _prepare_mla_inputs(input_tensors, shapes, is_nz):
     """Apply NZ format cast and reshape input tensors for MLA."""
     if is_nz:
@@ -311,7 +323,7 @@ def _prepare_mla_inputs(input_tensors, shapes, is_nz):
     gamma_cq = input_tensors["gamma_cq"].reshape(shapes["rmsnorm_gamma_cq_shape"]).npu()
     gamma_ckv = input_tensors["gamma_ckv"].reshape(shapes["rmsnorm_gamma_ckv_shape"]).npu()
 
-    return token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv
+    return _PrepareMlaInputsOutputs(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv)
 
 
 def _compare_mla_outputs(output_q_data, output_kv_data, output_qr_data,

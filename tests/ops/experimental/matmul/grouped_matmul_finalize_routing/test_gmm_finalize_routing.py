@@ -18,6 +18,7 @@
 """
 
 
+from dataclasses import dataclass
 import sys
 import os
 _p = os.path.dirname(__file__)
@@ -29,6 +30,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import argparse
 import sys
 
+from typing import Any
 import pytest
 import pypto
 import torch
@@ -47,7 +49,22 @@ RTOL = 1e-3
 ATOL = 1e-3
 
 
+@dataclass
+class _BuildFinalizeRoutingTensorsOutputs:
+    x1: Any
+    x2: Any
+    scale: Any
+    pertoken_scale: Any
+    group_list: Any
+    shared_input: Any
+    logit: Any
+    row_index: Any
+    out: Any
+
+
 def _build_finalize_routing_tensors(config, torch_dtype, scale_k):
+
+
     """构造 grouped_matmul_finalize_routing 的输入张量。"""
     x1 = torch.randn((config.m, config.k), dtype=torch.float32).uniform_(0, 1).to(torch_dtype)
     if config.transpose_x2:
@@ -64,7 +81,9 @@ def _build_finalize_routing_tensors(config, torch_dtype, scale_k):
     logit = torch.randn((config.m,), dtype=torch.float32).uniform_(0, 1)
     row_index = torch.arange(config.m, dtype=torch.int64) % config.batch
     out = torch.zeros((config.batch, config.n), dtype=torch.float32)
-    return x1, x2, scale, pertoken_scale, group_list, shared_input, logit, row_index, out
+    return _BuildFinalizeRoutingTensorsOutputs(
+    x1, x2, scale, pertoken_scale, group_list,
+    shared_input, logit, row_index, out)
 
 
 TEST_CONFIGS = [

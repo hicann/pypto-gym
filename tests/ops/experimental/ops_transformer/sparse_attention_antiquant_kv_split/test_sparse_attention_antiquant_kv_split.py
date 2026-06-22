@@ -12,6 +12,7 @@
 Sparse Attention Antiquant KV Split 算子测试
 """
 
+from dataclasses import dataclass
 import sys
 import os
 _p = os.path.dirname(__file__)
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 
 import math
 import logging
+from typing import Any
 import torch
 import torch_npu  # noqa: F401
 import numpy as np
@@ -46,27 +48,44 @@ def gen_uniform_data(data_shape, min_value, max_value, dtype):
         return torch.randint(low=min_value, high=max_value, size=data_shape, dtype=dtype)
 
 
-def _gather_kv_slices(topk_indices, topk_indices_tmp, s2_start, s2_tile_cur,
-                       kn_quant, kr, kn_scales, block_table, block_size, b_idx,
-                       kv_lora_rank, qk_rope_dim, input_dtype):
-    """Gather KV slices for a tile: compute offsets from block_table, then fetch kn/kr/scales."""
-    offset = torch.zeros([s2_tile_cur], dtype=torch.int32)
-    for cur_s2_idx in range(s2_tile_cur):
-        s2_idx_tmp = s2_start + cur_s2_idx
-        topk_index = topk_indices_tmp[s2_idx_tmp]
-        block_idx_in_batch = topk_index // block_size
-        slc_block_idx = block_table[b_idx, block_idx_in_batch]
-        tail = topk_index % block_size
-        offset[cur_s2_idx] = slc_block_idx * block_size + tail
+@dataclass
+class _GatherKvSlicesInputs:
+    topk_indices: Any
+    topk_indices_tmp: Any
+    s2_start: Any
+    s2_tile_cur: Any
+    kn_quant: Any
+    kr: Any
+    kn_scales: Any
+    block_table: Any
+    block_size: Any
+    b_idx: Any
+    kv_lora_rank: Any
+    qk_rope_dim: Any
+    input_dtype: Any
 
-    kn_quant_slice = torch.zeros([s2_tile_cur, kv_lora_rank], dtype=torch.float8_e4m3fn)
-    kr_slice = torch.zeros([s2_tile_cur, qk_rope_dim], dtype=torch.bfloat16)
-    kn_scales_slice = torch.zeros([s2_tile_cur, 4], dtype=torch.float32)
-    for cur_s2_idx in range(s2_tile_cur):
+
+def _gather_kv_slices(inputs: _GatherKvSlicesInputs):
+
+
+    """Gather KV slices for a tile: compute offsets from inputs.block_table, then fetch kn/inputs.kr/scales."""
+    offset = torch.zeros([inputs.s2_tile_cur], dtype=torch.int32)
+    for cur_s2_idx in range(inputs.s2_tile_cur):
+        s2_idx_tmp = inputs.s2_start + cur_s2_idx
+        topk_index = inputs.topk_indices_tmp[s2_idx_tmp]
+        block_idx_in_batch = topk_index // inputs.block_size
+        slc_block_idx = inputs.block_table[inputs.b_idx, block_idx_in_batch]
+        tail = topk_index % inputs.block_size
+        offset[cur_s2_idx] = slc_block_idx * inputs.block_size + tail
+
+    kn_quant_slice = torch.zeros([inputs.s2_tile_cur, inputs.kv_lora_rank], dtype=torch.float8_e4m3fn)
+    kr_slice = torch.zeros([inputs.s2_tile_cur, inputs.qk_rope_dim], dtype=torch.bfloat16)
+    kn_scales_slice = torch.zeros([inputs.s2_tile_cur, 4], dtype=torch.float32)
+    for cur_s2_idx in range(inputs.s2_tile_cur):
         slc_idx = offset[cur_s2_idx]
-        kn_quant_slice[cur_s2_idx, :] = kn_quant[slc_idx, :]
-        kr_slice[cur_s2_idx, :] = kr[slc_idx, :]
-        kn_scales_slice[cur_s2_idx, :] = kn_scales[slc_idx, :]
+        kn_quant_slice[cur_s2_idx, :] = inputs.kn_quant[slc_idx, :]
+        kr_slice[cur_s2_idx, :] = inputs.kr[slc_idx, :]
+        kn_scales_slice[cur_s2_idx, :] = inputs.kn_scales[slc_idx, :]
     return kn_quant_slice, kr_slice, kn_scales_slice
 
 
@@ -131,9 +150,10 @@ def compute_attention_aq(input_data, params, s2_tile):
 
                 topk_indices_tmp = topk_indices[b_idx * s1 + s1_idx, s2_start:s2_start + s2_tile_cur]
                 kn_quant_slice, kr_slice, kn_scales_slice = _gather_kv_slices(
-                    topk_indices, topk_indices_tmp, s2_start, s2_tile_cur,
-                    kn_quant, kr, kn_scales, block_table, block_size, b_idx,
-                    kv_lora_rank, qk_rope_dim, input_dtype)
+                    _GatherKvSlicesInputs(
+                        topk_indices, topk_indices_tmp, s2_start, s2_tile_cur,
+                        kn_quant, kr, kn_scales, block_table, block_size, b_idx,
+                        kv_lora_rank, qk_rope_dim, input_dtype))
 
                 q1 = _dequant_and_attention(qi, kn_quant_slice, kr_slice, kn_scales_slice,
                                              s2_tile_cur, kv_lora_rank, qk_rope_dim,

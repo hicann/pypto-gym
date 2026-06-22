@@ -10,9 +10,11 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+from dataclasses import dataclass
 import os
 import math
 import logging
+from typing import Any
 import torch
 import torch_npu
 
@@ -386,7 +388,20 @@ def _build_indexer_pytorch_inputs(inputs_data, dims):
     )
 
 
+@dataclass
+class _BuildIndexerOutputsOutputs:
+    outputs: Any
+    q_int8_golden: Any
+    q_scale_golden: Any
+    k_cache_golden: Any
+    k_cache_scale_golden: Any
+    weights_golden: Any
+
+
+
 def _build_indexer_outputs(golden_data, inputs, dims):
+
+
     """Build IndexerPrologQuantOutput from golden data."""
     t = dims["t"]
     head_num = dims["idx_n_heads"]
@@ -405,7 +420,9 @@ def _build_indexer_outputs(golden_data, inputs, dims):
         k_scale=inputs.k_cache_scale,
         weights=gen_zero_tensor(weights_golden)
     )
-    return outputs, q_int8_golden, q_scale_golden, k_cache_golden, k_cache_scale_golden, weights_golden
+    return _BuildIndexerOutputsOutputs(
+    outputs, q_int8_golden, q_scale_golden,
+    k_cache_golden, k_cache_scale_golden, weights_golden)
 
 
 def _run_and_compare(inputs, outputs, configs, q_int8_golden, q_scale_golden,
@@ -438,8 +455,13 @@ def do_test_lighting_indexer_prolog_quant(case_name, configs):
     torch_npu.npu.config.allow_internal_format = True
 
     inputs = _build_indexer_pytorch_inputs(inputs_data, dims)
-    outputs, q_int8_golden, q_scale_golden, k_cache_golden, k_cache_scale_golden, \
-        weights_golden = _build_indexer_outputs(golden_data, inputs, dims)
+    out = _build_indexer_outputs(golden_data, inputs, dims)
+    outputs = out.outputs
+    q_int8_golden = out.q_int8_golden
+    q_scale_golden = out.q_scale_golden
+    k_cache_golden = out.k_cache_golden
+    k_cache_scale_golden = out.k_cache_scale_golden
+    weights_golden = out.weights_golden
 
     _run_and_compare(inputs, outputs, configs, q_int8_golden, q_scale_golden,
                      k_cache_golden, k_cache_scale_golden, weights_golden)

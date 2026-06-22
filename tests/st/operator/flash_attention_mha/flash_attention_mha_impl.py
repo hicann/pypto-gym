@@ -22,6 +22,8 @@ attention matrix from [s1_size, s2_size] to [Q_TILE, K_TILE] per iteration.
 O, L, M are accumulated across kv tiles (online softmax algorithm).
 """
 
+from dataclasses import dataclass
+from typing import Any
 import pypto
 
 
@@ -29,7 +31,22 @@ Q_TILE = 320
 K_TILE = 320
 
 
+@dataclass
+class _FaSetupDimsOutputs:
+    num_heads: Any
+    head_dim: Any
+    hidden_dim: Any
+    total_q: Any
+    total_kv: Any
+    scale: Any
+    q_2d: Any
+    k_2d: Any
+    v_2d: Any
+
+
 def _fa_setup_dims(q, k, v):
+
+
     """Setup: derive dimensions, reshape inplace, return symbols + 2D views."""
     num_heads = q.shape[1]
     head_dim = q.shape[2]
@@ -40,7 +57,7 @@ def _fa_setup_dims(q, k, v):
     q_2d = pypto.reshape(q, [total_q, hidden_dim], inplace=True)
     k_2d = pypto.reshape(k, [total_kv, hidden_dim], inplace=True)
     v_2d = pypto.reshape(v, [total_kv, hidden_dim], inplace=True)
-    return num_heads, head_dim, hidden_dim, total_q, total_kv, scale, q_2d, k_2d, v_2d
+    return _FaSetupDimsOutputs(num_heads, head_dim, hidden_dim, total_q, total_kv, scale, q_2d, k_2d, v_2d)
 
 
 def _fa_compute_head_tile_views(q_2d, k_2d, v_2d, q_tile, k_tile, head_dim,

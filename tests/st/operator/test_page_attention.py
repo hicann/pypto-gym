@@ -10,6 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+from dataclasses import dataclass
+from typing import Any
 import pypto
 import torch
 import math
@@ -190,29 +192,48 @@ def op_page_attention(params, q_nope, k_nope_cache, v_nope_cache, q_rope, k_rope
     inside_main_function()
 
 
-def _golden_compute_per_batch(b_index, b, q_bnsd, n_tile, n_q, block_size, block_table,
-                               k_cache, v_cache, d_k, d_v, scalar, block_num_per_batch, act_seqs):
+@dataclass
+class _GoldenComputePerBatchInputs:
+    b_index: Any
+    b: Any
+    q_bnsd: Any
+    n_tile: Any
+    n_q: Any
+    block_size: Any
+    block_table: Any
+    k_cache: Any
+    v_cache: Any
+    d_k: Any
+    d_v: Any
+    scalar: Any
+    block_num_per_batch: Any
+    act_seqs: Any
+
+
+def _golden_compute_per_batch(inputs: _GoldenComputePerBatchInputs):
+
+
     matmul_dtype = torch.float32
-    cur_seq = act_seqs[b_index]
-    bn_per_batch = math.ceil(cur_seq / block_size)
-    n_loop = math.ceil(n_q / n_tile)
+    cur_seq = inputs.act_seqs[inputs.b_index]
+    bn_per_batch = math.ceil(cur_seq / inputs.block_size)
+    n_loop = math.ceil(inputs.n_q / inputs.n_tile)
     tiled_out = []
     for n_idx in range(n_loop):
         oi_update = []
         li_update = []
         mi_update = []
-        qi = q_bnsd[b_index, n_idx * n_tile: (n_idx + 1) * n_tile, :, :]
+        qi = inputs.q_bnsd[inputs.b_index, n_idx * inputs.n_tile: (n_idx + 1) * inputs.n_tile, :, :]
         qi = qi.reshape(-1, qi.shape[-1])
-        for bn in range(block_num_per_batch[b_index]):
-            cur_block_idx = block_table[b_index][bn]
-            s2_tile_cur = min(block_size, cur_seq - bn * block_size)
-            kj = k_cache[cur_block_idx, 0:s2_tile_cur, :]
-            vj = v_cache[cur_block_idx, 0:s2_tile_cur, :]
-            kj = kj.reshape(s2_tile_cur, d_k)
-            vj = vj.reshape(s2_tile_cur, d_v)
+        for bn in range(inputs.block_num_per_batch[inputs.b_index]):
+            cur_block_idx = inputs.block_table[inputs.b_index][bn]
+            s2_tile_cur = min(inputs.block_size, cur_seq - bn * inputs.block_size)
+            kj = inputs.k_cache[cur_block_idx, 0:s2_tile_cur, :]
+            vj = inputs.v_cache[cur_block_idx, 0:s2_tile_cur, :]
+            kj = kj.reshape(s2_tile_cur, inputs.d_k)
+            vj = vj.reshape(s2_tile_cur, inputs.d_v)
 
             sij = torch.matmul(qi.to(matmul_dtype), kj.to(matmul_dtype).mT)
-            sij_scale = sij * scalar
+            sij_scale = sij * inputs.scalar
             tilda_mij = sij_scale.max(dim=-1, keepdim=True).values
             t_sub = sij_scale - tilda_mij
             tilda_pij = torch.exp(t_sub)
@@ -243,7 +264,7 @@ def _golden_compute_per_batch(b_index, b, q_bnsd, n_tile, n_q, block_size, block
             q1 = torch.matmul(tilda_pij.to(matmul_dtype), vj.to(matmul_dtype))
             q2 = q1 * t4
             oi_tmp = q3 + q2
-            if bn == block_num_per_batch[b_index] - 1:
+            if bn == inputs.block_num_per_batch[inputs.b_index] - 1:
                 oi_update = oi_tmp / li_new
             else:
                 oi_update = oi_tmp
@@ -281,8 +302,10 @@ def op_page_attention_golden(params, q_nope, k_nope_cache, v_cache, q_rope, k_ro
     for actual_seq in act_seqs:
         block_num_per_batch.append(math.ceil(actual_seq / block_size))
     for b_index in range(b):
-        batch_results = _golden_compute_per_batch(b_index, b, q_bnsd, n_tile, n_q,
-            block_size, block_table, k_cache, v_cache, d_k, d_v, scalar, block_num_per_batch, act_seqs)
+        batch_results = _golden_compute_per_batch(_GoldenComputePerBatchInputs(
+            b_index=b_index, b=b, q_bnsd=q_bnsd, n_tile=n_tile, n_q=n_q,
+            block_size=block_size, block_table=block_table, k_cache=k_cache, v_cache=v_cache,
+            d_k=d_k, d_v=d_v, scalar=scalar, block_num_per_batch=block_num_per_batch, act_seqs=act_seqs))
         tiled_out.extend(batch_results)
     attent_out = torch.cat(tiled_out, dim=0)
     return (attent_out, )
