@@ -29,8 +29,6 @@
         -t/--targets: 指定编译目标
         -j/--job_num: 指定编译并行度
         --build_type: 指定构建类型 (Debug/Release/MinSizeRel/RelWithDebInfo)
-        -u/--utest: 启用 UTest 测试
-        -s/--stest: 启用 STest 测试
         -c/--clean: 清理构建目录和安装目录
 
 示例:
@@ -78,6 +76,7 @@ class FeatureParam():
     frontend_type: Optional[str] = None  # 前端类型, 支持 python3, cpp
     backend_type: Optional[str] = None  # 后端类型, 支持 npu, cost_model
     whl_plat_name: Optional[str] = None  # python3 whl 包 plat-name
+    whl_isolation: bool = False  # 以 isolation 模式编译 whl 包
 
     def __init__(self, args):
         """初始化 FeatureParam 实例
@@ -93,6 +92,8 @@ class FeatureParam():
             logging.warning("Environment variable ASCEND_HOME_PATH is unset/empty, falling back to cost_model backend.")
             self.backend_type = "cost_model"
         self.whl_plat_name = f"{args.plat_name}_{BuildCtrl.get_system_processor()}" if args.plat_name else ""
+        self.whl_isolation = args.isolation
+        self.multi_py3_cfg = None
 
     def __str__(self) -> str:
         """返回特性参数的字符串表示
@@ -106,6 +107,7 @@ class FeatureParam():
         if self.frontend_type_python3:
             if self.whl_plat_name:
                 desc += f"\n    PlatName                : {self.whl_plat_name}"
+            desc += f"\n    Isolation               : {self.whl_isolation}"
         desc += f"\n    Backend                 : {self.backend_type}"
         return desc
 
@@ -117,6 +119,21 @@ class FeatureParam():
         :rtype: bool
         """
         return self.frontend_type in ["python", "python3"]
+    
+    @property
+    def multi_py3_min_minor(self) -> Optional[int]:
+        minor_list = [int(c.minor) for c in (self.multi_py3_cfg or [])]
+        if minor_list:
+            return min(minor_list)
+        else:
+            return None
+
+    @property
+    def multi_py3_exe_cfg(self) -> str:
+        if not self.multi_py3_cfg:
+            return ""
+        cfg_list = [f"{cfg.exe}" for cfg in self.multi_py3_cfg]
+        return ":".join(cfg_list)
 
     @staticmethod
     def reg_args(parser, ext: Optional[Any] = None):
@@ -135,10 +152,11 @@ class FeatureParam():
                             choices=["manylinux2014", "manylinux_2_24", "manylinux_2_28"],
                             help="whl plat_name, such as manylinux2014/manylinux_2_24/manylinux_2_28 etc.")
         parser.add_argument("-b", "--backend", nargs="?", type=str, default="npu",
-
-
                             choices=["npu", "cost_model"],
                             help="backend, such as npu/cost_model etc.")
+        parser.add_argument("--no_isolation", action="store_false", default=True, dest="isolation",
+                            help="Disable building the project(whl) in an isolated virtual environment. "
+                                 "Build dependencies must be installed separately when this option is used.")
 
 
 @dataclasses.dataclass
@@ -493,9 +511,7 @@ class TestsParam():
         :param args: 命令行参数解析结果
         """
         self.exec: TestsExecuteParam = TestsExecuteParam(args=args)
-        self.utest: TestsFilterParam = TestsFilterParam(argv=args.utest, opt="ENABLE_UTEST")
         self.golden: TestsGoldenParam = TestsGoldenParam(args=args)
-        self.stest: TestsFilterParam = TestsFilterParam(argv=args.stest, opt="ENABLE_STEST")
         self.models: TestsFilterParam = TestsFilterParam(argv=args.models)
 
     def __str__(self) -> str:
@@ -508,14 +524,6 @@ class TestsParam():
             return ""
         desc = f"\nTests"
         desc += f"{self.exec}"
-        if self.utest.enable:
-            desc += f"\n    Utest"
-            desc += f"\n                     Enable : {self.utest.enable}"
-            desc += f"\n                     Filter : {self.utest.filter_str}"
-        if self.stest.enable:
-            desc += f"\n    Stest"
-            desc += f"\n                     Enable : {self.stest.enable}"
-            desc += f"\n                     Filter : {self.stest.filter_str}"
         if self.models.enable:
             desc += f"\n    Models"
             desc += f"\n                     Enable : {self.models.enable}"
@@ -529,8 +537,7 @@ class TestsParam():
         :return: 如果启用了任意类型的测试, 返回 True
         :rtype: bool
         """
-        tests_enable = self.utest.enable or self.stest.enable
-        return tests_enable or self.models.enable
+        return self.models.enable
 
     @staticmethod
     def reg_args(parser, ext: Optional[Any] = None):
@@ -543,9 +550,7 @@ class TestsParam():
         :type ext: Optional[Any]
         """
         TestsExecuteParam.reg_args(parser=parser)
-        TestsFilterParam.reg_args(parser=parser, ext="utest")
         TestsGoldenParam.reg_args(parser=parser)
-        TestsFilterParam.reg_args(parser=parser, ext="stest")
         TestsFilterParam.reg_args(parser=parser, ext="models")
 
 
@@ -566,7 +571,8 @@ class BuildCtrl():
         self.origin_timeout: Optional[int] = args.timeout if args.timeout and args.timeout > 0 else None  # 超时时长
         self.remain_timeout: Optional[int] = self.origin_timeout
         self.src_root: Path = Path(__file__).parent.resolve()
-        self.build_root: Path = Path(Path.cwd(), "build")
+        self.pypto_root: Path = Path(__file__).parent.parent.resolve().joinpath("pypto")
+        self.build_root: Path = Path(self.pypto_root, "build")
         self.install_root: Path = Path(self.build_root.parent, "build_out")
         self.feature: FeatureParam = FeatureParam(args=args)
         self.build: BuildParam = BuildParam(args=args)
@@ -577,6 +583,7 @@ class BuildCtrl():
         self.pip_dependence_desc: Dict[str, str] = {"pip": ">=22.1"}
         self.pip_support_config_setting = self.check_pip_dependencies(deps=self.pip_dependence_desc,
                                                                       raise_err=False, log_err=False)
+
         devs = ["0"]
         if args.device is not None:
             devs = [str(d) for d in args.device if d is not None]
@@ -595,7 +602,7 @@ class BuildCtrl():
         desc += f"\n    Python3                 : {sys.executable} ({py3_ver.major}.{py3_ver.minor}.{py3_ver.micro})"
         desc += f"\n    pip3                    : {pip_ver}"
         desc += f"\nPath"
-        desc += f"\n    Source  Dir             : {self.src_root}"
+        desc += f"\n    Source  Dir             : {self.pypto_root}"
         desc += f"\n    Build   Dir             : {self.build_root}"
         desc += f"\n    Install Dir             : {self.install_root}"
         desc += f"\n    3rd     Dir             : {self.third_party_path}"
@@ -715,7 +722,28 @@ class BuildCtrl():
         logging.info("%s", ctrl)
         logging.info("Front-end(python3), start process")
         ctrl.py_clean()
+        ctrl.py_build()
         ctrl.py_tests()
+    
+
+    @staticmethod
+    def get_system_processor() -> str:
+        """获取系统处理器架构名称
+
+        通过 platform.machine() 获取当前系统的处理器架构, 并将常见的别名映射到标准名称.
+
+        :return: 标准化的处理器架构名称, 如 x86_64 或 aarch64
+        :rtype: str
+        """
+        machine = platform.machine().lower()
+        arch_map = {  # 直接映射常见架构
+            "x86_64": "x86_64",
+            "amd64": "x86_64",
+            "aarch64": "aarch64",
+            "arm64": "aarch64",
+        }
+        return arch_map.get(machine, machine)
+
 
     def run_build_cmd(self, cmd: str, update_env: Optional[Dict[str, str]] = None,
                       check: bool = True, pg_desc: str = "CMake") -> Tuple[subprocess.CompletedProcess, str]:
@@ -723,9 +751,6 @@ class BuildCtrl():
 
         因以下原因, 设置本函数, 而非调用原生 subprocess.run
             1. 支持多 target 构建, 各 target 构建时长共享公共 timeout 配置;
-            2. UTest/STest 并行执行场景下, 执行时进程调用关系为:
-                   build_ci.py(主进程) -> 进程1(CMake) -> 进程2(CMake Generator, make/ninja) -> 进程3(Python)-> 进程4(exe)
-               此时若 进程1 超时, 需要触发其子/孙进程感知, 进而结束
 
         本函数内支持 timeout 重计算, 仅执行成功时会进行重计算
 
@@ -769,8 +794,9 @@ class BuildCtrl():
         # 超时时长更新
         duration = self._duration(ts=ts)
         return subprocess.CompletedProcess(process.args, ret_code, stdout, stderr), duration
-
-    def pip_install(self, whl: Path, dest: Optional[Path] = None):
+    
+    def pip_install(self, install_root: Path, dest: Optional[Path] = None,
+                    update_env: Optional[Dict[str, str]] = None):
         """安装指定的 whl 包
 
         使用 pip 命令安装指定的 whl 包, 支持自定义安装路径和参数.
@@ -784,13 +810,27 @@ class BuildCtrl():
         :param update_env: 环境变量 (额外更新内容)
         :type update_env: Optional[Dict[str, str]]
         """
-        cmd = f"{sys.executable} -m pip install " + f"{whl}" + (" -vvv " if self.verbose else "")
-        cmd += f" --target={dest}" if dest else ""
-        print(f"=========pip_install {cmd}===========")
-        logging.info("Install %s, Cmd: %s, Timeout: %s", whl, cmd, self.remain_timeout)
-        _, duration = self.run_build_cmd(cmd=cmd, pg_desc="pip")
-        logging.info("Install %s%s success, %s", whl, f" to {dest}" if dest else "", duration)
+        root_dir = "."
+        # 递归匹配 pypto 开头 whl
+        wheel_list = list(Path(install_root).rglob("pypto*.whl"))
 
+        # 只取唯一包（目录仅有一个）
+        if wheel_list:
+            whl_file = wheel_list[0]
+            whl_path = whl_file.resolve()
+            whl_name = whl_file.name
+            print("找到唯一whl文件完整路径:", whl_path)
+            print("whl包名:", whl_name)
+        else:
+            raise FileNotFoundError("未找到任何 pypto 开头的 .whl 安装包")
+
+        cmd = f"{sys.executable} -m pip install " + f"{whl_path}" + \
+            (" --no-compile --no-deps --no-cache-dir ")
+        logging.info("Install %s, Cmd: %s, Timeout: %s", whl_path, cmd, self.remain_timeout)
+        _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="pip")
+        logging.info("Install %s%s success, %s", whl_path, f" to {dest}" if dest else "", duration)
+        
+    
     def pip_uninstall(self, name: str, path: Optional[Path] = None):
         """卸载指定的 whl 包
 
@@ -801,49 +841,89 @@ class BuildCtrl():
         :param path: 指定安装路径, 如果指定则直接删除对应路径下的文件
         :type path: Optional[Path]
         """
-        if path:
-            del_lst = [Path(f) for f in path.glob(pattern=f"{name}-*.dist-info")]
-            pkg_dir = Path(path, name)
-            if pkg_dir.exists() and pkg_dir.is_dir():
-                del_lst.append(pkg_dir)
-            for p in del_lst:
-                shutil.rmtree(p)
-        else:
-            cmd = f"{sys.executable} -m pip uninstall -v -y {name}"
-            logging.info("Uninstall %s package, Cmd: %s, Timeout: %s", name, cmd, self.remain_timeout)
-            _, _ = self.run_build_cmd(cmd=cmd, pg_desc="pip")
+        
+        cmd = f"{sys.executable} -m pip uninstall -v -y {name}"
+        logging.info("Uninstall %s package, Cmd: %s, Timeout: %s", name, cmd, self.remain_timeout)
+        _, _ = self.run_build_cmd(cmd=cmd, pg_desc="pip")
         logging.info("Uninstall %s package%s success", name, f" from {path}" if path else "")
+    
 
     def py_clean(self):
         """清理 Python 前端构建的中间结果
 
         清理包括 CMake 构建目录, Python 缓存文件, 输出目录等. 仅在 clean 标记为 True 时执行额外清理.
         """
-        pkg_src = Path(self.src_root)
-        print(f"========pkg_src is {pkg_src}=======")
-        path_lst = [
-            Path(Path.cwd(), "output"),
-            Path(Path.cwd(), "kernel_meta"),
-            Path(self.src_root, "python/pypto.egg-info"),
-            Path(pkg_src, "__pycache__"),
-            Path(pkg_src, "op/__pycache__"),
-            Path(pkg_src, "lib"),  # edit 模式
-        ]
-        so_glob = pkg_src.glob(pattern=f"*.so")
-        so_path = [Path(p) for p in so_glob]
-        path_lst.extend(so_path)
-        for cache_dir in path_lst:
-            if not cache_dir.exists():
-                continue
-            logging.info("Clean Cache/Output Path(%s)", cache_dir)
-            if cache_dir.is_dir():
-                shutil.rmtree(cache_dir)
-            else:
-                os.remove(cache_dir)
+        try:
+            # 切换工作目录至 pypto 源码根目录 self.pypto_root
+            os.chdir(self.pypto_root)
+            pkg_src = Path(self.pypto_root)
+            path_lst = [
+                Path(Path.cwd(), "output"),
+                Path(Path.cwd(), "kernel_meta"),
+                Path(self.pypto_root, "python/pypto.egg-info"),
+                Path(pkg_src, "__pycache__"),
+                Path(pkg_src, "op/__pycache__"),
+                Path(pkg_src, "lib"),  # edit 模式
+            ]
+            so_glob = pkg_src.glob(pattern=f"*.so")
+            so_path = [Path(p) for p in so_glob]
+            path_lst.extend(so_path)
+            for cache_dir in path_lst:
+                if not cache_dir.exists():
+                    continue
+                logging.info("Clean Cache/Output Path(%s)", cache_dir)
+                if cache_dir.is_dir():
+                    shutil.rmtree(cache_dir)
+                else:
+                    os.remove(cache_dir)
+        finally:
+            os.chdir(self.src_root)
 
     def py_build(self):
-        # 重装 whl 包
-        dist = self.install_root
+        """whl 包编译处理
+
+        支持两种编译模式:
+            1. 正式编译: 调用 build 库触发 setuptools(bdist_wheel 命令) 进而触发 CMake 完成编译
+            2. pip 编译: 调用 pip install 命令触发 setuptools(editable_wheel 命令) 进而触发 CMake 完成编译
+               pip 编译有两种模式:
+               - 常规安装: 适用于生产环境或代码稳定后使用, 安装后对源码的修改不会反映到已安装的包中
+               - 可编辑安装: 便于开发调试, 在 site-packages 中创建指向本地的链接,
+                 对 Python 源码的修改会即时生效, 无需重新安装
+        """
+        update_env = {}
+        if self.third_party_path:
+            print("third party set")
+            update_env.update({"PYPTO_THIRD_PARTY_PATH": self.third_party_path})
+        
+        try:
+            # 切换工作目录至 pypto 源码根目录 self.pypto_root
+            os.chdir(self.pypto_root)
+            # 检查 build 包版本是否符合要求, 之所以将其放在此处检查, 是因为 pyproject.toml 中 build-system.requires 的检查功能
+            # 就是 build 包实现的, 所以将其写在 pyproject.toml 中并无法提前检查
+            self.check_pip_dependencies(deps={"build": ">=1.0.3"}, raise_err=True, log_err=True)
+            cmd = f"{sys.executable} -m build --outdir={self.install_root}"
+            cmd += f" --no-isolation" if not self.feature.whl_isolation else ""
+            cmd += f" {self._get_setuptools_bdist_wheel_config_setting()}"
+            logging.info("Build whl, Cmd: %s, Timeout: %s", cmd, self.remain_timeout)
+            _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="build")
+            logging.info("Build whl success, %s", duration)
+
+            opt = f" --no-compile --no-deps"
+            opt += f" --no-build-isolation" if not self.feature.whl_isolation else ""
+
+            cmd_config_setting, env_config_setting = self._get_setuptools_build_ext_config_setting()
+            if self.pip_support_config_setting:
+                opt += f" {cmd_config_setting}" if cmd_config_setting else ""
+            else:
+                # pip 低版本无 --config-setting 参数, 此时以环境变量方式传入
+                update_env["PYPTO_BUILD_EXT_ARGS"] = env_config_setting
+
+            # 重装 whl 包
+            dist = self._get_pip_install_dist()
+            self.pip_uninstall(name=self.feature.whl_name, path=dist)
+            self.pip_install(install_root=self.install_root, dest=dist, update_env=update_env)
+        finally:
+            os.chdir(self.src_root)
 
     def py_tests(self):
         """执行 Python 前端测试
@@ -851,11 +931,10 @@ class BuildCtrl():
         包括单元测试 (UTest) , 系统测试 (STest) , 模型测试 (Models) .
         如果未使用 pip 安装模式, 会先卸载并重新安装 whl 包.
         """
-        tests_enable = self.tests.utest.enable or self.tests.stest.enable
-        if not tests_enable and not self.tests.models.enable:
+        os.chdir(self.src_root)
+        if not self.tests.models.enable:
             return
         dist = None
-        print(f"==========pip list is {dist}=========")
         # 执行用例, UTest
         # 在 Python 3.12 中, pytest-xdist 通过 os.fork() 创建子进程时会产生 DeprecationWarning.
         # 使用 -W ignore::DeprecationWarning 参数来忽略该警告.
@@ -863,9 +942,6 @@ class BuildCtrl():
             n_workers = str(self.build.job_num)
         else:
             n_workers = "auto"
-        
-        self.py_tests_run_pytest(dist=dist, params=[(self.tests.utest, "tests/ut/")],
-                                 ext=f"-n {n_workers} -W ignore::DeprecationWarning")
 
         # 执行用例, Models/STest, 支持混合执行
         dev_lst = [int(d) for d in self.auto_execute_device_id.split(":")]
@@ -877,10 +953,6 @@ class BuildCtrl():
 
         # 执行用例Models
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/")],
-                                 ext=ext_str)
-        
-        # 执行用例STest
-        self.py_tests_run_pytest(dist=dist, params=[(self.tests.stest, "tests/st/")],
                                  ext=ext_str)
 
         # 执行多卡用例 通过world_size区分 当前通信用例都是4卡
@@ -940,7 +1012,7 @@ class BuildCtrl():
 
         # ===============================================
         cmd = f"{sys.executable} -m pytest {filter_str} -v --durations=0 -s --capture=no"
-        cmd += f" --rootdir={self.src_root} {ext}"
+        cmd += f" --rootdir={self.pypto_root} {ext}"
 
         if self.check_pip_dependencies(deps={"pytest-xdist": ">=3.8.0"}, raise_err=False, log_err=False):
             cmd += " --no-loadscope-reorder"
@@ -949,24 +1021,6 @@ class BuildCtrl():
         _, duration = self.run_build_cmd(cmd=cmd, update_env=update_env, pg_desc="pytest")
         logging.info("pytest run success, %s", duration)
 
-
-    @staticmethod
-    def get_system_processor() -> str:
-        """获取系统处理器架构名称
-
-        通过 platform.machine() 获取当前系统的处理器架构, 并将常见的别名映射到标准名称.
-
-        :return: 标准化的处理器架构名称, 如 x86_64 或 aarch64
-        :rtype: str
-        """
-        machine = platform.machine().lower()
-        arch_map = {  # 直接映射常见架构
-            "x86_64": "x86_64",
-            "amd64": "x86_64",
-            "aarch64": "aarch64",
-            "arm64": "aarch64",
-        }
-        return arch_map.get(machine, machine)
 
     def _py_tests_get_xsan_env(self) -> Dict[str, str]:
         update_env = {}
@@ -997,8 +1051,31 @@ class BuildCtrl():
 
     def _get_pip_install_dist(self) -> Optional[Path]:
         # pip install -e 场景需直接安装到 site-packages 默认路径(与指定 --target 参数逻辑冲突), 其他场景安装到自定义目录
-        return None
+        return self.install_root
 
+    def _get_setuptools_build_ext_config_setting(self) -> Tuple[str, str]:
+        env_setting = ""
+        multi_py3_exe_cfg = self.feature.multi_py3_exe_cfg
+        if multi_py3_exe_cfg:
+            env_setting += f" --multi-py3-exe={multi_py3_exe_cfg}"
+        cmd_setting = ""
+        if env_setting:
+            cmd_setting = f" --config-setting=--build-option='build_ext {env_setting}'"
+        return cmd_setting, env_setting
+
+    def _get_setuptools_bdist_wheel_config_setting(self) -> str:
+        cmd = f" bdist_wheel --plat-name={self.feature.whl_plat_name}" if self.feature.whl_plat_name else ""
+        multi_py3_min_minor = self.feature.multi_py3_min_minor
+        if multi_py3_min_minor:
+            cmd += f" --py-limited-api=cp{sys.version_info.major}{multi_py3_min_minor}"
+        cmd += f" build --build-base={self.build_root.name}"
+        cmd += f" --parallel={self.build.job_num}" if self.build.job_num else ""
+        _, ext = self._get_setuptools_build_ext_config_setting()
+        if ext:
+            cmd += f" build_ext {ext}"
+        cmd = f" --config-setting=--build-option='{cmd}'"
+        return cmd
+    
     def _duration(self, ts: datetime) -> str:
         duration = int((datetime.now(tz=timezone.utc) - ts).seconds)
         duration_str = f"Duration {duration} secs"

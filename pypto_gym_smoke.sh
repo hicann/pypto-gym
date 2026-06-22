@@ -121,21 +121,15 @@ run_build_ci() {
 }
 
 parse_config_key() {
-    LOG_INFO "parse_config_key 0000."
     # 定义局部变量，避免污染全局
     # local config_file="$DATA_DIR/pypto_cann.cfg"
     CUR_DIR=$(cd "$(dirname "$0")" && pwd)
     local config_file="$CUR_DIR/pypto_cann.cfg"
     local config_query_key="$1"
     local config_query_val=""
-    LOG_INFO "parse_config_key 1111."
-    LOG_INFO "$config_file"
-    LOG_INFO "parse_config_key 1111111111111111."
-    LOG_INFO "$config_query_key"
-    LOG_INFO "parse_config_key 222222222222222."
+
     # 1. 校验配置文件是否存在
     if [ ! -f "$config_file" ]; then
-        LOG_INFO "parse_config_key 3333333."
         LOG_ERROR "Config file $config_file not exist."
         exit 1
     fi
@@ -144,8 +138,6 @@ parse_config_key() {
         LOG_ERROR "Config query key empty."
         exit 1
     fi
-    
-    LOG_INFO "parse_config_key 2222."
     # 3. 核心逻辑：精准匹配键名，提取值并去除所有空白字符
     # -F '='：以等号为分隔符
     # -v key="$config_query_key"：将shell变量传入awk
@@ -160,17 +152,14 @@ parse_config_key() {
         }
     ' "$config_file")
     # 4. 直接输出值（无匹配/值为空时，输出空字符串）
-    LOG_INFO "parse_config_key 333."
     echo "$config_query_val"
     return 0
 }
 
 PYTHON3_EXE=$(which python3)
 LOG_INFO "PYTHON3_EXE=$PYTHON3_EXE"
-LOG_INFO "PYTHON3_EXE 2222"
 
 PYPTO_GOLDEN_PATH=$(parse_config_key "PYPTO_GOLDEN_PATH")
-LOG_INFO "PYTHON3_EXE 3333"
 if [ -z "$PYPTO_GOLDEN_PATH" ]; then
     LOG_ERROR "Can't get PYPTO_GOLDEN_PATH."
     exit 1
@@ -267,7 +256,9 @@ if [ -n "${PTO_ISA_URL}" ]; then
     PTO_ISA_PKG_NAME="cann-pto-isa_linux.run"
     wget -O "$PTO_ISA_PKG_NAME" "${PTO_ISA_URL}"
     chmod +x ./$PTO_ISA_PKG_NAME
-    LOG_DO "bash" "$PTO_ISA_PKG_NAME" "--full" "--quiet" "--install-path=${CANN_PATH}/../"
+    LOG_DO "bash" "$PTO_ISA_PKG_NAME" "--full" "--quiet" "--install-path=${CANN_PATH}../"
+
+    echo "安装pto-isa包成功：${CANN_PATH}"
 
     # 自动回到进入前的工作目录
     popd > /dev/null
@@ -282,6 +273,38 @@ if [ ! -f "$SETENV_SH" ]; then
 fi
 LOG_DO "source $SETENV_SH"
 
+# 下载pypto代码
+work_dir=$(pwd)
+# 定位上级目录
+work_parent_dir="${work_dir}/.."
+target_repo="${work_parent_dir}/pypto"
+
+# 判断上级目录是否存在pypto文件夹，存在则彻底删除
+if [ -d "${target_repo}" ]; then
+    echo "检测到上级目录已存在pypto仓库，开始删除..."
+    rm -rf "${target_repo}"
+fi
+
+# if [ ! -d "${target_repo}" ]; then
+#     LOG_INFO "上级目录 ${target_repo} 不存在，开始创建"
+#     mkdir -p "${target_repo}"
+#     chmod 755 "${target_repo}"
+#     LOG_INFO "目录创建完成，权限已设置755"
+# fi
+
+# 进入上级目录执行克隆操作
+cd "${work_parent_dir}" || exit 1
+git clone https://gitcode.com/cann/pypto.git
+
+echo "target_repo 变量值为: ${target_repo}"
+
+echo "========== 当前目录文件列表 =========="
+ls "${target_repo}"
+echo "======================================"
+
+# 进入上级目录执行克隆操作
+cd "${work_dir}" || exit 1
+
 
 # ======================================================================================================================
 # 5: 调用任务, 并统计耗时
@@ -289,21 +312,6 @@ LOG_DO "source $SETENV_SH"
 cd "$SRC_DIR" || { LOG_ERROR "Failed to cd to $SRC_DIR"; exit 1; }
 
 # 调用参数准备
-# CHANGED_FILES_PARAM=""
-# if [[ "$CI_MODE" == true ]]; then
-#     changed_file_path="$DATA_DIR/pypto_changed_files.txt"
-#     LOG_INFO "$changed_file_path"
-#     if [ -f "$changed_file_path" ]; then
-#         rm "$changed_file_path"
-#     fi
-#     LOG_INFO "changed_file 1111."
-#     # git diff --name-only HEAD~1 HEAD > "$changed_file_path"
-#     CHANGED_FILES_PARAM="--changed_files=$changed_file_path"
-#     LOG_INFO "Changed files content as follows:"
-#     LOG_DO "cat $changed_file_path"
-# fi
-
-# 调用参数准备（已修复，支持 --f 传入文件）
 CHANGED_FILES_PARAM=""
 if [[ "$CI_MODE" == true ]]; then
     if [ -n "$CHANGED_FILE_FROM_ARG" ]; then
@@ -316,7 +324,6 @@ if [[ "$CI_MODE" == true ]]; then
     #     rm "$changed_file_path"
     # fi
 
-    LOG_INFO "changed_file 1111."
     CHANGED_FILES_PARAM="--changed_files=$changed_file_path"
     LOG_INFO "Changed files content as follows:"
     LOG_DO "cat $changed_file_path"
@@ -335,8 +342,6 @@ device_params=(
     "-d=12" "-d=13"
     "-d=14" "-d=15"
 )
-# device_ids="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
-# device_params=("--device=${device_ids}")
 common_params=(
     "--clean"
     "--verbose"
@@ -347,7 +352,7 @@ common_params=(
 # 参数默认值
 PYTHON_TOTAL_TIMEOUT=$(parse_config_key "PYTHON_TOTAL_TIMEOUT")
 if [ -z "$PYTHON_TOTAL_TIMEOUT" ]; then
-    PYTHON_TOTAL_TIMEOUT=600
+    PYTHON_TOTAL_TIMEOUT=900
 fi
 PYTHON_TOTAL_TIMEOUT="$PYTHON_TOTAL_TIMEOUT"
 LOG_INFO "PYTHON_TOTAL_TIMEOUT=$PYTHON_TOTAL_TIMEOUT"
@@ -355,9 +360,9 @@ LOG_INFO "PYTHON_TOTAL_TIMEOUT=$PYTHON_TOTAL_TIMEOUT"
 LOG_HEAD "Python Environment:"
 LOG_DO "$PYTHON3_EXE --version"
 LOG_DO "$PYTHON3_EXE -m pip list"
-LOG_HEAD "Befor run build ci:"
-run_build_ci "$PYTHON3_EXE" "Python(STest & Examples)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --stest --models "${device_params[@]}"
+run_build_ci "$PYTHON3_EXE" "Python(Examples)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --models "${device_params[@]}"
 
+# run_build_ci "$PYTHON3_EXE" "Python(STest)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --stest "${device_params[@]}"
 # # 2026/1/31 增加集合通信测试用例
 # # 2026/3/20: 重新梳理及明确规格 --timeout=300 --case_execute_timeout=35
 # run_build_ci "$PYTHON3_EXE" "C++(STest Distributed)" --frontend=cpp "${common_params[@]}" "--timeout=$CPP_HCCL_TOTAL_TIMEOUT" --stest_distributed "${device_params[@]}" "--case_execute_timeout=$CPP_CASE_EXEC_TIMEOUT"

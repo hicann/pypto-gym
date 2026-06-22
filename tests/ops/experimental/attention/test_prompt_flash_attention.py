@@ -24,6 +24,7 @@ while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+import pytest
 
 import torch.nn.functional as F
 import numpy as np
