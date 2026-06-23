@@ -200,7 +200,8 @@ def moe_finalize_routing_v2_wrapper(
     # ========================================
 
     bias_param = bias if bias is not None else torch.zeros((1, H), dtype=torch.bfloat16, device=expanded_x.device)
-    expert_idx_param = expert_idx if expert_idx is not None else torch.zeros((1, 1), dtype=torch.int32, device=expanded_x.device)
+    expert_idx_param = (expert_idx if expert_idx is not None
+                        else torch.zeros((1, 1), dtype=torch.int32, device=expanded_x.device))
     scales_param = scales if scales is not None else torch.ones((1, 1), dtype=torch.bfloat16, device=expanded_x.device)
     x1_param = x1 if x1 is not None else torch.zeros((1, H), dtype=torch.bfloat16, device=expanded_x.device)
     x2_param = x2 if x2 is not None else torch.zeros((1, H), dtype=torch.bfloat16, device=expanded_x.device)

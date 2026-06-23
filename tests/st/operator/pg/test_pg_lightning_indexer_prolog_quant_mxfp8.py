@@ -484,7 +484,8 @@ try:
     )
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        logging.warning("Skip: torchair not installed, skip NPU registration for operator 'lightning_indexer_prolog_quant_mxfp8'")
+        logging.warning("Skip: torchair not installed, skip NPU registration for operator "
+                        "'lightning_indexer_prolog_quant_mxfp8'")
     else:
         logging.warning(f"Skip: Unexpected error : {e}")
 

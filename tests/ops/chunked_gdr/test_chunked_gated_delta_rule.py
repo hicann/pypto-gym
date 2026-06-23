@@ -62,7 +62,7 @@ sys.path.insert(0, str(_IMPL))
 
 import pytest
 
-from chunked_gated_delta_rule_golden import chunked_gated_delta_rule_golden
+from chunked_gated_delta_rule_golden import chunked_gated_delta_rule_golden, ChunkedGatedDeltaRuleGoldenInputs
 from chunked_gated_delta_rule_impl import chunked_gated_delta_rule_wrapper
 
 # ═══════════════════════════════════════════════════════════════════
@@ -603,12 +603,13 @@ def run_single_test(config, device_id=0):
     chunk_size = dims["L"]
 
     golden_attn, golden_state = chunked_gated_delta_rule_golden(
-        inputs["query"], inputs["key"], inputs["value"],
-        inputs["beta"], inputs["gate"], inputs["states"],
-        inputs["mask"], inputs["tril_mask"], inputs["eye"],
-        inputs["act_seq_len"],
-        chunk_size=chunk_size,
-    )
+        ChunkedGatedDeltaRuleGoldenInputs(
+            query=inputs["query"], key=inputs["key"], value=inputs["value"],
+            beta=inputs["beta"], gate=inputs["gate"], states=inputs["states"],
+            mask=inputs["mask"], tril_mask=inputs["tril_mask"], eye=inputs["eye"],
+            act_seq_len=inputs["act_seq_len"],
+            chunk_size=chunk_size,
+        ))
 
     torch.npu.set_device(device_id)
 

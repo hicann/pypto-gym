@@ -292,16 +292,6 @@ def _gen_topk_indices(b, s_q, n_kv, topk, slc_actual_seq):
                 perm = torch.randperm(slc_actual_seq[b_i])
                 topk_indices[b_i, s_q_i, :] = perm[:topk]
     return topk_indices.reshape(b * s_q, n_kv * topk)
-    """Generate topk indices for sparse flash attention."""
-    topk_indices = torch.zeros(b, s_q, topk).to(torch.int32)
-    for b_i in range(b):
-        for s_q_i in range(s_q):
-            if slc_actual_seq[b_i] < topk:
-                topk_indices[b_i, s_q_i, :slc_actual_seq[b_i]] = torch.arange(0, slc_actual_seq[b_i])
-            else:
-                perm = torch.randperm(slc_actual_seq[b_i])
-                topk_indices[b_i, s_q_i, :] = perm[:topk]
-    return topk_indices.reshape(b * s_q, n_kv * topk)
 
 
 def _prepare_kv_data(kn_bsnd_tmp, kr, block_num, block_size,

@@ -25,7 +25,8 @@ import torch
 import torch_npu  # noqa: F401
 import pypto
 
-from experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import flash_attention_score_kernel_npu
+from experimental.ops_transformer.flash_attention_score.flash_attention_score_impl import (
+    flash_attention_score_kernel_npu)
 from flash_attention_score_golden import (
     flash_attention_score_golden,
     FlashAttentionInputs,
@@ -44,7 +45,7 @@ def _precision_verify(impl_out, gold_out, tag):
     gold_out = tuple(t.cpu() for t in gold_out)
     impl_out = tuple(t.cpu() for t in impl_out)
 
-    names   = ("output",      "softmax_max", "softmax_sum")
+    names = ("output", "softmax_max", "softmax_sum")
     atol_rt = [(0.0001, 0.0078125), (0.000025, 0.005), (0.000025, 0.005)]
 
     all_ok = True
@@ -55,9 +56,9 @@ def _precision_verify(impl_out, gold_out, tag):
         n_total = g.numel()
 
         abs_err = (im - g).abs()
-        exceed  = abs_err > (atol + rtol * g.abs())
-        n_fail  = exceed.sum().item()
-        max_d   = abs_err.max().item()
+        exceed = abs_err > (atol + rtol * g.abs())
+        n_fail = exceed.sum().item()
+        max_d = abs_err.max().item()
 
         passed = (n_fail == 0)
         print(f"  {tag}_{name}: n={n_total}  fail={n_fail}  "
@@ -70,8 +71,8 @@ def _precision_verify(impl_out, gold_out, tag):
     if not all_ok:
         return False
 
-    g     = gold_out[0].cpu().float()
-    im    = impl_out[0].cpu().float()
+    g = gold_out[0].cpu().float()
+    im = impl_out[0].cpu().float()
     n_tot = g.numel()
 
     abs_err = (im - g).abs()
@@ -164,7 +165,7 @@ def test_l0() -> None:
     dev_id = _set_device()
     dev = torch.device(f"npu:{dev_id}")
 
-    shape  = {"B": 1, "N": 64, "Sq": 1024, "Skv": 1024, "D": 128}
+    shape = {"B": 1, "N": 64, "Sq": 1024, "Skv": 1024, "D": 128}
     inputs = _make_inputs(dev, seed=50, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
@@ -183,7 +184,7 @@ def test_l1() -> None:
     dev_id = _set_device()
     dev = torch.device(f"npu:{dev_id}")
 
-    shape  = {"B": 2, "N": 32, "Sq": 500, "Skv": 500, "D": 128}
+    shape = {"B": 2, "N": 32, "Sq": 500, "Skv": 500, "D": 128}
     inputs = _make_inputs(dev, seed=71, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)
@@ -202,7 +203,7 @@ def test_l2() -> None:
     dev_id = _set_device()
     dev = torch.device(f"npu:{dev_id}")
 
-    shape  = {"B": 8, "N": 32, "Sq": 439, "Skv": 439, "D": 128}
+    shape = {"B": 8, "N": 32, "Sq": 439, "Skv": 439, "D": 128}
     inputs = _make_inputs(dev, seed=99, shape=shape, pse_type=1, keep_prob=1.0)
 
     print("=" * 60)

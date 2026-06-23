@@ -28,26 +28,42 @@ def _assemble_q_tensors(cur_n_tile, d_n, d_r, cur_offset, dtype, q_nope, q_rope)
     return qi
 
 
-def _load_kv_cache_block(b_idx, bn, block_size, cur_seq, d_n, d_r, dtype,
-                          block_table, k_nope_cache, k_rope_cache, v_nope_cache, is_nz_format):
+@dataclass
+class _LoadKvCacheBlockInputs:
+    b_idx: Any
+    bn: Any
+    block_size: Any
+    cur_seq: Any
+    d_n: Any
+    d_r: Any
+    dtype: Any
+    block_table: Any
+    k_nope_cache: Any
+    k_rope_cache: Any
+    v_nope_cache: Any
+    is_nz_format: Any
+
+
+def _load_kv_cache_block(inputs: _LoadKvCacheBlockInputs):
     """Load one KV cache block and return assembled KJ and VJ tensors."""
-    cur_s2_tile = block_size
-    cur_block_idx = block_table[b_idx, bn]
+    cur_s2_tile = inputs.block_size
+    cur_block_idx = inputs.block_table[inputs.b_idx, inputs.bn]
     cur_block_idx.as_variable()
-    kn = pypto.view(k_nope_cache, [cur_s2_tile, d_n],
-                    [cur_block_idx * block_size, 0],
-                    valid_shape=[(cur_seq - bn * block_size).min(block_size), d_n])
-    kr = pypto.view(k_rope_cache, [cur_s2_tile, d_r],
-                    [cur_block_idx * block_size, 0],
-                    valid_shape=[(cur_seq - bn * block_size).min(block_size), d_r])
-    kj_fmt = pypto.TileOpFormat.TILEOP_NZ if is_nz_format else pypto.TileOpFormat.TILEOP_ND
-    kj = pypto.tensor([cur_s2_tile, d_n + d_r], dtype, "kj", kj_fmt)
+    kn = pypto.view(inputs.k_nope_cache, [cur_s2_tile, inputs.d_n],
+                    [cur_block_idx * inputs.block_size, 0],
+                    valid_shape=[(inputs.cur_seq - inputs.bn * inputs.block_size).min(inputs.block_size), inputs.d_n])
+    kr = pypto.view(inputs.k_rope_cache, [cur_s2_tile, inputs.d_r],
+                    [cur_block_idx * inputs.block_size, 0],
+                    valid_shape=[(inputs.cur_seq - inputs.bn * inputs.block_size).min(inputs.block_size), inputs.d_r])
+    kj_fmt = pypto.TileOpFormat.TILEOP_NZ if inputs.is_nz_format else pypto.TileOpFormat.TILEOP_ND
+    kj = pypto.tensor([cur_s2_tile, inputs.d_n + inputs.d_r], inputs.dtype, "kj", kj_fmt)
     pypto.assemble(kn, [0, 0], kj)
-    pypto.assemble(kr, [0, d_n], kj)
-    kj = pypto.view(kj, [cur_s2_tile, d_n + d_r], [0, 0],
-                    valid_shape=[(cur_seq - bn * block_size).min(block_size), d_r + d_n])
-    vj = pypto.view(v_nope_cache, [cur_s2_tile, d_n], [cur_block_idx * block_size, 0],
-                    valid_shape=[(cur_seq - bn * block_size).min(block_size), d_n])
+    pypto.assemble(kr, [0, inputs.d_n], kj)
+    kj = pypto.view(kj, [cur_s2_tile, inputs.d_n + inputs.d_r], [0, 0],
+                    valid_shape=[(inputs.cur_seq - inputs.bn * inputs.block_size).min(
+                        inputs.block_size), inputs.d_r + inputs.d_n])
+    vj = pypto.view(inputs.v_nope_cache, [cur_s2_tile, inputs.d_n], [cur_block_idx * inputs.block_size, 0],
+                    valid_shape=[(inputs.cur_seq - inputs.bn * inputs.block_size).min(inputs.block_size), inputs.d_n])
     return kj, vj
 
 
@@ -87,53 +103,87 @@ def op_page_attention(params, q_nope, k_nope_cache, v_nope_cache, q_rope, k_rope
     c2_tile = tile_config.c2_tile_shape
     v2_tile = tile_config.v2_tile_shape
 
-    def _bn_first_iteration_body(oi_update, li_update, mi_update, tilda_pij_f16, vj, tilda_lij, tilda_mij,
-                                  c2_tile, v2_tile, bn, oi_offset, attention_out):
-        pypto.set_cube_tile_shapes([c2_tile[0], c2_tile[1]], [c2_tile[2], c2_tile[3]], [c2_tile[4], c2_tile[5]])
-        pypto.set_semantic_label("b1-matmul2")
-        pypto.set_matrix_size([tilda_pij_f16.shape[0], tilda_pij_f16.shape[1], vj.shape[1]])
-        oi_tmp = pypto.matmul(tilda_pij_f16, vj, pypto.DT_FP32)
-        pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
-        pypto.set_semantic_label("b1-after-matmul2")
-        if pypto.cond(pypto.is_loop_end(bn)):
-            pypto.set_semantic_label("b1-after-matmul2")
-            oi_update[:] = (pypto.div(oi_tmp, tilda_lij))
-            pypto.assemble(oi_update, oi_offset, attention_out)
-        else:
-            oi_update[:] = (oi_tmp)
-        li_update[:] = (tilda_lij)
-        mi_update[:] = (tilda_mij)
+    @dataclass
+    class _BnFirstIterationBodyInputs:
+        oi_update: Any
+        li_update: Any
+        mi_update: Any
+        tilda_pij_f16: Any
+        vj: Any
+        tilda_lij: Any
+        tilda_mij: Any
+        c2_tile: Any
+        v2_tile: Any
+        bn: Any
+        oi_offset: Any
+        attention_out: Any
 
-    def _bn_subsequent_iteration_body(oi_update, li_update, mi_update, tilda_pij_f16, vj, tilda_mij, tilda_lij,
-                                       c2_tile, v2_tile, bn, oi_offset, attention_out):
-        oi = oi_update
-        li = li_update
-        mi = mi_update
+    def _bn_first_iteration_body(inputs: _BnFirstIterationBodyInputs):
+        pypto.set_cube_tile_shapes(
+            [inputs.c2_tile[0], inputs.c2_tile[1]],
+            [inputs.c2_tile[2], inputs.c2_tile[3]],
+            [inputs.c2_tile[4], inputs.c2_tile[5]])
+        pypto.set_semantic_label("b1-matmul2")
+        pypto.set_matrix_size([inputs.tilda_pij_f16.shape[0], inputs.tilda_pij_f16.shape[1], inputs.vj.shape[1]])
+        oi_tmp = pypto.matmul(inputs.tilda_pij_f16, inputs.vj, pypto.DT_FP32)
+        pypto.set_vec_tile_shapes(inputs.v2_tile[0], inputs.v2_tile[1])
+        pypto.set_semantic_label("b1-after-matmul2")
+        if pypto.cond(pypto.is_loop_end(inputs.bn)):
+            pypto.set_semantic_label("b1-after-matmul2")
+            inputs.oi_update[:] = (pypto.div(oi_tmp, inputs.tilda_lij))
+            pypto.assemble(inputs.oi_update, inputs.oi_offset, inputs.attention_out)
+        else:
+            inputs.oi_update[:] = (oi_tmp)
+        inputs.li_update[:] = (inputs.tilda_lij)
+        inputs.mi_update[:] = (inputs.tilda_mij)
+
+    @dataclass
+    class _BnSubsequentIterationBodyInputs:
+        oi_update: Any
+        li_update: Any
+        mi_update: Any
+        tilda_pij_f16: Any
+        vj: Any
+        tilda_mij: Any
+        tilda_lij: Any
+        c2_tile: Any
+        v2_tile: Any
+        bn: Any
+        oi_offset: Any
+        attention_out: Any
+
+    def _bn_subsequent_iteration_body(inputs: _BnSubsequentIterationBodyInputs):
+        oi = inputs.oi_update
+        li = inputs.li_update
+        mi = inputs.mi_update
         pypto.set_semantic_label("Softmax-acc")
-        mi_new = pypto.maximum(mi, tilda_mij)
+        mi_new = pypto.maximum(mi, inputs.tilda_mij)
         t1 = pypto.sub(mi, mi_new)
         t2 = pypto.exp(t1)
-        t3 = pypto.sub(tilda_mij, mi_new)
+        t3 = pypto.sub(inputs.tilda_mij, mi_new)
         t4 = pypto.exp(t3)
-        t5 = pypto.mul(t4, tilda_lij)
+        t5 = pypto.mul(t4, inputs.tilda_lij)
         t6 = pypto.mul(t2, li)
         li_new = pypto.add(t6, t5)
         q3 = pypto.mul(oi, t2)
         pypto.set_semantic_label("bn-matmul2")
-        pypto.set_cube_tile_shapes([c2_tile[0], c2_tile[1]], [c2_tile[2], c2_tile[3]], [c2_tile[4], c2_tile[5]])
-        pypto.set_matrix_size([tilda_pij_f16.shape[0], tilda_pij_f16.shape[1], vj.shape[1]])
-        q1 = pypto.matmul(tilda_pij_f16, vj, pypto.DT_FP32)
-        pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
+        pypto.set_cube_tile_shapes(
+            [inputs.c2_tile[0], inputs.c2_tile[1]],
+            [inputs.c2_tile[2], inputs.c2_tile[3]],
+            [inputs.c2_tile[4], inputs.c2_tile[5]])
+        pypto.set_matrix_size([inputs.tilda_pij_f16.shape[0], inputs.tilda_pij_f16.shape[1], inputs.vj.shape[1]])
+        q1 = pypto.matmul(inputs.tilda_pij_f16, inputs.vj, pypto.DT_FP32)
+        pypto.set_vec_tile_shapes(inputs.v2_tile[0], inputs.v2_tile[1])
         pypto.set_semantic_label("bn-after-matmul2")
         q2 = pypto.mul(q1, t4)
         oi_tmp = pypto.add(q3, q2)
-        if pypto.cond(pypto.is_loop_end(bn)):
-            oi_update[:] = (pypto.div(oi_tmp, li_new))
-            pypto.assemble(oi_update, oi_offset, attention_out)
+        if pypto.cond(pypto.is_loop_end(inputs.bn)):
+            inputs.oi_update[:] = (pypto.div(oi_tmp, li_new))
+            pypto.assemble(inputs.oi_update, inputs.oi_offset, inputs.attention_out)
         else:
-            oi_update[:] = (oi_tmp)
-        li_update[:] = (li_new)
-        mi_update[:] = (mi_new)
+            inputs.oi_update[:] = (oi_tmp)
+        inputs.li_update[:] = (li_new)
+        inputs.mi_update[:] = (mi_new)
 
     def inside_main_function():
         batch_size = block_table.shape[0]
@@ -166,20 +216,28 @@ def op_page_attention(params, q_nope, k_nope_cache, v_nope_cache, q_rope, k_rope
 
                                 qi = _assemble_q_tensors(cur_n_tile, d_n, d_r, cur_offset, dtype,
                                                          q_nope, q_rope)
-                                kj, vj = _load_kv_cache_block(b_idx, bn, block_size, cur_seq, d_n, d_r,
-                                                              dtype, block_table, k_nope_cache,
-                                                              k_rope_cache, v_nope_cache, is_nz_format)
+                                kj, vj = _load_kv_cache_block(_LoadKvCacheBlockInputs(
+                                    b_idx=b_idx, bn=bn, block_size=block_size, cur_seq=cur_seq,
+                                    d_n=d_n, d_r=d_r, dtype=dtype, block_table=block_table,
+                                    k_nope_cache=k_nope_cache, k_rope_cache=k_rope_cache,
+                                    v_nope_cache=v_nope_cache, is_nz_format=is_nz_format))
                                 tilda_pij_f16, tilda_lij, tilda_mij = _compute_block_sij(
                                     qi, kj, softmax_scale, dtype, c1_tile, v1_tile)
 
                                 if pypto.cond(pypto.is_loop_begin(bn)):
-                                    _bn_first_iteration_body(oi_update, li_update, mi_update,
-                                        tilda_pij_f16, vj, tilda_lij, tilda_mij, c2_tile, v2_tile, bn,
-                                        oi_offset, attention_out)
+                                    _bn_first_iteration_body(_BnFirstIterationBodyInputs(
+                                        oi_update=oi_update, li_update=li_update, mi_update=mi_update,
+                                        tilda_pij_f16=tilda_pij_f16, vj=vj,
+                                        tilda_lij=tilda_lij, tilda_mij=tilda_mij,
+                                        c2_tile=c2_tile, v2_tile=v2_tile, bn=bn,
+                                        oi_offset=oi_offset, attention_out=attention_out))
                                 else:
-                                    _bn_subsequent_iteration_body(oi_update, li_update, mi_update,
-                                        tilda_pij_f16, vj, tilda_mij, tilda_lij, c2_tile, v2_tile, bn,
-                                        oi_offset, attention_out)
+                                    _bn_subsequent_iteration_body(_BnSubsequentIterationBodyInputs(
+                                        oi_update=oi_update, li_update=li_update, mi_update=mi_update,
+                                        tilda_pij_f16=tilda_pij_f16, vj=vj,
+                                        tilda_mij=tilda_mij, tilda_lij=tilda_lij,
+                                        c2_tile=c2_tile, v2_tile=v2_tile, bn=bn,
+                                        oi_offset=oi_offset, attention_out=attention_out))
                             inside_bn_loop(
                                 b_idx=b_idx,
                                 block_table=block_table,

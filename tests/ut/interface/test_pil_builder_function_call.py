@@ -531,6 +531,7 @@ def _call_doublestar_nested_tests():
     def call_double_star_from_func():
         def make():
             return {'x': Expr.int(0), 'y': Expr.int(1)}
+
         def func(x, y):
             Expr.str(x)
             Expr.str(y)
@@ -581,6 +582,7 @@ def _call_doublestar_nested_tests():
     def call_nested_three_deep():
         def inner():
             return Expr.int(0)
+
         def middle(x):
             return x
         Expr.str(middle(inner()))
@@ -589,6 +591,7 @@ def _call_doublestar_nested_tests():
     def call_star():
         def inner():
             return [Expr.int(0), Expr.int(1)]
+
         def middle(a, b):
             return a, b, Expr.int(3)
         middle(*inner())

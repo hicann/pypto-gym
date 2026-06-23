@@ -1004,6 +1004,7 @@ def _subscript_slice_expression_tests():
     def slice_range_call_bounds():
         def lo():
             return Expr.int(1)
+
         def hi():
             return Expr.int(3)
         var_l = [Expr.int(0), Expr.int(1), Expr.int(2), Expr.int(3)]

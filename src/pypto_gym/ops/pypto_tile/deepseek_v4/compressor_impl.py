@@ -367,14 +367,14 @@ def interleaved_rope_2d(
     return pypto.cast(x_embed, x.dtype)
 
 
-def scatter_update_3d(input, index, src):
-    input_shape = input.shape
+def scatter_update_3d(input_tensor, index, src):
+    input_shape = input_tensor.shape
     d = src.shape[2]
     pypto.set_vec_tile_shapes(1, 24, d)
     src = pypto.reshape(src, [src.shape[0] * src.shape[1], src.shape[2]])
-    input = pypto.reshape(input, [input.shape[0] * input.shape[1], input.shape[2]])
+    input_tensor = pypto.reshape(input_tensor, [input_tensor.shape[0] * input_tensor.shape[1], input_tensor.shape[2]])
     pypto.set_vec_tile_shapes(24, d)
-    output = pypto.scatter_update(input, -2, index, src)
+    output = pypto.scatter_update(input_tensor, -2, index, src)
     return pypto.reshape(output, input_shape)
 
 

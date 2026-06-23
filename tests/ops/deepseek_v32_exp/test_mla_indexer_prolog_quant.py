@@ -470,28 +470,43 @@ def _mla_compute_q_path(inputs: _MlaComputeQPathInputs):
     return q_nope, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant, x_2d
 
 
-def _mla_compute_kv_path(x_2d, w_dkvkr, gamma_ckv, is_quant_a, w_kva_scale,
-                          is_quant_b, dtype, b, s, kv_lora_rank, qk_rope_head_dim):
-    bs, h = x_2d.shape
-    if is_quant_a:
-        x_2d_quant, x_2d_scale_dequant = quant(x_2d, True)
-        kv_a_proj = torch.matmul(x_2d_quant.to(torch.int32), w_dkvkr.to(torch.int32))
+@dataclass
+class _MlaComputeKvPathInputs:
+    x_2d: Any
+    w_dkvkr: Any
+    gamma_ckv: Any
+    is_quant_a: Any
+    w_kva_scale: Any
+    is_quant_b: Any
+    dtype: Any
+    b: Any
+    s: Any
+    kv_lora_rank: Any
+    qk_rope_head_dim: Any
+
+
+def _mla_compute_kv_path(inputs: _MlaComputeKvPathInputs):
+
+    bs, h = inputs.x_2d.shape
+    if inputs.is_quant_a:
+        x_2d_quant, x_2d_scale_dequant = quant(inputs.x_2d, True)
+        kv_a_proj = torch.matmul(x_2d_quant.to(torch.int32), inputs.w_dkvkr.to(torch.int32))
         kv_a_proj_fp32 = kv_a_proj.to(torch.float32)
         kv_a_proj_fp32_dequant = kv_a_proj_fp32 * x_2d_scale_dequant
-        kv_a_proj = kv_a_proj_fp32_dequant * w_kva_scale
+        kv_a_proj = kv_a_proj_fp32_dequant * inputs.w_kva_scale
     else:
-        kv_a_proj = torch.matmul(x_2d.to(torch.float32), w_dkvkr.to(torch.float32))
-    kv_a_proj = kv_a_proj.to(dtype)
-    kv_reshape = kv_a_proj.reshape(b, s, kv_lora_rank + qk_rope_head_dim)
-    compressed_kv = kv_reshape[:, :, 0:kv_lora_rank]
-    compressed_kv_norm = rms_norm(compressed_kv, gamma_ckv)
+        kv_a_proj = torch.matmul(inputs.x_2d.to(torch.float32), inputs.w_dkvkr.to(torch.float32))
+    kv_a_proj = kv_a_proj.to(inputs.dtype)
+    kv_reshape = kv_a_proj.reshape(inputs.b, inputs.s, inputs.kv_lora_rank + inputs.qk_rope_head_dim)
+    compressed_kv = kv_reshape[:, :, 0:inputs.kv_lora_rank]
+    compressed_kv_norm = rms_norm(compressed_kv, inputs.gamma_ckv)
     compressed_kv_quant_scale = None
-    if is_quant_b:
-        compressed_kv_norm_split = compressed_kv_norm.reshape(b * s, 4, kv_lora_rank // 4)
+    if inputs.is_quant_b:
+        compressed_kv_norm_split = compressed_kv_norm.reshape(inputs.b * inputs.s, 4, inputs.kv_lora_rank // 4)
         compressed_kv_norm, compressed_kv_quant_scale = quant(compressed_kv_norm_split, True)
-        compressed_kv_quant_scale = compressed_kv_quant_scale.reshape(b, s, 1, 4)
-    compressed_kv_r = compressed_kv_norm.reshape(b, s, 1, kv_lora_rank)
-    k_nope = compressed_kv_r.reshape(b * s * 1, kv_lora_rank)
+        compressed_kv_quant_scale = compressed_kv_quant_scale.reshape(inputs.b, inputs.s, 1, 4)
+    compressed_kv_r = compressed_kv_norm.reshape(inputs.b, inputs.s, 1, inputs.kv_lora_rank)
+    k_nope = compressed_kv_r.reshape(inputs.b * inputs.s * 1, inputs.kv_lora_rank)
     return kv_a_proj, kv_reshape, k_nope, compressed_kv_quant_scale
 
 
@@ -578,8 +593,10 @@ def mla_prolog_quant_v32_compute(inputs):
     n, qk_nope_head_dim, kv_lora_rank = w_uk.shape
 
     kv_a_proj, kv_reshape, k_nope, compressed_kv_quant_scale = \
-        _mla_compute_kv_path(x_2d, w_dkvkr, gamma_ckv, is_quant_a, w_kva_scale,
-                             is_quant_b, dtype, b, s, kv_lora_rank, qk_rope_head_dim)
+        _mla_compute_kv_path(_MlaComputeKvPathInputs(
+            x_2d=x_2d, w_dkvkr=w_dkvkr, gamma_ckv=gamma_ckv, is_quant_a=is_quant_a,
+            w_kva_scale=w_kva_scale, is_quant_b=is_quant_b, dtype=dtype, b=b, s=s,
+            kv_lora_rank=kv_lora_rank, qk_rope_head_dim=qk_rope_head_dim))
 
     q_embed, kv_cache_out, kr_cache_out, kv_quant_scale_cache_out = \
         _mla_compute_rope_cache(_MlaComputeRopeCacheInputs(
@@ -610,14 +627,30 @@ def _indexer_q_rope_hadamard(q_bf16, cos, sin, rope_head_dim, hadamard_q, x_dtyp
     return q_int8, q_scale
 
 
-def _indexer_k_path(x, w_idx_k, layer_norm_gamma, layer_norm_beta,
-                    cos, sin, rope_head_dim, hadamard_k, x_dtype, b, s, d):
-    k = torch.matmul(x.to(torch.float32), w_idx_k.to(torch.float32))
-    k = layer_norm(k, layer_norm_gamma, layer_norm_beta).to(x_dtype)
-    k_rope, k_nope = torch.split(k, [rope_head_dim, d - rope_head_dim], dim=-1)
-    k_rope = single_rope(k_rope.unsqueeze(2), cos, sin).squeeze(2)
+@dataclass
+class IndexerKPathInputs:
+    x: Any
+    w_idx_k: Any
+    layer_norm_gamma: Any
+    layer_norm_beta: Any
+    cos: Any
+    sin: Any
+    rope_head_dim: Any
+    hadamard_k: Any
+    x_dtype: Any
+    b: Any
+    s: Any
+    d: Any
+
+
+def _indexer_k_path(inputs: IndexerKPathInputs):
+
+    k = torch.matmul(inputs.x.to(torch.float32), inputs.w_idx_k.to(torch.float32))
+    k = layer_norm(k, inputs.layer_norm_gamma, inputs.layer_norm_beta).to(inputs.x_dtype)
+    k_rope, k_nope = torch.split(k, [inputs.rope_head_dim, inputs.d - inputs.rope_head_dim], dim=-1)
+    k_rope = single_rope(k_rope.unsqueeze(2), inputs.cos, inputs.sin).squeeze(2)
     k = torch.cat([k_rope, k_nope], dim=-1)
-    k = torch.matmul(k.to(torch.float32), hadamard_k.to(torch.float32)).to(x_dtype)
+    k = torch.matmul(k.to(torch.float32), inputs.hadamard_k.to(torch.float32)).to(inputs.x_dtype)
     k_int8, k_scale = quant(k)
     k_scale = k_scale.to(torch.float16)
     return k_int8, k_scale
@@ -645,11 +678,14 @@ def indexer_prolog(inputs: dict, dims: dict):
     cache_index = inputs['idx_k_cache_index']
     x_dtype = x.dtype
 
-    q_bf16 = _indexer_q_path(q_norm.reshape(b, s, -1), q_norm_scale.reshape(b, s, -1), w_idx_qb, w_idx_qb_scale, n, d, x_dtype)
+    q_bf16 = _indexer_q_path(q_norm.reshape(b, s, -1), q_norm_scale.reshape(b, s, -1),
+                             w_idx_qb, w_idx_qb_scale, n, d, x_dtype)
     q_int8, q_scale = _indexer_q_rope_hadamard(q_bf16, cos, sin, rope_head_dim, hadamard_q, x_dtype)
 
-    k_int8, k_scale = _indexer_k_path(x, w_idx_k, layer_norm_gamma, layer_norm_beta,
-                                       cos, sin, rope_head_dim, hadamard_k, x_dtype, b, s, d)
+    k_int8, k_scale = _indexer_k_path(IndexerKPathInputs(
+        x=x, w_idx_k=w_idx_k, layer_norm_gamma=layer_norm_gamma, layer_norm_beta=layer_norm_beta,
+        cos=cos, sin=sin, rope_head_dim=rope_head_dim, hadamard_k=hadamard_k,
+        x_dtype=x_dtype, b=b, s=s, d=d))
     k_cache = idx_k_cache.clone()
     k_scale_cache = idx_k_scale_cache.clone()
     scatter_update_2d(k_cache, k_int8.reshape(b, s, 1, d), cache_index, -2)
@@ -846,15 +882,17 @@ def check(case_name, outputs, goldens):
             max_error_ratio=0.005)
     compare(outputs['q_rope'].cpu(), goldens['q_rope'], 'qRope', atol=0.005, rtol=0.0078125, max_error_ratio=0.005)
     compare(outputs['kv_cache_out'].cpu(), goldens['kv_cache_out'], 'kv', atol=1, rtol=0, max_error_ratio=0)
-    compare(outputs['kr_cache_out'].cpu(), goldens['kr_cache_out'], 'kr', atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
-    compare(outputs['kv_quant_scale_cache_out'].cpu(), goldens['kv_quant_scale_cache_out'], 'kScaleCache', atol=0.000025,
-            rtol=0.005, max_error_ratio=0.005)
+    compare(outputs['kr_cache_out'].cpu(), goldens['kr_cache_out'], 'kr',
+            atol=0.0001, rtol=0.0078125, max_error_ratio=0.005)
+    compare(outputs['kv_quant_scale_cache_out'].cpu(), goldens['kv_quant_scale_cache_out'],
+            'kScaleCache', atol=0.000025, rtol=0.005, max_error_ratio=0.005)
 
     ########### ip ###########
     compare(outputs['q_int8'].cpu(), goldens['q_int8'], 'q_int8', atol=2, rtol=0, max_error_ratio=0)
     compare(outputs['q_scale'].cpu(), goldens['q_scale'], 'q_scale', atol=0.000025, rtol=0.006)
     compare(outputs['idx_k_cache_out'].cpu(), goldens['idx_k_cache_out'], 'k_int8', atol=1, rtol=0, max_error_ratio=0)
-    compare(outputs['idx_k_scale_cache_out'].cpu(), goldens['idx_k_scale_cache_out'], 'k_scale', atol=0.000025, rtol=0, max_error_ratio=0.005)
+    compare(outputs['idx_k_scale_cache_out'].cpu(), goldens['idx_k_scale_cache_out'],
+            'k_scale', atol=0.000025, rtol=0, max_error_ratio=0.005)
     compare(outputs['weights'].cpu(), goldens['weights'], 'weights', atol=0.000025, rtol=0, max_error_ratio=0.005)
     logging.debug(f'=== {case_name}: PASS ===')
 

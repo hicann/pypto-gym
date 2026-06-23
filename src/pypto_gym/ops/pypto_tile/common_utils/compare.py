@@ -128,6 +128,7 @@ def compare(t: torch.Tensor, t_ref: torch.Tensor, name, *, atol, rtol, max_error
         (f"compare fail: {name}, max diff: {max_diff.item():.8f} at {max_pos}, "
          f"error_count: {error_count}, error_count_threshold: {error_count_threshold}")
 
+
 def gen_uniform_data(data_shape, min_value, max_value, dtype):
     if min_value == 0 and max_value == 0:
         return torch.zeros(data_shape, dtype=dtype)

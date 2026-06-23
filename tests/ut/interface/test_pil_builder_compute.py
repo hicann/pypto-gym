@@ -65,23 +65,23 @@ def test_pil_builder_ifexp():
 
         @TestParser.test
         def true_test_body_selected():
-            var_x = Expr.str(0) if Expr.true(1) else Expr.str(2)
+            _ = Expr.str(0) if Expr.true(1) else Expr.str(2)
 
         @TestParser.test
         def false_test_orelse_selected():
-            var_x = Expr.str(0) if Expr.false(1) else Expr.str(2)
+            _ = Expr.str(0) if Expr.false(1) else Expr.str(2)
 
         @TestParser.test
         def nested_ifexp_in_body():
-            var_x = (Expr.str(0) if Expr.true(1) else Expr.str(2)) if Expr.true(3) else Expr.str(4)
+            _ = (Expr.str(0) if Expr.true(1) else Expr.str(2)) if Expr.true(3) else Expr.str(4)
 
         @TestParser.test
         def nested_ifexp_in_orelse():
-            var_x = Expr.str(0) if Expr.false(1) else (Expr.str(2) if Expr.true(3) else Expr.str(4))
+            _ = Expr.str(0) if Expr.false(1) else (Expr.str(2) if Expr.true(3) else Expr.str(4))
 
         @TestParser.test
         def nested_ifexp_in_orelse_false():
-            var_x = Expr.str(0) if Expr.false(1) else (Expr.str(2) if Expr.false(3) else Expr.str(4))
+            _ = Expr.str(0) if Expr.false(1) else (Expr.str(2) if Expr.false(3) else Expr.str(4))
 
         @TestParser.test
         def ifexp_as_if_test():
@@ -97,8 +97,8 @@ def test_pil_builder_bin_op():
 
         @TestParser.test
         def add():
-            var_x = Expr.int(0) + Expr.int(1) * Expr.int(2)
-            var_y = Expr.int(0) - Expr.int(1) // Expr.int(2)
+            _ = Expr.int(0) + Expr.int(1) * Expr.int(2)
+            _ = Expr.int(0) - Expr.int(1) // Expr.int(2)
 
 
 def test_pil_builder_unary_op():
@@ -107,8 +107,8 @@ def test_pil_builder_unary_op():
 
         @TestParser.test
         def add():
-            var_x = -Expr.int(0) + Expr.int(1) * Expr.int(2)
-            var_y = -Expr.int(0) - Expr.int(1) // Expr.int(2)
+            _ = -Expr.int(0) + Expr.int(1) * Expr.int(2)
+            _ = -Expr.int(0) - Expr.int(1) // Expr.int(2)
 
 
 def _register_compare_single_op_tests():
@@ -118,50 +118,61 @@ def _register_compare_single_op_tests():
         def cmp_lt_true():
             var_x = Expr.int(1) < Expr.int(2)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_lt_false():
             var_x = Expr.int(2) < Expr.int(1)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_lte():
             var_x = Expr.int(1) <= Expr.int(1)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_gt():
             var_x = Expr.int(2) > Expr.int(1)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_gte():
             var_x = Expr.int(2) >= Expr.int(2)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_eq_true():
             var_x = Expr.int(1) == Expr.int(1)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_eq_false():
             var_x = Expr.int(1) == Expr.int(2)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_neq():
             var_x = Expr.int(1) != Expr.int(2)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_is():
             var_a = Expr.int(0)
             var_x = var_a is var_a
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_is_not():
             var_a = Expr.int(0)
             var_b = Expr.int(1)
             var_x = var_a is not var_b
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_in():
             var_l = [Expr.int(0), Expr.int(1)]
             var_x = Expr.int(0) in var_l
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_not_in():
             var_l = [Expr.int(0), Expr.int(1)]
@@ -176,14 +187,17 @@ def _register_compare_chained_tests():
         def cmp_chain_lt_lt_all_true():
             var_x = Expr.int(1) < Expr.int(2) < Expr.int(3)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_chain_lt_lt_first_false():
             var_x = Expr.int(3) < Expr.int(2) < Expr.int(4)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_chain_lt_eq():
             var_x = Expr.int(1) < Expr.int(2) == Expr.int(2)
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_chain_three_ops():
             var_x = Expr.int(1) < Expr.int(2) <= Expr.int(3) < Expr.int(4)
@@ -197,35 +211,42 @@ def _register_compare_expr_context_tests():
         def cmp_in_binop():
             var_x = (Expr.int(1) < Expr.int(2)) + 0
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_in_unary():
             var_x = not (Expr.int(1) == Expr.int(2))
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_if_true():
             if Expr.int(1) < Expr.int(2):
                 Expr.str(0)
             else:
                 Expr.str(1)
+
         @TestParser.test
         def cmp_if_false():
             if Expr.int(2) < Expr.int(1):
                 Expr.str(0)
             else:
                 Expr.str(1)
+
         @TestParser.test
         def cmp_for_iter():
             for var_x in [Expr.int(0) < Expr.int(1), Expr.int(2) < Expr.int(1)]:
                 Expr.str(var_x)
+
         @TestParser.test
         def cmp_while_test():
             var_n = [0]
             while var_n[0] < 3:
                 Expr.str(var_n[0])
                 var_n[0] = var_n[0] + 1
+
         @TestParser.test
         def cmp_call_pos_arg():
             Expr.str(Expr.int(1) < Expr.int(2))
+
         @TestParser.test
         def cmp_call_kw_arg():
             def func(x):
@@ -241,34 +262,41 @@ def _register_compare_literal_subscript_tests():
             var_t = (Expr.int(1) < Expr.int(2), Expr.int(3) > Expr.int(4))
             Expr.str(var_t[0])
             Expr.str(var_t[1])
+
         @TestParser.test
         def cmp_in_list():
             var_l = [Expr.int(1) < Expr.int(2), Expr.int(3) > Expr.int(4)]
             Expr.str(var_l[0])
             Expr.str(var_l[1])
+
         @TestParser.test
         def cmp_dict_value():
             var_d = {0: Expr.int(1) < Expr.int(2)}
             Expr.str(var_d[0])
+
         @TestParser.test
         def cmp_dict_key():
             var_d = {Expr.int(1) == Expr.int(1): Expr.int(0)}
             Expr.str(var_d[True])
+
         @TestParser.test
         def cmp_in_set():
             var_s = {Expr.int(1) < Expr.int(2), Expr.int(3) > Expr.int(4)}
             Expr.str(True in var_s)
+
         @TestParser.test
         def cmp_as_subscript_index():
             var_arr = Expr(0)
             var_arr[True] = Expr.int(99)
             var_x = var_arr[Expr.int(1) == Expr.int(1)]
             Expr.str(var_x)
+
         @TestParser.test
         def cmp_as_slice_bound():
             var_l = [Expr.int(0), Expr.int(1), Expr.int(2)]
             var_s = var_l[Expr.int(1) == Expr.int(1):]
             Expr.str(var_s[0])
+
         @TestParser.test
         def cmp_annotation_with_value():
             var_x: bool = Expr.int(1) < Expr.int(2)

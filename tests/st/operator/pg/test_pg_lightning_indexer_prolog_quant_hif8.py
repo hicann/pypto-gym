@@ -362,7 +362,8 @@ def lightning_indexer_prolog_quant_hif8_pypto(x, q_norm, q_norm_scale, w_qb, w_q
     device = x.device
     q_hif8 = torch.empty((t * head_num, head_dim), device=device, dtype=torch.uint8)
     q_scale = torch.empty((t * head_num, 1), device=device, dtype=torch.float32)
-    k_hif8 = k_cache; k_scale = k_scale_cache
+    k_hif8 = k_cache
+    k_scale = k_scale_cache
     weights = torch.empty((t, head_num), device=device, dtype=torch.bfloat16)
     if isinstance(x, FakeTensor):
         return q_hif8, q_scale, k_hif8, k_scale, weights
@@ -385,7 +386,8 @@ try:
     )
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        logging.warning("Skip: torchair not installed, skip NPU registration for operator 'lightning_indexer_prolog_quant_hif8'")
+        logging.warning("Skip: torchair not installed, skip NPU registration for operator "
+                        "'lightning_indexer_prolog_quant_hif8'")
     else:
         logging.warning(f"Skip: Unexpected error : {e}")
 

@@ -217,12 +217,16 @@ def _create_prolog_tensors(cfg):
         'ln_b': pypto.tensor(dtype=d_bf16, shape=[cfg.head_dim], name="ln_b"),
         'cos': pypto.tensor(dtype=d_bf16, shape=[cfg.b, cfg.s1, cfg.rope_head_dim], name="cos"),
         'sin': pypto.tensor(dtype=d_bf16, shape=[cfg.b, cfg.s1, cfg.rope_head_dim], name="sin"),
-        'k_cache': pypto.tensor(dtype=d_bf16, shape=[cfg.block_num, cfg.block_size, cfg.n_kv, cfg.head_dim], name="k_cache"),
+        'k_cache': pypto.tensor(dtype=d_bf16,
+                                 shape=[cfg.block_num, cfg.block_size, cfg.n_kv, cfg.head_dim],
+                                 name="k_cache"),
         'k_cache_index': pypto.tensor(dtype=d_i32, shape=[cfg.b, cfg.s1], name="k_cache_index"),
         'block_table': pypto.tensor(dtype=d_i32, shape=[cfg.b, cfg.s2_tile // cfg.block_size], name="block_table"),
         'query': pypto.tensor(dtype=d_bf16, shape=[cfg.b * cfg.s1, cfg.head_num, cfg.head_dim], name="qOut"),
         'weight': pypto.tensor(dtype=d_bf16, shape=[cfg.b * cfg.s1, cfg.head_num], name="weightOut"),
-        'k_cache_out': pypto.tensor(dtype=d_bf16, shape=[cfg.block_num, cfg.block_size, cfg.n_kv, cfg.head_dim], name="kCacheOut"),
+        'k_cache_out': pypto.tensor(dtype=d_bf16,
+                                     shape=[cfg.block_num, cfg.block_size, cfg.n_kv, cfg.head_dim],
+                                     name="kCacheOut"),
     }
     return tensors
 

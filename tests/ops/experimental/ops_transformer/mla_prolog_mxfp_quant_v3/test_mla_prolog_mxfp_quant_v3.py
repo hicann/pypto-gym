@@ -605,9 +605,15 @@ def _define_mla_prolog_shapes(params):
 
 def _apply_nz_format(input_tensors, shapes):
     """Apply FRACTAL_NZ format cast to weight tensors."""
-    w_dq_nz = torch_npu.npu_format_cast(input_tensors["w_dq"].reshape(shapes["w_dq_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
-    w_dkvkr_nz = torch_npu.npu_format_cast(input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
-    w_uqqr_nz = torch_npu.npu_format_cast(input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu().contiguous(),                                         torch_npu.Format.FRACTAL_NZ)
+    w_dq_nz = torch_npu.npu_format_cast(
+        input_tensors["w_dq"].reshape(shapes["w_dq_shape"]).npu().contiguous(),
+        torch_npu.Format.FRACTAL_NZ)
+    w_dkvkr_nz = torch_npu.npu_format_cast(
+        input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu().contiguous(),
+        torch_npu.Format.FRACTAL_NZ)
+    w_uqqr_nz = torch_npu.npu_format_cast(
+        input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu().contiguous(),
+        torch_npu.Format.FRACTAL_NZ)
     input_tensors["w_uqqr"] = w_uqqr_nz
     input_tensors["w_dkvkr"] = w_dkvkr_nz
     input_tensors["w_dq"] = w_dq_nz

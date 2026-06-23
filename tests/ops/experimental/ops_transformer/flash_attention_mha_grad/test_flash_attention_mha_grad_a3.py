@@ -56,7 +56,9 @@ HEAD_DIM_DEFAULT = 64
 S1_TILE = 2048
 S2_TILE = 2048
 
-MhaGradInputs = collections.namedtuple("MhaGradInputs", ["q", "k", "v", "actual_q", "actual_kv", "q_seqlens", "kv_seqlens"])
+MhaGradInputs = collections.namedtuple(
+    "MhaGradInputs", ["q", "k", "v", "actual_q", "actual_kv",
+                      "q_seqlens", "kv_seqlens"])
 
 
 def get_device_id():
@@ -123,7 +125,9 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device,
     for skv in kv_seqlens:
         kv_cumsum.append(kv_cumsum[-1] + skv)
     actual_kv = torch.tensor(kv_cumsum, dtype=torch.int32, device=device)
-    return MhaGradInputs(q=q, k=k, v=v, actual_q=actual_q, actual_kv=actual_kv, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
+    return MhaGradInputs(
+        q=q, k=k, v=v, actual_q=actual_q, actual_kv=actual_kv,
+        q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
 
 def attention_backward_golden(q, k, v, o_input, do_t, scale):
@@ -308,8 +312,8 @@ def _run_kernel(inputs: _RunKernelInputs):
     import time
     start_time = time.time()
     flash_attention_mha_grad_kernel_impl(
-        inputs.q, inputs.k, inputs.v, inputs.o_out, inputs.do_t, inputs.l_out, inputs.m_out,
-        inputs.dq_out, inputs.dk_out, inputs.dv_out,
+        inputs.q, inputs.k, inputs.v, inputs.o_out, inputs.do_t,
+        inputs.l_out, inputs.m_out, inputs.dq_out, inputs.dk_out, inputs.dv_out,
         inputs.actual_q, inputs.actual_kv, inputs.tile_config)
     elapsed = time.time() - start_time
     logging.info(f"  Kernel time: {elapsed * 1000:.2f} ms")

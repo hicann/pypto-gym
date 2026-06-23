@@ -60,18 +60,33 @@ def _fa_setup_dims(q, k, v):
     return _FaSetupDimsOutputs(num_heads, head_dim, hidden_dim, total_q, total_kv, scale, q_2d, k_2d, v_2d)
 
 
-def _fa_compute_head_tile_views(q_2d, k_2d, v_2d, q_tile, k_tile, head_dim,
-                                 q_start, q_tile_start, k_start, k_tile_start,
-                                 q_tile_len, k_tile_len, h_offset):
-    q_tile_view = pypto.view(q_2d, [q_tile, head_dim],
-                          [q_start + q_tile_start, h_offset],
-                          valid_shape=[q_tile_len, head_dim])
-    k_tile_view = pypto.view(k_2d, [k_tile, head_dim],
-                          [k_start + k_tile_start, h_offset],
-                          valid_shape=[k_tile_len, head_dim])
-    v_tile_view = pypto.view(v_2d, [k_tile, head_dim],
-                          [k_start + k_tile_start, h_offset],
-                          valid_shape=[k_tile_len, head_dim])
+@dataclass
+class _FaComputeHeadTileViewsInputs:
+    q_2d: Any
+    k_2d: Any
+    v_2d: Any
+    q_tile: Any
+    k_tile: Any
+    head_dim: Any
+    q_start: Any
+    q_tile_start: Any
+    k_start: Any
+    k_tile_start: Any
+    q_tile_len: Any
+    k_tile_len: Any
+    h_offset: Any
+
+
+def _fa_compute_head_tile_views(inputs: _FaComputeHeadTileViewsInputs):
+    q_tile_view = pypto.view(inputs.q_2d, [inputs.q_tile, inputs.head_dim],
+                          [inputs.q_start + inputs.q_tile_start, inputs.h_offset],
+                          valid_shape=[inputs.q_tile_len, inputs.head_dim])
+    k_tile_view = pypto.view(inputs.k_2d, [inputs.k_tile, inputs.head_dim],
+                          [inputs.k_start + inputs.k_tile_start, inputs.h_offset],
+                          valid_shape=[inputs.k_tile_len, inputs.head_dim])
+    v_tile_view = pypto.view(inputs.v_2d, [inputs.k_tile, inputs.head_dim],
+                          [inputs.k_start + inputs.k_tile_start, inputs.h_offset],
+                          valid_shape=[inputs.k_tile_len, inputs.head_dim])
     return q_tile_view, k_tile_view, v_tile_view
 
 
@@ -88,17 +103,32 @@ def _fa_compute_scores_softmax(q_tile_view, k_tile_view, scale):
     return pij, lij, mij
 
 
-def _fa_emit_final_tile(k_tile_idx, q_start, q_tile_start, h_act_idx, h_offset,
-                         pij, lij, mij, v_tile_view, l_output, m_output, output):
+@dataclass
+class _FaEmitFinalTileInputs:
+    k_tile_idx: Any
+    q_start: Any
+    q_tile_start: Any
+    h_act_idx: Any
+    h_offset: Any
+    pij: Any
+    lij: Any
+    mij: Any
+    v_tile_view: Any
+    l_output: Any
+    m_output: Any
+    output: Any
+
+
+def _fa_emit_final_tile(inputs: _FaEmitFinalTileInputs):
     pypto.set_vec_tile_shapes(64, 512)
-    pij_div = pypto.div(pij, lij, precision_type=pypto.PrecisionType.INTRINSIC)
+    pij_div = pypto.div(inputs.pij, inputs.lij, precision_type=pypto.PrecisionType.INTRINSIC)
     pij_bf16 = pypto.cast(pij_div, pypto.DT_BF16)
-    oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_BF16)
+    oij = pypto.matmul(pij_bf16, inputs.v_tile_view, out_dtype=pypto.DT_BF16)
     if pypto.platform.npuarch == 'DAV_3510':
         pypto.set_pass_options(sg_set_scope=-1)
-    pypto.assemble(lij, [q_start + q_tile_start, h_act_idx], l_output)
-    pypto.assemble(mij, [q_start + q_tile_start, h_act_idx], m_output)
-    pypto.assemble(oij, [q_start + q_tile_start, h_offset], output)
+    pypto.assemble(inputs.lij, [inputs.q_start + inputs.q_tile_start, inputs.h_act_idx], inputs.l_output)
+    pypto.assemble(inputs.mij, [inputs.q_start + inputs.q_tile_start, inputs.h_act_idx], inputs.m_output)
+    pypto.assemble(oij, [inputs.q_start + inputs.q_tile_start, inputs.h_offset], inputs.output)
 
 
 def _fa_emit_first_tile(v_tile_view, pij, oi_update, li_update, mi_update, lij, mij):
@@ -112,72 +142,124 @@ def _fa_emit_first_tile(v_tile_view, pij, oi_update, li_update, mi_update, lij, 
     mi_update[:] = mij
 
 
-def _fa_accumulate_tile(k_tile_idx, q_start, q_tile_start, h_act_idx, h_offset,
-                         v_tile_view, pij, lij, mij, oi_update, li_update, mi_update,
-                         q_tile_len, head_dim, q_tile, l_output, m_output, output):
+@dataclass
+class _FaAccumulateTileInputs:
+    k_tile_idx: Any
+    q_start: Any
+    q_tile_start: Any
+    h_act_idx: Any
+    h_offset: Any
+    v_tile_view: Any
+    pij: Any
+    lij: Any
+    mij: Any
+    oi_update: Any
+    li_update: Any
+    mi_update: Any
+    q_tile_len: Any
+    head_dim: Any
+    q_tile: Any
+    l_output: Any
+    m_output: Any
+    output: Any
+
+
+def _fa_accumulate_tile(inputs: _FaAccumulateTileInputs):
     pypto.set_vec_tile_shapes(64, 512)
-    pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
-    oij = pypto.matmul(pij_bf16, v_tile_view, out_dtype=pypto.DT_FP32)
+    pij_bf16 = pypto.cast(inputs.pij, pypto.DT_BF16)
+    oij = pypto.matmul(pij_bf16, inputs.v_tile_view, out_dtype=pypto.DT_FP32)
     if pypto.platform.npuarch == 'DAV_3510':
         pypto.set_pass_options(sg_set_scope=-1)
     pypto.set_vec_tile_shapes(512, 64)
-    li = pypto.view(li_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-    mi = pypto.view(mi_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-    oi = pypto.view(oi_update, [q_tile, head_dim], [0, 0], valid_shape=[q_tile_len, head_dim])
-    mi_new = pypto.maximum(mi, mij)
+    li = pypto.view(inputs.li_update, [inputs.q_tile, 1], [0, 0], valid_shape=[inputs.q_tile_len, 1])
+    mi = pypto.view(inputs.mi_update, [inputs.q_tile, 1], [0, 0], valid_shape=[inputs.q_tile_len, 1])
+    oi = pypto.view(inputs.oi_update, [inputs.q_tile, inputs.head_dim], [0, 0],
+                    valid_shape=[inputs.q_tile_len, inputs.head_dim])
+    mi_new = pypto.maximum(mi, inputs.mij)
     t1 = pypto.sub(mi, mi_new)
     t2 = pypto.exp(t1)
-    t3 = pypto.sub(mij, mi_new)
+    t3 = pypto.sub(inputs.mij, mi_new)
     t4 = pypto.exp(t3)
-    li_new = pypto.add(pypto.mul(t2, li), pypto.mul(t4, lij))
+    li_new = pypto.add(pypto.mul(t2, li), pypto.mul(t4, inputs.lij))
     oi_tmp = pypto.add(pypto.mul(oi, t2), pypto.mul(oij, t4))
-    if pypto.is_loop_end(k_tile_idx):
+    if pypto.is_loop_end(inputs.k_tile_idx):
         out_fp32 = pypto.div(oi_tmp, li_new, precision_type=pypto.PrecisionType.INTRINSIC)
         out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
-        pypto.assemble(li_new, [q_start + q_tile_start, h_act_idx], l_output)
-        pypto.assemble(mi_new, [q_start + q_tile_start, h_act_idx], m_output)
-        pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
+        pypto.assemble(li_new, [inputs.q_start + inputs.q_tile_start, inputs.h_act_idx], inputs.l_output)
+        pypto.assemble(mi_new, [inputs.q_start + inputs.q_tile_start, inputs.h_act_idx], inputs.m_output)
+        pypto.assemble(out_bf16, [inputs.q_start + inputs.q_tile_start, inputs.h_offset], inputs.output)
     else:
-        oi_update[:] = oi_tmp
-        li_update[:] = li_new
-        mi_update[:] = mi_new
+        inputs.oi_update[:] = oi_tmp
+        inputs.li_update[:] = li_new
+        inputs.mi_update[:] = mi_new
 
 
-def _fa_process_ktile(k_tile_idx, k_tile_count, q_start, q_tile_start, k_start, k_tile,
-                      seq_len_k, h_idx, head_dim, q_2d, k_2d, v_2d, q_tile, scale,
-                      q_tile_len, li_update_0, mi_update_0, oi_update_0,
-                      li_update_1, mi_update_1, oi_update_1,
-                      l_output, m_output, output):
-    k_tile_start = k_tile_idx * k_tile
-    k_tile_end = pypto.min(k_tile_start + k_tile, seq_len_k)
+@dataclass
+class _FaProcessKtileInputs:
+    k_tile_idx: Any
+    k_tile_count: Any
+    q_start: Any
+    q_tile_start: Any
+    k_start: Any
+    k_tile: Any
+    seq_len_k: Any
+    h_idx: Any
+    head_dim: Any
+    q_2d: Any
+    k_2d: Any
+    v_2d: Any
+    q_tile: Any
+    scale: Any
+    q_tile_len: Any
+    li_update_0: Any
+    mi_update_0: Any
+    oi_update_0: Any
+    li_update_1: Any
+    mi_update_1: Any
+    oi_update_1: Any
+    l_output: Any
+    m_output: Any
+    output: Any
+
+
+def _fa_process_ktile(inputs: _FaProcessKtileInputs):
+    k_tile_start = inputs.k_tile_idx * inputs.k_tile
+    k_tile_end = pypto.min(k_tile_start + inputs.k_tile, inputs.seq_len_k)
     k_tile_len = k_tile_end - k_tile_start
     for h_s_idx in range(2):
-        h_act_idx = h_idx * 2 + h_s_idx
-        h_offset = h_act_idx * head_dim
+        h_act_idx = inputs.h_idx * 2 + h_s_idx
+        h_offset = h_act_idx * inputs.head_dim
         if h_s_idx == 0:
-            li_up, mi_up, oi_up = li_update_0, mi_update_0, oi_update_0
+            li_up, mi_up, oi_up = inputs.li_update_0, inputs.mi_update_0, inputs.oi_update_0
         else:
-            li_up, mi_up, oi_up = li_update_1, mi_update_1, oi_update_1
-        q_tv, k_tv, v_tv = _fa_compute_head_tile_views(
-            q_2d, k_2d, v_2d, q_tile, k_tile, head_dim,
-            q_start, q_tile_start, k_start, k_tile_start,
-            q_tile_len, k_tile_len, h_offset)
+            li_up, mi_up, oi_up = inputs.li_update_1, inputs.mi_update_1, inputs.oi_update_1
+        q_tv, k_tv, v_tv = _fa_compute_head_tile_views(_FaComputeHeadTileViewsInputs(
+            q_2d=inputs.q_2d, k_2d=inputs.k_2d, v_2d=inputs.v_2d,
+            q_tile=inputs.q_tile, k_tile=inputs.k_tile, head_dim=inputs.head_dim,
+            q_start=inputs.q_start, q_tile_start=inputs.q_tile_start,
+            k_start=inputs.k_start, k_tile_start=k_tile_start,
+            q_tile_len=inputs.q_tile_len, k_tile_len=k_tile_len, h_offset=h_offset))
         pypto.set_cube_tile_shapes([64, 512], [64, 64], [512, 512])
-        pij, lij, mij = _fa_compute_scores_softmax(q_tv, k_tv, scale)
+        pij, lij, mij = _fa_compute_scores_softmax(q_tv, k_tv, inputs.scale)
         pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
-        if pypto.is_loop_begin(k_tile_idx):
-            if pypto.is_loop_end(k_tile_idx):
-                _fa_emit_final_tile(k_tile_idx, q_start, q_tile_start, h_act_idx,
-                                     h_offset, pij, lij, mij, v_tv,
-                                     l_output, m_output, output)
+        if pypto.is_loop_begin(inputs.k_tile_idx):
+            if pypto.is_loop_end(inputs.k_tile_idx):
+                _fa_emit_final_tile(_FaEmitFinalTileInputs(
+                    k_tile_idx=inputs.k_tile_idx, q_start=inputs.q_start,
+                    q_tile_start=inputs.q_tile_start, h_act_idx=h_act_idx,
+                    h_offset=h_offset, pij=pij, lij=lij, mij=mij, v_tile_view=v_tv,
+                    l_output=inputs.l_output, m_output=inputs.m_output, output=inputs.output))
             else:
                 _fa_emit_first_tile(v_tv, pij, oi_up, li_up, mi_up, lij, mij)
         else:
-            _fa_accumulate_tile(k_tile_idx, q_start, q_tile_start, h_act_idx,
-                                 h_offset, v_tv, pij, lij, mij,
-                                 oi_up, li_up, mi_up,
-                                 q_tile_len, head_dim, q_tile,
-                                 l_output, m_output, output)
+            _fa_accumulate_tile(_FaAccumulateTileInputs(
+                k_tile_idx=inputs.k_tile_idx, q_start=inputs.q_start,
+                q_tile_start=inputs.q_tile_start, h_act_idx=h_act_idx,
+                h_offset=h_offset, v_tile_view=v_tv, pij=pij, lij=lij, mij=mij,
+                oi_update=oi_up, li_update=li_up, mi_update=mi_up,
+                q_tile_len=inputs.q_tile_len, head_dim=inputs.head_dim,
+                q_tile=inputs.q_tile,
+                l_output=inputs.l_output, m_output=inputs.m_output, output=inputs.output))
 
 
 @pypto.frontend.jit(
@@ -236,9 +318,11 @@ def flash_attention_varlen_forward_kernel(
                 q_tile_end = pypto.min(q_tile_start + q_tile, seq_len_q)
                 q_tile_len = q_tile_end - q_tile_start
                 for k_tile_idx in pypto.loop(k_tile_count, name="k_tile_loop"):
-                    _fa_process_ktile(
-                        k_tile_idx, k_tile_count, q_start, q_tile_start, k_start, k_tile,
-                        seq_len_k, h_idx, head_dim, q_2d, k_2d, v_2d, q_tile, scale,
-                        q_tile_len, li_up0, mi_up0, oi_up0,
-                        li_up1, mi_up1, oi_up1,
-                        l_output, m_output, output)
+                    _fa_process_ktile(_FaProcessKtileInputs(
+                        k_tile_idx=k_tile_idx, k_tile_count=k_tile_count,
+                        q_start=q_start, q_tile_start=q_tile_start, k_start=k_start, k_tile=k_tile,
+                        seq_len_k=seq_len_k, h_idx=h_idx, head_dim=head_dim,
+                        q_2d=q_2d, k_2d=k_2d, v_2d=v_2d, q_tile=q_tile, scale=scale,
+                        q_tile_len=q_tile_len, li_update_0=li_up0, mi_update_0=mi_up0, oi_update_0=oi_up0,
+                        li_update_1=li_up1, mi_update_1=mi_up1, oi_update_1=oi_up1,
+                        l_output=l_output, m_output=m_output, output=output))

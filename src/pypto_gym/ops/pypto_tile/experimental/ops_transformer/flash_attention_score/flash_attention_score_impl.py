@@ -37,12 +37,12 @@ def flash_attention_score_kernel_npu(
     keep_prob:   float,
     scale_value: float,
 ):
-    B    = query.shape[0]
-    N    = query.shape[1]
-    Sq   = query.shape[2]
-    D    = query.shape[3]
+    B = query.shape[0]
+    N = query.shape[1]
+    Sq = query.shape[2]
+    D = query.shape[3]
     N_kv = key.shape[1]
-    Skv  = key.shape[2]
+    Skv = key.shape[2]
     group = N // N_kv
     num_blocks_q = (Sq + BLOCK_Q - 1) // BLOCK_Q
     num_blocks_kv = (Skv + BLOCK_KV - 1) // BLOCK_KV

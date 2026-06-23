@@ -54,7 +54,9 @@ HIDDEN_DIM = NUM_HEADS * HEAD_DIM
 Q_TILE = 320
 K_TILE = 320
 
-MhaInputs = collections.namedtuple("MhaInputs", ["q", "k", "v", "cu_seqlens_q", "cu_seqlens_k", "q_seqlens", "kv_seqlens"])
+MhaInputs = collections.namedtuple(
+    "MhaInputs", ["q", "k", "v", "cu_seqlens_q", "cu_seqlens_k",
+                   "q_seqlens", "kv_seqlens"])
 AttentionForwardOutput = collections.namedtuple("AttentionForwardOutput", ["o", "m", "l"])
 
 
@@ -129,22 +131,41 @@ def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     cu_seqlens_q = torch.tensor([0] + list(np.cumsum(q_seqlens)), dtype=torch.int32, device=device)
     cu_seqlens_k = torch.tensor([0] + list(np.cumsum(kv_seqlens)), dtype=torch.int32, device=device)
 
-    return MhaInputs(q=q, k=k, v=v, cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
+    return MhaInputs(
+        q=q, k=k, v=v, cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k,
+        q_seqlens=q_seqlens, kv_seqlens=kv_seqlens)
 
 
-def _compute_kv_tile(k_tile_idx, k_tile_count, q_tile_len, k_f, v_f,
-                     q_tile_view, scale, k_tile, s2_size,
-                     oi_update, li_update, mi_update,
-                     o_out, q_tile_start, q_tile_end,
-                     l_out, m_out):
+@dataclass
+class ComputeKvTileInputs:
+    k_tile_idx: int
+    k_tile_count: int
+    q_tile_len: int
+    k_f: torch.Tensor
+    v_f: torch.Tensor
+    q_tile_view: torch.Tensor
+    scale: float
+    k_tile: int
+    s2_size: int
+    oi_update: torch.Tensor
+    li_update: torch.Tensor
+    mi_update: torch.Tensor
+    o_out: torch.Tensor
+    q_tile_start: int
+    q_tile_end: int
+    l_out: torch.Tensor
+    m_out: torch.Tensor
+
+
+def _compute_kv_tile(inputs: ComputeKvTileInputs):
     """Compute one kv-tile within the online-softmax golden (updates accumulators in-place)."""
-    k_tile_start = k_tile_idx * k_tile
-    k_tile_end = min(k_tile_start + k_tile, s2_size)
+    k_tile_start = inputs.k_tile_idx * inputs.k_tile
+    k_tile_end = min(k_tile_start + inputs.k_tile, inputs.s2_size)
     k_tile_len = k_tile_end - k_tile_start
-    k_tile_view = k_f[k_tile_start:k_tile_end, :]
-    v_tile_view = v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
+    k_tile_view = inputs.k_f[k_tile_start:k_tile_end, :]
+    v_tile_view = inputs.v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
 
-    scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+    scores = torch.matmul(inputs.q_tile_view, k_tile_view.T) * inputs.scale
     mij = scores.amax(dim=-1, keepdim=True)
     s_shifted = scores - mij
     pij = torch.exp(s_shifted)
@@ -152,37 +173,37 @@ def _compute_kv_tile(k_tile_idx, k_tile_count, q_tile_len, k_f, v_f,
     p_bf16 = pij.to(torch.bfloat16)
     oij = torch.matmul(p_bf16, v_tile_view)
 
-    if k_tile_idx == 0:
-        if k_tile_idx == k_tile_count - 1:
+    if inputs.k_tile_idx == 0:
+        if inputs.k_tile_idx == inputs.k_tile_count - 1:
             pij_div = pij / lij
             pij_bf16 = pij_div.to(torch.bfloat16)
             out_bf16 = torch.matmul(pij_bf16, v_tile_view)
-            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
-            l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
-            m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
+            inputs.o_out[inputs.q_tile_start:inputs.q_tile_end, :] = out_bf16[:inputs.q_tile_len, :]
+            inputs.l_out[inputs.q_tile_start:inputs.q_tile_end, :] = lij[:inputs.q_tile_len, :]
+            inputs.m_out[inputs.q_tile_start:inputs.q_tile_end, :] = mij[:inputs.q_tile_len, :]
         else:
-            oi_update[:q_tile_len, :] = oij[:q_tile_len, :]
-            li_update[:q_tile_len, :] = lij[:q_tile_len, :]
-            mi_update[:q_tile_len, :] = mij[:q_tile_len, :]
+            inputs.oi_update[:inputs.q_tile_len, :] = oij[:inputs.q_tile_len, :]
+            inputs.li_update[:inputs.q_tile_len, :] = lij[:inputs.q_tile_len, :]
+            inputs.mi_update[:inputs.q_tile_len, :] = mij[:inputs.q_tile_len, :]
     else:
-        mi = mi_update[:q_tile_len, :]
-        li = li_update[:q_tile_len, :]
-        oi = oi_update[:q_tile_len, :]
-        mi_new = torch.maximum(mi, mij[:q_tile_len, :])
+        mi = inputs.mi_update[:inputs.q_tile_len, :]
+        li = inputs.li_update[:inputs.q_tile_len, :]
+        oi = inputs.oi_update[:inputs.q_tile_len, :]
+        mi_new = torch.maximum(mi, mij[:inputs.q_tile_len, :])
         t1 = torch.exp(mi - mi_new)
-        t2 = torch.exp(mij[:q_tile_len, :] - mi_new)
-        li_new = t1 * li + t2 * lij[:q_tile_len, :]
-        oi_tmp = t1 * oi + t2 * oij[:q_tile_len, :]
-        if k_tile_idx == k_tile_count - 1:
+        t2 = torch.exp(mij[:inputs.q_tile_len, :] - mi_new)
+        li_new = t1 * li + t2 * lij[:inputs.q_tile_len, :]
+        oi_tmp = t1 * oi + t2 * oij[:inputs.q_tile_len, :]
+        if inputs.k_tile_idx == inputs.k_tile_count - 1:
             out_fp32 = oi_tmp / li_new
             out_bf16 = out_fp32.to(torch.bfloat16)
-            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
-            l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
-            m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]
+            inputs.o_out[inputs.q_tile_start:inputs.q_tile_end, :] = out_bf16[:inputs.q_tile_len, :]
+            inputs.l_out[inputs.q_tile_start:inputs.q_tile_end, :] = li_new[:inputs.q_tile_len, :]
+            inputs.m_out[inputs.q_tile_start:inputs.q_tile_end, :] = mi_new[:inputs.q_tile_len, :]
         else:
-            oi_update[:q_tile_len, :] = oi_tmp
-            li_update[:q_tile_len, :] = li_new
-            mi_update[:q_tile_len, :] = mi_new
+            inputs.oi_update[:inputs.q_tile_len, :] = oi_tmp
+            inputs.li_update[:inputs.q_tile_len, :] = li_new
+            inputs.mi_update[:inputs.q_tile_len, :] = mi_new
 
 
 def attention_forward_golden(q, k, v, scale):
@@ -233,35 +254,49 @@ def attention_forward_golden(q, k, v, scale):
         mi_update = torch.full((q_tile, 1), float('-inf'), dtype=torch.float32)
 
         for k_tile_idx in range(k_tile_count):
-            _compute_kv_tile(
-                k_tile_idx, k_tile_count, q_tile_len, k_f, v_f,
-                q_tile_view, scale, k_tile, s2_size,
-                oi_update, li_update, mi_update,
-                o_out, q_tile_start, q_tile_end,
-                l_out, m_out)
+            _compute_kv_tile(ComputeKvTileInputs(
+                k_tile_idx=k_tile_idx, k_tile_count=k_tile_count, q_tile_len=q_tile_len,
+                k_f=k_f, v_f=v_f, q_tile_view=q_tile_view, scale=scale,
+                k_tile=k_tile, s2_size=s2_size,
+                oi_update=oi_update, li_update=li_update, mi_update=mi_update,
+                o_out=o_out, q_tile_start=q_tile_start, q_tile_end=q_tile_end,
+                l_out=l_out, m_out=m_out))
 
     return AttentionForwardOutput(o_out, m_out, l_out)
 
 
-def _compute_golden_outputs(
-    batch_size, num_heads, dim, hidden_dim, s1_size, s2_size, scale,
-    q, k, v, q_seqlens, kv_seqlens,
-):
+@dataclass
+class ComputeGoldenOutputsInputs:
+    batch_size: int
+    num_heads: int
+    dim: int
+    hidden_dim: int
+    s1_size: int
+    s2_size: int
+    scale: float
+    q: torch.Tensor
+    k: torch.Tensor
+    v: torch.Tensor
+    q_seqlens: list
+    kv_seqlens: list
+
+
+def _compute_golden_outputs(inputs: ComputeGoldenOutputsInputs):
     """Compute golden O/M/L by iterating over batches and heads."""
-    total_q = batch_size * s1_size
-    out_golden = torch.empty(total_q, hidden_dim, dtype=torch.bfloat16)
-    l_golden = torch.empty(total_q, num_heads, dtype=torch.float32)
-    m_golden = torch.empty(total_q, num_heads, dtype=torch.float32)
+    total_q = inputs.batch_size * inputs.s1_size
+    out_golden = torch.empty(total_q, inputs.hidden_dim, dtype=torch.bfloat16)
+    l_golden = torch.empty(total_q, inputs.num_heads, dtype=torch.float32)
+    m_golden = torch.empty(total_q, inputs.num_heads, dtype=torch.float32)
     q_off, k_off = 0, 0
-    for b in range(batch_size):
-        sq, sk = q_seqlens[b], kv_seqlens[b]
-        for h in range(num_heads):
-            h_off = h * dim
-            q_h = q[q_off:q_off + sq, h, :]
-            k_h = k[k_off:k_off + sk, h, :]
-            v_h = v[k_off:k_off + sk, h, :]
-            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, scale)
-            out_golden[q_off:q_off + sq, h_off:h_off + dim] = golden_o
+    for b in range(inputs.batch_size):
+        sq, sk = inputs.q_seqlens[b], inputs.kv_seqlens[b]
+        for h in range(inputs.num_heads):
+            h_off = h * inputs.dim
+            q_h = inputs.q[q_off:q_off + sq, h, :]
+            k_h = inputs.k[k_off:k_off + sk, h, :]
+            v_h = inputs.v[k_off:k_off + sk, h, :]
+            golden_o, golden_m, golden_l = attention_forward_golden(q_h, k_h, v_h, inputs.scale)
+            out_golden[q_off:q_off + sq, h_off:h_off + inputs.dim] = golden_o
             m_golden[q_off:q_off + sq, h:h + 1] = golden_m
             l_golden[q_off:q_off + sq, h:h + 1] = golden_l
         q_off += sq
@@ -347,8 +382,10 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     m_out_npu = torch.empty(total_q, num_heads, dtype=torch.float32, device=device)
 
     out_golden, l_golden, m_golden = _compute_golden_outputs(
-        batch_size, num_heads, dim, hidden_dim, s1_size, s2_size, scale,
-        q, k, v, q_seqlens, kv_seqlens)
+        ComputeGoldenOutputsInputs(
+            batch_size=batch_size, num_heads=num_heads, dim=dim,
+            hidden_dim=hidden_dim, s1_size=s1_size, s2_size=s2_size, scale=scale,
+            q=q, k=k, v=v, q_seqlens=q_seqlens, kv_seqlens=kv_seqlens))
 
     logging.info("  Running kernel...")
     flash_attention_varlen_forward_kernel(

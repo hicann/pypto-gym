@@ -32,17 +32,32 @@ from common_utils import gen_uniform_data
 from tests.ops.utils.compare import compare
 
 
+@dataclass
+class CompressSFAForwardInputs:
+    query_npu: Any
+    q_act_seqs_npu: Any
+    ori_kv_npu: Any
+    cmp_kv_npu: Any
+    ori_block_table_npu: Any
+    cmp_block_table_npu: Any
+    atten_sink_npu: Any
+    seqused_kv_npu: Any
+    cmp_sparse_indices_npu: Any
+    softmax_scale: Any
+    win_size: Any
+    cmp_ratio: Any
+
+
 class CompressSFA(torch.nn.Module):
-    def forward(self, query_npu, q_act_seqs_npu, ori_kv_npu, cmp_kv_npu, ori_block_table_npu,
-                cmp_block_table_npu, atten_sink_npu, seqused_kv_npu, cmp_sparse_indices_npu,
-                softmax_scale, win_size, cmp_ratio):
+    def forward(self, inputs: CompressSFAForwardInputs):
+
         args = SCFANpuInputs(
-            query_npu=query_npu, q_act_seqs_npu=q_act_seqs_npu,
-            ori_kv_npu=ori_kv_npu, cmp_kv_npu=cmp_kv_npu,
-            ori_block_table_npu=ori_block_table_npu, cmp_block_table_npu=cmp_block_table_npu,
-            atten_sink_npu=atten_sink_npu, seqused_kv_npu=seqused_kv_npu,
-            cmp_sparse_indices_npu=cmp_sparse_indices_npu,
-            softmax_scale=softmax_scale, win_size=win_size, cmp_ratio=cmp_ratio)
+            query_npu=inputs.query_npu, q_act_seqs_npu=inputs.q_act_seqs_npu,
+            ori_kv_npu=inputs.ori_kv_npu, cmp_kv_npu=inputs.cmp_kv_npu,
+            ori_block_table_npu=inputs.ori_block_table_npu, cmp_block_table_npu=inputs.cmp_block_table_npu,
+            atten_sink_npu=inputs.atten_sink_npu, seqused_kv_npu=inputs.seqused_kv_npu,
+            cmp_sparse_indices_npu=inputs.cmp_sparse_indices_npu,
+            softmax_scale=inputs.softmax_scale, win_size=inputs.win_size, cmp_ratio=inputs.cmp_ratio)
         return sparse_compress_flash_attention_graph(args)
 
 
@@ -353,9 +368,13 @@ def do_test_sparse_compress_attention_func_acl_graph(bn1n2s1, actual_seq, input_
     kv_act_seqs_npu = kv_act_seqs.npu()
     atten_sink_npu = atten_sink.npu()
 
-    attention_out = model(q_npu, q_act_seqs_npu, origin_kv_npu, compress_kv_npu,
-        origin_block_table_npu, block_table_npu, atten_sink_npu, kv_act_seqs_npu,
-        topk_indices_npu, softmax_scale, win_size, cmp_ratio)
+    attention_out = model(CompressSFAForwardInputs(
+        query_npu=q_npu, q_act_seqs_npu=q_act_seqs_npu,
+        ori_kv_npu=origin_kv_npu, cmp_kv_npu=compress_kv_npu,
+        ori_block_table_npu=origin_block_table_npu, cmp_block_table_npu=block_table_npu,
+        atten_sink_npu=atten_sink_npu, seqused_kv_npu=kv_act_seqs_npu,
+        cmp_sparse_indices_npu=topk_indices_npu,
+        softmax_scale=softmax_scale, win_size=win_size, cmp_ratio=cmp_ratio))
     pypto.runtime._device_synchronize()
 
     compare(attention_out.cpu(), atten_out.reshape(attention_out.shape),

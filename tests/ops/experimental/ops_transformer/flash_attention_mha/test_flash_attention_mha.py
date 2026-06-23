@@ -128,49 +128,66 @@ def _kv_tile_iter_body(q_tile_view, k_tile_view, v_tile_view, scale,
         return oi_upd, li_upd, mi_upd, lij, mij, oij, False, scores, pij, li_new, mi_new, oi_tmp, scores, pij
 
 
-def _process_kv_tile(q_tile_view, k_tile_view, v_tile_view, scale, q_tile_len, k_tile_idx,
-                     k_tile_count, oi_upd, li_upd, mi_upd, q_tile_start, q_tile_end,
-                     o_out, l_out, m_out):
+@dataclass
+class ProcessKvTileInputs:
+    q_tile_view: torch.Tensor
+    k_tile_view: torch.Tensor
+    v_tile_view: torch.Tensor
+    scale: float
+    q_tile_len: int
+    k_tile_idx: int
+    k_tile_count: int
+    oi_upd: torch.Tensor
+    li_upd: torch.Tensor
+    mi_upd: torch.Tensor
+    q_tile_start: int
+    q_tile_end: int
+    o_out: torch.Tensor
+    l_out: torch.Tensor
+    m_out: torch.Tensor
+
+
+def _process_kv_tile(inputs: ProcessKvTileInputs):
     """Process one KV tile: compute scores, softmax, matmul, update accumulators."""
-    scores = torch.matmul(q_tile_view, k_tile_view.T) * scale
+    scores = torch.matmul(inputs.q_tile_view, inputs.k_tile_view.T) * inputs.scale
     mij = scores.amax(dim=-1, keepdim=True)
     s_shifted = scores - mij
     pij = torch.exp(s_shifted)
     lij = pij.sum(dim=-1, keepdim=True)
     p_bf16 = pij.to(torch.bfloat16)
-    oij = torch.matmul(p_bf16, v_tile_view)
+    oij = torch.matmul(p_bf16, inputs.v_tile_view)
 
-    if k_tile_idx == 0:
-        if k_tile_idx == k_tile_count - 1:
+    if inputs.k_tile_idx == 0:
+        if inputs.k_tile_idx == inputs.k_tile_count - 1:
             pij_div = pij / lij
             pij_bf16 = pij_div.to(torch.bfloat16)
-            out_bf16 = torch.matmul(pij_bf16, v_tile_view)
-            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
-            l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
-            m_out[q_tile_start:q_tile_end, :] = mij[:q_tile_len, :]
+            out_bf16 = torch.matmul(pij_bf16, inputs.v_tile_view)
+            inputs.o_out[inputs.q_tile_start:inputs.q_tile_end, :] = out_bf16[:inputs.q_tile_len, :]
+            inputs.l_out[inputs.q_tile_start:inputs.q_tile_end, :] = lij[:inputs.q_tile_len, :]
+            inputs.m_out[inputs.q_tile_start:inputs.q_tile_end, :] = mij[:inputs.q_tile_len, :]
         else:
-            oi_upd[:q_tile_len, :] = oij[:q_tile_len, :]
-            li_upd[:q_tile_len, :] = lij[:q_tile_len, :]
-            mi_upd[:q_tile_len, :] = mij[:q_tile_len, :]
+            inputs.oi_upd[:inputs.q_tile_len, :] = oij[:inputs.q_tile_len, :]
+            inputs.li_upd[:inputs.q_tile_len, :] = lij[:inputs.q_tile_len, :]
+            inputs.mi_upd[:inputs.q_tile_len, :] = mij[:inputs.q_tile_len, :]
     else:
-        mi = mi_upd[:q_tile_len, :]
-        li = li_upd[:q_tile_len, :]
-        oi = oi_upd[:q_tile_len, :]
-        mi_new = torch.maximum(mi, mij[:q_tile_len, :])
+        mi = inputs.mi_upd[:inputs.q_tile_len, :]
+        li = inputs.li_upd[:inputs.q_tile_len, :]
+        oi = inputs.oi_upd[:inputs.q_tile_len, :]
+        mi_new = torch.maximum(mi, mij[:inputs.q_tile_len, :])
         t1 = torch.exp(mi - mi_new)
-        t2 = torch.exp(mij[:q_tile_len, :] - mi_new)
-        li_new = t1 * li + t2 * lij[:q_tile_len, :]
-        oi_tmp = t1 * oi + t2 * oij[:q_tile_len, :]
-        if k_tile_idx == k_tile_count - 1:
+        t2 = torch.exp(mij[:inputs.q_tile_len, :] - mi_new)
+        li_new = t1 * li + t2 * lij[:inputs.q_tile_len, :]
+        oi_tmp = t1 * oi + t2 * oij[:inputs.q_tile_len, :]
+        if inputs.k_tile_idx == inputs.k_tile_count - 1:
             out_fp32 = oi_tmp / li_new
             out_bf16 = out_fp32.to(torch.bfloat16)
-            o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
-            l_out[q_tile_start:q_tile_end, :] = li_new[:q_tile_len, :]
-            m_out[q_tile_start:q_tile_end, :] = mi_new[:q_tile_len, :]
+            inputs.o_out[inputs.q_tile_start:inputs.q_tile_end, :] = out_bf16[:inputs.q_tile_len, :]
+            inputs.l_out[inputs.q_tile_start:inputs.q_tile_end, :] = li_new[:inputs.q_tile_len, :]
+            inputs.m_out[inputs.q_tile_start:inputs.q_tile_end, :] = mi_new[:inputs.q_tile_len, :]
         else:
-            oi_upd[:q_tile_len, :] = oi_tmp
-            li_upd[:q_tile_len, :] = li_new
-            mi_upd[:q_tile_len, :] = mi_new
+            inputs.oi_upd[:inputs.q_tile_len, :] = oi_tmp
+            inputs.li_upd[:inputs.q_tile_len, :] = li_new
+            inputs.mi_upd[:inputs.q_tile_len, :] = mi_new
 
 
 def attention_forward_golden(q, k, v, scale):

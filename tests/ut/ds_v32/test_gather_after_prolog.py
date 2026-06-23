@@ -51,30 +51,47 @@ class GatherInputs:
     s1: pypto.symbolic_scalar
 
 
-def _gather_topk_loop_body(
-    b_idx, s1_idx, n2_idx, topk_idx, d_n, d_r,
-    block_size, top_k_indices, block_table,
-    k_nope_cache, k_rope_cache, gather_res,
-    s1, n2, topk,
-):
+@dataclass
+class GatherTopkLoopBodyInputs:
+    b_idx: Any
+    s1_idx: Any
+    n2_idx: Any
+    topk_idx: Any
+    d_n: Any
+    d_r: Any
+    block_size: Any
+    top_k_indices: Any
+    block_table: Any
+    k_nope_cache: Any
+    k_rope_cache: Any
+    gather_res: Any
+    s1: Any
+    n2: Any
+    topk: Any
+
+
+def _gather_topk_loop_body(inputs: GatherTopkLoopBodyInputs):
+
     """Single-iteration body of the topk gather loop."""
     pypto.set_vec_tile_shapes(1, 1, 1, 16)
-    topk_index = top_k_indices[b_idx, s1_idx, n2_idx, topk_idx]
-    block_idx_in_batch = (topk_index // block_size)
-    tail = topk_index % block_size
-    slc_block_idx = block_table[b_idx, block_idx_in_batch]
-    pypto.set_vec_tile_shapes(1, d_n)
-    kv_slc_block = pypto.view(k_nope_cache, [1, d_n], [slc_block_idx * block_size + tail, 0])
-    kr_slc_block = pypto.view(k_rope_cache, [1, d_r], [slc_block_idx * block_size + tail, 0])
+    topk_index = inputs.top_k_indices[inputs.b_idx, inputs.s1_idx, inputs.n2_idx, inputs.topk_idx]
+    block_idx_in_batch = (topk_index // inputs.block_size)
+    tail = topk_index % inputs.block_size
+    slc_block_idx = inputs.block_table[inputs.b_idx, block_idx_in_batch]
+    pypto.set_vec_tile_shapes(1, inputs.d_n)
+    kv_slc_block = pypto.view(inputs.k_nope_cache, [1, inputs.d_n], [slc_block_idx * inputs.block_size + tail, 0])
+    kr_slc_block = pypto.view(inputs.k_rope_cache, [1, inputs.d_r], [slc_block_idx * inputs.block_size + tail, 0])
     pypto.set_semantic_label("gather1")
     kv_slc_block_fp32 = pypto.cast(kv_slc_block, pypto.DT_FP32)
     kr_slc_block_fp32 = pypto.cast(kr_slc_block, pypto.DT_FP32)
     pypto.set_semantic_label("gather2")
-    kv_slc_block_fp16 = pypto.cast(kv_slc_block_fp32, gather_res.dtype)
-    kr_slc_block_fp16 = pypto.cast(kr_slc_block_fp32, gather_res.dtype)
-    ofs = (b_idx * s1 * n2 * topk + s1_idx * n2 * topk + n2_idx * topk + topk_idx)
-    pypto.assemble(kv_slc_block_fp16, [ofs, 0], gather_res)
-    pypto.assemble(kr_slc_block_fp16, [ofs, d_n], gather_res)
+    kv_slc_block_fp16 = pypto.cast(kv_slc_block_fp32, inputs.gather_res.dtype)
+    kr_slc_block_fp16 = pypto.cast(kr_slc_block_fp32, inputs.gather_res.dtype)
+    ofs = (inputs.b_idx * inputs.s1 * inputs.n2 * inputs.topk
+           + inputs.s1_idx * inputs.n2 * inputs.topk
+           + inputs.n2_idx * inputs.topk + inputs.topk_idx)
+    pypto.assemble(kv_slc_block_fp16, [ofs, 0], inputs.gather_res)
+    pypto.assemble(kr_slc_block_fp16, [ofs, inputs.d_n], inputs.gather_res)
 
 
 def gather_after_prolog_compute(args: GatherInputs):
@@ -103,12 +120,13 @@ def gather_after_prolog_compute(args: GatherInputs):
                     cur_kv_seq = act_seqs[b_idx]
                     top_k_loop = ((cur_kv_seq - s1 + 1 + s1_idx).max(0).min(topk))
                     for topk_idx in pypto.loop(top_k_loop, unroll_list=unroll_list):
-                        _gather_topk_loop_body(
-                            b_idx, s1_idx, n2_idx, topk_idx, d_n, d_r,
-                            block_size, top_k_indices, block_table,
-                            k_nope_cache, k_rope_cache, gather_res,
-                            s1, n2, topk,
-                        )
+                        _gather_topk_loop_body(GatherTopkLoopBodyInputs(
+                            b_idx=b_idx, s1_idx=s1_idx, n2_idx=n2_idx, topk_idx=topk_idx,
+                            d_n=d_n, d_r=d_r, block_size=block_size,
+                            top_k_indices=top_k_indices, block_table=block_table,
+                            k_nope_cache=k_nope_cache, k_rope_cache=k_rope_cache,
+                            gather_res=gather_res, s1=s1, n2=n2, topk=topk,
+                        ))
 
 
 @dataclass

@@ -20,6 +20,7 @@ Main Functions:
 """
 
 import argparse
+import dataclasses
 import logging
 import multiprocessing as mp
 import os
@@ -42,58 +43,88 @@ from distributed_config import DistributedConfig, collect_process_errors
 logger = logging.getLogger(__name__)
 
 
-def _do_allreduce_matmul(matmul_weight, in_tensor_tile, shmem_tensor, shmem_barrier_signal,
-                        my_pe, world_size, shmem_shape, view_row_shape, hidden_size,
-                        batch_size, bs_idx):
-    pypto.set_vec_tile_shapes(view_row_shape, hidden_size)
+@dataclasses.dataclass
+class DoAllreduceMatmulInputs:
+    matmul_weight: object
+    in_tensor_tile: object
+    shmem_tensor: object
+    shmem_barrier_signal: object
+    my_pe: object
+    world_size: int
+    shmem_shape: list
+    view_row_shape: int
+    hidden_size: int
+    batch_size: int
+    bs_idx: int
+
+
+@dataclasses.dataclass
+class AddRmsnormAndStoreOutputInputs:
+    all_reduce_out: object
+    residual: object
+    batch_size: int
+    bs_idx: int
+    view_row_shape: int
+    hidden_size: int
+    in_tensor_mean_coff: float
+    eps: float
+    gamma_2d: object
+    bias_2d: object
+    in_tensor: object
+    residual_out: object
+    out_tensor: object
+
+
+def _do_allreduce_matmul(inputs: DoAllreduceMatmulInputs):
+    pypto.set_vec_tile_shapes(inputs.view_row_shape, inputs.hidden_size)
     data_clear_out = pypto.distributed.shmem_clear_data(
-        shmem_tensor, shmem_shape, [0, 0], pred=[in_tensor_tile])
+        inputs.shmem_tensor, inputs.shmem_shape, [0, 0], pred=[inputs.in_tensor_tile])
     barrier_out = pypto.distributed.shmem_barrier_all(
-        shmem_barrier_signal, [data_clear_out])
+        inputs.shmem_barrier_signal, [data_clear_out])
     pypto.set_cube_tile_shapes([8, 8], [128, 256], [256, 512])
-    matmul_result = pypto.matmul(in_tensor_tile, matmul_weight, pypto.DT_BF16, b_trans=True)
-    pypto.set_vec_tile_shapes(view_row_shape, hidden_size)
-    for dyn_idx in range(world_size):
-        put_out = pypto.distributed.shmem_put(matmul_result, [0, 0], shmem_tensor, dyn_idx,
+    matmul_result = pypto.matmul(inputs.in_tensor_tile, inputs.matmul_weight, pypto.DT_BF16, b_trans=True)
+    pypto.set_vec_tile_shapes(inputs.view_row_shape, inputs.hidden_size)
+    for dyn_idx in range(inputs.world_size):
+        put_out = pypto.distributed.shmem_put(matmul_result, [0, 0], inputs.shmem_tensor, dyn_idx,
             put_op=pypto.AtomicType.ADD, pred=[barrier_out])
-        pypto.distributed.shmem_signal(shmem_tensor, dyn_idx, 1, shmem_shape,
+        pypto.distributed.shmem_signal(inputs.shmem_tensor, dyn_idx, 1, inputs.shmem_shape,
             [0, 0], target_pe=dyn_idx, sig_op=pypto.AtomicType.ADD, pred=[put_out])
-    wait_until_out = pypto.distributed.shmem_wait_until(shmem_tensor, my_pe, world_size,
-        shmem_shape, [0, 0], cmp=pypto.OpType.EQ, clear_signal=True, pred=[in_tensor_tile])
-    pypto.set_vec_tile_shapes(1, hidden_size)
+    wait_until_out = pypto.distributed.shmem_wait_until(inputs.shmem_tensor, inputs.my_pe, inputs.world_size,
+        inputs.shmem_shape, [0, 0], cmp=pypto.OpType.EQ, clear_signal=True, pred=[inputs.in_tensor_tile])
+    pypto.set_vec_tile_shapes(1, inputs.hidden_size)
     return pypto.experimental.shmem_load(
-        shmem_tensor, my_pe, shmem_shape, [0, 0], pred=[wait_until_out],
-        valid_shape=[(batch_size - bs_idx * view_row_shape).min(view_row_shape), hidden_size]
+        inputs.shmem_tensor, inputs.my_pe, inputs.shmem_shape, [0, 0], pred=[wait_until_out],
+        valid_shape=[(inputs.batch_size - inputs.bs_idx * inputs.view_row_shape).min(
+            inputs.view_row_shape), inputs.hidden_size]
     )
 
 
-def _add_rmsnorm_and_store_output(all_reduce_out, residual, batch_size, bs_idx, view_row_shape,
-                                  hidden_size, in_tensor_mean_coff, eps, gamma_2d, bias_2d,
-                                  in_tensor, residual_out, out_tensor):
+def _add_rmsnorm_and_store_output(inputs: AddRmsnormAndStoreOutputInputs):
     residual_tile = pypto.view(
-        residual, (view_row_shape, hidden_size), [bs_idx * view_row_shape, 0],
-        valid_shape=[(batch_size - bs_idx * view_row_shape).min(view_row_shape), hidden_size])
-    all_reduce_out_fp32 = pypto.cast(all_reduce_out, pypto.DT_FP32)
+        inputs.residual, (inputs.view_row_shape, inputs.hidden_size), [inputs.bs_idx * inputs.view_row_shape, 0],
+        valid_shape=[(inputs.batch_size - inputs.bs_idx * inputs.view_row_shape).min(
+            inputs.view_row_shape), inputs.hidden_size])
+    all_reduce_out_fp32 = pypto.cast(inputs.all_reduce_out, pypto.DT_FP32)
     residual_tile_fp32 = pypto.cast(residual_tile, pypto.DT_FP32)
     add_out = pypto.add(all_reduce_out_fp32, residual_tile_fp32)
     square = pypto.mul(add_out, add_out)
-    mean_res = pypto.mul(square, in_tensor_mean_coff)
+    mean_res = pypto.mul(square, inputs.in_tensor_mean_coff)
     reduce_asum = pypto.sum(mean_res, -1, True)
-    reduce_sum = pypto.add(reduce_asum, eps)
+    reduce_sum = pypto.add(reduce_asum, inputs.eps)
     reduce_sqrt = pypto.sqrt(reduce_sum)
     res_div = pypto.div(add_out, reduce_sqrt)
-    hidden_bf16 = pypto.tensor([view_row_shape, hidden_size], pypto.DT_BF16, "hidden_bf16")
-    residual_bf16_tmp = pypto.cast(add_out, in_tensor.dtype)
-    for tmp_idx in range(view_row_shape):
-        gamma_2d_fp32 = pypto.cast(gamma_2d, pypto.DT_FP32)
-        bias_2d_fp32 = pypto.cast(bias_2d, pypto.DT_FP32)
-        res_div_single = pypto.view(res_div, [1, hidden_size], [tmp_idx, 0])
+    hidden_bf16 = pypto.tensor([inputs.view_row_shape, inputs.hidden_size], pypto.DT_BF16, "hidden_bf16")
+    residual_bf16_tmp = pypto.cast(add_out, inputs.in_tensor.dtype)
+    for tmp_idx in range(inputs.view_row_shape):
+        gamma_2d_fp32 = pypto.cast(inputs.gamma_2d, pypto.DT_FP32)
+        bias_2d_fp32 = pypto.cast(inputs.bias_2d, pypto.DT_FP32)
+        res_div_single = pypto.view(res_div, [1, inputs.hidden_size], [tmp_idx, 0])
         res = pypto.mul(res_div_single, gamma_2d_fp32)
         res_add = pypto.add(res, bias_2d_fp32)
-        in_tensor_norm = pypto.cast(res_add, in_tensor.dtype)
+        in_tensor_norm = pypto.cast(res_add, inputs.in_tensor.dtype)
         hidden_bf16[tmp_idx:tmp_idx + 1] = in_tensor_norm
-    residual_out[bs_idx * pypto.symbolic_scalar(view_row_shape):] = residual_bf16_tmp
-    out_tensor[bs_idx * pypto.symbolic_scalar(view_row_shape):] = hidden_bf16
+    inputs.residual_out[inputs.bs_idx * pypto.symbolic_scalar(inputs.view_row_shape):] = residual_bf16_tmp
+    inputs.out_tensor[inputs.bs_idx * pypto.symbolic_scalar(inputs.view_row_shape):] = hidden_bf16
 
 
 def _matmul_allreduce_add_rmsnorm(
@@ -129,13 +160,19 @@ def _matmul_allreduce_add_rmsnorm(
             in_tensor, (view_row_shape, in_tensor.shape[1]), [bs_idx * view_row_shape, 0],
             valid_shape=[(batch_size - bs_idx * view_row_shape).min(view_row_shape), in_tensor.shape[1]])
 
-        all_reduce_out = _do_allreduce_matmul(matmul_weight, in_tensor_tile, shmem_tensor,
-            shmem_barrier_signal, my_pe, world_size, shmem_shape, view_row_shape,
-            hidden_size, batch_size, bs_idx)
+        all_reduce_out = _do_allreduce_matmul(DoAllreduceMatmulInputs(
+            matmul_weight=matmul_weight, in_tensor_tile=in_tensor_tile,
+            shmem_tensor=shmem_tensor, shmem_barrier_signal=shmem_barrier_signal,
+            my_pe=my_pe, world_size=world_size, shmem_shape=shmem_shape,
+            view_row_shape=view_row_shape, hidden_size=hidden_size,
+            batch_size=batch_size, bs_idx=bs_idx))
 
-        _add_rmsnorm_and_store_output(all_reduce_out, residual, batch_size, bs_idx,
-            view_row_shape, hidden_size, in_tensor_mean_coff, eps, gamma_2d, bias_2d,
-            in_tensor, residual_out, out_tensor)
+        _add_rmsnorm_and_store_output(AddRmsnormAndStoreOutputInputs(
+            all_reduce_out=all_reduce_out, residual=residual, batch_size=batch_size,
+            bs_idx=bs_idx, view_row_shape=view_row_shape, hidden_size=hidden_size,
+            in_tensor_mean_coff=in_tensor_mean_coff, eps=eps, gamma_2d=gamma_2d,
+            bias_2d=bias_2d, in_tensor=in_tensor, residual_out=residual_out,
+            out_tensor=out_tensor))
 
 
 @pypto.frontend.jit()

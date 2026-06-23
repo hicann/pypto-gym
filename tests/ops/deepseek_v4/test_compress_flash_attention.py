@@ -466,18 +466,35 @@ def _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash
     return output_flash, kv_bs
 
 
-def ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out, enable_flash=True, cmp_ratio=1,
-               is_new_sink=True, ori_kv=None, ori_block_table=None):
-    if not enable_flash:
-        return _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv,
-                                 output_flash, cmp_ratio, is_new_sink, ori_kv, ori_block_table)
+@dataclass
+class IfaGoldenInputs:
+    q: Any
+    cmp_kv: Any
+    sinks: Any
+    cmp_block_table: Any
+    seqused_kv: Any
+    output_flash: Any
+    tmp_out: Any
+    enable_flash: Any = True
+    cmp_ratio: Any = 1
+    is_new_sink: Any = True
+    ori_kv: Any = None
+    ori_block_table: Any = None
+
+
+def ifa_golden(inputs: IfaGoldenInputs):
+
+    if not inputs.enable_flash:
+        return _golden_no_flash(inputs.q, inputs.cmp_kv, inputs.sinks, inputs.cmp_block_table,
+                                 inputs.seqused_kv, inputs.output_flash, inputs.cmp_ratio,
+                                 inputs.is_new_sink, inputs.ori_kv, inputs.ori_block_table)
     else:
         output_flash = ifa_flash_torch(
-            IfaFlashTorchInputs(q=q, cmp_kv=cmp_kv, sinks=sinks,
-            cmp_block_table=cmp_block_table, seqused_kv=seqused_kv,
-            output_flash=output_flash, tmp_out=tmp_out,
-            cmp_ratio=cmp_ratio, is_new_sink=is_new_sink,
-            ori_kv=ori_kv, ori_block_table=ori_block_table)
+            IfaFlashTorchInputs(q=inputs.q, cmp_kv=inputs.cmp_kv, sinks=inputs.sinks,
+            cmp_block_table=inputs.cmp_block_table, seqused_kv=inputs.seqused_kv,
+            output_flash=inputs.output_flash, tmp_out=inputs.tmp_out,
+            cmp_ratio=inputs.cmp_ratio, is_new_sink=inputs.is_new_sink,
+            ori_kv=inputs.ori_kv, ori_block_table=inputs.ori_block_table)
         )
         return output_flash
 
@@ -542,8 +559,11 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
         [attn_cfg.block_table_batch, attn_cfg.max_blocks], cmp_ratio=cmp_ratio)
     attention_out = torch.zeros(q_shape, **{"dtype": torch_dtype, "device": device})
 
-    ifa_golden(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, tmp_out_golden, enable_flash=False,
-        cmp_ratio=cmp_ratio, is_new_sink=True, ori_kv=ori_kv, ori_block_table=ori_block_table)
+    ifa_golden(IfaGoldenInputs(q=q, cmp_kv=cmp_kv, sinks=sinks,
+        cmp_block_table=cmp_block_table, seqused_kv=seqused_kv,
+        output_flash=output_flash, tmp_out=tmp_out_golden, enable_flash=False,
+        cmp_ratio=cmp_ratio, is_new_sink=True, ori_kv=ori_kv,
+        ori_block_table=ori_block_table))
 
     # acl graph
     if enable_graph:

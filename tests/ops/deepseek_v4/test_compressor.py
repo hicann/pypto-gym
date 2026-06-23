@@ -12,6 +12,8 @@
 
 import os
 import sys
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -83,60 +85,96 @@ def apply_rotary_pos_emb_v2(
     return x_embed
 
 
-def _compress_overlap_step(
-    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
-    kv_state, score_state, kv_block_table, score_block_table,
-    block_size, ratio, d, kv, score,
-):
+@dataclass
+class _CompressOverlapStepInputs:
+    kv_total: Any
+    score_total: Any
+    ape: Any
+    pos: Any
+    b_idx: Any
+    i: Any
+    start_pos_dy: Any
+    kv_state: Any
+    score_state: Any
+    kv_block_table: Any
+    score_block_table: Any
+    block_size: Any
+    ratio: Any
+    d: Any
+    kv: Any
+    score: Any
+
+
+def _compress_overlap_step(inputs: _CompressOverlapStepInputs):
     """Overlap-mode (ratio==4) compression step for one token position."""
-    kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
-    score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
-    cur_pos = (start_pos_dy[b_idx] + i) % block_size
-    kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
-    score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
-    should_compress = (start_pos_dy[b_idx] + i + 1) % ratio == 0
+    block_offset = (inputs.start_pos_dy[inputs.b_idx] + inputs.i) // inputs.block_size
+    kv_block_idx = inputs.kv_block_table[inputs.b_idx, block_offset]
+    score_block_idx = inputs.score_block_table[inputs.b_idx, block_offset]
+    cur_pos = (inputs.start_pos_dy[inputs.b_idx] + inputs.i) % inputs.block_size
+    inputs.kv_state[kv_block_idx, cur_pos, :] = inputs.kv.squeeze(0)
+    inputs.score_state[score_block_idx, cur_pos, :] = inputs.score.squeeze(0)
+    should_compress = (inputs.start_pos_dy[inputs.b_idx] + inputs.i + 1) % inputs.ratio == 0
     if should_compress:
-        pre_kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i - 2 * ratio + 1) // block_size]
-        pre_score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i - 2 * ratio + 1) // block_size]
-        pre_start = (start_pos_dy[b_idx] + i - 2 * ratio + 1) % block_size
-        pre_end = pre_start + ratio
-        cur_start = (start_pos_dy[b_idx] + i - ratio + 1) % block_size
-        cur_end = cur_start + ratio
-        if start_pos_dy[b_idx] < ratio:
+        pre_block_offset = (inputs.start_pos_dy[inputs.b_idx] + inputs.i
+                            - 2 * inputs.ratio + 1) // inputs.block_size
+        pre_kv_block_idx = inputs.kv_block_table[inputs.b_idx, pre_block_offset]
+        pre_score_block_idx = inputs.score_block_table[inputs.b_idx, pre_block_offset]
+        pre_start = (inputs.start_pos_dy[inputs.b_idx] + inputs.i - 2 * inputs.ratio + 1) % inputs.block_size
+        pre_end = pre_start + inputs.ratio
+        cur_start = (inputs.start_pos_dy[inputs.b_idx] + inputs.i - inputs.ratio + 1) % inputs.block_size
+        cur_end = cur_start + inputs.ratio
+        if inputs.start_pos_dy[inputs.b_idx] < inputs.ratio:
             kv_state_tmp = torch.cat([
-                kv_state[pre_kv_block_idx, pre_start:pre_end, :d] * 0,
-                kv_state[kv_block_idx, cur_start:cur_end, d:]], dim=0)
+                inputs.kv_state[pre_kv_block_idx, pre_start:pre_end, :inputs.d] * 0,
+                inputs.kv_state[kv_block_idx, cur_start:cur_end, inputs.d:]], dim=0)
             score_state_tmp = torch.cat([
-                score_state[pre_score_block_idx, pre_start:pre_end, :d] - float("inf"),
-                score_state[score_block_idx, cur_start:cur_end, d:]], dim=0)
+                inputs.score_state[pre_score_block_idx, pre_start:pre_end, :inputs.d] - float("inf"),
+                inputs.score_state[score_block_idx, cur_start:cur_end, inputs.d:]], dim=0)
         else:
             kv_state_tmp = torch.cat([
-                kv_state[pre_kv_block_idx, pre_start:pre_end, :d],
-                kv_state[kv_block_idx, cur_start:cur_end, d:]], dim=0)
+                inputs.kv_state[pre_kv_block_idx, pre_start:pre_end, :inputs.d],
+                inputs.kv_state[kv_block_idx, cur_start:cur_end, inputs.d:]], dim=0)
             score_state_tmp = torch.cat([
-                score_state[pre_score_block_idx, pre_start:pre_end, :d],
-                score_state[score_block_idx, cur_start:cur_end, d:]], dim=0)
+                inputs.score_state[pre_score_block_idx, pre_start:pre_end, :inputs.d],
+                inputs.score_state[score_block_idx, cur_start:cur_end, inputs.d:]], dim=0)
         kv_new = (kv_state_tmp * score_state_tmp.softmax(dim=0)).sum(dim=0, keepdim=False)
     else:
         kv_new = None
     return kv_new, should_compress
 
 
-def _compress_non_overlap_step(
-    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
-    kv_state, score_state, kv_block_table, score_block_table,
-    block_size, ratio, d, kv, score,
-):
+@dataclass
+class _CompressNonOverlapStepInputs:
+    kv_total: Any
+    score_total: Any
+    ape: Any
+    pos: Any
+    b_idx: Any
+    i: Any
+    start_pos_dy: Any
+    kv_state: Any
+    score_state: Any
+    kv_block_table: Any
+    score_block_table: Any
+    block_size: Any
+    ratio: Any
+    d: Any
+    kv: Any
+    score: Any
+
+
+def _compress_non_overlap_step(inputs: _CompressNonOverlapStepInputs):
     """Non-overlap-mode compression step for one token position."""
-    kv_block_idx = kv_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
-    score_block_idx = score_block_table[b_idx, (start_pos_dy[b_idx] + i) // block_size]
-    cur_pos = (start_pos_dy[b_idx] + i) % block_size
-    kv_state[kv_block_idx, cur_pos, :] = kv.squeeze(0)
-    score_state[score_block_idx, cur_pos, :] = score.squeeze(0)
-    should_compress = (start_pos_dy[b_idx] + i + 1) % ratio == 0
+    block_offset = (inputs.start_pos_dy[inputs.b_idx] + inputs.i) // inputs.block_size
+    kv_block_idx = inputs.kv_block_table[inputs.b_idx, block_offset]
+    score_block_idx = inputs.score_block_table[inputs.b_idx, block_offset]
+    cur_pos = (inputs.start_pos_dy[inputs.b_idx] + inputs.i) % inputs.block_size
+    inputs.kv_state[kv_block_idx, cur_pos, :] = inputs.kv.squeeze(0)
+    inputs.score_state[score_block_idx, cur_pos, :] = inputs.score.squeeze(0)
+    should_compress = (inputs.start_pos_dy[inputs.b_idx] + inputs.i + 1) % inputs.ratio == 0
     if should_compress:
-        kv_tmp = torch.cat((kv_state[kv_block_idx, :-1, :], kv), dim=0)
-        score_tmp = torch.cat((score_state[score_block_idx, :-1, :], score), dim=0)
+        kv_tmp = torch.cat((inputs.kv_state[kv_block_idx, :-1, :], inputs.kv), dim=0)
+        score_tmp = torch.cat((inputs.score_state[score_block_idx, :-1, :], inputs.score), dim=0)
         kv_new = (kv_tmp * score_tmp.softmax(dim=0)).sum(dim=0, keepdim=False)
     else:
         kv_new = None
@@ -155,25 +193,45 @@ def _compress_post_process(kv_new, dtype, eps, weight, rope_head_dim, sin, cos, 
     return kv_new
 
 
-def golden_compress(
-    x,
-    sin,
-    cos,
-    wkv,
-    wgate,
-    ape,
-    weight,
-    kv_state,
-    score_state,
-    kv_block_table,
-    score_block_table,
-    hadamard,
-    ratio,
-    start_pos_dy,
-    rope_head_dim,
-    rotate,
-    eps=1e-6,
-):
+@dataclass
+class GoldenCompressInputs:
+    x: Any
+    sin: Any
+    cos: Any
+    wkv: Any
+    wgate: Any
+    ape: Any
+    weight: Any
+    kv_state: Any
+    score_state: Any
+    kv_block_table: Any
+    score_block_table: Any
+    hadamard: Any
+    ratio: Any
+    start_pos_dy: Any
+    rope_head_dim: Any
+    rotate: Any
+    eps: Any = 1e-6
+
+
+def golden_compress(inputs: GoldenCompressInputs):
+    x = inputs.x
+    sin = inputs.sin
+    cos = inputs.cos
+    wkv = inputs.wkv
+    wgate = inputs.wgate
+    ape = inputs.ape
+    weight = inputs.weight
+    kv_state = inputs.kv_state
+    score_state = inputs.score_state
+    kv_block_table = inputs.kv_block_table
+    score_block_table = inputs.score_block_table
+    hadamard = inputs.hadamard
+    ratio = inputs.ratio
+    start_pos_dy = inputs.start_pos_dy
+    rope_head_dim = inputs.rope_head_dim
+    rotate = inputs.rotate
+    eps = inputs.eps
     bsz, s1, _ = x.size()
     overlap = ratio == 4
     dtype = x.dtype
@@ -197,15 +255,19 @@ def golden_compress(
             score = score_total[b_idx, i:i + 1, :].clone()
             score += ape[pos]
             if overlap:
-                kv_new, should_compress = _compress_overlap_step(
-                    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
-                    kv_state, score_state, kv_block_table, score_block_table,
-                    block_size, ratio, d, kv, score)
+                kv_new, should_compress = _compress_overlap_step(_CompressOverlapStepInputs(
+                    kv_total=kv_total, score_total=score_total, ape=ape, pos=pos,
+                    b_idx=b_idx, i=i, start_pos_dy=start_pos_dy,
+                    kv_state=kv_state, score_state=score_state, kv_block_table=kv_block_table,
+                    score_block_table=score_block_table,
+                    block_size=block_size, ratio=ratio, d=d, kv=kv, score=score))
             else:
-                kv_new, should_compress = _compress_non_overlap_step(
-                    kv_total, score_total, ape, pos, b_idx, i, start_pos_dy,
-                    kv_state, score_state, kv_block_table, score_block_table,
-                    block_size, ratio, d, kv, score)
+                kv_new, should_compress = _compress_non_overlap_step(_CompressNonOverlapStepInputs(
+                    kv_total=kv_total, score_total=score_total, ape=ape, pos=pos,
+                    b_idx=b_idx, i=i, start_pos_dy=start_pos_dy,
+                    kv_state=kv_state, score_state=score_state, kv_block_table=kv_block_table,
+                    score_block_table=score_block_table,
+                    block_size=block_size, ratio=ratio, d=d, kv=kv, score=score))
             if should_compress:
                 kv_output[b_idx, :] = _compress_post_process(
                     kv_new, dtype, eps, weight, rope_head_dim, sin, cos, b_idx, hadamard, rotate)
@@ -254,20 +316,38 @@ def gen_inputs(
             kv_state, score_state, block_table, hadamard)
 
 
+@dataclass
+class CompressorForwardInputs:
+    x: Any
+    kv_state: Any
+    score_state: Any
+    kv_block_table: Any
+    score_block_table: Any
+    sin: Any
+    cos: Any
+    wkv: Any
+    wgate: Any
+    ape: Any
+    weight: Any
+    hadamard: Any
+    st: Any
+    ra: Any
+    rope_head_dim: Any
+    ro: Any
+
+
 class Compressor(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(
-        self, x, kv_state, score_state, kv_block_table, score_block_table, sin, cos, wkv, wgate,
-        ape, weight, hadamard, st, ra, rope_head_dim, ro
-    ):
+    def forward(self, inputs: CompressorForwardInputs):
         args = CompressorArgs(
-            x=x, kv_state=kv_state, score_state=score_state,
-            kv_block_table=kv_block_table, score_block_table=score_block_table,
-            sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
-            hadamard=hadamard, start_pos=st, ratio=ra,
-            rope_head_dim=rope_head_dim, rotate=ro)
+            x=inputs.x, kv_state=inputs.kv_state, score_state=inputs.score_state,
+            kv_block_table=inputs.kv_block_table, score_block_table=inputs.score_block_table,
+            sin=inputs.sin, cos=inputs.cos, wkv=inputs.wkv, wgate=inputs.wgate,
+            ape=inputs.ape, weight=inputs.weight,
+            hadamard=inputs.hadamard, start_pos=inputs.st, ratio=inputs.ra,
+            rope_head_dim=inputs.rope_head_dim, rotate=inputs.ro)
         return compressor_pypto(args)
 
 
@@ -293,9 +373,12 @@ def _run_compressor_test(ra, ro, bsz, seq, h, d, rope_head_dim, device, enable_a
     if enable_acl_graph:
         compressor_model = Compressor().npu()
         compressor_model = compile_model(compressor_model)
-        out, kv_state_out, score_state_out = compressor_model(
-            x, kv_state, score_state, block_table, block_table,
-            sin, cos, wkv, wgate, ape, weight, hadamard, st, ra, rope_head_dim, ro)
+        out, kv_state_out, score_state_out = compressor_model(CompressorForwardInputs(
+            x=x, kv_state=kv_state, score_state=score_state,
+            kv_block_table=block_table, score_block_table=block_table,
+            sin=sin, cos=cos, wkv=wkv, wgate=wgate,
+            ape=ape, weight=weight, hadamard=hadamard, st=st, ra=ra,
+            rope_head_dim=rope_head_dim, ro=ro))
         torch_npu.npu.synchronize()
     elif ra == 128:
         args = CompressorArgs(
@@ -314,9 +397,11 @@ def _run_compressor_test(ra, ro, bsz, seq, h, d, rope_head_dim, device, enable_a
             rope_head_dim=rope_head_dim, rotate=ro)
         out, kv_state_out, score_state_out = compressor_pypto(args)
 
-    kv = golden_compress(x, sin, cos, wkv, wgate, ape, weight,
-                         kv_state, score_state, block_table, block_table,
-                         hadamard, ra, st, rope_head_dim, ro)
+    kv = golden_compress(GoldenCompressInputs(
+        x=x, sin=sin, cos=cos, wkv=wkv, wgate=wgate, ape=ape, weight=weight,
+        kv_state=kv_state, score_state=score_state, kv_block_table=block_table,
+        score_block_table=block_table,
+        hadamard=hadamard, ratio=ra, start_pos_dy=st, rope_head_dim=rope_head_dim, rotate=ro))
     _assert_compressor_outputs(kv_state_out, kv_state, score_state_out, score_state, out, kv)
     print("test_compressor_decode passed!")
 

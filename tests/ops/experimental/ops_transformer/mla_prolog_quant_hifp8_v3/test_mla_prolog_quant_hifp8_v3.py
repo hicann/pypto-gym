@@ -266,49 +266,71 @@ def _compute_q_path(inputs: _ComputeQPathInputs):
     return q_reshape, q_out, q_a_layernorm, q_a_layernorm_scale_dequant
 
 
-def _compute_kv_and_cache(x_2d, x_2d_quant, x_2d_scale_dequant,
-                          w_dkvkr, w_dkvkr_scale, gamma_ckv,
-                          cos, sin, q_reshape,
-                          kv_cache, kr_cache, cache_index,
-                          is_quant_a, dtype,
-                          b, s, kv_lora_rank, qk_rope_head_dim, qk_nope_head_dim):
+@dataclass
+class _ComputeKvAndCacheInputs:
+    x_2d: Any
+    x_2d_quant: Any
+    x_2d_scale_dequant: Any
+    w_dkvkr: Any
+    w_dkvkr_scale: Any
+    gamma_ckv: Any
+    cos: Any
+    sin: Any
+    q_reshape: Any
+    kv_cache: Any
+    kr_cache: Any
+    cache_index: Any
+    is_quant_a: Any
+    dtype: Any
+    b: Any
+    s: Any
+    kv_lora_rank: Any
+    qk_rope_head_dim: Any
+    qk_nope_head_dim: Any
+
+
+def _compute_kv_and_cache(inputs: _ComputeKvAndCacheInputs):
+
     # shape is: [b * s, h] @ [h, kv_lora_rank + qk_rope_head_dim] -> [b * s, kv_lora_rank + qk_rope_head_dim]
-    if is_quant_a:
-        kv_a_proj = torch_npu.npu_quant_matmul(x_2d_quant, w_dkvkr, w_dkvkr_scale.view(kv_lora_rank + qk_rope_head_dim), 
-                pertoken_scale=x_2d_scale_dequant.view(b * s), x1_dtype=torch_npu.hifloat8,
-                x2_dtype=torch_npu.hifloat8, output_dtype=torch_npu.float32)
+    if inputs.is_quant_a:
+        kv_a_proj = torch_npu.npu_quant_matmul(
+            inputs.x_2d_quant, inputs.w_dkvkr,
+            inputs.w_dkvkr_scale.view(inputs.kv_lora_rank + inputs.qk_rope_head_dim), 
+            pertoken_scale=inputs.x_2d_scale_dequant.view(inputs.b * inputs.s),
+            x1_dtype=torch_npu.hifloat8,
+            x2_dtype=torch_npu.hifloat8, output_dtype=torch_npu.float32)
     else:
         # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现与x86平台不一致，通过升精度保证正确性
-        kv_a_proj = torch.matmul(x_2d.to(torch.float32),
-                                 w_dkvkr.to(torch.float32))  # [b * s, kv_lora_rank + qk_rope_head_dim]
+        kv_a_proj = torch.matmul(inputs.x_2d.to(torch.float32),
+                                 inputs.w_dkvkr.to(torch.float32))  # [b * s, kv_lora_rank + qk_rope_head_dim]
 
-    kv_a_proj = kv_a_proj.to(dtype)
-    kv_reshape = kv_a_proj.reshape(b, s, kv_lora_rank + qk_rope_head_dim)
+    kv_a_proj = kv_a_proj.to(inputs.dtype)
+    kv_reshape = kv_a_proj.reshape(inputs.b, inputs.s, inputs.kv_lora_rank + inputs.qk_rope_head_dim)
 
-    compressed_kv = kv_reshape[:, :, 0:kv_lora_rank]  # [b, s, kv_lora_rank]
-    compressed_kv_norm = rms_norm(compressed_kv, gamma_ckv)
+    compressed_kv = kv_reshape[:, :, 0:inputs.kv_lora_rank]  # [b, s, kv_lora_rank]
+    compressed_kv_norm = rms_norm(compressed_kv, inputs.gamma_ckv)
     compressed_kv_quant_scale = None
 
-    compressed_kv_r = compressed_kv_norm.reshape(b, s, 1, kv_lora_rank)
-    k_nope = compressed_kv_r.reshape(b * s * 1, kv_lora_rank)
+    compressed_kv_r = compressed_kv_norm.reshape(inputs.b, inputs.s, 1, inputs.kv_lora_rank)
+    k_nope = compressed_kv_r.reshape(inputs.b * inputs.s * 1, inputs.kv_lora_rank)
 
     """ RoPE """
-    q_pe = q_reshape[:, :, :, qk_nope_head_dim:]  # [b, s, n, qk_rope_head_dim]
+    q_pe = inputs.q_reshape[:, :, :, inputs.qk_nope_head_dim:]  # [b, s, n, qk_rope_head_dim]
 
-    k_pe = kv_reshape[:, :, kv_lora_rank:]  # [b, s, qk_rope_head_dim]
-    k_pe_r = k_pe.reshape(b, s, 1, qk_rope_head_dim)
+    k_pe = kv_reshape[:, :, inputs.kv_lora_rank:]  # [b, s, qk_rope_head_dim]
+    k_pe_r = k_pe.reshape(inputs.b, inputs.s, 1, inputs.qk_rope_head_dim)
 
     # q_embed: [b, s, n, qk_rope_head_dim], k_embed: [b, s, 1, qk_rope_head_dim]
-    q_embed, k_embed = apply_rotary_pos_emb_v2(q_pe, k_pe_r, cos, sin, 2)
-    k_embed_r = k_embed.reshape(b * 1 * s, qk_rope_head_dim)
+    q_embed, k_embed = apply_rotary_pos_emb_v2(q_pe, k_pe_r, inputs.cos, inputs.sin, 2)
+    k_embed_r = k_embed.reshape(inputs.b * 1 * inputs.s, inputs.qk_rope_head_dim)
 
     """ kv_cache output, [b,1,s2,kv_lora_rank] """
-    kv_cache_tmp = kv_cache.clone()
-    kv_cache_out = scatter_update([kv_cache_tmp, k_nope, cache_index], -2)
+    kv_cache_tmp = inputs.kv_cache.clone()
+    kv_cache_out = scatter_update([kv_cache_tmp, k_nope, inputs.cache_index], -2)
 
     """ kr_cache output, [b,1,s2,qk_rope_head_dim] """
-    kr_cache_tmp = kr_cache.clone()
-    kr_cache_out = scatter_update([kr_cache_tmp, k_embed_r, cache_index], -2)
+    kr_cache_tmp = inputs.kr_cache.clone()
+    kr_cache_out = scatter_update([kr_cache_tmp, k_embed_r, inputs.cache_index], -2)
 
     return q_embed, kv_cache_out, kr_cache_out
 
@@ -788,10 +810,12 @@ def _prepare_mla_input_output_tensors(input_tensors, shapes, dtype, is_quant_a, 
     if nz:
         w_dq_nz = torch_npu.npu_format_cast(input_tensors["w_dq"].reshape(shapes["w_dq_shape"]).npu().contiguous(), \
                                             torch_npu.Format.FRACTAL_NZ)
-        w_dkvkr_nz = torch_npu.npu_format_cast(input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
-        w_uqqr_nz = torch_npu.npu_format_cast(input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu().contiguous(), \
-                                            torch_npu.Format.FRACTAL_NZ)
+        w_dkvkr_nz = torch_npu.npu_format_cast(
+            input_tensors["w_dkvkr"].reshape(shapes["w_dkv_kr_shape"]).npu().contiguous(),
+            torch_npu.Format.FRACTAL_NZ)
+        w_uqqr_nz = torch_npu.npu_format_cast(
+            input_tensors["w_uqqr"].reshape(shapes["w_uq_qr_shape"]).npu().contiguous(),
+            torch_npu.Format.FRACTAL_NZ)
         input_tensors["w_uqqr"] = w_uqqr_nz
         input_tensors["w_dkvkr"] = w_dkvkr_nz
         input_tensors["w_dq"] = w_dq_nz
@@ -852,13 +876,15 @@ def mla_prolog_quant_v32(params, input_tensors, golden_data, dtype, is_quant_a, 
                         is_quant_b, nz, tile_config):
 
     shapes, golden1, golden2, golden3, golden4 = _compute_mla_shapes_and_golden(params, golden_data)
-    input_data, output_data = _prepare_mla_input_output_tensors(input_tensors, shapes, dtype, is_quant_a, is_quant_b, nz)
+    input_data, output_data = _prepare_mla_input_output_tensors(
+        input_tensors, shapes, dtype, is_quant_a, is_quant_b, nz)
 
     rope_tile_shape = RopeTileShapeConfig(two_dim=[32, 64], three_dim=[32, 32, 128], four_dim=[16, 128, 128, 128])
     mla_prolog_quant(*input_data, *output_data, 1e-5, 1e-5, tile_config, rope_tile_shape)
 
     _compare_mla_outputs(output_data[0], output_data[1], output_data[2], output_data[3],
                          golden1, golden2, golden3, golden4)
+
 
 @pytest.mark.soc("950")
 def test_b4_s64k2_pa_nd_bf16_quant():

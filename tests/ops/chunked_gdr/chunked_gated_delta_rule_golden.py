@@ -45,8 +45,41 @@ State Convention:
   At output, we transpose back: last_state = S_internal^T.
 """
 
+from dataclasses import dataclass
+from typing import Any
+
 import torch
 import torch.nn.functional as F
+
+
+@dataclass
+class ProcessGdrChunkInputs:
+    cq: Any
+    ck: Any
+    cv: Any
+    cb: Any
+    cg: Any
+    S: Any
+    tril_mask: Any
+    attn_upper_mask: Any
+    chunk_attn_mask: Any
+    scale: float
+    eps: float
+
+
+@dataclass
+class ChunkedGatedDeltaRuleGoldenInputs:
+    query: Any
+    key: Any
+    value: Any
+    beta: Any
+    gate: Any
+    states: Any
+    mask: Any
+    tril_mask: Any
+    eye: Any
+    act_seq_len: Any
+    chunk_size: int = 128
 
 
 def _inverse_iterative(A, chunk_size):
@@ -59,78 +92,67 @@ def _inverse_iterative(A, chunk_size):
     return attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
 
-def _process_gdr_chunk(cq, ck, cv, cb, cg, S, tril_mask, attn_upper_mask,
-                       chunk_attn_mask, scale, eps):
+def _process_gdr_chunk(inputs: ProcessGdrChunkInputs):
     """Process a single chunk within the Gated Delta Rule algorithm."""
-    q_norm = cq * torch.rsqrt((cq ** 2).sum(dim=-1, keepdim=True) + eps)
-    k_norm = ck * torch.rsqrt((ck ** 2).sum(dim=-1, keepdim=True) + eps)
-    q_scaled = q_norm * scale
-    gate_cum = tril_mask @ cg.unsqueeze(-1)
-    decay_mask = ((gate_cum - gate_cum.T) * tril_mask).exp() * tril_mask
-    key_beta = k_norm * cb.unsqueeze(-1)
+    q_norm = inputs.cq * torch.rsqrt((inputs.cq ** 2).sum(dim=-1, keepdim=True) + inputs.eps)
+    k_norm = inputs.ck * torch.rsqrt((inputs.ck ** 2).sum(dim=-1, keepdim=True) + inputs.eps)
+    q_scaled = q_norm * inputs.scale
+    gate_cum = inputs.tril_mask @ inputs.cg.unsqueeze(-1)
+    decay_mask = ((gate_cum - gate_cum.T) * inputs.tril_mask).exp() * inputs.tril_mask
+    key_beta = k_norm * inputs.cb.unsqueeze(-1)
     kkt = key_beta @ k_norm.T
-    A = -(kkt * decay_mask).masked_fill(attn_upper_mask, 0)
-    A_inv = _inverse_iterative(A, cq.shape[0])
-    v_beta = cv * cb.unsqueeze(-1)
+    A = -(kkt * decay_mask).masked_fill(inputs.attn_upper_mask, 0)
+    A_inv = _inverse_iterative(A, inputs.cq.shape[0])
+    v_beta = inputs.cv * inputs.cb.unsqueeze(-1)
     v_out = A_inv @ v_beta
     k_cumdecay = A_inv @ (key_beta * gate_cum.exp())
-    v_prime = k_cumdecay @ S
-    o_inter = (q_scaled * gate_cum.exp()) @ S
-    attn = (q_scaled @ k_norm.T * decay_mask).masked_fill(chunk_attn_mask, 0)
+    v_prime = k_cumdecay @ inputs.S
+    o_inter = (q_scaled * gate_cum.exp()) @ inputs.S
+    attn = (q_scaled @ k_norm.T * decay_mask).masked_fill(inputs.chunk_attn_mask, 0)
     v_new = v_out - v_prime
     chunk_out = o_inter + attn @ v_new
     g_last_cum = gate_cum[-1, 0]
     k_gexp = k_norm * (g_last_cum - gate_cum).exp()
-    S = S * torch.exp(g_last_cum) + k_gexp.T @ v_new
-    return chunk_out, S
+    inputs.S = inputs.S * torch.exp(g_last_cum) + k_gexp.T @ v_new
+    return chunk_out, inputs.S
 
 
 def chunked_gated_delta_rule_golden(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    beta: torch.Tensor,
-    gate: torch.Tensor,
-    states: torch.Tensor,
-    mask: torch.Tensor,
-    tril_mask: torch.Tensor,
-    eye: torch.Tensor,
-    act_seq_len: torch.Tensor,
-    chunk_size: int = 128,
+    inputs: ChunkedGatedDeltaRuleGoldenInputs,
 ) -> tuple:
     """PyTorch golden reference for chunked_gated_delta_rule.
 
     Implements the full 6-step Chunked Gated Delta Rule Linear Attention
     algorithm, supporting both aligned and unaligned sequences.
     """
-    L = chunk_size
+    L = inputs.chunk_size
     D = 128
     eps = 1e-6
     scale = 1.0 / (D ** 0.5)
 
-    T, Nqk, _ = query.shape
-    _, Nv, _ = value.shape
-    B = int(act_seq_len.shape[0]) - 1
+    T, Nqk, _ = inputs.query.shape
+    _, Nv, _ = inputs.value.shape
+    B = int(inputs.act_seq_len.shape[0]) - 1
     group = Nv // Nqk
 
-    core_attn_out = torch.zeros(T, Nv, D, dtype=torch.float32, device=query.device)
-    last_state_data = torch.zeros(B, Nv, D, D, dtype=torch.float32, device=query.device)
+    core_attn_out = torch.zeros(T, Nv, D, dtype=torch.float32, device=inputs.query.device)
+    last_state_data = torch.zeros(B, Nv, D, D, dtype=torch.float32, device=inputs.query.device)
 
-    attn_upper_mask = torch.ones(L, L, dtype=torch.bool, device=query.device).triu(diagonal=0)
-    chunk_attn_mask = torch.ones(L, L, dtype=torch.bool, device=query.device).triu(diagonal=1)
+    attn_upper_mask = torch.ones(L, L, dtype=torch.bool, device=inputs.query.device).triu(diagonal=0)
+    chunk_attn_mask = torch.ones(L, L, dtype=torch.bool, device=inputs.query.device).triu(diagonal=1)
 
     for b_idx in range(B):
-        s = int(act_seq_len[b_idx + 1]) - int(act_seq_len[b_idx])
-        bs_ofs = int(act_seq_len[b_idx])
+        s = int(inputs.act_seq_len[b_idx + 1]) - int(inputs.act_seq_len[b_idx])
+        bs_ofs = int(inputs.act_seq_len[b_idx])
 
         for nv_idx in range(Nv):
             nqk_idx = nv_idx // group
-            S = states[b_idx, nv_idx].T.clone()
-            q_data = query[bs_ofs:bs_ofs + s, nqk_idx, :].clone()
-            k_data = key[bs_ofs:bs_ofs + s, nqk_idx, :].clone()
-            v_data = value[bs_ofs:bs_ofs + s, nv_idx, :].clone()
-            b_data = beta[bs_ofs:bs_ofs + s, nv_idx].clone()
-            g_data = gate[bs_ofs:bs_ofs + s, nv_idx].clone()
+            S = inputs.states[b_idx, nv_idx].T.clone()
+            q_data = inputs.query[bs_ofs:bs_ofs + s, nqk_idx, :].clone()
+            k_data = inputs.key[bs_ofs:bs_ofs + s, nqk_idx, :].clone()
+            v_data = inputs.value[bs_ofs:bs_ofs + s, nv_idx, :].clone()
+            b_data = inputs.beta[bs_ofs:bs_ofs + s, nv_idx].clone()
+            g_data = inputs.gate[bs_ofs:bs_ofs + s, nv_idx].clone()
             pad_size = (L - s % L) % L
             s_padded = s + pad_size
             q_pad = F.pad(q_data, (0, 0, 0, pad_size))
@@ -145,9 +167,10 @@ def chunked_gated_delta_rule_golden(
                 cv = v_pad[chunk_idx:chunk_idx + L, :]
                 cb = b_pad[chunk_idx:chunk_idx + L]
                 cg = g_pad[chunk_idx:chunk_idx + L]
-                chunk_out, S = _process_gdr_chunk(
-                    cq, ck, cv, cb, cg, S, tril_mask,
-                    attn_upper_mask, chunk_attn_mask, scale, eps)
+                chunk_out, S = _process_gdr_chunk(ProcessGdrChunkInputs(
+                    cq=cq, ck=ck, cv=cv, cb=cb, cg=cg, S=S, tril_mask=inputs.tril_mask,
+                    attn_upper_mask=attn_upper_mask, chunk_attn_mask=chunk_attn_mask,
+                    scale=scale, eps=eps))
                 out_start = bs_ofs + chunk_idx
                 out_end = min(out_start + L, bs_ofs + s)
                 actual_len = out_end - out_start
@@ -316,7 +339,10 @@ def _run_single_validation_case(config, chunk_len, head_dim, mask, tril_mask, ey
     eye = eye_aligned if is_aligned else eye_unaligned
     try:
         core_attn_out, last_state_data = chunked_gated_delta_rule_golden(
-            query, key, value, beta, gate, states, mask, tril_mask, eye, act_seq_len, chunk_size=chunk_len)
+            ChunkedGatedDeltaRuleGoldenInputs(
+                query=query, key=key, value=value, beta=beta, gate=gate,
+                states=states, mask=mask, tril_mask=tril_mask, eye=eye,
+                act_seq_len=act_seq_len, chunk_size=chunk_len))
         shape_ok = (core_attn_out.shape == (seq_len, num_v_heads, head_dim) and
                     last_state_data.shape == (batch_size, num_v_heads, head_dim, head_dim))
         nan_ok = (not torch.isnan(core_attn_out).any() and not torch.isinf(core_attn_out).any() and
@@ -393,7 +419,10 @@ def _validate_cross(L, D, mask, tril_mask, all_passed):
         eye = eye_aligned if is_aligned else eye_unaligned
         try:
             golden_attn, golden_state = chunked_gated_delta_rule_golden(
-                query, key, value, beta, gate, states, mask, tril_mask, eye, act_seq_len, chunk_size=L)
+                ChunkedGatedDeltaRuleGoldenInputs(
+                    query=query, key=key, value=value, beta=beta, gate=gate,
+                    states=states, mask=mask, tril_mask=tril_mask, eye=eye,
+                    act_seq_len=act_seq_len, chunk_size=L))
             ref_attn, ref_state = _ref_segs_chunk_gated_delta_rule(
                 query.clone(), key.clone(), value.clone(), gate.clone(), beta.clone(),
                 act_seq_len.clone(), chunk_size=128, initial_state=states.clone(),
@@ -441,7 +470,10 @@ def _validate_value_range_stability(L, D, mask, tril_mask, all_passed):
 
     print("\n[值域检查]")
     attn_out, state_out = chunked_gated_delta_rule_golden(
-        q, k, v, b, g, s, mask, tril_mask, eye_aligned, asl, chunk_size=128)
+        ChunkedGatedDeltaRuleGoldenInputs(
+            query=q, key=k, value=v, beta=b, gate=g,
+            states=s, mask=mask, tril_mask=tril_mask, eye=eye_aligned,
+            act_seq_len=asl, chunk_size=128))
     attn_max = attn_out.abs().max().item()
     state_max = state_out.abs().max().item()
     if attn_max < 1e4 and state_max < 1e4:
@@ -455,7 +487,10 @@ def _validate_value_range_stability(L, D, mask, tril_mask, all_passed):
     g_moderate = torch.rand(128, 4, dtype=torch.float32) * 10.0 - 10.0
     try:
         attn_out_stable, state_out_stable = chunked_gated_delta_rule_golden(
-            q, k, v, b, g_moderate, s, mask, tril_mask, eye_aligned, asl, chunk_size=128)
+            ChunkedGatedDeltaRuleGoldenInputs(
+                query=q, key=k, value=v, beta=b, gate=g_moderate,
+                states=s, mask=mask, tril_mask=tril_mask, eye=eye_aligned,
+                act_seq_len=asl, chunk_size=128))
         stable_ok = (not torch.isnan(attn_out_stable).any() and not torch.isinf(attn_out_stable).any() and
                      not torch.isnan(state_out_stable).any() and not torch.isinf(state_out_stable).any())
         if stable_ok:
@@ -475,7 +510,10 @@ def _validate_value_range_stability(L, D, mask, tril_mask, all_passed):
         g_zero = torch.zeros(128, 4, dtype=torch.float32)
         s_zero = torch.zeros(1, 4, 128, 128, dtype=torch.float32)
         attn_zero, state_zero = chunked_gated_delta_rule_golden(
-            q_zero, k_zero, v_zero, b_zero, g_zero, s_zero, mask, tril_mask, eye_aligned, asl, chunk_size=128)
+            ChunkedGatedDeltaRuleGoldenInputs(
+                query=q_zero, key=k_zero, value=v_zero, beta=b_zero, gate=g_zero,
+                states=s_zero, mask=mask, tril_mask=tril_mask, eye=eye_aligned,
+                act_seq_len=asl, chunk_size=128))
         zero_ok = (not torch.isnan(attn_zero).any() and not torch.isinf(attn_zero).any() and
                    not torch.isnan(state_zero).any() and not torch.isinf(state_zero).any())
         if zero_ok:
@@ -510,8 +548,7 @@ def _validate():
     import inspect
     sig = inspect.signature(chunked_gated_delta_rule_golden)
     params = list(sig.parameters.keys())
-    expected_params = ["query", "key", "value", "beta", "gate", "states",
-                       "mask", "tril_mask", "eye", "act_seq_len", "chunk_size"]
+    expected_params = ["inputs"]
     sig_ok = params == expected_params
     if sig_ok:
         print(f"  函数签名匹配 spec: {params} ... ✓ PASS")
