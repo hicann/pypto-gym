@@ -545,7 +545,7 @@ def _mla_compute_rope_cache(inputs: _MlaComputeRopeCacheInputs):
         compressed_kv_quant_scale = inputs.compressed_kv_quant_scale.reshape(-1, 4)
         kv_quant_scale_cache_tmp = inputs.kv_quant_scale_cache.clone()
         kv_quant_scale_cache_out = \
-            scatter_update_4d(kv_quant_scale_cache_tmp, inputs.compressed_kv_quant_scale, inputs.cache_index, -2)
+            scatter_update_4d(kv_quant_scale_cache_tmp, compressed_kv_quant_scale, inputs.cache_index, -2)
     else:
         kv_quant_scale_cache_out = None
     return q_embed, kv_cache_out, kr_cache_out, kv_quant_scale_cache_out
