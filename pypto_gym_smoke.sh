@@ -156,7 +156,8 @@ parse_config_key() {
     return 0
 }
 
-PYTHON3_EXE=$(which python3)
+# PYTHON3_EXE=$(which python3)
+PYTHON3_EXE=/opt/conda/bin/python3
 LOG_INFO "PYTHON3_EXE=$PYTHON3_EXE"
 
 PYPTO_GOLDEN_PATH=$(parse_config_key "PYPTO_GOLDEN_PATH")
@@ -274,7 +275,7 @@ fi
 LOG_DO "source $SETENV_SH"
 
 # 下载pypto代码
-work_dir=$(pwd)
+work_dir="$SRC_DIR"
 # 定位上级目录
 work_parent_dir="${work_dir}/.."
 target_repo="${work_parent_dir}/pypto"
@@ -293,10 +294,13 @@ fi
 # fi
 
 # 进入上级目录执行克隆操作
+echo "work_parent_dir 变量值为: ${work_parent_dir}"
+
 cd "${work_parent_dir}" || exit 1
 git clone https://gitcode.com/cann/pypto.git
 
 echo "target_repo 变量值为: ${target_repo}"
+
 
 echo "========== 当前目录文件列表 =========="
 ls "${target_repo}"
@@ -336,7 +340,7 @@ device_params=(
     "-d=0"  "-d=1"
     "-d=2"  "-d=3"
     "-d=4"  "-d=5"
-    "-d=7"
+    "-d=6"  "-d=7"
     "-d=8"  "-d=9"
     "-d=10" "-d=11"
     "-d=12" "-d=13"
