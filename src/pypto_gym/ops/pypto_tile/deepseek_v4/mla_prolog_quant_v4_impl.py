@@ -510,52 +510,6 @@ def mla_prolog_v4_compute(cfg: MlaPrologV4ComputeConfig):
         pypto.assemble(kv_norm_rope, [tIdx, head_dim-rope_dim], kv_out)
 
 
-class MLAKernelMAnager:
-    def __init__(self):
-        self.vec_all_shape = {}
-        self.t_vec = [4096, 128, 64, 32, 16, 1]
-        self.wq_a_shape = [4096, 1024]
-        self.wq_b_shape = [1024, 64 * 512]
-        self.wkv_shape = [4096, 512]
-        self.rmsnorm_gamma_cq_shape = [1024]
-        self.rmsnorm_gamma_ckv_shape = [512]
-        self.wq_b_scale_shape = [64 * 512, 1]
-
-        for t in self.t_vec:
-            x_shape = [t, 4096]
-            rops_cos_shape = [t, 64]
-            q_out_shape = [t, 64, 512]
-            kv_out_shape = [t, 512]
-            qr_out_shape = [t, 1024]
-            qr_scale_out_shape = [t, 1]
-            self.vec_all_shape[t] = [
-    x_shape,
-    self.wq_a_shape,
-    self.wq_b_shape,
-    self.wkv_shape,
-    self.rmsnorm_gamma_cq_shape,
-    self.rmsnorm_gamma_ckv_shape,
-    rops_cos_shape,
-    rops_cos_shape,
-    self.wq_b_scale_shape,
-    q_out_shape,
-    kv_out_shape,
-    qr_out_shape,
-     qr_scale_out_shape]
-
-    def infer_controlflow_shape(self, *args):
-        global vec_all_shape, t_vec
-        if not args:
-            return [v for v in self.vec_all_shape.values()]
-        x_shape = args[0]
-        for t in self.t_vec:
-            if x_shape[0] >= t:
-                return self.vec_all_shape[t]
-        return None
-
-manager = MLAKernelMAnager()
-
-
 @pypto.frontend.jit(runtime_options={
     "stitch_function_max_num": 128,
     "device_sched_mode": 1
@@ -563,7 +517,6 @@ manager = MLAKernelMAnager()
     pass_options={
         "vec_nbuffer_setting": {-1: 2}
     },
-    infer_controlflow_shape=manager.infer_controlflow_shape,
 )
 def mla_prolog_v4(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 

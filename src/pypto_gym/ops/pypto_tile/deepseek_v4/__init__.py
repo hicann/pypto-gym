@@ -44,7 +44,6 @@ from .hc_pre_impl import (
     npu_hc_pre,
     hc_pre,
     hc_pre_pypto,
-    HCPreKernelManager,
 )
 from .lightning_indexer_prolog_quant_v4_impl import (
     npu_quant_lightning_indexer_prolog,
@@ -94,7 +93,6 @@ __all__ = [
     'npu_hc_pre',
     'hc_pre',
     'hc_pre_pypto',
-    'HCPreKernelManager',
     # Lightning Indexer Prolog
     'npu_quant_lightning_indexer_prolog',
     'quant_lightning_indexer_prolog',

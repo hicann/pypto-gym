@@ -336,7 +336,7 @@ device_params=(
     "-d=0"  "-d=1"
     "-d=2"  "-d=3"
     "-d=4"  "-d=5"
-    "-d=6"  "-d=7"
+    "-d=7"
     "-d=8"  "-d=9"
     "-d=10" "-d=11"
     "-d=12" "-d=13"
@@ -352,7 +352,7 @@ common_params=(
 # 参数默认值
 PYTHON_TOTAL_TIMEOUT=$(parse_config_key "PYTHON_TOTAL_TIMEOUT")
 if [ -z "$PYTHON_TOTAL_TIMEOUT" ]; then
-    PYTHON_TOTAL_TIMEOUT=900
+    PYTHON_TOTAL_TIMEOUT=600
 fi
 PYTHON_TOTAL_TIMEOUT="$PYTHON_TOTAL_TIMEOUT"
 LOG_INFO "PYTHON_TOTAL_TIMEOUT=$PYTHON_TOTAL_TIMEOUT"

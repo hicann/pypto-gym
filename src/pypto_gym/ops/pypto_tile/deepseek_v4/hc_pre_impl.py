@@ -86,47 +86,11 @@ def hc_split_sinkhorn_trans(comb_flag: pypto.Tensor, hc_split_sinkhorn_iters, hc
     return comb_flag
 
 
-class HCPreKernelManager:
-    def __init__(self):
-        self.vec_all_shape = {}
-        self.t_vec = [4096, 256, 128, 64, 16, 4, 1]
-        self.hc_fn_shape = [24, 4*4096]
-        self.hc_scale_shape = [3, ]
-        self.hc_base_shape = [24, ]
-
-        for t in self.t_vec:
-            x_shape = [t, 4, 4096]
-            y_shape = [t, 4096]
-            post_shape = [t, 4]
-            comb_shape = [t, 4, 4]
-            self.vec_all_shape[t] = [
-    x_shape,
-    self.hc_fn_shape,
-    self.hc_scale_shape,
-    self.hc_base_shape,
-    y_shape,
-    post_shape,
-     comb_shape]
-
-    def infer_controlflow_shape(self, *args):
-        if not args:
-            return [v for v in self.vec_all_shape.values()]
-
-        x_shape = args[0]
-        for t in self.t_vec:
-            if x_shape[0] >= t:
-                return self.vec_all_shape[t]
-        return None
-
-manager = HCPreKernelManager()
-
-
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 0,
     },
-    infer_controlflow_shape=manager.infer_controlflow_shape,
 )
 def hc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
