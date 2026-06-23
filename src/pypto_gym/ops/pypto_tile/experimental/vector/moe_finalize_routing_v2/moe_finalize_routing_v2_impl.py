@@ -37,7 +37,7 @@ kernel_run_mode = pypto.RunMode.NPU  # 始终使用 NPU 模式
 
 @pypto.frontend.jit(
     runtime_options={"run_mode": kernel_run_mode},
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8}}
+    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 2}}
 )
 def moe_finalize_routing_v2_kernel(
 expanded_x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
