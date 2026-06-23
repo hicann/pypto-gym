@@ -356,11 +356,11 @@ def mla_prolog_eager(params, input_tensors, golden_tensors, dtype, is_nz, attrs,
     inputs = _prepare_mla_tensors(params, input_tensors, is_nz)
     token_x = inputs[0]
 
-    output_q_data = torch.empty([token_x.size(0), inputs[2].size(1) // inputs[6].size(0),
-                                 inputs[6].size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
-    output_kv_data = torch.empty([token_x.size(0), inputs[6].size(0)],
+    output_q_data = torch.empty([token_x.size(0), inputs[2].size(1) // inputs[7].size(0),
+                                 inputs[7].size(0)], dtype=token_x.dtype, device=f'{token_x.device}')
+    output_kv_data = torch.empty([token_x.size(0), inputs[7].size(0)],
                                  dtype=token_x.dtype, device=f'{token_x.device}')
-    output_qr_data = torch.empty([token_x.size(0), inputs[5].size(0)],
+    output_qr_data = torch.empty([token_x.size(0), inputs[1].size(1)],
                                  dtype=torch.int8, device=f'{token_x.device}')
     output_qr_scale_data = torch.empty([token_x.size(0), 1],
                                        dtype=torch.float32, device=f'{token_x.device}')
@@ -378,8 +378,8 @@ def mla_prolog_eager(params, input_tensors, golden_tensors, dtype, is_nz, attrs,
         vec_tile=[max(1, token_x.shape[0] // 16), 64])
 
     params_info = [
-        token_x, inputs[1], inputs[2], inputs[3],
-        inputs[5], inputs[6], inputs[4], inputs[7], inputs[8],
+        token_x, inputs[1], inputs[2], inputs[3], inputs[6],
+        inputs[7], inputs[4], inputs[5], inputs[8], 
         output_q_data, output_kv_data, output_qr_data, output_qr_scale_data]
     mla_prolog_v4(*params_info, attrs, configs, tile_configs)
     pypto.runtime._device_synchronize()
