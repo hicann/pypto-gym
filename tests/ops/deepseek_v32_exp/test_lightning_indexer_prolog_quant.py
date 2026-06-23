@@ -535,7 +535,7 @@ def test_b2_s1_4k_s2_64k():
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )
-    do_test_lighting_indexer_prolog_quant("QuantLightingIndexerPrologSTest.b2_s1_4k_s2_64k", configs)
+    do_test_lighting_indexer_prolog_quant("QuantLightningIndexerPrologSTest.b2_s1_4k_s2_64k", configs)
 
 
 @pytest.mark.skip(reason="large test case")
