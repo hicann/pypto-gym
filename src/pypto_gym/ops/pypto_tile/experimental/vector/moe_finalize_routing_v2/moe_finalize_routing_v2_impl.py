@@ -72,6 +72,7 @@ expanded_x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     for i in pypto.loop(NUM_ROWS, name="rows_loop", idx_name="i", unroll_list=[16, 4, 1]):
         out_row_fp32 = pypto.tensor([1, tile_h], pypto.DT_FP32, "out_row_fp32")
 
+        pypto.set_pass_options(sg_set_scope=1)
         for k in range(K):
             # 根据 drop_pad_mode 计算 idx_pos（编译期分支）
             if drop_pad_mode == 0 or drop_pad_mode == 1:
@@ -119,6 +120,7 @@ expanded_x: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
 
         out_row_bf16 = pypto.cast(out_row_fp32, pypto.DT_BF16)
         pypto.assemble(out_row_bf16, [i, 0], out)
+        pypto.set_pass_options(sg_set_scope=-1)
 
 
 # ─────────────────────────────────────────────
