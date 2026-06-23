@@ -15,7 +15,7 @@ Flash Attention MHA Backward
   - q/k/v/o/do: [total, num_heads, head_dim] BF16
                 Q 侧 total = actual_q[-1], KV 侧 total = actual_kv[-1]
   - l/m:        [total_q, num_heads, 1] FP32
-  - dq/dk/dv:   [total, hidden_dim] BF16
+  - dq/dk/dv:   [total, hidden_dim] BF32
   - actual_q/actual_kv: [batch + 1] INT32, 前缀累加
                 第 i 个 batch: offset = actual_*[i], seq = actual_*[i+1] - actual_*[i]
 
@@ -49,10 +49,6 @@ class FlashAttentionGradTileShapeConfig:
     pass_options={
         "vec_nbuffer_setting": {-2: 1, -1: 16},
         "cube_l1_reuse_setting": {-1: 16},
-    },
-    debug_options={
-        "runtime_debug_mode": 1,
-        "compile_debug_mode": 0
     },
 )
 def flash_attention_mha_grad_kernel_impl(
