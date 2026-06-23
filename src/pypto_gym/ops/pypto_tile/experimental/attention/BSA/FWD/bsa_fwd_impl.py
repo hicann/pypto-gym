@@ -365,6 +365,45 @@ def _dispatch_fwd_kernel(call_inputs, prepared, sparse_kv_result):
 
     o_out = output_3d.reshape(b, hq, sq_pad, d)[:, :, :sq, :].contiguous()
     softmax_lse = (lse_m_2d + torch.log(lse_l_2d)).reshape(b, hq, sq_pad)[:, :, :sq].contiguous()
+
+    # 后处理: 将 valid_mask 全零的 Q block 输出强制归零 ----
+    #
+    # 原因：kernel 的 online softmax 在 valid_mask 全零时仍然产生非零输出。
+    # 当所有 KV block 的 scaled_mask=0 且 neg_inf_mask=-65504 时：
+    #   s_masked = s_scores * 0 + (-65504) = -65504（所有位置相同）
+    #   m_ij = max(-65504) = -65504
+    #   p_ij = exp(s_masked - m_ij) = exp(-65504 - (-65504)) = exp(0) = 1  ← 全部为1！
+    #   o_ij = p_ij @ v_block = 1 @ v_block ≠ 0
+    #
+    # 第一步：检测哪些 Q blocks 的 valid_mask 全部为零（没有任何有效 KV 数据）
+    valid_mask = sparse_kv_result.valid_mask
+    max_sel = sparse_kv_result.max_sel
+    num_qblocks = b * hq * num_qb
+    # valid_mask 形状 (num_qblocks * max_sel * bx, by)，reshape 为每组一个 Q block
+    # sum(dim=(1,2)) 对每个 Q block 的所有行×列求和，和为零 = 该 block 全零 mask
+    mask_row_sums = valid_mask.reshape(num_qblocks, max_sel * bx, -1).sum(dim=(1, 2))
+    all_zero_mask = (mask_row_sums == 0)
+
+    if all_zero_mask.any():
+        zero_indices = torch.where(all_zero_mask)[0]
+        for qb_idx in zero_indices.tolist():
+            # 从全局索引反推 (batch×head, Q block 编号)
+            flat_bh = qb_idx // num_qb     # output_3d 的第一维索引
+            u = qb_idx % num_qb            # 该 Q block 在序列中的 block 编号
+            q_start = u * bx
+            q_end = min(q_start + bx, sq_pad)
+            # 只在实际序列长度范围内修改（超出 sq 的位置不影响比较结果）
+            if q_start < sq:
+                actual_end = min(q_end, sq)
+                # 将输出重置为与 golden 一致的零值状态
+                output_3d[flat_bh, q_start:actual_end, :] = 0.0   # 输出归零
+                lse_l_2d[flat_bh, q_start:actual_end] = 1.0        # l=1 → log(1)=0
+                lse_m_2d[flat_bh, q_start:actual_end] = cfg.lse_init  # m=-inf → LSE = -inf
+        # 因为直接修改了底层张量，需重新 reshape 得到最终输出
+        o_out = output_3d.reshape(b, hq, sq_pad, d)[:, :, :sq, :].contiguous()
+        softmax_lse = (lse_m_2d + torch.log(lse_l_2d)).reshape(b, hq, sq_pad)[:, :, :sq].contiguous()
+
+
     return BSAForwardResult(o=o_out, lse=softmax_lse)
 
 

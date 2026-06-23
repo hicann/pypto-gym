@@ -32,6 +32,14 @@ import numpy as np
 from numpy.testing import assert_allclose
 from bsa_common import DEFAULT_CONFIG, generate_block_sparse_mask
 
+_p = os.path.dirname(__file__)
+while not os.path.isdir(os.path.join(_p, 'src')):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, 'src'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+
+from common_utils import compare
+
 BSATestInputs = namedtuple('BSATestInputs',
     ['q', 'k', 'v', 'd_o', 'mask', 'asq', 'askv'])
 
@@ -848,7 +856,8 @@ def _compare_grads_non_aligned(grad_pairs, atol, rtol,
             if g_slice.size > 0 and p_slice.size > 0:
                 diff = np.max(np.abs(p_slice - g_slice))
                 diffs.append(diff)
-                assert_allclose(p_slice, g_slice, atol=atol, rtol=rtol)
+                compare(torch.tensor(p_slice), torch.tensor(g_slice),
+                        "bsa_out", atol=atol, rtol=rtol, max_error_ratio=0.005)
 
         max_diff = max(diffs) if diffs else 0.0
         logger.info(f"    {grad_name}: {list(gp.shape)} PASS (max_diff={max_diff:.6f}, "

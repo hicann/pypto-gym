@@ -414,7 +414,7 @@ def _prepare_bwd_specific_inputs(call_inputs, prepared):
                         num_qb=prepared.num_qb, num_kb=prepared.num_kb,
                         bx=bx, by=prepared.by, d=d, device=call_inputs.query.device,
                         actual_seq_lengths=call_inputs.actual_seq_lengths,
-                        actual_seq_lengths_kv=None,
+                        actual_seq_lengths_kv=call_inputs.actual_seq_lengths_kv,
                         q_2d=prepared.q_2d, do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d))
     return _BwdSpecificInputs(
         do_2d=do_2d, o_2d=o_2d, lse_2d=lse_2d,
@@ -471,6 +471,25 @@ def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
         bwd_dir = new_bwd_dir
     _last_backward_perf_dirs["dQ"] = bwd_dir
     _last_backward_perf_dirs["dK/dV"] = bwd_dir
+
+    # 后处理: 将 valid_mask 全零的 Q block 的 dQ 强制归零 ----
+    # 原因：kernel 的 online softmax 在 valid_mask 全零时，
+    # 由于 LSE 可能为 -inf，产生 NaN/inf 的 dQ。
+    valid_mask = sparse_kv_result.valid_mask
+    max_sel = sparse_kv_result.max_sel
+    num_qblocks = b * hq * num_qb
+    mask_row_sums = valid_mask.reshape(num_qblocks, max_sel * bx, -1).sum(dim=(1, 2))
+    all_zero_mask = (mask_row_sums == 0)
+
+    if all_zero_mask.any():
+        dq_3d = bwd_inputs.dq_2d.reshape(b * hq, sq_pad, d)
+        zero_indices = torch.where(all_zero_mask)[0]
+        for qb_idx in zero_indices.tolist():
+            flat_bh = qb_idx // num_qb
+            u = qb_idx % num_qb
+            q_start = u * bx
+            q_end = min(q_start + bx, sq_pad)
+            dq_3d[flat_bh, q_start:q_end, :] = 0.0
 
     dq = bwd_inputs.dq_2d.reshape(b, hq, sq_pad, d)[:, :, :sq, :].to(torch.float16).contiguous()
     dk = bwd_inputs.dk_2d.reshape(b, hkv, skv_pad, d)[:, :, :skv, :].to(torch.float16).contiguous()

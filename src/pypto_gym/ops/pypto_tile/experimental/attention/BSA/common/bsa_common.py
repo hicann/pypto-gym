@@ -352,31 +352,54 @@ def _apply_q_boundary_mask(valid_mask, total_qblocks, q_cfg, remaining_q_per_bat
             _zero_q_boundary(i, remaining_q_per_batch[b_idx])
 
 
-def _collect_valid_kv_per_qblock(block_sparse_mask, kv_cfg):
+def _collect_valid_kv_per_qblock(block_sparse_mask, kv_cfg, actual_seq_lengths_kv=None, by=None):
     """Phase 1 of _build_sparse_kv: collect valid KV indices per Q block.
 
     Args:
         kv_cfg: _CollectKVCfg(b, hq, hkv, num_qb, num_kb) namedtuple.
+        actual_seq_lengths_kv: per-batch actual KV lengths (for non-aligned filtering).
+        by: KV block size (block_shape_y).
     """
     b, hq, hkv, num_qb, num_kb = kv_cfg.b, kv_cfg.hq, kv_cfg.hkv, kv_cfg.num_qb, kv_cfg.num_kb
     group = hq // hkv
     nkv_cols = block_sparse_mask.shape[3]
     qblock_info = []
     max_sel = 0
+    # 追踪没有真实有效 KV 的 dummy Q blocks ----
+    # 当某个 Q block 在 actual KV 范围内没有任何 mask=True 的 KV block 时，
+    # valid_v 为空，会回退到 [0]（dummy block）。这些 dummy block 会导致
+    # kernel 的 online softmax 产生非零输出，需要记录并在后续清零。
+    dummy_qblocks = set()
 
     for flat_idx in range(b * hq):
         b_idx = flat_idx // hq
         h_q = flat_idx % hq
         h_kv_idx = h_q // group
+        # 限制每个batch的KV block搜索范围 ----
+        # 搜索范围是 range(num_kb)，num_kb 来自 skv_max（所有batch最大值），
+        # shorter batch 会收集到超出其真实 KV 长度的 block（全padding数据）。
+        # 对每个 batch 计算 actual_num_kb，只在真实范围内搜索。
+        if actual_seq_lengths_kv is not None and by is not None:
+            # 例：batch 0 skv=2264, by=512 → actual_num_kb=5（blocks 0-4 有效）
+            # batch 1 skv=3603, by=512 → actual_num_kb=8（blocks 0-7 有效）
+            actual_num_kb = math.ceil(int(actual_seq_lengths_kv[b_idx]) / by)
+            max_v = min(actual_num_kb, min(num_kb, nkv_cols))
+        else:
+            max_v = min(num_kb, nkv_cols)
         for u in range(num_qb):
-            valid_v = [v for v in range(min(num_kb, nkv_cols))
+            valid_v = [v for v in range(max_v)
                        if block_sparse_mask[b_idx, h_q, u, v].item()]
             if not valid_v:
+                # 该 Q block 在实际范围内没有有效 KV block → 使用 dummy block 0
                 valid_v = [0]
+                # 记录 dummy Q block 的全局索引，后续在 _build_sparse_kv_cached 中清零
+                qblock_idx = flat_idx * num_qb + u
+                dummy_qblocks.add(qblock_idx)
             qblock_info.append((b_idx, h_kv_idx, valid_v))
             max_sel = max(max_sel, len(valid_v))
 
-    return qblock_info, max(max_sel, 1)
+    # 新增 dummy_qblocks：没有真实有效 KV 的 Q block 索引集合
+    return qblock_info, max(max_sel, 1), dummy_qblocks
 
 
 def _fill_compacted_kv(qblock_info, max_sel, valid_mask, fill_cfg):
@@ -441,13 +464,22 @@ def _build_sparse_kv_cached(block_sparse_mask, k_2d, v_2d, shape_cfg):
     cache_key = (block_sparse_mask.data_ptr(), b, hq, hkv, num_qb, num_kb, bx, by)
 
     kv_collect_cfg = _CollectKVCfg(b=b, hq=hq, hkv=hkv, num_qb=num_qb, num_kb=num_kb)
+    # 扩展key cache以包含 per-batch 实际 KV 长度 ----
+    # key cache 只含 mask 指针+形状，不同 batch 会出现配置共享错误缓存。
+    # 当 actual_seq_lengths_kv 不同时，per-batch 过滤结果不同，必须区分缓存。
+    if actual_seq_lengths_kv is not None:
+        aslk_tuple = tuple(int(actual_seq_lengths_kv[i]) for i in range(b))
+        cache_key = cache_key + ('aslk',) + aslk_tuple
     cached = _MASK_CACHE.get(cache_key)
     if cached is not None:
-        qblock_info, max_sel = cached
+        # 缓存命中：解包三元组（含 dummy_qblocks）
+        qblock_info, max_sel, dummy_qblocks = cached
     else:
-        qblock_info, max_sel = _collect_valid_kv_per_qblock(
-            block_sparse_mask, kv_collect_cfg)
-        _MASK_CACHE[cache_key] = (qblock_info, max_sel)
+        # 传递 actual_seq_lengths_kv 进行 per-batch 过滤 ----
+        qblock_info, max_sel, dummy_qblocks = _collect_valid_kv_per_qblock(
+            block_sparse_mask, kv_collect_cfg,
+            actual_seq_lengths_kv=actual_seq_lengths_kv, by=by)
+        _MASK_CACHE[cache_key] = (qblock_info, max_sel, dummy_qblocks)
 
     fill_cfg = _KVFillConfig(hkv=hkv, skv_pad=skv_pad, bx=bx, by=by,
                               d=d, device=device, total_qblocks=total_qblocks,
@@ -455,35 +487,74 @@ def _build_sparse_kv_cached(block_sparse_mask, k_2d, v_2d, shape_cfg):
     k_compact, v_compact, valid_mask = _fill_compacted_kv(
         qblock_info, max_sel, None, fill_cfg)
 
-    # Compute remaining KV lengths per batch
-    if actual_seq_lengths_kv is not None:
-        remaining_kv_per_batch = [
-            int(actual_seq_lengths_kv[b_idx]) - (num_kb - 1) * by
-            for b_idx in range(b)
-        ]
-    elif skv_pad > skv:
-        remaining_kv_per_batch = skv - (num_kb - 1) * by
+    # ==== Non-aligned: 集中处理 per-batch boundary + dummy + out-of-range ====
+    # num_kb/num_qb 来自 sq_max/skv_max（全局最大值），而 boundary masking
+    # 公式用 per-batch 实际长度去减全局 block 数，shorter batch 算出负值导致 Python
+    # 负索引切片破坏有效数据。
+    # 在有 actual_seq_lengths 信息时，绕过原有 boundary 函数，直接在此处用一个
+    # 循环集中完成所有 per-batch 修正（dummy 清零 + KV boundary + Q boundary）
+    if actual_seq_lengths_kv is not None or actual_seq_lengths is not None:
+        # Step 1: 清零 dummy Q blocks 的 valid_mask
+        # 这些 Q blocks 在实际范围内没有有效 KV block，valid_mask 设为全零以避免
+        # kernel 的 online softmax 产生非零输出。
+        for dummy_idx in dummy_qblocks:
+            mask_start = dummy_idx * max_sel * bx
+            mask_end = mask_start + max_sel * bx
+            valid_mask[mask_start:mask_end, :] = 0.0
+
+        # Step 2: Per-batch KV boundary masking
+        # 对每个 Q block 检查其 KV block 是否在该 batch 的实际范围内，
+        # 超范围则全部清零，最后一个有效 block 则只清零 padding 列。
+        if actual_seq_lengths_kv is not None:
+            for i, (b_idx, h_kv_idx, valid_v) in enumerate(qblock_info):
+                skv_val = int(actual_seq_lengths_kv[b_idx])
+                actual_num_kb = math.ceil(skv_val / by)
+                last_valid_rem = skv_val - (actual_num_kb - 1) * by
+                for j, v_blk in enumerate(valid_v):
+                    m_start = i * max_sel * bx + j * bx
+                    if v_blk == actual_num_kb - 1:
+                        if last_valid_rem < by:
+                            valid_mask[m_start:m_start + bx, last_valid_rem:] = 0.0
+                    elif v_blk >= actual_num_kb:
+                        valid_mask[m_start:m_start + bx, :] = 0.0
+
+        # Step 3: Per-batch Q boundary masking
+        # 超出 batch 实际 Q 范围的 block 全部清零，最后一个有效 Q block 只清零 padding 行。
+        if actual_seq_lengths is not None:
+            b_count = len(actual_seq_lengths)
+            hq_total = total_qblocks // (b_count * num_qb) if b_count > 0 else total_qblocks // num_qb
+            for i in range(total_qblocks):
+                b_idx = i // (hq_total * num_qb)
+                sq_val = int(actual_seq_lengths[b_idx])
+                actual_num_qb = math.ceil(sq_val / bx)
+                u = i % num_qb
+                if u == actual_num_qb - 1:
+                    last_valid_rem = sq_val - (actual_num_qb - 1) * bx
+                    if last_valid_rem < bx:
+                        for j in range(max_sel):
+                            m_dst = i * max_sel * bx + j * bx
+                            valid_mask[m_dst + last_valid_rem:m_dst + bx, :] = 0.0
+                elif u >= actual_num_qb:
+                    for j in range(max_sel):
+                        m_dst = i * max_sel * bx + j * bx
+                        valid_mask[m_dst:m_dst + bx, :] = 0.0
     else:
-        remaining_kv_per_batch = by  # aligned, no boundary
+        # ==== Aligned path: 使用原有 boundary masking 函数（不修改） ====
+        if skv_pad > skv:
+            remaining_kv_per_batch = skv - (num_kb - 1) * by
+        else:
+            remaining_kv_per_batch = by
+        kv_boundary_cfg = _KVBoundaryCfg(max_sel=max_sel, bx=bx, num_kb=num_kb)
+        _apply_kv_boundary_mask(
+            valid_mask, qblock_info, kv_boundary_cfg, remaining_kv_per_batch)
 
-    kv_boundary_cfg = _KVBoundaryCfg(max_sel=max_sel, bx=bx, num_kb=num_kb)
-    _apply_kv_boundary_mask(
-        valid_mask, qblock_info, kv_boundary_cfg, remaining_kv_per_batch)
-
-    # Compute remaining Q lengths per batch
-    if actual_seq_lengths is not None:
-        remaining_q_per_batch = [
-            int(actual_seq_lengths[b_idx]) - (num_qb - 1) * bx
-            for b_idx in range(b)
-        ]
-    elif sq_pad > sq:
-        remaining_q_per_batch = sq - (num_qb - 1) * bx
-    else:
-        remaining_q_per_batch = bx  # aligned, no boundary
-
-    q_boundary_cfg = _QBoundaryCfg(max_sel=max_sel, bx=bx, num_qb=num_qb)
-    _apply_q_boundary_mask(valid_mask, total_qblocks, q_boundary_cfg,
-                           remaining_q_per_batch)
+        if sq_pad > sq:
+            remaining_q_per_batch = sq - (num_qb - 1) * bx
+        else:
+            remaining_q_per_batch = bx
+        q_boundary_cfg = _QBoundaryCfg(max_sel=max_sel, bx=bx, num_qb=num_qb)
+        _apply_q_boundary_mask(valid_mask, total_qblocks, q_boundary_cfg,
+                               remaining_q_per_batch)
 
     return k_compact, v_compact, valid_mask, max_sel
 
@@ -606,6 +677,7 @@ def _build_sparse_q_dkdv_cached(block_sparse_mask, shape_cfg):
     Args:
         shape_cfg: _SparseKVConfig namedtuple grouping all parameters,
             including actual_seq_lengths for boundary masking,
+            actual_seq_lengths_kv for per-batch KV boundary masking,
             and q_2d/do_2d/o_2d/lse_2d data tensors for fill.
     """
     global _Q_DKDV_CACHE
@@ -613,6 +685,7 @@ def _build_sparse_q_dkdv_cached(block_sparse_mask, shape_cfg):
     num_qb, num_kb = shape_cfg.num_qb, shape_cfg.num_kb
     bx, by, d, device = shape_cfg.bx, shape_cfg.by, shape_cfg.d, shape_cfg.device
     actual_seq_lengths = shape_cfg.actual_seq_lengths
+    actual_seq_lengths_kv = shape_cfg.actual_seq_lengths_kv
 
     total_kv = b * hkv * num_kb
 
@@ -634,27 +707,60 @@ def _build_sparse_q_dkdv_cached(block_sparse_mask, shape_cfg):
     q_compact, do_compact, o_compact, lse_compact, inner_mask = _fill_compacted_q(
         kvblock_info, max_inner, q_fill_cfg)
 
-    # Compute remaining Q lengths per batch
-    if actual_seq_lengths is not None:
-        remaining_q_per_batch = [
-            int(actual_seq_lengths[b_idx]) - (num_qb - 1) * bx
-            for b_idx in range(b)
-        ]
-    elif sq_pad > sq:
-        remaining_q_per_batch = sq - (num_qb - 1) * bx
+    # ==== Non-aligned: 集中处理 per-batch Q/KV boundary masking ====
+    # 与 _build_sparse_kv_cached 中的处理方式类似，在有 actual_seq_lengths 信息时，
+    # 绕过原有 _apply_q_boundary_inner_mask 函数，直接在此处集中完成所有 per-batch
+    if actual_seq_lengths is not None or actual_seq_lengths_kv is not None:
+        # Step 1: Per-batch KV boundary masking
+        # 对 ghost KV blocks（超出该 batch 实际 KV 范围）清零 inner_mask 整个区域，
+        # 对最后一个有效 KV block 清零 padding 列（超出 actual_kv 的列位置）。
+        if actual_seq_lengths_kv is not None:
+            for i, (b_idx, valid_q) in enumerate(kvblock_info):
+                v_blk = i % num_kb
+                skv_val = int(actual_seq_lengths_kv[b_idx])
+                actual_num_kb = math.ceil(skv_val / by)
+                if v_blk >= actual_num_kb:
+                    mask_start = i * max_inner * bx
+                    mask_end = mask_start + max_inner * bx
+                    inner_mask[mask_start:mask_end, :] = 0.0
+                elif v_blk == actual_num_kb - 1:
+                    last_valid_rem = skv_val - (actual_num_kb - 1) * by
+                    if last_valid_rem < by:
+                        for j, (h_q, u) in enumerate(valid_q):
+                            m_start = i * max_inner * bx + j * bx
+                            inner_mask[m_start:m_start + bx, last_valid_rem:] = 0.0
+
+        # Step 2: Per-batch Q boundary masking
+        # 对 ghost Q blocks（超出该 batch 实际 Q 范围）清零 inner_mask 所有行，
+        # 对最后一个有效 Q block 清零 padding 行（超出 actual_sq 的行位置）。
+        if actual_seq_lengths is not None:
+            for i, (b_idx, valid_q) in enumerate(kvblock_info):
+                for j, (h_q, u) in enumerate(valid_q):
+                    sq_val = int(actual_seq_lengths[b_idx])
+                    actual_num_qb = math.ceil(sq_val / bx)
+                    m_dst = i * max_inner * bx + j * bx
+                    if u >= actual_num_qb:
+                        inner_mask[m_dst:m_dst + bx, :] = 0.0
+                    elif u == actual_num_qb - 1:
+                        last_valid_rem = sq_val - (actual_num_qb - 1) * bx
+                        if last_valid_rem < bx:
+                            inner_mask[m_dst + last_valid_rem:m_dst + bx, :] = 0.0
     else:
-        remaining_q_per_batch = bx  # aligned, no boundary
+        # ==== Aligned path: 使用原有 boundary masking 函数（不修改） ====
+        if sq_pad > sq:
+            remaining_q_per_batch = sq - (num_qb - 1) * bx
+        else:
+            remaining_q_per_batch = bx
+        inner_cfg = _QBoundaryInnerCfg(max_inner=max_inner, bx=bx, num_qb=num_qb)
+        _apply_q_boundary_inner_mask(
+            inner_mask, kvblock_info, inner_cfg,
+            remaining_q_per_batch)
 
-    inner_cfg = _QBoundaryInnerCfg(max_inner=max_inner, bx=bx, num_qb=num_qb)
-    _apply_q_boundary_inner_mask(
-        inner_mask, kvblock_info, inner_cfg,
-        remaining_q_per_batch)
-
-
-    padded_rows = (inner_mask.sum(dim=-1) == 0)  # shape: (N,), True where entire row is padded
+    padded_rows = (inner_mask.sum(dim=-1) == 0)
     lse_compact[padded_rows] = 1e30
     q_compact[padded_rows] = 0.0
     do_compact[padded_rows] = 0.0
+    o_compact[padded_rows] = 0.0
 
     return SparseQDkdvResult(q_compact=q_compact, do_compact=do_compact,
                                 o_compact=o_compact, lse_compact=lse_compact,
