@@ -428,7 +428,7 @@ def ifa_flash_torch(inputs: IfaFlashTorchInputs):
                     scale=scale, dtype=dtype, win=win, ori_kv=inputs.ori_kv,
                     ori_block_table=inputs.ori_block_table, sinks=inputs.sinks,
                     output_flash=inputs.output_flash, is_new_sink=inputs.is_new_sink))
-    return inputs.output_flash
+    return output_flash
 
 
 def _golden_no_flash(q, cmp_kv, sinks, cmp_block_table, seqused_kv, output_flash, cmp_ratio, is_new_sink,

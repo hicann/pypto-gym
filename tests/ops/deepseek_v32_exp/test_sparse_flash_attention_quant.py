@@ -125,7 +125,7 @@ def _flash_update(inputs: _FlashUpdateInputs):
         li_update = inputs.tilda_lij
         mi_update = inputs.tilda_mij
         inputs.tmp_out[inputs.b_idx, inputs.s1_idx, :] = inputs.tilda_lij.reshape(inputs.n1)
-        return inputs.oi_tmp, oi_update, inputs.li_update, inputs.mi_update
+        return oi_tmp, oi_update, li_update, mi_update
     mi_new = torch.maximum(inputs.mi_update, inputs.tilda_mij)
     t1 = inputs.mi_update - mi_new
     t2 = torch.exp(t1)

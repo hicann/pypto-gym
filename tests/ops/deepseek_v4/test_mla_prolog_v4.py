@@ -345,8 +345,15 @@ def _compare_mla_outputs(output_q_data, output_kv_data, output_qr_data,
 def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
     d_type = pypto.DataType.DT_FP16 if dtype == pypto.DataType.DT_FP16 else pypto.DataType.DT_BF16
     shapes = _get_mla_shapes(params)
-    token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv = \
-        _prepare_mla_inputs(input_tensors, shapes, is_nz)
+    mla_inputs = _prepare_mla_inputs(input_tensors, shapes, is_nz)
+    token_x = mla_inputs.token_x
+    wq_a = mla_inputs.wq_a
+    wq_b = mla_inputs.wq_b
+    wkv = mla_inputs.wkv
+    rope_cos = mla_inputs.rope_cos
+    rope_sin = mla_inputs.rope_sin
+    gamma_cq = mla_inputs.gamma_cq
+    gamma_ckv = mla_inputs.gamma_ckv
 
     import torchair as tng
     from torchair.configs.compiler_config import CompilerConfig
@@ -366,8 +373,15 @@ def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
 def mla_prolog_eager(params, input_tensors, golden_tensors, dtype, is_nz, attrs, configs):
     d_type = pypto.DataType.DT_FP16 if dtype == pypto.DataType.DT_FP16 else pypto.DataType.DT_BF16
     shapes = _get_mla_shapes(params)
-    token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv = \
-        _prepare_mla_inputs(input_tensors, shapes, is_nz)
+    mla_inputs = _prepare_mla_inputs(input_tensors, shapes, is_nz)
+    token_x = mla_inputs.token_x
+    wq_a = mla_inputs.wq_a
+    wq_b = mla_inputs.wq_b
+    wkv = mla_inputs.wkv
+    rope_cos = mla_inputs.rope_cos
+    rope_sin = mla_inputs.rope_sin
+    gamma_cq = mla_inputs.gamma_cq
+    gamma_ckv = mla_inputs.gamma_ckv
 
     output_q_data = torch.zeros(
         [token_x.size(0), wq_b.size(1) // gamma_ckv.size(0), gamma_ckv.size(0)],
