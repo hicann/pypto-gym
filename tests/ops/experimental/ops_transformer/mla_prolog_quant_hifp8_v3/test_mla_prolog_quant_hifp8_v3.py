@@ -210,62 +210,6 @@ class _ComputeQPathInputs:
     kv_lora_rank: Any
 
 
-def _compute_q_path(inputs: _ComputeQPathInputs):
-
-
-    q_head_dim = inputs.qk_nope_head_dim + inputs.qk_rope_head_dim
-    # shape is: [inputs.b * inputs.s, h] @ [h, inputs.q_lora_rank] -> [inputs.b * inputs.s, inputs.q_lora_rank]
-    if inputs.is_quant_a:
-        # no smooth
-        q_a_proj = torch_npu.npu_quant_matmul(
-            inputs.x_2d_quant, inputs.w_dq, inputs.w_dq_scale.view(inputs.q_lora_rank),
-            pertoken_scale=inputs.x_2d_scale_dequant.view(inputs.b * inputs.s),
-            x1_dtype=torch_npu.hifloat8, x2_dtype=torch_npu.hifloat8,
-            output_dtype=torch_npu.float32)
-
-    else:
-        # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现与x86平台不一致，通过升精度保证正确性
-        q_a_proj = torch.matmul(
-            inputs.x_2d.to(torch.float32), inputs.w_dq.to(torch.float32))
-        # -> [inputs.b * inputs.s, inputs.q_lora_rank]
-
-    q_a_proj = q_a_proj.to(torch.bfloat16)
-
-    q_a_layernorm = rms_norm(q_a_proj, inputs.gamma_cq)
-
-    # shape: [b*s, q_lora_rank] @ [q_lora_rank, n*q_head_dim] -> [b*s, n*q_head_dim]
-    q_a_layernorm_scale_dequant = None
-    if inputs.is_quant_b:
-        q_a_layernorm, q_a_layernorm_scale_dequant = quant_hif8(q_a_layernorm)  # scale: [inputs.b * inputs.s,1]
-        q_b_proj = torch_npu.npu_quant_matmul(
-            q_a_layernorm, inputs.w_uqqr, inputs.w_uqqr_scale.view(inputs.n * q_head_dim),
-            pertoken_scale=q_a_layernorm_scale_dequant.view(inputs.b * inputs.s),
-            x1_dtype=torch_npu.hifloat8, x2_dtype=torch_npu.hifloat8,
-            output_dtype=torch_npu.float32)
-    else:
-        q_b_proj = torch.matmul(
-            q_a_layernorm.to(torch.float32), inputs.w_uqqr.to(torch.float32))
-        # -> [inputs.b * inputs.s, inputs.n * q_head_dim]
-
-    q_b_proj = q_b_proj.to(inputs.dtype)
-
-    q_reshape = q_b_proj.reshape(inputs.b, inputs.s, inputs.n, q_head_dim)
-
-    q_nope = q_reshape[:, :, :, 0:inputs.qk_nope_head_dim]  # [inputs.b, inputs.s, inputs.n, inputs.qk_nope_head_dim]
-    q_nope_r = q_nope.reshape(inputs.b * inputs.s, inputs.n, inputs.qk_nope_head_dim)
-    q_nope_t = q_nope_r.permute(1, 0, 2)  # [inputs.n, inputs.b * inputs.s, inputs.qk_nope_head_dim]
-    # shape: [n, b*s, qk_nope_dim] @ [n, qk_nope_dim, kv_lora_rank] -> [n, b*s, kv_lora_rank]
-    # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现与x86平台不一致，通过升精度保证正确性
-    q_nope_new = torch.matmul(q_nope_t.to(torch.float32), inputs.w_uk.to(torch.float32))
-    q_nope_new = q_nope_new.to(inputs.dtype)
-    q_nope_new_t = q_nope_new.permute(1, 0, 2)  # [inputs.b * inputs.s, inputs.n, inputs.kv_lora_rank]
-    q_out = q_nope_new_t.reshape(
-            inputs.b, inputs.s, inputs.n, inputs.kv_lora_rank)
-        # -> [inputs.b, inputs.s, inputs.n, inputs.kv_lora_rank]
-
-    return q_reshape, q_out, q_a_layernorm, q_a_layernorm_scale_dequant
-
-
 @dataclass
 class _ComputeKvAndCacheInputs:
     x_2d: Any
@@ -489,12 +433,19 @@ def mla_prolog_quant_v32_compute(inputs):
         if has_smooth:
             smooth_cq = inputs.get("smooth_cq")
 
-    q_out, q_reshape, q_a_layernorm, q_a_layernorm_scale_dequant, x_2d, x_2d_quant, x_2d_scale_dequant = \
+    q_outputs = \
         _compute_q_path(_ComputeQPathInputs(x=x, w_dq=w_dq, w_uqqr=w_uqqr, w_uk=w_uk,
                         gamma_cq=gamma_cq, cos=cos, dtype=dtype,
                         is_quant_a=is_quant_a, is_quant_b=is_quant_b,
                         w_dq_scale=w_dq_scale if is_quant_a else None,
                         w_uqqr_scale=w_uqqr_scale if is_quant_b else None))
+    q_out = q_outputs.q_out
+    q_reshape = q_outputs.q_reshape
+    q_a_layernorm = q_outputs.q_a_layernorm
+    q_a_layernorm_scale_dequant = q_outputs.q_a_layernorm_scale_dequant
+    x_2d = q_outputs.x_2d
+    x_2d_quant = q_outputs.x_2d_quant
+    x_2d_scale_dequant = q_outputs.x_2d_scale_dequant
 
     b, s, h = x.shape
     qk_rope_head_dim = cos.shape[2]
