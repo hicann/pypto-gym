@@ -105,7 +105,7 @@ def get_pfa_tile_cfg():
     m_tile = 256
     k_tile = 128
     n_tile = 128
-    s2_tile = 2048
+    s2_tile = 1024
 
     tile_cfg = AttentionTileConfig(
         g_tile=12,

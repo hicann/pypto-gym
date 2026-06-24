@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
 import pytest
 
+import pytest
 import torch.nn.functional as F
 import numpy as np
 from numpy.testing import assert_allclose

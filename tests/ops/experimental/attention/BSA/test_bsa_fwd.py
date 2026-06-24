@@ -134,6 +134,7 @@ from bsa_fwd_golden import (  # noqa: huawei-wrong-import-position
 from bsa_fwd_impl import (  # noqa: huawei-wrong-import-position
     block_sparse_attention_forward, BSAForwardCallInputs)
 
+torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
 
 # Test Cases
 

@@ -140,6 +140,7 @@ from bsa_bwd_impl import (  # noqa: huawei-wrong-import-position
     block_sparse_attention_backward, BSABackwardCallInputs,
     _last_backward_perf_dirs)
 
+torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
 
 # Test Cases
 
