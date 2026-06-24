@@ -217,6 +217,7 @@ def do_precision_test(case_cfg):
     skv = case_cfg.skv
     sparsity = case_cfg.sparsity
     device = get_device()
+    torch.npu.set_device(device)
     logger.info(f"  [FWD] {name}: b={b} hq={hq} hkv={hkv} sq={sq} skv={skv} sp={sparsity}")
     inputs = gen_inputs(GenInputsConfig(
         b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, sparsity=sparsity, device=device, seed=42))
@@ -236,6 +237,7 @@ def do_precision_test(case_cfg):
 def do_non_aligned_precision_test(case_cfg):
     """Run forward precision test for non-aligned/variable-length sequences."""
     device = get_device()
+    torch.npu.set_device(device)
     logger.info(f"  [FWD-NA] {case_cfg.name}: b={case_cfg.b} hq={case_cfg.hq} hkv={case_cfg.hkv} "
                 f"sq_max={case_cfg.sq_max} skv_max={case_cfg.skv_max} "
                 f"asq={case_cfg.asq_list} askv={case_cfg.askv_list} sp={case_cfg.sparsity}")
@@ -284,6 +286,7 @@ def do_perf_bench(case_cfg, *, clean_before=False):
     if clean_before:
         _clean_output_dirs(_FWD_CLEAN_DIRS)
     device = get_device()
+    torch.npu.set_device(device)
     logger.info(f"  [FWD-perf] {name}: b={b} hq={hq} hkv={hkv} sq={sq} skv={skv}")
     inputs = gen_inputs(GenInputsConfig(
         b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, sparsity=sparsity, device=device, seed=42))
@@ -310,6 +313,7 @@ def do_perf_bench(case_cfg, *, clean_before=False):
 def do_perf_wall(case_cfg):
     """Run one FWD kernel call WITHOUT debug mode — pure wall-clock timing."""
     device = get_device()
+    torch.npu.set_device(device)
     logger.info(f"  [FWD-wall] {case_cfg.name}: b={case_cfg.b} hq={case_cfg.hq} "
                 f"hkv={case_cfg.hkv} sq={case_cfg.sq} skv={case_cfg.skv}")
     inputs = gen_inputs(GenInputsConfig(

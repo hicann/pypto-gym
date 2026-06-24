@@ -14,7 +14,7 @@ PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾
 ## 核心特性
 
 - **大模型核心算子样例**：覆盖 DeepSeek V3.2 / V4、GLM V4.5、Gemma4-31B-it、Qwen3 系列（1.7B / 3.5-9B / 3.6-27B / Next / VL-8B）、LLaDA2-MoE 等模型的关键算子实现
-- **实验性算子样例**：基于实验性目录 `experimental`，收录 Attention、Matmul、Vector、Distributed 等基础算子的开发态样例
+- **实验性算子样例**：基于实验性目录 `experimental`，收录 Attention、Matmul、Vector 等基础算子的开发态样例
 - **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
 - **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
 
@@ -69,14 +69,11 @@ pytest -v --forked
 
 具体测试范围参考 [pytest.ini](./pytest.ini) 配置
 
-### 3. 多卡 / 指定 SoC
+### 3. 指定 SoC
 
 ```bash
 # 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
 pytest tests/ops/glm_v4_5 -v --forked --device 1
-
-# 多卡（2 卡）分布式样例
-pytest tests/ops/experimental/distributed --device 0 1 --cards-per-case 2
 ```
 
 ### 4. 用例筛选说明
@@ -133,7 +130,6 @@ pypto-gym/
 │       │   │   ├── ...
 │       │   │   └── experimental/            # 实验性算子
 │       │   │       ├── attention/           # BSA / Chunked GDR / Flash Attention 等
-│       │   │       ├── distributed/         # 分布式配置与分析
 │       │   │       ├── matmul/              # GMM / 量化矩阵乘 / MXFP8 等
 │       │   │       ├── ops_transformer/     # Flash Attention / MLA Prolog / SwiGLU / Sparse Attention 等
 │       │   │       └── vector/              # RMSNorm / RoPE / AdamW / Sigmoid / MoE 等
@@ -157,7 +153,6 @@ pypto-gym/
 │       ├── utils/                           # 测试工具函数
 │       └── experimental/                    # 实验性算子测试
 │           ├── attention/
-│           ├── distributed/
 │           ├── matmul/
 │           ├── ops_transformer/
 │           └── vector/

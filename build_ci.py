@@ -955,16 +955,6 @@ class BuildCtrl():
         self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/")],
                                  ext=ext_str)
 
-        # 执行多卡用例 通过world_size区分 当前通信用例都是4卡
-        for cards_per_case in [4]:
-            if cards_per_case <= 1 or cards_per_case > len(dev_lst):
-                continue
-            # 分组策略 一个worker对应一组卡
-            n_workers = len(dev_lst) // cards_per_case
-            ext_str = f'-n {n_workers} --device {dev_ext} --cards-per-case {cards_per_case} -m "world_size"'
-            self.py_tests_run_pytest(dist=dist, params=[(self.tests.models, "tests/ops/experimental/distributed/"), ],
-                                     ext=ext_str)
-
     def py_tests_run_pytest(self, dist: Optional[Path], params: List[Tuple[TestsFilterParam, str]], ext: str = ""):
         """调用 pytest 执行测试用例
 

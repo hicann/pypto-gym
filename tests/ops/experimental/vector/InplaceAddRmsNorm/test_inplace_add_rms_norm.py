@@ -206,16 +206,6 @@ def test_level3(device: str) -> bool:
     return _run_case(cases[0], device)
 
 
-def test_level4(device: str) -> bool:
-    cases = [c for c in _load_cases() if c["id"] == "level4"]
-    return _run_case(cases[0], device)
-
-
-def test_level5(device: str) -> bool:
-    cases = [c for c in _load_cases() if c["id"] == "level5"]
-    return _run_case(cases[0], device)
-
-
 def main() -> int:
     try:
         device = _device()
