@@ -115,8 +115,16 @@ def test_gmm_finalize_routing(config):
     torch_dtype = torch_dtype_map.get(config.in_dtype, torch.float8_e4m3fn)
     scale_k = (config.k + 63) // 64
 
-    x1, x2, scale, pertoken_scale, group_list, shared_input, logit, row_index, out = \
-        _build_finalize_routing_tensors(config, torch_dtype, scale_k)
+    result = _build_finalize_routing_tensors(config, torch_dtype, scale_k)
+    x1 = result.x1
+    x2 = result.x2
+    scale = result.scale
+    pertoken_scale = result.pertoken_scale
+    group_list = result.group_list
+    shared_input = result.shared_input
+    logit = result.logit
+    row_index = result.row_index
+    out = result.out
 
     golden = gen_golden(
         FinalizeRoutingGoldenInputs(

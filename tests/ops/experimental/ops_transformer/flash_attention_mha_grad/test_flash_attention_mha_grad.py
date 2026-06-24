@@ -335,8 +335,14 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
     if device is None:
         return None
 
-    batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens = \
-        _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens)
+    params = _resolve_params(batch_size, num_heads, s1_size, s2_size, dim, q_seqlens, kv_seqlens)
+    batch_size = params.batch_size
+    num_heads = params.num_heads
+    s1_size = params.s1_size
+    s2_size = params.s2_size
+    dim = params.dim
+    q_seqlens = params.q_seqlens
+    kv_seqlens = params.kv_seqlens
     if tile_config is None:
         tile_config = _default_tile_config()
 

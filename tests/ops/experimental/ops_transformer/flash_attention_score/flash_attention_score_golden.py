@@ -273,14 +273,26 @@ def flash_attention_score_golden(inputs: FlashAttentionInputs, npu: bool = False
         softmax_max:  [B, N, Sq, 1] fp32  — per-row online-softmax max
         softmax_sum:  [B, N, Sq, 1] fp32  — per-row online-softmax sum
     """
-    query, key, value, atten_mask, pse, drop_mask = _move_tensors_to_device(inputs, npu)
+    result = _move_tensors_to_device(inputs, npu)
+    query = result.query
+    key = result.key
+    value = result.value
+    atten_mask = result.atten_mask
+    pse = result.pse
+    drop_mask = result.drop_mask
     pse_type = inputs.pse_type
     keep_prob = inputs.keep_prob
     b, n, sq, d = query.shape
     _, n_kv, skv, _ = key.shape
 
-    output, softmax_max, softmax_sum, group, scale, num_blocks_kv, num_blocks_q = \
-        _init_outputs_and_symbols(query, key, inputs, b, n, sq, d, n_kv, skv)
+    symbols = _init_outputs_and_symbols(query, key, inputs, b, n, sq, d, n_kv, skv)
+    output = symbols.output
+    softmax_max = symbols.softmax_max
+    softmax_sum = symbols.softmax_sum
+    group = symbols.group
+    scale = symbols.scale
+    num_blocks_kv = symbols.num_blocks_kv
+    num_blocks_q = symbols.num_blocks_q
 
     atten_mask_fp32 = atten_mask.float()              # [Sq, Skv] fp32
     dev = query.device
