@@ -553,4 +553,5 @@ if __name__ == "__main__":
     test_sfa_bf16_b4_s2_seq64k_total_int8_d()
     test_sfa_bf16_b4_s2_seq64k_per_int8_d()
     test_sfa_bf16_b1_s256_seq64k_int8_p()
-    test_sfa_bf16_b4_s2_seq64k_per_bf16_d_950()
+    if pypto.platform.npuarch == 'DAV_3510':
+        test_sfa_bf16_b4_s2_seq64k_per_bf16_d_950()
