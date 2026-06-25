@@ -55,10 +55,10 @@ class FinalizeRoutingConfig:
     k: int
     n: int
     num_experts: int
-    m_tile_shape: list
-    k_tile_shape: list
-    n_tile_shape: list
     vector_tile_shape: list
+    m_tile_shape: list = field(default_factory=list)
+    k_tile_shape: list = field(default_factory=list)
+    n_tile_shape: list = field(default_factory=list)
     m: int = field(init=False)
     in_dtype: pypto.DataType = pypto.DT_FP8E4M3
     transpose_x1: bool = False
@@ -72,6 +72,22 @@ class FinalizeRoutingConfig:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "m", self.batch * self.topk)
+        per_expert_m = self.m // self.num_experts
+        if per_expert_m < 128:
+            m_tile_shape = [per_expert_m, per_expert_m]
+            k_tile_shape = [256, 512]
+            n_tile_shape = [256, 512]
+        elif per_expert_m <= 1024:
+            m_tile_shape = [128, 128]
+            k_tile_shape = [512, 512]
+            n_tile_shape = [128, 256]
+        else:
+            m_tile_shape = [128, 128]
+            k_tile_shape = [256, 256]
+            n_tile_shape = [256, 256]
+        object.__setattr__(self, "m_tile_shape", m_tile_shape)
+        object.__setattr__(self, "k_tile_shape", k_tile_shape)
+        object.__setattr__(self, "n_tile_shape", n_tile_shape)
 
 
 @dataclass

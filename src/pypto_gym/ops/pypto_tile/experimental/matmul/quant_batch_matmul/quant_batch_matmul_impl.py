@@ -229,9 +229,8 @@ def quant_batch_matmul_kernel(
 
                 result_tile = pypto.view(
                     result_out,
-                    [1, m_block, n_block],
+                    [1, m, n_block],
                     [0, 0, 0],
-                    valid_shape=[1, valid_m, valid_n],
                 )
 
                 pypto.assemble(
