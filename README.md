@@ -13,7 +13,7 @@ PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾
 
 ## 核心特性
 
-- **大模型核心算子样例**：覆盖 DeepSeek V3.2 / V4、GLM V4.5、Gemma4-31B-it、Qwen3 系列（1.7B / 3.5-9B / 3.6-27B / Next / VL-8B）、LLaDA2-MoE 等模型的关键算子实现
+- **大模型核心算子样例**：覆盖 DeepSeek 系列、Qwen3 系列、GLM V4.5、Gemma4-31B-it、LLaDA2-MoE 等模型的关键算子实现
 - **实验性算子样例**：基于实验性目录 `experimental`，收录 Attention、Matmul、Vector 等基础算子的开发态样例
 - **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
 - **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
@@ -70,9 +70,6 @@ python3 modeling/transformers/runtime_patch.py \
 ### 1. 运行部分算子测试
 
 ```bash
-# 直接执行 GLM V4.5 Attention
-python tests/ops/glm_v4_5/test_glm_attention.py
-
 # 使用 pytest 执行 GLM V4.5 Attention
 pytest tests/ops/glm_v4_5/test_glm_attention.py
 
@@ -121,60 +118,83 @@ pip install scipy decorator -i https://mirrors.aliyun.com/pypi/simple/
 
 ```
 pypto-gym/
-├── docs/                                    # 文档资源
 ├── modeling/                                # 模型端到端执行脚本
 │   └── transformers/                        # 大模型推理示例
 │       ├── infer.py                         # 通用推理入口
+│       ├── download_hf_model.py             # HuggingFace 模型下载
+│       ├── runtime_patch.py                 # PyPTO 运行时补丁覆盖层生成
+│       ├── bench_qwen3_1_7b.sh             # Qwen3-1.7B 基准脚本
 │       ├── deepseek-v2-lite-chat/           # DeepSeek V2 Lite Chat
 │       ├── gemma4_31b_it/                   # Gemma4-31B-it
+│       ├── gutenocr_3b/                     # GutenOCR-3B
 │       ├── llada2_moe/                      # LLaDA2-MoE
+│       ├── minimax_m27/                     # MiniMax M2.7
+│       ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct
 │       ├── qwen3_1_7b/                      # Qwen3-1.7B
 │       ├── qwen3_5_9b/                      # Qwen3.5-9B
-│       ├── ...
+│       ├── qwen3_6_27b/                     # Qwen3.6-27B
+│       ├── qwen3_vl_8b_instruct_unredacted_max/  # Qwen3-VL-8B
+│       ├── spatial_ssrl_3b/                 # Spatial SSRL 3B
 │       └── sample_inputs/                   # 公共样例输入
 ├── src/
 │   └── pypto_gym/
 │       ├── ops/                             # 算子样例根目录
-│       │   ├── pypto_tile/                  # Tile 算子实现
-│       │   │   ├── arctic/                  # Arctic LSTM Speculator
-│       │   │   ├── deepseek_v2_lite_chat/   # DeepSeek V2 Lite Chat MLA Prolog
-│       │   │   ├── deepseek_v32_exp/        # DeepSeek V3.2 MLA / Sparse Attention / Lightning Indexer
-│       │   │   ├── deepseek_v4/             # DeepSeek V4 MLA / Compressor / Window Attention
-│       │   │   ├── gemma4_31b_it/           # Gemma4-31B-it GQA Decode Attention / Softmax
-│       │   │   ├── glm_v4_5/                # GLM V4.5 Attention / MoE / FFN / Gate
-│       │   │   ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
-│       │   │   ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
-│       │   │   ├── qwen3_1_7b/              # Qwen3-1.7B RMSNorm + RoPE
-│       │   │   ├── qwen3_5_9b/              # Qwen3.5-9B Gated Delta Rule
-│       │   │   ├── ...
-│       │   │   └── experimental/            # 实验性算子
-│       │   │       ├── attention/           # BSA / Chunked GDR / Flash Attention 等
-│       │   │       ├── matmul/              # GMM / 量化矩阵乘 / MXFP8 等
-│       │   │       ├── ops_transformer/     # Flash Attention / MLA Prolog / SwiGLU / Sparse Attention 等
-│       │   │       └── vector/              # RMSNorm / RoPE / AdamW / Sigmoid / MoE 等
-│       │   └── ...
+│       │   └── pypto_tile/                  # Tile 算子实现
+│       │       ├── arctic/                  # Arctic LSTM Speculator
+│       │       ├── common_utils/            # 公共工具（对比、日志、设备查询等）
+│       │       ├── deepseek_v2_lite_chat/   # DeepSeek V2 Lite Chat MLA Prolog
+│       │       ├── deepseek_v32_exp/        # DeepSeek V3.2 MLA / Sparse Attention / Lightning Indexer
+│       │       ├── deepseek_v4/             # DeepSeek V4 MLA / Compressor / Window Attention
+│       │       ├── gemma4_31b_it/           # Gemma4-31B-it GQA Decode Attention / Softmax
+│       │       ├── glm_v4_5/                # GLM V4.5 Attention / MoE / FFN / Gate
+│       │       ├── gutenocr_3b/             # GutenOCR-3B RMSNorm / SwiGLU MLP / MRoPE
+│       │       ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
+│       │       ├── minimax_m27/             # MiniMax M2.7 MoE Grouped GEMM
+│       │       ├── phi_3_mini_4k_instruct/  # Phi-3-mini-4k-instruct RMSNorm
+│       │       ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
+│       │       ├── qwen3_1_7b/              # Qwen3-1.7B RMSNorm + RoPE
+│       │       ├── qwen3_5_9b/              # Qwen3.5-9B Gated Delta Rule
+│       │       ├── qwen3_6_27b/             # Qwen3.6-27B Gated Delta Rule
+│       │       ├── qwen3_next/              # Qwen3-Next Gated Delta Rule
+│       │       ├── qwen3_vl_8b_instruct_unredacted_max/  # Qwen3-VL-8B RMSNorm
+│       │       ├── spatial_ssrl_3b/         # Spatial SSRL 3B RMSNorm + RoPE
+│       │       └── experimental/            # 实验性算子
 │       └── transformers/                    # 各个模型结构定义
 │           ├── gemma4_31b_it/
+│           ├── gutenocr_3b/
 │           ├── llada2_moe/
+│           ├── minimax_m27/
+│           ├── phi_3_mini_4k_instruct/
 │           ├── qwen3_1_7b/
 │           ├── qwen3_5_9b/
-│           ├── ...
+│           ├── qwen3_6_27b/
+│           ├── qwen3_vl_8b_instruct_unredacted_max/
 │           └── spatial_ssrl_3b/
-├── tests/                                   # 算子测试用例
-│   └── ops/                                 # 与 src/pypto_gym/ops/ 对应
-│       ├── arctic/                          # Arctic LSTM 算子测试
-│       ├── deepseek_v32_exp/                # DeepSeek V3.2 算子测试
-│       ├── deepseek_v4/                     # DeepSeek V4 算子测试
-│       ├── gemma4_31b_it/                   # Gemma4-31B-it 算子测试
-│       ├── glm_v4_5/                        # GLM V4.5 算子测试
-│       ├── llada2_moe/                      # LLaDA2-MoE 算子测试
-│       ├── qat/                             # QAT 算子测试
-│       ├── utils/                           # 测试工具函数
-│       └── experimental/                    # 实验性算子测试
-│           ├── attention/
-│           ├── matmul/
-│           ├── ops_transformer/
-│           └── vector/
+├── tests/                                   # 测试用例
+│   ├── ops/                                 # 算子测试（与 src/pypto_gym/ops/ 对应）
+│   │   ├── arctic/                          # Arctic LSTM 算子测试
+│   │   ├── chunked_gdr/                     # Chunked GDR 算子测试
+│   │   ├── deepseek_v2_lite_chat/           # DeepSeek V2 Lite Chat 算子测试
+│   │   ├── deepseek_v32_exp/                # DeepSeek V3.2 算子测试
+│   │   ├── deepseek_v4/                     # DeepSeek V4 算子测试
+│   │   ├── gemma4_31b_it/                   # Gemma4-31B-it 算子测试
+│   │   ├── glm_v4_5/                        # GLM V4.5 算子测试
+│   │   ├── gutenocr_3b/                     # GutenOCR-3B 算子测试
+│   │   ├── llada2_moe/                      # LLaDA2-MoE 算子测试
+│   │   ├── minimax_m27/                     # MiniMax M2.7 算子测试
+│   │   ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct 算子测试
+│   │   ├── qat/                             # QAT 算子测试
+│   │   ├── qwen3_1_7b/                      # Qwen3-1.7B 算子测试
+│   │   ├── qwen3_5_9b/                      # Qwen3.5-9B 算子测试
+│   │   ├── qwen3_6_27b/                     # Qwen3.6-27B 算子测试
+│   │   ├── qwen3_next/                      # Qwen3-Next 算子测试
+│   │   ├── qwen3_vl_8b_instruct_unredacted_max/  # Qwen3-VL-8B 算子测试
+│   │   ├── spatial_ssrl_3b/                 # Spatial SSRL 3B 算子测试
+│   │   ├── utils/                           # 测试工具函数
+│   │   └── experimental/                    # 实验性算子测试
+│   ├── st/                                  # 系统测试（Flash Attention、Page Attention 等）
+│   ├── ut/                                  # 单元测试（算子基础测试）
+│   └── README.md                            # 测试目录说明
 ├── conftest.py                              # pytest 调度（多卡 / 多 SoC 筛选）
 ├── CONTRIBUTING.md                          # 贡献指南
 ├── pytest.ini
@@ -192,12 +212,13 @@ pypto-gym/
 |---------|------|------|
 | `arctic/` | sum_lstm | LSTM 推测器（Arctic-Inference），融合输入、RMSNorm、GELU、门控与细胞状态更新 |
 | `deepseek_v2_lite_chat/` | mla_prolog | MLA Prolog 预计算 |
-| `deepseek_v32_exp/` | mla_prolog_quant, lightning_indexer_prolog_quant, sparse_flash_attention_quant, sparse_attention_antiquant, mla_indexer_prolog_quant, lightning_indexer | MLA Prolog、Lightning Indexer、稀疏注意力等 6 个量化/非量化算子 |
+| `deepseek_v32_exp/` | mla_prolog_quant, lightning_indexer_prolog_quant, sparse_flash_attention_quant, sparse_attention_antiquant, mla_indexer_prolog_quant, lightning_indexer_quant | MLA Prolog、Lightning Indexer、稀疏注意力等 6 个量化/非量化算子 |
 | `deepseek_v4/` | mla_prolog_v4, mla_prolog_quant_v4, lightning_indexer_prolog_quant_v4, compressor, compress_flash_attention, sparse_compress_flash_attention, win_attention, hc_pre | MLA Prolog、压缩器、压缩/稀疏 Flash Attention、窗口注意力等 8 个算子 |
 | `gemma4_31b_it/` | gqa_decode_attn, attn_softmax | GQA 解码注意力（KV 头均值，带宽降低 75%）、3-pass Softmax |
 | `glm_v4_5/` | attention_pre_quant, attention, attention_fusion, gate, select_experts, ffn_shared_expert_quant, moe_fusion | 注意力（含量化前处理与融合）、MoE 门控/专家选择/FFN/融合等 7 个算子 |
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
+| `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
 | `phi_3_mini_4k_instruct/` | rms_norm | RMSNorm（D=3072），支持 ACLGraph |
 | `qat/` | symmetric_per_tensor, symmetric_per_channel, asymmetric_per_group | 量化感知训练三模式（前向 + 反向） |
 | `qwen3_1_7b/` | rms_norm_rope | RMSNorm + RoPE 融合 |
@@ -206,7 +227,10 @@ pypto-gym/
 | `qwen3_next/` | gated_delta_rule | Chunk Gated Delta Rule，线性复杂度 O(n)，支持 1K-1M+ 序列长度 |
 | `qwen3_vl_8b_instruct_.../` | rms_norm | RMSNorm（hidden_size=2048） |
 | `spatial_ssrl_3b/` | rms_norm, rope | RMSNorm + RoPE（Vision 2D / 多模态 3D） |
-| `experimental/vector/` | ApplyAdamWV2, GatherPaKvCache, QkvRmsNormRopeCache | AdamW 更新、Paged Attention KV cache gather、QKV RMSNorm RoPE cache 融合 |
+| `experimental/attention/` | BSA, chunked_gdr, incre_flash_attention_gqa_antiquant, incre_flash_attention_mla, incre_flash_attention, pfa_flash_attention | BSA、Chunked GDR、增量 Flash Attention（GQA/MLA）、PFA Flash Attention 等 6 个算子 |
+| `experimental/matmul/` | gmm_mxfp8, grouped_matmul_finalize_routing, grouped_matmul_swiglu_quant, quant_batch_matmul, quant_grouped_matmul_inplace_add, quant_matmul_reduce_sum, transpose_quant_batch_matmul | MXFP8 GMM、量化分组矩阵乘、量化批量矩阵乘、转置量化矩阵乘等 7 个算子 |
+| `experimental/ops_transformer/` | flash_attention_mha, flash_attention_mha_grad, flash_attention_score, flash_attention_score_grad, fused_swiglu, fused_swiglu_grad, lightning_indexer, mla_prolog, mla_prolog_mxfp_quant_v3, mla_prolog_quant_hifp8_v3, page_attention_quant, sparse_attention_antiquant_fp8, sparse_attention_antiquant_kv_split, sparse_attention_grad_tnd, sparse_attention_tnd, attention_worker_combine | Flash Attention（MHA/Score，含量化/反向）、MLA Prolog（含量化）、SwiGLU、Page Attention、稀疏注意力等 16 个算子 |
+| `experimental/vector/` | ApplyAdamWV2, GatherPaKvCache, QkvRmsNormRopeCache, ApplyRMSProp, BNTrainingReduce, InplaceAddRmsNorm, InterleaveRope, moe_gating_topk 等 | AdamW / RMSProp 更新、Paged Attention KV cache gather、QKV RMSNorm RoPE cache 融合、RMSNorm、RoPE、MoE 门控等 14 个算子 |
 
 ## 添加新算子
 
