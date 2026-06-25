@@ -72,6 +72,29 @@ _BUILD_DIR = os.environ.get(
 os.makedirs(_BUILD_DIR, exist_ok=True)
 
 
+def _local_softmax(sij, mask, s2_start, s2_valid):
+    pypto.set_vec_tile_shapes(Nkv, GROUPS, S2_TILE)
+    mask_tile = pypto.view(mask, [Nkv, GROUPS, S2_TILE], [0, 0, s2_start],
+                           valid_shape=[Nkv, GROUPS, s2_valid])
+    sij_scaled = pypto.add(pypto.mul(sij, SCALE), mask_tile)
+    m_ij = pypto.amax(sij_scaled, -1, keepdim=True)
+    p_ij = pypto.exp(pypto.sub(sij_scaled, m_ij))
+    l_ij = pypto.sum(p_ij, -1, keepdim=True)
+    return m_ij, p_ij, l_ij
+
+
+def _compensated_pv(p_ij, v_tile):
+    p_hi = pypto.tensor([Nkv, GROUPS, S2_TILE], pypto.DT_BF16, "p_hi")
+    p_hi[:] = pypto.cast(p_ij, pypto.DT_BF16)
+    p_lo = pypto.tensor([Nkv, GROUPS, S2_TILE], pypto.DT_BF16, "p_lo")
+    p_lo[:] = pypto.cast(pypto.sub(p_ij, pypto.cast(p_hi, pypto.DT_FP32)), pypto.DT_BF16)
+    pypto.set_cube_tile_shapes([4, 4], [64, 64], [128, 128])
+    o_hi = pypto.matmul(p_hi, v_tile, pypto.DT_FP32)
+    o_lo = pypto.matmul(p_lo, v_tile, pypto.DT_FP32)
+    pypto.set_vec_tile_shapes(Nkv, GROUPS, D)
+    return pypto.add(o_hi, o_lo)
+
+
 @pypto.frontend.jit(
     runtime_options={"device_sched_mode": 1, "run_mode": pypto.RunMode.NPU},
     pass_options={"cube_l1_reuse_setting": {0: 4}},
@@ -84,11 +107,7 @@ def gemma4_decode_attn_gqa(
     mask:    pypto.Tensor([Nkv, GROUPS, Skv_dyn], pypto.DT_FP32),
     out:     pypto.Tensor([Nq, D], pypto.DT_BF16),
 ):
-    """GQA decode attention with online softmax (Nkv=4, GROUPS=8).
-
-    q: [Nq=32, D=256] reshaped internally to [Nkv=4, GROUPS=8, D=256]
-    K/V: [Nkv=4, Skv_padded, D=256] -- already averaged from 16 heads
-    """
+    """GQA decode attention with online softmax (Nkv=4, GROUPS=8)."""
     Skv = k_full.shape[1]
     s2_loop = (Skv + S2_TILE - 1) // S2_TILE
 
@@ -103,16 +122,12 @@ def gemma4_decode_attn_gqa(
 
     for s2_idx in pypto.loop(s2_loop, name="LOOP_S2", idx_name="s2_idx"):
         s2_start = s2_idx * S2_TILE
-        s2_end = pypto.min(s2_start + S2_TILE, Skv)
-        s2_valid = s2_end - s2_start
+        s2_valid = pypto.min(s2_start + S2_TILE, Skv) - s2_start
 
-        # Load K tile: [Nkv, S2_TILE, D]
         pypto.set_vec_tile_shapes(Nkv, S2_TILE, D)
         k_tile = pypto.tensor([Nkv, S2_TILE, D], pypto.DT_BF16, "k_tile")
         k_tile[:] = pypto.view(k_full, [Nkv, S2_TILE, D], [0, s2_start, 0],
                                valid_shape=[Nkv, s2_valid, D])
-
-        # Load V tile: [Nkv, S2_TILE, D]
         v_tile = pypto.tensor([Nkv, S2_TILE, D], pypto.DT_BF16, "v_tile")
         v_tile[:] = pypto.view(v_full, [Nkv, S2_TILE, D], [0, s2_start, 0],
                                valid_shape=[Nkv, s2_valid, D])
@@ -120,30 +135,13 @@ def gemma4_decode_attn_gqa(
         pypto.set_cube_tile_shapes([4, 4], [128, 128], [64, 64])
         sij = pypto.matmul(q_3d, k_tile, pypto.DT_FP32, b_trans=True)
 
-        # Scale + mask
-        pypto.set_vec_tile_shapes(Nkv, GROUPS, S2_TILE)
-        sij_scaled = pypto.mul(sij, SCALE)
-        mask_tile = pypto.view(mask, [Nkv, GROUPS, S2_TILE], [0, 0, s2_start],
-                               valid_shape=[Nkv, GROUPS, s2_valid])
-        sij_scaled = pypto.add(sij_scaled, mask_tile)
+        m_ij, p_ij, l_ij = _local_softmax(sij, mask, s2_start, s2_valid)
+        o_ij = _compensated_pv(p_ij, v_tile)
 
-        # Local softmax
-        m_ij = pypto.amax(sij_scaled, -1, keepdim=True)   # [Nkv, GROUPS, 1]
-        p_ij = pypto.exp(pypto.sub(sij_scaled, m_ij))     # [Nkv, GROUPS, S2_TILE]
-        l_ij = pypto.sum(p_ij, -1, keepdim=True)          # [Nkv, GROUPS, 1]
-
-        # PV: [Nkv, GROUPS, S2_TILE] @ [Nkv, S2_TILE, D] -> [Nkv, GROUPS, D]
-        p_buf = pypto.tensor([Nkv, GROUPS, S2_TILE], pypto.DT_BF16, "p_buf")
-        p_buf[:] = pypto.cast(p_ij, pypto.DT_BF16)
-        pypto.set_cube_tile_shapes([4, 4], [64, 64], [128, 128])
-        o_ij = pypto.matmul(p_buf, v_tile, pypto.DT_FP32)
-
-        # Online softmax accumulation
         pypto.set_vec_tile_shapes(Nkv, GROUPS, D)
         if pypto.is_loop_begin(s2_idx):
             if pypto.is_loop_end(s2_idx):
-                o_final = pypto.div(o_ij, l_ij)
-                out[:] = pypto.reshape(pypto.cast(o_final, pypto.DT_BF16), [Nq, D])
+                out[:] = pypto.reshape(pypto.cast(pypto.div(o_ij, l_ij), pypto.DT_BF16), [Nq, D])
             else:
                 oi[:] = o_ij
             li[:] = l_ij
@@ -155,8 +153,7 @@ def gemma4_decode_attn_gqa(
             li_new = pypto.add(pypto.mul(alpha, li), pypto.mul(beta, l_ij))
             oi_new = pypto.add(pypto.mul(oi, alpha), pypto.mul(o_ij, beta))
             if pypto.is_loop_end(s2_idx):
-                o_final = pypto.div(oi_new, li_new)
-                out[:] = pypto.reshape(pypto.cast(o_final, pypto.DT_BF16), [Nq, D])
+                out[:] = pypto.reshape(pypto.cast(pypto.div(oi_new, li_new), pypto.DT_BF16), [Nq, D])
             else:
                 oi[:] = oi_new
             li[:] = li_new
