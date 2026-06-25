@@ -115,12 +115,21 @@ export MODEL_PATH=/path/to/MiniMax-M2.7
 export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 export PYPTO_VEC_TILE=128            # vector tile must fit the 910B 192 KB UB
 export TE_PARALLEL_COMPILER=1        # serial TBE compile (avoids a parallel-compiler SIGSEGV)
+export PYTHONPATH=$PWD/../../../src:$PYTHONPATH
+
+python3 ../download_hf_model.py \
+    --model-id MiniMaxAI/MiniMax-M2.7 \
+    --output-dir "$MODEL_PATH"
+
+python3 ../runtime_patch.py \
+    --model-family minimax_m27 \
+    --model-path "$MODEL_PATH"
 
 # single prompt — full 228.7B model on one die (experts FP8 on host, streamed per layer)
-TILE_FWK_DEVICE_ID=0 python ask_minimax_m27.py
+TILE_FWK_DEVICE_ID=0 python3 ask_minimax_m27.py --model-path "$MODEL_PATH" --device 0
 
 # 8-die full-model E2E benchmark — PyPTO (default) vs eager, prefill (reproduces the Results table)
-MODEL_PATH="$MODEL_PATH" ./bench_minimax_m27.sh
+MODEL_PATH="$MODEL_PATH" bash bench_minimax_m27.sh
 # or directly (one process per die); default --moe-impl is pypto:
 torchrun --nproc_per_node=8 bench_minimax_m27.py --moe-impl pypto
 torchrun --nproc_per_node=8 bench_minimax_m27.py --moe-impl eager

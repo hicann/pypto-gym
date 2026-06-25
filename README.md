@@ -46,6 +46,25 @@ export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
 
+## HuggingFace 模型下载与运行时补丁
+
+`modeling/transformers/download_hf_model.py` 用于将 HuggingFace 模型卡下载到本地目录，`modeling/transformers/runtime_patch.py` 用于在本地模型目录外生成 PyPTO 运行时补丁覆盖层。各模型 README 会给出对应的 `model-id` 和 `model-family`。
+
+```bash
+export MODEL_PATH=/path/to/local-model
+export PYTHONPATH=$PWD/src:$PYTHONPATH
+
+python3 modeling/transformers/download_hf_model.py \
+    --model-id <org/model-card> \
+    --output-dir "$MODEL_PATH"
+
+python3 modeling/transformers/runtime_patch.py \
+    --model-family <model-family> \
+    --model-path "$MODEL_PATH"
+```
+
+未内置的模型可通过 `runtime_patch.py --family-name --auto-map --copy` 显式指定补丁映射。
+
 ## ⚡️快速上手
 
 ### 1. 运行部分算子测试

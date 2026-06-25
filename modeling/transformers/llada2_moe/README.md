@@ -34,18 +34,25 @@ reducing launches to 20/iter.
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 export TILE_FWK_DEVICE_ID=14
-export PYTHONPATH=$PWD/src
+export MODEL_PATH=/path/to/LLaDA2.0-mini
+export PYTHONPATH=$PWD/../../../src:$PYTHONPATH
+
+python3 ../download_hf_model.py \
+    --model-id inclusionAI/LLaDA2.0-mini \
+    --output-dir "$MODEL_PATH"
+
+python3 ../runtime_patch.py \
+    --model-family llada2_moe \
+    --model-path "$MODEL_PATH"
 
 # Single inference — baseline
-python modeling/transformers/llada2_moe/ask_LLaDA2-mini.py \
-    --model-path /path/to/LLaDA2.0-mini --device 14
+python3 ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device 14
 
 # Single inference — PyPTO
-python modeling/transformers/llada2_moe/ask_LLaDA2-mini.py \
-    --model-path /path/to/LLaDA2.0-mini --device 14 --use_pypto
+python3 ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device 14 --use_pypto
 
 # Full benchmark (warmup + 10 measurement iters, baseline vs PyPTO)
-MODEL_PATH=/path/to/LLaDA2.0-mini bash modeling/transformers/llada2_moe/bench_LLaDA2-mini.sh
+MODEL_PATH="$MODEL_PATH" bash bench_LLaDA2-mini.sh
 ```
 
 ## Benchmark Methodology

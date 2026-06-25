@@ -33,14 +33,25 @@
 ## Usage
 
 ```bash
+export MODEL_PATH=/path/to/gemma-4-31b-it
+export PYTHONPATH=$PWD/../../../src:$PYTHONPATH
+
+python3 ../download_hf_model.py \
+    --model-id google/gemma-4-31b-it \
+    --output-dir "$MODEL_PATH"
+
+python3 ../runtime_patch.py \
+    --model-family gemma4_31b_it \
+    --model-path "$MODEL_PATH"
+
 # Baseline (no PyPTO)
-python3 ask_Gemma-4-31B-it.py --model-path /path/to/gemma-4-31b-it
+python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH"
 
 # With PyPTO fused kernels
-python3 ask_Gemma-4-31B-it.py --model-path /path/to/gemma-4-31b-it --use_pypto
+python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --use_pypto
 
 # Benchmark
-bash bench_Gemma-4-31B-it.sh
+DEVICE=0 MODEL_PATH="$MODEL_PATH" bash bench_Gemma-4-31B-it.sh
 ```
 
 ## Kernel Unit Tests
