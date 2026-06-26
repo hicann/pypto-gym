@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL_ID="spatial_ssrl_3b"
-MODEL_PATH="/data/h00520348/optimize525/models/spatial_ssrl_3b"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/spatial_ssrl_3b}"
 INPUT_FILE="${SCRIPT_DIR}/sample_inputs.txt"
 OUTPUT_LENGTH=30
 BASELINE_REPORT="${SCRIPT_DIR}/bench_baseline.json"

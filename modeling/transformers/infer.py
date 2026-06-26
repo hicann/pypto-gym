@@ -14,13 +14,14 @@ Qwen3-1.7B 单次问答脚本
 """
 
 import argparse
+import os
 import torch
 import torch_npu
 
 parser = argparse.ArgumentParser(description="Qwen3-1.7B 问答脚本")
 parser.add_argument("--prompt", default="你好")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/mnt/workspace/gitCode/cann/network/Qwen3-1.7B", help="模型权重路径")
+parser.add_argument("--model-path", default=os.environ.get("MODEL_PATH", "/path/to/models/Qwen3-1.7B"), help="模型权重路径")
 parser.add_argument("--use-pto", action="store_true", help="启用PyPTO算子优化")
 args = parser.parse_args()
 

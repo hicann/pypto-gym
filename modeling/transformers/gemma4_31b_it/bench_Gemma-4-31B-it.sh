@@ -8,7 +8,7 @@
 set -e
 
 MODEL_ID="Gemma-4-31B-it"
-MODEL_PATH="${MODEL_PATH:-/mnt/workspace/models/gemma-4-31b-it}"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/gemma-4-31b-it}"
 INPUT_FILE="$(dirname $0)/sample_inputs.txt"
 OUTPUT_LENGTH=100
 

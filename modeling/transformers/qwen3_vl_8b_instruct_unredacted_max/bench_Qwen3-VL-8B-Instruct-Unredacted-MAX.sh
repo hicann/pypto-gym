@@ -8,7 +8,7 @@
 set -e
 
 MODEL_ID="Qwen3-VL-8B-Instruct-Unredacted-MAX"
-MODEL_PATH="/mnt/workspace/gitCode/cann/models/Qwen3-VL-8B-Instruct-Unredacted-MAX"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/Qwen3-VL-8B-Instruct-Unredacted-MAX}"
 INPUT_FILE="$(dirname $0)/sample_inputs.txt"
 OUTPUT_LENGTH=100
 SUMMARY_FILE="$(dirname $0)/benchmark_summary.txt"

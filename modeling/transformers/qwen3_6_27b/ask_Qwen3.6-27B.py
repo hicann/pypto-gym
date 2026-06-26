@@ -16,6 +16,7 @@ Qwen3.6-27B 推理脚本
 """
 
 import argparse
+import os
 import sys
 import torch
 import torch_npu
@@ -23,7 +24,7 @@ import torch_npu
 parser = argparse.ArgumentParser(description="Qwen3.6-27B 推理脚本")
 parser.add_argument("--prompt", default=None, help="提问文本（优先级高于--sentence_file）")
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/mnt/workspace/gitCode/cann/models/pure/Qwen3.6-27B", help="模型权重路径")
+parser.add_argument("--model-path", default=os.environ.get("MODEL_PATH", "/path/to/models/Qwen3.6-27B"), help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
 parser.add_argument("--use_pypto", action="store_true", help="PyPTO融合算子模式")

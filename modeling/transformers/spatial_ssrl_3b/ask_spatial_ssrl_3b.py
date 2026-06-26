@@ -31,7 +31,7 @@ import time
 
 import torch
 import torch_npu
-_MODELS_ROOT = _os.environ.get("MODELS_ROOT", "/npu/s00454010/models")
+_MODELS_ROOT = _os.environ.get("MODELS_ROOT", "/path/to/models")
 sys.path.insert(0, _MODELS_ROOT)
 import cann_pow_patch
 from transformers import AutoModelForImageTextToText, AutoProcessor

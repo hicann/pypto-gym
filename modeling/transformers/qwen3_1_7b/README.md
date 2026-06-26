@@ -3,7 +3,7 @@
 | 字段 | 说明 |
 |------|------|
 | HuggingFace | Qwen/Qwen3-1.7B |
-| 权重目录 | `{model_weight_dir}`（如 `/data/models/Qwen3-1.7B`） |
+| 权重目录 | `{model_weight_dir}`（如 `/path/to/models/Qwen3-1.7B`） |
 | 代码来源 | transformers 4.51.0 内置 `/models/qwen3/`，import 已修复为 `from transformers.xxx` |
 | transformers版本 | 4.51.0 |
 | 代码位置 | modeling_qwen3.py, configuration_qwen3.py（根目录，auto_map指向根目录） |

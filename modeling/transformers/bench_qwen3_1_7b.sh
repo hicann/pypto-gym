@@ -8,7 +8,7 @@
 
 set -e
 
-MODEL_PATH="${MODEL_PATH:-/mnt/workspace/gitCode/cann/network/Qwen3-1.7B}"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/Qwen3-1.7B}"
 DEVICE="${DEVICE:-0}"
 PROMPT="${PROMPT:-你好}"
 

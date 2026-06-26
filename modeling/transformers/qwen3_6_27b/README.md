@@ -3,7 +3,7 @@
 | 字段 | 说明 |
 |------|------|
 | HuggingFace | Qwen/Qwen3.6-27B |
-| 权重目录 | /mnt/workspace/gitCode/cann/models/pure/Qwen3.6-27B |
+| 权重目录 | /path/to/models/Qwen3.6-27B |
 | 代码来源 | transformers 包 (built-in，使用 qwen3_5 架构) |
 | 运行命令 | `python3 scripts/ask_Qwen3.6-27B.py` |
 | transformers 版本 | 5.6.1 |

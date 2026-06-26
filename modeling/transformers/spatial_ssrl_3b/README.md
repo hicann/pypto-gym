@@ -25,14 +25,14 @@
 ```bash
 python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id internlm/Spatial-SSRL-3B \
-    --output-dir /npu/s00454010/models/spatial_ssrl_3b
+    --output-dir /path/to/models/spatial_ssrl_3b
 ```
 
 ## PYPTO入网适配
 
 ```bash
 bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
-    /npu/s00454010/models/spatial_ssrl_3b spatial_ssrl_3b
+    /path/to/models/spatial_ssrl_3b spatial_ssrl_3b
 ```
 
 脚本自动完成：备份 HF 原始代码 → 替换为华为修改版 → 写入 `pto_kernels/` → 确保 `auto_map` → 清除 HF 缓存。

@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL_ID="gutenocr_3b"
-MODEL_PATH="/data/h00520348/optimize525/models/gutenocr_3b"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/gutenocr_3b}"
 INPUT_FILE="${SCRIPT_DIR}/sample_inputs.txt"
 OUTPUT_LENGTH=100
 BASELINE_REPORT="${SCRIPT_DIR}/bench_baseline.json"

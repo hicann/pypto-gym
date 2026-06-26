@@ -23,7 +23,7 @@ import time
 import os
 
 # ===== PyPTO编译环境配置（必须在任何导入前） =====
-os.environ['PTO_TILE_LIB_CODE_PATH'] = '/data/h00520348/optimize_aclgraph/pto-isa'
+os.environ.setdefault('PTO_TILE_LIB_CODE_PATH', '/path/to/pto-isa')
 os.environ['ASCEND_HOME_PATH'] = '/usr/local/Ascend/cann-9.0.0'
 
 # ===== 参数解析 =====
@@ -32,7 +32,7 @@ parser.add_argument("--prompt", default=None, help="提问文本（优先级高�
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
 parser.add_argument(
     "--model-path",
-    default="/data/h00520348/optimize_aclgraph/models/DeepSeek-V2-Lite-Chat",
+    default=os.environ.get("MODEL_PATH", "/path/to/models/DeepSeek-V2-Lite-Chat"),
      help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")

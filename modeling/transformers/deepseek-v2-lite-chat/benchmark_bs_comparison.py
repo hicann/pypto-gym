@@ -20,7 +20,7 @@ import re
 import os
 import sys
 
-os.chdir('/data/h00520348/optimize_aclgraph/models/DeepSeek-V2-Lite-Chat')
+os.chdir(os.environ.get("MODEL_PATH", "/path/to/models/DeepSeek-V2-Lite-Chat"))
 
 test_configs = [
     # BS=1, 不同输出长度（影响KV cache长度）

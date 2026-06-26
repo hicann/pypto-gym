@@ -8,7 +8,7 @@
 set -e
 
 MODEL_ID="Qwen3.5-9B"
-MODEL_PATH="/mnt/workspace/gitCode/cann/models/pure/Qwen3.5-9B"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/Qwen3.5-9B}"
 INPUT_FILE="$(dirname $0)/sample_inputs.txt"
 OUTPUT_LENGTH=100
 SUMMARY_FILE="$(dirname $0)/benchmark_summary.txt"

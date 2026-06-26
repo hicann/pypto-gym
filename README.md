@@ -105,14 +105,14 @@ pytest tests/ops/glm_v4_5 -v --forked --device 1
 ```bash
 python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id Qwen/Qwen3-1.7B \
-    --output-dir /data/models/Qwen3-1.7B
+    --output-dir /path/to/models/Qwen3-1.7B
 ```
 
 #### 2. 入网适配
 
 ```bash
 bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
-    /data/models/Qwen3-1.7B qwen3_1_7b
+    /path/to/models/Qwen3-1.7B qwen3_1_7b
 ```
 
 #### 3. 验证
@@ -120,7 +120,7 @@ bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
 ```bash
 python3 modeling/transformers/qwen3_1_7b/ask_Qwen3-1.7B.py \
     --device 0 --prompt "你好" --use-pto \
-    --model-path /data/models/Qwen3-1.7B
+    --model-path /path/to/models/Qwen3-1.7B
 ```
 
 ## 常见问题排查
