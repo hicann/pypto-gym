@@ -99,7 +99,7 @@ def run_mhc_pre_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     N_SQUARED_PLUS_2N = N * N + 2 * N
 
     # 固定随机种子以保证可重复性
-    torch.manual_seed(42)
+    torch.manual_seed(1)
 
     # 准备测试数据
     x = torch.randn(bs, N, D, dtype=torch.bfloat16, device=device)
