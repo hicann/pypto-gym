@@ -79,7 +79,7 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
             nan_count += 1
             if abnormal_count <= max_prints:
                 _log_nan_error(multi_idx, cpu_val, npu_val)
-        elif abs_diff > (atol + rtol * abs(cpu_float)):
+        elif _is_above_tolerance(cpu_val, npu_val, rtol, atol):
             exceed_tolerance_count += 1
             if abnormal_count <= max_prints:
                 _log_tolerance_error(multi_idx, cpu_val, npu_val, rtol, atol)
