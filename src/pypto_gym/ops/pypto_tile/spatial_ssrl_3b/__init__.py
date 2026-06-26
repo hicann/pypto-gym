@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -30,10 +31,24 @@ from .rope import (
 USE_PTO_RMS_NORM = False
 USE_PTO_ROPE = False
 
+
+# Wrapper aliases for modeling code compatibility
+def apply_rotary_pos_emb_vision_wrapper(q, k, cos, sin):
+    """Wrapper alias for vision RoPE PTO implementation."""
+    return apply_rotary_pos_emb_vision_pto_impl(q, k, cos, sin)
+
+
+def apply_multimodal_rotary_pos_emb_wrapper(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
+    """Wrapper alias for multimodal RoPE PTO implementation."""
+    return apply_multimodal_rotary_pos_emb_pto_impl(q, k, cos, sin, mrope_section, unsqueeze_dim)
+
+
 __all__ = [
-    "USE_PTO_RMS_NORM", 
+    "USE_PTO_RMS_NORM",
     "USE_PTO_ROPE",
     "rms_norm_pto_wrapper",
     "apply_rotary_pos_emb_vision_pto_impl",
-    "apply_multimodal_rotary_pos_emb_pto_impl"
+    "apply_multimodal_rotary_pos_emb_pto_impl",
+    "apply_rotary_pos_emb_vision_wrapper",
+    "apply_multimodal_rotary_pos_emb_wrapper",
 ]

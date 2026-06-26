@@ -124,9 +124,11 @@ def apply_rotary_pos_emb_vision_pto_impl(
     Returns:
         q_embed, k_embed: 旋转后的 query 和 key
     """
+    q = q.contiguous()
+    k = k.contiguous()
     q_out = torch.empty_like(q)
     k_out = torch.empty_like(k)
-    
+
     apply_rotary_pos_emb_vision_kernel(q, k, cos, sin, q_out, k_out)
     
     return q_out, k_out
@@ -172,13 +174,22 @@ def apply_multimodal_rotary_pos_emb_pto_impl(
         
         start_idx = end_idx
     
-    cos_merged = torch.cat(cos_list, dim=-1).unsqueeze(unsqueeze_dim)
-    sin_merged = torch.cat(sin_list, dim=-1).unsqueeze(unsqueeze_dim)
+    cos_merged = torch.cat(cos_list, dim=-1).unsqueeze(unsqueeze_dim).contiguous()
+    sin_merged = torch.cat(sin_list, dim=-1).unsqueeze(unsqueeze_dim).contiguous()
 
+    # GQA: q and k may have different head counts — split kernel calls
+    cos_q = cos_merged.expand(-1, q.shape[1], -1, -1).contiguous()
+    sin_q = sin_merged.expand(-1, q.shape[1], -1, -1).contiguous()
+    cos_k = cos_merged.expand(-1, k.shape[1], -1, -1).contiguous()
+    sin_k = sin_merged.expand(-1, k.shape[1], -1, -1).contiguous()
+
+    q = q.contiguous()
+    k = k.contiguous()
     q_out = torch.empty_like(q)
     k_out = torch.empty_like(k)
-    
-    apply_rotary_pos_emb_kernel(q, k, cos_merged, sin_merged, q_out, k_out)
+
+    apply_rotary_pos_emb_kernel(q, q, cos_q, sin_q, q_out, q_out)  # q-only: dummy k
+    apply_rotary_pos_emb_kernel(k, k, cos_k, sin_k, k_out, k_out)  # k-only: dummy q
     
     return q_out, k_out
 

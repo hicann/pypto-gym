@@ -1,0 +1,64 @@
+{
+    "test_cases": [
+        {
+            "id": "swiglu_mlp_001",
+            "description": "single token - (1, 2048) bf16",
+            "seed": 42,
+            "input": {
+                "x": {"shape": [1, 2048], "dtype": "bfloat16"},
+                "gate_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "up_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "down_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+                "down_bias": {"shape": [2048], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "output": {"shape": [1, 2048], "dtype": "bfloat16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "swiglu_mlp_002",
+            "description": "prefill batch=2 seq=4 - (8, 2048) bf16",
+            "seed": 43,
+            "input": {
+                "x": {"shape": [8, 2048], "dtype": "bfloat16"},
+                "gate_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "up_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "down_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+                "down_bias": {"shape": [2048], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "output": {"shape": [8, 2048], "dtype": "bfloat16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        },
+        {
+            "id": "swiglu_mlp_003",
+            "description": "large batch - (16, 2048) bf16",
+            "seed": 44,
+            "input": {
+                "x": {"shape": [16, 2048], "dtype": "bfloat16"},
+                "gate_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "gate_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "up_weight": {"shape": [2048, 11008], "dtype": "bfloat16"},
+                "up_bias": {"shape": [11008], "dtype": "bfloat16"},
+                "down_weight": {"shape": [11008, 2048], "dtype": "bfloat16"},
+                "down_bias": {"shape": [2048], "dtype": "bfloat16"},
+                "eps": {"value": 1e-6}
+            },
+            "output": {
+                "output": {"shape": [16, 2048], "dtype": "bfloat16"}
+            },
+            "rtol": 1e-2,
+            "atol": 1e-2
+        }
+    ]
+}

@@ -67,7 +67,9 @@ python3 modeling/transformers/runtime_patch.py \
 
 ## ⚡️快速上手
 
-### 1. 运行部分算子测试
+### 算子
+
+#### 1. 运行部分算子测试
 
 ```bash
 # 使用 pytest 执行 GLM V4.5 Attention
@@ -77,7 +79,7 @@ pytest tests/ops/glm_v4_5/test_glm_attention.py
 pytest tests/ops/glm_v4_5 -v --forked
 ```
 
-### 2. 运行全部算子测试
+#### 2. 运行全部算子测试
 
 ```bash
 pytest -v --forked
@@ -92,9 +94,34 @@ pytest -v --forked
 pytest tests/ops/glm_v4_5 -v --forked --device 1
 ```
 
-### 4. 用例筛选说明
+#### 4. 用例筛选说明
 
 测试用例通过 `@pytest.mark.soc` 标注适用芯片，conftest.py 会根据当前设备的 soc_version 自动过滤不适配的用例（显示为 `SKIPPED`）。部分规模较大的用例默认已使用 `@pytest.mark.skip(reason="large test case")` 标注，需手动移除 skip 标注后运行。
+
+### 整网
+
+#### 1. 下载模型权重
+
+```bash
+python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+    --model-id Qwen/Qwen3-1.7B \
+    --output-dir /data/models/Qwen3-1.7B
+```
+
+#### 2. 入网适配
+
+```bash
+bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+    /data/models/Qwen3-1.7B qwen3_1_7b
+```
+
+#### 3. 验证
+
+```bash
+python3 modeling/transformers/qwen3_1_7b/ask_Qwen3-1.7B.py \
+    --device 0 --prompt "你好" --use-pto \
+    --model-path /data/models/Qwen3-1.7B
+```
 
 ## 常见问题排查
 

@@ -1,102 +1,93 @@
-# Spatial-SSRL-3B 迁移说明
+# Spatial-SSRL-3B 整网集成说明
 
 ## 基本信息
 
 | 项目 | 值 |
 |------|------|
 | HuggingFace | [internlm/Spatial-SSRL-3B](https://huggingface.co/internlm/Spatial-SSRL-3B) |
-| 权重目录 | /data/h00520348/optimize525/models/spatial_ssrl_3b |
-| 代码来源 | transformers包内置 + 本地定制 (core/) |
-| transformers版本 | 4.55.4 |
-| 运行命令 | `python3 scripts/ask_spatial_ssrl_3b.py --device 0` |
+| 架构 | Qwen2.5-VL-3B-Instruct (model_type: qwen2_5_vl) |
+| 代码来源 | trust_remote_code — HF 下载后由 `restore_model_patch.sh` 替换为华为 PTO 修改版 |
+| 运行命令 | `python3 scripts/ask_spatial_ssrl_3b.py --device 0 --prompt "你好"` |
 
-## 目录结构
+## 环境信息
 
-```
-spatial_ssrl_3b/
-├── config.json                          # 模型配置（含auto_map）
-├── model-00001-of-00002.safetensors     # 模型权重分片1
-├── model-00002-of-00002.safetensors     # 模型权重分片2
-├── model.safetensors.index.json         # 权重索引
-├── tokenizer.json / tokenizer_config.json
-├── vocab.json / merges.txt
-├── generation_config.json
-├── preprocessor_config.json
-├── video_preprocessor_config.json
-├── chat_template.jinja
-├── core/                                # 定制化模型代码
-│   ├── modeling_spatial_ssrl_3b.py
-│   └── configuration_spatial_ssrl_3b.py
-├── spatial_ssrl_3b_pto_kernels/         # PyPTO融合算子
-│   ├── rms_norm/
-│   └── rope/
-└── scripts/
-    ├── ask_spatial_ssrl_3b.py           # 推理脚本
-    ├── bench_spatial_ssrl_3b.sh         # 性能测试脚本
-    ├── prof_spatial_ssrl_3b.sh          # 性能采集脚本
-    └── README.md                         # 详细使用说明
-```
+| 组件 | 版本 |
+|------|------|
+| torch | 2.9.0 |
+| torch_npu | 2.9.0.post2 |
+| torchvision | 0.24.0 |
+| transformers | 5.6.0 |
+| CANN | 9.1.0 |
+| NPU | Ascend 910B |
 
-## 使用方法
+## 下载模型
 
-### 基本推理
 ```bash
+python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+    --model-id internlm/Spatial-SSRL-3B \
+    --output-dir /npu/s00454010/models/spatial_ssrl_3b
+```
+
+## PYPTO入网适配
+
+```bash
+bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+    /npu/s00454010/models/spatial_ssrl_3b spatial_ssrl_3b
+```
+
+脚本自动完成：备份 HF 原始代码 → 替换为华为修改版 → 写入 `pto_kernels/` → 确保 `auto_map` → 清除 HF 缓存。
+
+## 使用说明
+
+```bash
+# 基线模式
 python3 scripts/ask_spatial_ssrl_3b.py --device 0 --prompt "你好"
-```
 
-### PyPTO 模式推理（融合算子加速）
-```bash
+# PTO 融合模式
 python3 scripts/ask_spatial_ssrl_3b.py --device 0 --use_pto --prompt "你好"
-```
-
-### PyPTO + aclgraph 模式
-```bash
-python3 scripts/ask_spatial_ssrl_3b.py --device 0 --use_pto --use_partial_aclgraph --prompt "你好"
-```
-
-### 自定义模型路径
-```bash
-python3 scripts/ask_spatial_ssrl_3b.py --device 0 --model-path /custom/path --prompt "你好"
-```
-
-### 从文件读取提示词
-```bash
-python3 scripts/ask_spatial_ssrl_3b.py --device 0 --sentence_file prompts.txt
 ```
 
 ## PyPTO 算子集成
 
-| 算子 | 位置 | 状态 |
-|------|------|------|
-| RMS Norm | spatial_ssrl_3b_pto_kernels/rms_norm/ | ✅ 已集成 |
-| RoPE | spatial_ssrl_3b_pto_kernels/rope/ | ✅ 已集成 |
+| 算子 | 位置 | 开关 | 状态 |
+|------|------|------|------|
+| RMSNorm | rms_norm/ | USE_PTO_RMS_NORM | ✅ |
+| RoPE (Text) | rope/ | USE_PTO_ROPE | ✅ |
+| RoPE (Vision) | rope/ | USE_PTO_ROPE | ✅ |
 
-启用方式：`--use_pto` 参数会同时启用 `USE_PTO_RMS_NORM` 和 `USE_PTO_ROPE`
+启用方式: `--use_pto` 注入 `spatial_ssrl_3b_pto_kernels` 到 `sys.modules`，设 USE_PTO_RMS_NORM=True / USE_PTO_ROPE=True。modeling 代码在 forward 时通过 `sys.modules.get()` 检测路由。
 
-## 性能指标
+## 性能对比
 
-| 指标 | Baseline | PyPTO (RMS Norm + RoPE) | 提升 |
-|------|----------|-------------------------|------|
-| 推理耗时 | 2.062s | 1.505s | 27% |
-| 吞吐量 | 14.5 tokens/s | 19.9 tokens/s | **37%** |
-| 峰值显存 | 7208.2MB | 7208.2MB | 持平 |
+| 模式 | 命令 | 模型加载 | 推理耗时 | 吞吐 | 峰值显存 |
+|------|------|---------|---------|------|---------|
+| baseline | `python3 scripts/ask_spatial_ssrl_3b.py --prompt "你好" --device 0 --output_length 30` | 6.0s | 2.5s | 6.4 tok/s | 7774 MB |
+| pto | `python3 scripts/ask_spatial_ssrl_3b.py --prompt "你好" --device 0 --output_length 30 --use_pto` | 7.1s | 37.6s | 0.3 tok/s | 7827 MB |
 
-测试条件：Prompt "你好，介绍一下华为昇腾NPU"，Output 30 tokens，NPU设备
+> 单算子替换时 PTO 比基线慢 ~15x 属正常（JIT 首编 + kernel launch 开销），收益来自多算子融合。RMSNorm + RoPE 为第一阶段；后续 round 预做 pre-attn、post-attn 融合后预期 PTO 反超基线。
 
-## 注意事项
+## 模型结构
 
-- 本模型为多模态视觉语言模型（Qwen2.5-VL架构，model_type=spatial_ssrl_3b）
-- 纯文本推理可通过 processor.apply_chat_template 实现
-- 模型参数量约3B，float16精度下单卡64GB HBM可运行
-- auto_map 配置指向本地 core/ 目录下的定制化实现
-
-## Citation
-
-```bibtex
-@article{liu2025spatial,
-  title={Spatial-SSRL: Enhancing Spatial Understanding via Self-Supervised Reinforcement Learning},
-  author={Liu, Yuhong and Zhang, Beichen and Zang, Yuhang and Cao, Yuhang and Xing, Long and Dong, Xiaoyi and Duan, Haodong and Lin, Dahua and Wang, Jiaqi},
-  journal={arXiv preprint arXiv:2510.27606},
-  year={2025}
-}
 ```
+spatial_ssrl_3b/
+├── config.json                          # 模型配置（含auto_map）
+├── configuration_qwen2_5_vl.py          # 模型配置类
+├── modeling_qwen2_5_vl.py               # 网络结构（含PTO注入）
+├── spatial_ssrl_3b_pto_kernels/         # PyPTO 融合算子
+│   ├── rms_norm/                        # RMSNorm kernel
+│   └── rope/                            # RoPE kernel（Vision + Multimodal）
+└── scripts/
+    ├── ask_spatial_ssrl_3b.py           # 推理脚本
+    ├── bench_spatial_ssrl_3b.sh         # 性能测试脚本
+    └── README.md
+```
+
+## 归档映射
+
+| 来源 (`models/spatial_ssrl_3b/`) | 目标 (`pypto-gym/`) |
+|---|---|
+| `config.json` | `src/pypto_gym/transformers/spatial_ssrl_3b/config.json` |
+| `configuration_qwen2_5_vl.py` | `src/pypto_gym/transformers/spatial_ssrl_3b/configuration_qwen2_5_vl.py` |
+| `modeling_qwen2_5_vl.py` | `src/pypto_gym/transformers/spatial_ssrl_3b/modeling_qwen2_5_vl.py` |
+| `spatial_ssrl_3b_pto_kernels/` | `src/pypto_gym/ops/pypto_tile/spatial_ssrl_3b/` |
+| `scripts/` | `modeling/transformers/spatial_ssrl_3b/` |

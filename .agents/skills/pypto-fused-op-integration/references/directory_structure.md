@@ -141,6 +141,38 @@ modeling/transformers/{model_name}/
 
 > 如模型 HF README 指定了 transformers 版本要求，应在环境信息中注明「HF 要求: transformers==X.X.X」。
 
+**下载方式（必须）：**
+
+README 中必须包含模型下载命令，方便其他用户从零重建：
+
+```markdown
+## 下载模型
+
+```bash
+python3 ../download_hf_model.py \
+    --model-id {repo_id} \
+    --output-dir {model_weight_dir}
+```
+```
+
+> 使用 skill 内置脚本 `download_hf_model.py` 或直接引用 `snapshot_download` 调用。
+
+**PyPTO 入网适配（必须）：**
+
+README 中必须包含 PYPTO 入网适配命令，说明如何将 HF 原始模型替换为华为修改版：
+
+```markdown
+## PYPTO入网适配
+
+```bash
+bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+    {model_weight_dir} {model_name}
+```
+
+脚本自动完成：备份 HF 原始代码 → 替换为华为修改版 → 写入 `pto_kernels/` → 确保 `auto_map` → 清除 HF 缓存。
+
+> 若 pypto-gym 仓库尚未包含此模型的修改版代码（`src/pypto_gym/transformers/{model_name}/`），可跳过此步骤，改为手动编写 `<script_dir>/restore_pypto_patch.sh`。
+
 **性能对比（必须）：**
 
 README 末尾追加性能对比表格和复现命令，方便用户 run：

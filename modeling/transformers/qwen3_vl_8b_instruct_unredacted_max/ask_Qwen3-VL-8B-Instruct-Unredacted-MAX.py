@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -18,6 +19,10 @@ import argparse
 import sys
 import torch
 import torch_npu
+# PyPTO: add workspace root for cann_pow_patch
+_WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _WORKSPACE_ROOT)
+import cann_pow_patch
 from transformers.models.qwen3_vl import Qwen3VLForConditionalGeneration
 from transformers import AutoTokenizer
 
@@ -26,7 +31,7 @@ parser.add_argument("--prompt", default=None, help="提问文本（优先级高�
 parser.add_argument("--device", default=0, type=int, help="NPU卡号")
 parser.add_argument(
     "--model-path",
-    default="/mnt/workspace/gitCode/cann/models/Qwen3-VL-8B-Instruct-Unredacted-MAX",
+    default=os.environ.get("MODEL_PATH", ""),
      help="模型权重路径")
 parser.add_argument("--sentence_file", type=str, default=None, help="从文件读取提示词（多行以换行拼接）")
 parser.add_argument("--output_length", type=int, default=100, help="最大生成token数")
@@ -64,7 +69,7 @@ text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_pr
 
 model = Qwen3VLForConditionalGeneration.from_pretrained(
     args.model_path, local_files_only=True,
-    torch_dtype=torch.bfloat16
+    torch_dtype=torch.bfloat16, attn_implementation="eager"
 ).to(f"npu:{args.device}").eval()
 
 # Monkey-patch RMSNorm for PyPTO injection

@@ -1,93 +1,70 @@
 # Qwen3-1.7B PyPTO Kernel Integration
 
-HuggingFace `Qwen3ForCausalLM` model definition modified to inject PyPTO fused operators on Ascend NPU hardware. This is a pure-text causal language model derived from the Qwen3 family (Alibaba), with Huawei-specific modifications for operator fusion.
+`Qwen3ForCausalLM` model definition (from transformers 4.51.0 `/models/qwen3/`), minimally modified to inject PyPTO fused operator on Ascend NPU hardware.
 
 ## Integration Scope
 
 | Operation | PyPTO Integrated | Fallback | Notes |
 |-----------|:---:|----------|-------|
-| RMS LayerNorm | Yes | PyTorch fp32 | Wired through `sys.modules` at forward time |
-| Attention (Q/K/V/O + RoPE) | No | eager / flash_attn / sdpa | Standard HuggingFace attention interface via `ALL_ATTENTION_FUNCTIONS` |
-| MLP (SwiGLU) | No | PyTorch `nn.Linear` | Standard gate/up/down projection |
-| Rotary Embedding | No | PyTorch `Qwen3RotaryEmbedding` | Standard rope computation |
-
-The RMSNorm integration is the sole PyPTO injection point. Every `Qwen3RMSNorm` instance in the network (attention Q/K norms, input layernorm, post-attention layernorm, and final output norm) checks for the kernel module at each forward call.
+| Q/K RMSNorm + RoPE | Yes | PyTorch eager `q_norm/k_norm` + `apply_rotary_pos_emb` | Prefill only (S>1); decode falls back |
+| Attention (Q/K/V/O) | No | eager / sdpa | Standard HuggingFace |
+| MLP (SwiGLU) | No | PyTorch `nn.Linear` | Standard |
+| Rotary Embedding | No | `Qwen3RotaryEmbedding` | Standard |
 
 ## Switch Variables
 
-The kernel module is expected to expose the following attributes in `sys.modules["qwen3_pto_kernels"]`:
+The kernel module in `sys.modules["qwen3_pto_kernels"]` must expose:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `USE_PTO_RMS_NORM` | `bool` | `False` | Enable PyPTO fused RMSNorm; when `False` or absent, falls back to PyTorch fp32 path |
+| `USE_PTO_ROPE` | `bool` | `False` | Enable PyPTO fused Q/K RMSNorm + RoPE |
 
 ## Kernel API Contract
 
-When `USE_PTO_RMS_NORM` is `True`, the kernel must provide:
+When `USE_PTO_ROPE=True`, the module must provide:
 
 ```python
-# Signature matching Qwen3RMSNorm.forward:
-def rms_norm_impl(
-    hidden_states: torch.Tensor,  # (batch, seq_len, hidden_size)
-    weight: torch.Tensor,         # (hidden_size,)
-    variance_epsilon: float,
-) -> torch.Tensor:                # (batch, seq_len, hidden_size)
+def qk_rope_wrapper(
+    q_proj_out: torch.Tensor,      # [B, S, num_q_heads * head_dim]
+    k_proj_out: torch.Tensor,      # [B, S, num_kv_heads * head_dim]
+    cos: torch.Tensor,             # [B, S, head_dim]
+    sin: torch.Tensor,             # [B, S, head_dim]
+    q_norm_weight: torch.Tensor,   # [head_dim]
+    k_norm_weight: torch.Tensor,   # [head_dim]
+    q_num_heads: int,              # 16
+    kv_num_heads: int,             # 8
+    head_dim: int,                 # 128
+) -> tuple[torch.Tensor, torch.Tensor]:  # (query_states [B,N,S,D], key_states [B,Nkv,S,D])
     ...
 ```
 
-The PyTorch fallback computes:
-```
-variance = hidden_states.pow(2).mean(-1, keepdim=True)
-hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
-return weight * hidden_states
-```
-
-The PyPTO kernel should produce numerically equivalent output (within fp16/bp16 tolerance).
-
 ## Usage
-
-### 1. Load kernel module into `sys.modules`
 
 ```python
 import sys
-from pypto_gym.ops.pypto_tile.qwen3_1_7b.rms_norm import rms_norm_impl
+from pypto_gym.ops.pypto_tile.qwen3_1_7b import qk_rope_wrapper
 
-class Qwen3PTOKernels:
-    USE_PTO_RMS_NORM = True
+# 1. Inject kernel module
+sys.modules["qwen3_pto_kernels"] = type("Kernels", (), {
+    "USE_PTO_ROPE": True,
+    "qk_rope_wrapper": staticmethod(qk_rope_wrapper)
+})
 
-    @staticmethod
-    def rms_norm_impl(hidden_states, weight, variance_epsilon):
-        # Delegate to the PyPTO-compiled kernel
-        return rms_norm_impl(hidden_states, weight, variance_epsilon)
-
-sys.modules["qwen3_pto_kernels"] = Qwen3PTOKernels
-```
-
-### 2. Instantiate model
-
-```python
-from pypto_gym.transformers.qwen3_1_7b.modeling_qwen3 import Qwen3ForCausalLM
-from pypto_gym.transformers.qwen3_1_7b.configuration_qwen3 import Qwen3Config
-
-config = Qwen3Config()
-model = Qwen3ForCausalLM(config).npu()
-```
-
-### 3. Disable PyPTO at runtime
-
-```python
-sys.modules["qwen3_pto_kernels"].USE_PTO_RMS_NORM = False  # back to PyTorch
+# 2. Load model (auto_map resolves to this directory)
+from transformers import AutoModelForCausalLM
+model = AutoModelForCausalLM.from_pretrained(
+    model_path, torch_dtype=torch.float16,
+    device_map={"": "npu:0"}, trust_remote_code=True
+)
 ```
 
 ## HuggingFace `auto_map`
 
-This model replaces the standard `transformers` Qwen3 implementation. Set the following in your model's `config.json` to enable `TrustRemoteCode` loading:
-
 ```json
 {
   "auto_map": {
-    "AutoConfig": "pypto_gym/transformers/qwen3_1_7b/configuration_qwen3.Qwen3Config",
-    "AutoModelForCausalLM": "pypto_gym/transformers/qwen3_1_7b/modeling_qwen3.Qwen3ForCausalLM"
+    "AutoConfig": "configuration_qwen3.Qwen3Config",
+    "AutoModelForCausalLM": "modeling_qwen3.Qwen3ForCausalLM"
   }
 }
 ```
@@ -96,10 +73,15 @@ This model replaces the standard `transformers` Qwen3 implementation. Set the fo
 
 | File | Description |
 |------|-------------|
-| `configuration_qwen3.py` | `Qwen3Config` — model configuration (4096 hidden, 32 layers, 32 heads, head_dim=128, Sliding Window + Full Attention alternating) |
-| `modeling_qwen3.py` | `Qwen3ForCausalLM`, `Qwen3Model`, `Qwen3DecoderLayer`, `Qwen3Attention`, `Qwen3RMSNorm`, `Qwen3MLP`, `Qwen3RotaryEmbedding` — full model graph, with `Qwen3RMSNorm.forward` dispatching to PyPTO kernel via `sys.modules.get("qwen3_pto_kernels")` |
+| `configuration_qwen3.py` | `Qwen3Config` — 2048 hidden, 28 layers, 16 Q-heads, 8 KV-heads, head_dim=128 |
+| `modeling_qwen3.py` | Full model graph with 6-line PTO dispatch in `Qwen3Attention.forward` |
+| `config.json` | Model config with auto_map |
 
-## Related Directories
+## Environment
 
-- **Ops**: `src/pypto_gym/ops/pypto_tile/qwen3_1_7b/` — contains PyPTO kernel implementations (`rms_norm/`, `rms_norm_rope/`)
-- **Tests**: `tests/ops/qwen3_1_7b/` and `tests/model_ops/qwen3_1_7b/` — correctness and performance tests
+| Component | Version |
+|-----------|---------|
+| torch | 2.9.0 |
+| torch_npu | 2.9.0.post2 |
+| transformers | 4.51.0 |
+| CANN | 9.0.0 |

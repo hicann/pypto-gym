@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -34,11 +36,20 @@ import json
 import torch
 import torch_npu
 
+_cpp = os.environ.get("CANN_POW_PATCH_PATH", "")
+if _cpp:
+    sys.path.insert(0, _cpp)
+try:
+    import cann_pow_patch
+except ImportError:
+    pass
+from transformers import AutoModelForImageTextToText, AutoProcessor
+
 # ===== 参数解析 =====
 parser = argparse.ArgumentParser(description="SwiGLU MLP整网集成演示")
 parser.add_argument("--prompt", default="你好", help="提问文本")
 parser.add_argument("--device", default=1, type=int, help="NPU卡号")
-parser.add_argument("--model-path", default="/data/h00520348/optimize525/models/gutenocr_3b", help="模型路径")
+parser.add_argument("--model-path", default=os.environ.get("GUTENOCR_MODEL_PATH", "."), help="模型路径")
 parser.add_argument("--warmup", default=5, type=int, help="Warmup iterations")
 parser.add_argument("--use_pto", action="store_true", help="启用PyPTO SwiGLU融合算子")
 parser.add_argument("--use_compile", action="store_true", help="启用torch.compile模式")
@@ -162,12 +173,12 @@ print("\n[模型加载]")
 start_load = time.time()
 
 
-model = GutenOcr_3b_VLForConditionalGeneration.from_pretrained(
+model = AutoModelForImageTextToText.from_pretrained(
     args.model_path,
     torch_dtype=torch.bfloat16,
     device_map={"": device},
     local_files_only=True,
-    trust_remote_code=True
+    trust_remote_code=True, attn_implementation="eager"
 )
 
 # 修复rope_scaling
@@ -251,7 +262,7 @@ print("\n[输入准备]")
 processor = AutoProcessor.from_pretrained(
     args.model_path,
     local_files_only=True,
-    trust_remote_code=True
+    trust_remote_code=True, attn_implementation="eager"
 )
 
 if args.simple_prompt:

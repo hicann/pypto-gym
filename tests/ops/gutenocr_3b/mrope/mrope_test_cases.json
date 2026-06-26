@@ -1,0 +1,64 @@
+{
+    "test_cases": [
+        {
+            "id": "mrope_001",
+            "description": "prefill seq_len=31 q=16heads k=2heads fp16",
+            "seed": 42,
+            "input": {
+                "q": {"shape": [1, 16, 31, 128], "dtype": "float16"},
+                "k": {"shape": [1, 2, 31, 128], "dtype": "float16"},
+                "cos": {"shape": [3, 1, 31, 128], "dtype": "float16"},
+                "sin": {"shape": [3, 1, 31, 128], "dtype": "float16"},
+                "mrope_section": [16, 24, 24],
+                "unsqueeze_dim": 1
+            },
+            "output": {
+                "q_shape": [1, 16, 31, 128],
+                "k_shape": [1, 2, 31, 128],
+                "dtype": "float16"
+            },
+            "rtol": 1e-5,
+            "atol": 1e-5
+        },
+        {
+            "id": "mrope_002",
+            "description": "decode seq_len=1 bf16",
+            "seed": 43,
+            "input": {
+                "q": {"shape": [1, 16, 1, 128], "dtype": "bfloat16"},
+                "k": {"shape": [1, 2, 1, 128], "dtype": "bfloat16"},
+                "cos": {"shape": [3, 1, 1, 128], "dtype": "bfloat16"},
+                "sin": {"shape": [3, 1, 1, 128], "dtype": "bfloat16"},
+                "mrope_section": [16, 24, 24],
+                "unsqueeze_dim": 1
+            },
+            "output": {
+                "q_shape": [1, 16, 1, 128],
+                "k_shape": [1, 2, 1, 128],
+                "dtype": "bfloat16"
+            },
+            "rtol": 1e-5,
+            "atol": 1e-5
+        },
+        {
+            "id": "mrope_003",
+            "description": "long seq_len=128 fp16",
+            "seed": 44,
+            "input": {
+                "q": {"shape": [1, 16, 128, 128], "dtype": "float16"},
+                "k": {"shape": [1, 2, 128, 128], "dtype": "float16"},
+                "cos": {"shape": [3, 1, 128, 128], "dtype": "float16"},
+                "sin": {"shape": [3, 1, 128, 128], "dtype": "float16"},
+                "mrope_section": [16, 24, 24],
+                "unsqueeze_dim": 1
+            },
+            "output": {
+                "q_shape": [1, 16, 128, 128],
+                "k_shape": [1, 2, 128, 128],
+                "dtype": "float16"
+            },
+            "rtol": 1e-5,
+            "atol": 1e-5
+        }
+    ]
+}

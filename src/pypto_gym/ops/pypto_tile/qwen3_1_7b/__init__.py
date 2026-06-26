@@ -10,23 +10,50 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Qwen3-1.7B PyPTO 融合算子库 - 实际集成版本
+Qwen3-1.7B PyPTO fused kernel module.
 
-实际集成的算子：
-- RoPE (部分融合): q_norm + k_norm + RoPE
-
-融合范围：
-- 部分融合: q_proj/k_proj [B,S,N,D] -> [q_norm + k_norm + RoPE] -> Q/K [B,N,S,D]
-- q_proj/k_proj/v_proj: 在 PyTorch 中完成
-- q_norm/k_norm: 在部分融合 kernel 中完成（USE_PTO_ROPE=True）
+Switch variable: USE_PTO_ROPE (bool, default False)
+  - True: Q/K RMSNorm + RoPE fused via PyPTO kernel
+  - False: original PyTorch q_norm/k_norm + apply_rotary_pos_emb
 """
+import torch
 
-from .rms_norm_rope.rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
 USE_PTO_ROPE = False
 
 
-__all__ = [
-    'USE_PTO_ROPE',
-    'qwen3_qk_rope_q',
-    'qwen3_qk_rope_k',
-]
+def qk_rope_wrapper(q_proj_out, k_proj_out, cos, sin, q_norm_weight, k_norm_weight,
+                     q_num_heads, kv_num_heads, head_dim):
+    """PTO fused Q/K RMSNorm + RoPE — dispatched from Qwen3Attention.forward.
+
+    Shapes:
+      q_proj_out:    [B, S, q_num_heads * head_dim]
+      k_proj_out:    [B, S, kv_num_heads * head_dim]
+      cos, sin:      [B, S, head_dim]
+      q_norm_weight: [head_dim]
+      k_norm_weight: [head_dim]
+
+    Returns:
+      query_states:  [B, q_num_heads, S, head_dim]    (transposed for attention)
+      key_states:    [B, kv_num_heads, S, head_dim]
+    """
+    from .rope.rrms_norm_rope_impl import qwen3_qk_rope_q, qwen3_qk_rope_k
+
+    batch, seq_len = q_proj_out.shape[0], q_proj_out.shape[1]
+    orig_dtype = q_proj_out.dtype  # may be float16; kernel expects bfloat16
+
+    # Flatten batch*seq_len into the dynamic sequence dim expected by the PTO kernel
+    q_3d = q_proj_out.view(batch, seq_len, q_num_heads, head_dim).reshape(-1, q_num_heads, head_dim)
+    k_3d = k_proj_out.view(batch, seq_len, kv_num_heads, head_dim).reshape(-1, kv_num_heads, head_dim)
+
+    cos_2d = cos.reshape(-1, head_dim).to(torch.bfloat16)
+    sin_2d = sin.reshape(-1, head_dim).to(torch.bfloat16)
+
+    out_q_bf16 = torch.empty(q_3d.shape, dtype=torch.bfloat16, device=q_3d.device)
+    out_k_bf16 = torch.empty(k_3d.shape, dtype=torch.bfloat16, device=k_3d.device)
+    qwen3_qk_rope_q(q_3d.to(torch.bfloat16), cos_2d, sin_2d, q_norm_weight.to(torch.bfloat16), out_q_bf16)
+    qwen3_qk_rope_k(k_3d.to(torch.bfloat16), cos_2d, sin_2d, k_norm_weight.to(torch.bfloat16), out_k_bf16)
+
+    query_states = out_q_bf16.to(orig_dtype).reshape(batch, seq_len, q_num_heads, head_dim).transpose(1, 2).contiguous()
+    key_states = out_k_bf16.to(orig_dtype).reshape(batch, seq_len, kv_num_heads, head_dim).transpose(1, 2).contiguous()
+
+    return query_states, key_states

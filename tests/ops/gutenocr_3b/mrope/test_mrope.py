@@ -10,8 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-RMSNorm 精度测试脚本
-遍历 test_cases.json 执行精度对比
+MRoPE 精度测试脚本
+遍历 mrope_test_cases.json 执行精度对比
 """
 
 import os
@@ -26,14 +26,14 @@ import torch_npu
 
 _CUR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_CUR))
-_IMPL = Path(__file__).resolve().parents[3] / "src/pypto_gym/ops/pypto_tile/gutenocr_3b/rms_norm"
+_IMPL = Path(__file__).resolve().parents[4] / "src/pypto_gym/ops/pypto_tile/gutenocr_3b/mrope"
 sys.path.insert(0, str(_IMPL))
 
 import numpy as np
 from numpy.testing import assert_allclose
 
-from rms_norm_golden_gutenocr_3b import rms_norm_golden
-from rms_norm_impl import rms_norm_pto_native
+from mrope_golden import mrope_golden
+from mrope_impl import mrope_pto_correct
 
 
 def get_device():
@@ -44,7 +44,7 @@ def get_device():
 
 
 def load_test_cases():
-    json_path = os.path.join(os.path.dirname(__file__), "rms_norm_test_cases.json")
+    json_path = os.path.join(os.path.dirname(__file__), "mrope_test_cases.json")
     if not os.path.exists(json_path):
         raise RuntimeError(f"Test cases file not found: {json_path}")
     with open(json_path, "r") as f:
@@ -82,49 +82,57 @@ def run_single_case(case_data):
     dtype_map = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
 
     inputs = case_data["input"]
+    q_dtype = dtype_map[inputs["q"]["dtype"]]
+    k_dtype = dtype_map[inputs["k"]["dtype"]]
+    cos_dtype = dtype_map[inputs["cos"]["dtype"]]
 
-    hidden_dtype = dtype_map[inputs["hidden_states"]["dtype"]]
-    hidden_states = torch.randn(inputs["hidden_states"]["shape"], dtype=hidden_dtype, device="cpu")
+    q = torch.randn(inputs["q"]["shape"], dtype=q_dtype, device="cpu")
+    k = torch.randn(inputs["k"]["shape"], dtype=k_dtype, device="cpu")
+    cos = torch.randn(inputs["cos"]["shape"], dtype=cos_dtype, device="cpu")
+    sin = torch.randn(inputs["sin"]["shape"], dtype=cos_dtype, device="cpu")
 
-    weight_dtype = dtype_map[inputs["weight"]["dtype"]]
-    weight = torch.randn(inputs["weight"]["shape"], dtype=weight_dtype, device="cpu")
+    mrope_section = inputs["mrope_section"]
+    unsqueeze_dim = inputs["unsqueeze_dim"]
 
-    eps = inputs["eps"]["value"]
+    q_npu = q.npu()
+    k_npu = k.npu()
+    cos_npu = cos.npu()
+    sin_npu = sin.npu()
 
-    hidden_states_npu = hidden_states.npu()
-    weight_npu = weight.npu()
+    q_golden_cpu, k_golden_cpu = mrope_golden(q, k, cos, sin, mrope_section, unsqueeze_dim)
+    q_golden = q_golden_cpu.npu()
+    k_golden = k_golden_cpu.npu()
 
-    output_golden = rms_norm_golden(hidden_states_npu, weight_npu, eps)
+    q_impl, k_impl = mrope_pto_correct(q_npu, k_npu, cos_npu, sin_npu, mrope_section, unsqueeze_dim)
 
-    output_impl = rms_norm_pto_native(hidden_states_npu, weight_npu, eps)
+    logging.info("\n[precision validation - q]")
+    q_diff = torch.abs(q_golden - q_impl).max().item()
+    logging.info(f"  Max diff: {q_diff:.6e}")
 
-    logging.info("\n[精度验证 - output]")
-    output_diff = torch.abs(output_golden - output_impl).max().item()
-    logging.info(f"  Max diff: {output_diff:.6e}")
+    logging.info("[precision validation - k]")
+    k_diff = torch.abs(k_golden - k_impl).max().item()
+    logging.info(f"  Max diff: {k_diff:.6e}")
 
-    rtol = case_data.get("rtol", 1e-2)
-    atol = case_data.get("atol", 1e-2)
+    rtol = case_data.get("rtol", 1e-5)
+    atol = case_data.get("atol", 1e-5)
 
-    if output_impl.dtype == torch.bfloat16:
-        output_impl_fp32 = output_impl.cpu().float()
-        output_golden_fp32 = output_golden.cpu().float()
-        assert_allclose(output_impl_fp32.numpy(), output_golden_fp32.numpy(), rtol=rtol, atol=atol)
+    if q_impl.dtype == torch.bfloat16:
+        assert_allclose(q_impl.cpu().float().numpy(), q_golden.cpu().float().numpy(), rtol=rtol, atol=atol)
+        assert_allclose(k_impl.cpu().float().numpy(), k_golden.cpu().float().numpy(), rtol=rtol, atol=atol)
     else:
-        assert_allclose(output_impl.cpu().numpy(), output_golden.cpu().numpy(), rtol=rtol, atol=atol)
-    logging.info(f"[PRECISION_PASS] output diff < {rtol}")
+        assert_allclose(q_impl.cpu().numpy(), q_golden.cpu().numpy(), rtol=rtol, atol=atol)
+        assert_allclose(k_impl.cpu().numpy(), k_golden.cpu().numpy(), rtol=rtol, atol=atol)
+    logging.info(f"[PRECISION_PASS] diff < {rtol}")
 
     outputs = case_data["output"]
-
-    expected_output_shape = torch.Size(outputs["output"]["shape"])
-    expected_output_dtype = dtype_map[outputs["output"]["dtype"]]
-    assert output_impl.shape == expected_output_shape, \
-        f"output shape mismatch: {output_impl.shape} vs {expected_output_shape}"
-    assert output_impl.dtype == expected_output_dtype, \
-        f"output dtype mismatch: {output_impl.dtype} vs {expected_output_dtype}"
+    expected_q_shape = torch.Size(outputs["q_shape"])
+    expected_k_shape = torch.Size(outputs["k_shape"])
+    assert q_impl.shape == expected_q_shape, f"q shape mismatch: {q_impl.shape} vs {expected_q_shape}"
+    assert k_impl.shape == expected_k_shape, f"k shape mismatch: {k_impl.shape} vs {expected_k_shape}"
 
 
 @pytest.mark.parametrize("case_data", load_test_cases(), ids=lambda c: c["id"])
-def test_rms_norm(case_data):
+def test_mrope(case_data):
     run_single_case(case_data)
 
 

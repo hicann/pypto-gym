@@ -22,7 +22,7 @@ description: 将HuggingFace大语言模型迁移到华为昇腾NPU环境并集�
 ## 工作流程概览
 
 ```
-阶段零：NPU 迁移与基线建立  →  模型下载 → 脚本生成 → 基线验证 → Git基线 → 代码部署
+阶段零：NPU 迁移与基线建立  →  模型下载 → PYPTO入网适配 → 脚本生成 → 基线验证 → Git基线 → 代码部署
 阶段一：前置准备           →  需求分析 + 环境验证 ★ + 智能推荐
 阶段二：理解验证           →  打点采集 ★ + Golden编写 + 场景验证 ⚠️
 阶段三路线选择 🔀           →  Benchmark 自动化 或 经典手动开发（用户选择）★
@@ -104,7 +104,7 @@ https://gitcode.com/cann/pypto/tree/master/.agents/skills
 ls {model_weight_dir}/*.safetensors {model_weight_dir}/*.bin 2>/dev/null
 ```
 
-- 存在权重 → 直接使用，跳过步骤 4
+- 存在权重 → 直接使用，跳过步骤 3
 - 不存在 → **询问：**「无权重文件。有已下载的目录吗？（给路径则跳过下载，否则自动下载）」
 
 **⚠️ 副本/克隆目录需验证tokenizer文件：**
@@ -160,29 +160,28 @@ curl -sk "https://hf-mirror.com/{repo_id}/raw/main/README.md" | grep -iE "transf
 
 > **前置条件：** 步骤 0 已确认 `{model_weight_dir}` 不存在权重文件。
 
-**检测网络结构来源：**
-检查仓库 config.json 的 auto_map 字段：
-- 含 auto_map → trust_remote_code 模式（优先）
-- 不含 auto_map → transformers 内置实现
+**方法一：download_hf_model.py（推荐）**
 
-**方法一：snapshot_download（默认）**
+```bash
+python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+    --model-id {repo_id} \
+    --output-dir {model_weight_dir}
+```
+
+支持 `--revision`、`--token`、`--allow-pattern`、`--ignore-pattern` 可选参数。
+
+**方法二：snapshot_download 直接调用**
 
 ```bash
 mkdir -p {model_weight_dir}
-
 export HF_ENDPOINT=https://hf-mirror.com
-
 nohup python3 -c "
 from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id='{repo_id}',
-    local_dir='{model_weight_dir}',
-    max_workers=10
-)
+snapshot_download(repo_id='{repo_id}', local_dir='{model_weight_dir}', max_workers=10)
 " > {model_weight_dir}/download.log 2>&1 &
 ```
 
-**方法二：git clone + git lfs pull（推荐，代理环境下大文件更稳定）**
+**方法三：git clone + git lfs pull（代理环境大文件更稳定）**
 
 ```bash
 apt-get install -y git-lfs 2>/dev/null || yum install -y git-lfs 2>/dev/null
@@ -190,14 +189,27 @@ GIT_SSL_NO_VERIFY=1 git clone https://hf-mirror.com/{repo_id} {model_weight_dir}
 GIT_SSL_NO_VERIFY=1 git -C {model_weight_dir} lfs pull
 ```
 
-> git clone 只拉 LFS 指针；lfs pull 分片下载权重，自带断点续传。
-
 **检查下载进度：**
 ```bash
 ps aux | grep "snapshot_download\|git.lfs"
 du -sh {model_weight_dir}/
 ls -lh {model_weight_dir}/*.safetensors {model_weight_dir}/*.bin 2>/dev/null
 ```
+
+---
+
+#### 步骤 3.5：PYPTO入网适配 ★
+
+HF 下载的原始 `modeling_*.py` 不含 PyPTO 算子集成。检查 pypto-gym 是否已包含此模型的华为修改版：
+
+```bash
+bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+    {model_weight_dir} {model_name}
+```
+
+脚本自动完成：备份 HF 原始代码 → 替换为华为修改版 → 写入 `pto_kernels/` → 确保 `auto_map` → 清除 HF 缓存。
+
+若无对应修改版（src/pypto_gym/ 下不存在），脚本跳过 code/patch，不报错。
 
 ---
 
@@ -271,7 +283,7 @@ git commit -m "migrate {model_name} to NPU — baseline before pto integration"
 
 检测 `{model_weight_dir}/config.json` 的 auto_map 字段判断网络结构来源。
 
-**README必须字段及环境版本：** 见 `references/directory_structure.md`
+**README必须字段：模型信息 + 环境版本 + 下载方式 + PYPTO入网适配 + 性能对比。** 见 `references/directory_structure.md`
 **文件版权声明：** 见 `references/directory_structure.md`
 
 创建 README 前，先采集当前环境版本：
@@ -292,9 +304,9 @@ echo "CANN:        $(ls /usr/local/Ascend/ascend-toolkit/latest 2>/dev/null || n
 
 **情况A：auto_map 存在（trust_remote_code 模式）**
 
-网络结构已下载到模型目录，无需复制和修改：
-1. 保持代码原位置
-2. 创建 `{script_dir}/README.md`（代码来源填"HuggingFace仓库自带"）
+步骤 3.5 已应用融合补丁（若 pypto-gym 含修改版）。如需额外处理：
+1. 确认 `config.json` 中 `auto_map` 指向的代码文件存在且正确
+2. 创建 `{script_dir}/README.md`（代码来源填"HuggingFace仓库自带 + pypto-gym 补丁"）
 
 ---
 
@@ -1033,10 +1045,11 @@ git commit -m "pto integration: add fused kernel for {model_name}"
 
 ---
 
-**Skill 版本：** v3.13  
-**最后更新：** 2026-06-17  
+**Skill 版本：** v3.14  
+**最后更新：** 2026-06-21  
 **维护者：** PyPTO Team  
 **更新说明：** 
+- v3.14: 步骤3新增 download_hf_model.py 推荐；新增步骤3.5 restore_model_patch.sh — HF 下载后自动注入 PyPTO 融合代码/算子；步骤7情况A修正 trust_remote_code 模式描述
 - v3.13: 步骤26新增算子 README 检查 — 归档后检查每个算子子目录是否有 README.md，缺失按模板补齐
 - v3.12: 步骤26/27归档映射精简为文件夹级别 — 去掉冗余子文件列表和"操作"列，映射每行是目录/文件名，不展开内部文件；README 映射同步简化
 - v3.11: 步骤26归档映射记录改为强制项 — README 缺失 `## 归档映射` 视为遗漏，步骤27(还原重建)依赖此映射

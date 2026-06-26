@@ -11,12 +11,12 @@
 
 
 """
-RMSNorm PyPTO算子模块
-提供BF16优化实现（单算子+60%，端到端固化开销抵消）
+SwiGLU MLP PyPTO算子模块
+提供融合算子实现（gate_proj + up_proj + down_proj融合）
 
-⚠️ 不推荐启用（固化开销抵消优化）
+✅ 所有batch推荐启用（唯一稳定有效算子）
 """
 
-__all__ = ["rms_norm_pto_native"]
+__all__ = ["swiglu_mlp_fused", "swiglu_mlp_fused_static"]
 
-from .rms_norm_impl import rms_norm_pto_native
+from .swiglu_mlp_impl import swiglu_mlp_fused, swiglu_mlp_fused_static

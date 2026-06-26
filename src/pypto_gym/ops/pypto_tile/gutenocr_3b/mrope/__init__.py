@@ -11,12 +11,12 @@
 
 
 """
-RMSNorm PyPTO算子模块
-提供BF16优化实现（单算子+60%，端到端固化开销抵消）
+MRoPE PyPTO算子模块
+提供Multimodal Rotary Position Embedding实现
 
-⚠️ 不推荐启用（固化开销抵消优化）
+⚠️ 仅Batch≤4推荐启用（固化开销问题）
 """
 
-__all__ = ["rms_norm_pto_native"]
+__all__ = ["mrope_pto_correct", "mrope_torch_fallback"]
 
-from .rms_norm_impl import rms_norm_pto_native
+from .mrope_impl import mrope_pto_correct, mrope_torch_fallback

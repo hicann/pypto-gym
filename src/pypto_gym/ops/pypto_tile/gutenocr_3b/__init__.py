@@ -28,22 +28,80 @@ GutenOCR-3B PyPTO 融合算子库
 - RMSNorm: 不推荐启用 (固化开销抵消优化)
 """
 
+from .swiglu_mlp import swiglu_mlp_fused, swiglu_mlp_fused_static
+from .mrope import mrope_pto_correct, mrope_torch_fallback
+from .rms_norm import rms_norm_pto_native
+
 USE_PTO_SWIGLU_MLP = False
 USE_PTO_MROPE = False
 USE_PTO_RMS_NORM = False
 
-from .swiglu_mlp import swiglu_mlp_fused, swiglu_mlp_fused_static
-from .mrope import mrope_pto_correct, mrope_torch_fallback
-from .rms_norm import rms_norm_pto_native, rms_norm_bf16_fallback
+
+def rms_norm_wrapper(hidden_states, weight, eps=1e-6):
+    """Wrapper for RMSNorm PTO call from modeling code."""
+    return rms_norm_pto_native(hidden_states, weight, eps)
+
+
+def swiglu_mlp_wrapper(mlp_module, hidden_states):
+    """
+    Bridge: Qwen2MLP → swiglu_mlp_fused / swiglu_mlp_fused_static kernel.
+
+    Args:
+        mlp_module: nn.Module with .gate_proj, .up_proj, .down_proj (nn.Linear)
+        hidden_states: [batch_size, seq_len, hidden_size] or [batch_size, hidden_size]
+    Returns:
+        output: same shape as hidden_states
+    """
+    import torch
+
+    # Flatten to [batch*seq, hidden_size]
+    orig_shape = hidden_states.shape
+    if hidden_states.dim() == 3:
+        x = hidden_states.reshape(-1, hidden_states.shape[-1])
+    else:
+        x = hidden_states
+
+    batch_size = x.shape[0]
+
+    gate_weight = mlp_module.gate_proj.weight.data.T.contiguous()
+    up_weight = mlp_module.up_proj.weight.data.T.contiguous()
+    down_weight = mlp_module.down_proj.weight.data.T.contiguous()
+
+    # Handle optional bias
+    hidden_size = mlp_module.hidden_size
+    inter_size = mlp_module.intermediate_size
+
+    def _zeros(shape):
+        return torch.zeros(shape, dtype=x.dtype, device=x.device)
+    gate_bias = (mlp_module.gate_proj.bias if mlp_module.gate_proj.bias is not None
+                 else _zeros(inter_size))
+    up_bias = (mlp_module.up_proj.bias if mlp_module.up_proj.bias is not None
+               else _zeros(inter_size))
+    down_bias = (mlp_module.down_proj.bias if mlp_module.down_proj.bias is not None
+                 else _zeros(hidden_size))
+
+    try:
+        result = torch.empty(batch_size, hidden_size, dtype=x.dtype, device=x.device)
+        swiglu_mlp_fused(x, gate_weight, gate_bias, up_weight, up_bias,
+                         down_weight, down_bias, result)
+        return result.reshape(orig_shape)
+    except Exception:
+        # PyPTO kernel unavailable — fall back to torch path
+        gate = torch.nn.functional.silu(torch.nn.functional.linear(x, gate_weight.T, gate_bias))
+        up = torch.nn.functional.linear(x, up_weight.T, up_bias)
+        down = torch.nn.functional.linear(gate * up, down_weight.T, down_bias)
+        return down.reshape(orig_shape)
+
 
 __all__ = [
     'USE_PTO_SWIGLU_MLP',
     'USE_PTO_MROPE',
     'USE_PTO_RMS_NORM',
+    'rms_norm_wrapper',
+    'swiglu_mlp_wrapper',
     'swiglu_mlp_fused',
     'swiglu_mlp_fused_static',
     'mrope_pto_correct',
     'mrope_torch_fallback',
     'rms_norm_pto_native',
-    'rms_norm_bf16_fallback',
 ]
