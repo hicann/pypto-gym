@@ -587,7 +587,7 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
 
 def test_c128_decode(enable_flash: bool = False, enable_high_perf: bool = False, enable_graph: bool = False, \
                     device_id: int = 0):
-    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', device_id))
     torch.npu.set_device(device_id)
     device = f'npu:{device_id}'
     attn_cfg = get_decode_case(device=device)

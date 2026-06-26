@@ -53,11 +53,9 @@ from spatial_ssrl_3b.rope.rope_impl import (
 )
 
 
-def get_device():
-    if "TILE_FWK_DEVICE_ID" in os.environ:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-        return f"npu:{device_id}"
-    return "cpu"
+def prep_env():
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
 
 
 def load_test_cases():
@@ -168,9 +166,7 @@ def test_rope_spatial_ssrl_3b():
             print(f"  {case['id']} — {case.get('description', '')}")
         return
     
-    device = get_device()
-    if device.startswith("npu"):
-        torch.npu.set_device(int(device.split(":")[1]))
+    prep_env()
     
     print("\n验证 PyPTO implementation (rope_impl.py):")
     print("  - @pypto.frontend.jit 装饰器")

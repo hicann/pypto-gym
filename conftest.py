@@ -13,6 +13,7 @@
 import os
 import sys
 
+import torch
 import pytest
 from typing import Optional  # 必须加在 conftest 顶部！
 import logging  # 顶部加
@@ -50,12 +51,16 @@ def _set_process_desc(desc: str):
 
 @pytest.fixture
 def device():
-    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+    return f"npu:{device_id}"
 
 
 @pytest.fixture
 def device_id():
-    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+    return device_id
 
 
 def pytest_addoption(parser: pytest.Parser):
@@ -196,6 +201,7 @@ def _is_case_match_soc(item, target_soc):
 def pytest_collection_modifyitems(config, items):
     if not items:
         return
+
     first_item = items[0]
     item_path = str(first_item.fspath).replace(os.sep, "/")
     has_ut = "/tests/ut" in item_path.lower() or "/benchmark/tests/" in item_path

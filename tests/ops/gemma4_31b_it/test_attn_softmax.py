@@ -39,17 +39,6 @@ _DTYPE_MAP = {
 }
 
 
-def get_device_id():
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        print("Please set: export TILE_FWK_DEVICE_ID=<chip_id>")
-        return None
-    try:
-        return int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError:
-        print(f"ERROR: TILE_FWK_DEVICE_ID must be int")
-        return None
-
-
 def load_test_cases(json_path):
     if not os.path.exists(json_path):
         raise RuntimeError(f"Test cases file not found: {json_path}")
@@ -107,7 +96,7 @@ def main():
     parser.add_argument("case_id", type=str, nargs="?", help="Case ID to run (omit for all)")
     parser.add_argument("--list", action="store_true", help="List available cases")
     parser.add_argument("--device", type=str,
-                        default="npu" if "TILE_FWK_DEVICE_ID" in os.environ else "cpu",
+                        default="npu",
                         help="Device: cpu or npu:<id>")
     parser.add_argument("--json", type=str,
                         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_cases.json"))
@@ -127,9 +116,7 @@ def main():
 
     device = args.device
     if device.startswith("npu"):
-        device_id = get_device_id()
-        if device_id is None:
-            raise RuntimeError("Test execution failed")
+        device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
         import torch_npu  # noqa: F401
         torch.npu.set_device(device_id)
         device = f"npu:{device_id}"

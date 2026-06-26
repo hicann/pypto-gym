@@ -36,11 +36,14 @@ from rms_norm_golden_gutenocr_3b import rms_norm_golden
 from rms_norm_impl import rms_norm_pto_native
 
 
+def prep_env():
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+
+
 def get_device():
-    if "TILE_FWK_DEVICE_ID" in os.environ:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-        return f"npu:{device_id}"
-    return "cpu"
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    return f"npu:{device_id}"
 
 
 def load_test_cases():
@@ -54,10 +57,8 @@ def load_test_cases():
 
 @pytest.fixture(scope="module")
 def device():
-    dev = get_device()
-    if dev.startswith("npu"):
-        torch.npu.set_device(int(dev.split(":")[1]))
-    return dev
+    prep_env()
+    return get_device()
 
 
 @pytest.fixture(scope="module")
@@ -72,10 +73,6 @@ def run_single_case(case_data):
     logging.info("\n" + "=" * 60)
     logging.info(f"Test: {case_id} — {description}")
     logging.info("=" * 60)
-
-    if torch.npu.is_available():
-        dev_id = os.environ.get('TILE_FWK_DEVICE_ID', '0')
-        torch.npu.set_device(f'npu:{dev_id}')
 
     torch.manual_seed(case_data.get("seed", 42))
 

@@ -190,19 +190,10 @@ def get_selected_tests(test_id: str | None) -> list[tuple[str, ApplyRMSPropTestC
 def prepare_device_id(run_mode: str) -> int | None:
     if run_mode != "npu":
         return None
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        raise DevicePreparationError(
-            "TILE_FWK_DEVICE_ID not set\n"
-            "Please set it before running:\n"
-            "  export TILE_FWK_DEVICE_ID=0"
-        )
     if importlib.util.find_spec("torch_npu") is None:
         raise DevicePreparationError("torch_npu is required when run_mode is npu.")
     importlib.import_module("torch_npu")
-    try:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError as exc:
-        raise DevicePreparationError("TILE_FWK_DEVICE_ID must be an integer.") from exc
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
     return device_id
 

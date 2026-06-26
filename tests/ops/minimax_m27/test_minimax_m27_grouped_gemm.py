@@ -57,6 +57,11 @@ def minimax_m27_grouped_gemm_golden(sorted_tokens, gate_up_proj, down_proj, expe
     return result
 
 
+def prep_env():
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+
+
 def get_device():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     return f"npu:{device_id}"
@@ -115,8 +120,8 @@ def run_single_case(case, device):
 def test_minimax_m27_grouped_gemm():
     """pytest entry: run every case in test_cases.json."""
     torch_npu.npu.config.allow_internal_format = True
+    prep_env()
     device = get_device()
-    torch.npu.set_device(int(device.split(":")[1]))
     for case in load_test_cases()["test_cases"]:
         run_single_case(case, device)
 
@@ -133,8 +138,8 @@ def main():
             logger.info("  %s — %s", case["id"], case.get("description", ""))
         return
     torch_npu.npu.config.allow_internal_format = True
+    prep_env()
     device = get_device()
-    torch.npu.set_device(int(device.split(":")[1]))
     for case in (cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]):
         run_single_case(case, device)
     logger.info("All tests passed!")

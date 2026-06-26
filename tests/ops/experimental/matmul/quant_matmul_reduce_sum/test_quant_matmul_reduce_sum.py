@@ -46,16 +46,7 @@ from experimental.matmul.quant_matmul_reduce_sum.quant_matmul_reduce_sum_impl im
 # ---------------------------------------------------------------------------
 
 def get_device_id():
-    """Get TILE_FWK_DEVICE_ID from environment."""
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        print("Please set: export TILE_FWK_DEVICE_ID=<device_id>")
-        print("Defaulting to device 0.")
-        return 0
-    try:
-        return int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError:
-        print(f"ERROR: TILE_FWK_DEVICE_ID must be int, got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        raise
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 # ---------------------------------------------------------------------------

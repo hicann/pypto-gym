@@ -46,11 +46,9 @@ except ImportError:
 from spatial_ssrl_3b.rms_norm.rms_norm_impl import rms_norm_impl
 
 
-def get_device():
-    if "TILE_FWK_DEVICE_ID" in os.environ:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-        return f"npu:{device_id}"
-    return "cpu"
+def prep_env():
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
 
 
 def load_test_cases():
@@ -132,9 +130,7 @@ def test_rms_norm_spatial_ssrl_3b():
             logging.info(f"  {case['id']} — {case.get('description', '')}")
         return
     
-    device = get_device()
-    if device.startswith("npu"):
-        torch.npu.set_device(int(device.split(":")[1]))
+    prep_env()
     
     logging.info("\n验证真正的 PyPTO kernel:")
     logging.info("  - @pypto.frontend.jit 装饰器")

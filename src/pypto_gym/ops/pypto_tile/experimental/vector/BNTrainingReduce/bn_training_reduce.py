@@ -45,15 +45,8 @@ class BnReduceConfig:
     out_tile_c: int
 
 
-def get_device_id() -> int | None:
-    """获取 NPU 设备 ID"""
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        LOGGER.warning("警告: 未设置 TILE_FWK_DEVICE_ID 环境变量，请确保已配置 NPU 环境。")
-        return None
-    try:
-        return int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError:
-        return None
+def get_device_id() -> int:
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 def align_up(value: int, align: int) -> int:
@@ -114,8 +107,6 @@ def prepare_device(run_mode: str) -> str:
     if run_mode != "npu":
         raise ValueError(f"Unsupported run_mode: {run_mode}")
     device_id = get_device_id()
-    if device_id is None:
-        raise RuntimeError("TILE_FWK_DEVICE_ID must be set to a valid integer.")
     if torch_npu is None:
         raise RuntimeError("torch_npu is required when TILE_FWK_DEVICE_ID is set.")
     torch.npu.set_device(device_id)

@@ -29,9 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        raise RuntimeError("Please set TILE_FWK_DEVICE_ID")
-    return int(os.environ['TILE_FWK_DEVICE_ID'])
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 k = 2

@@ -31,10 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logging.info("Please set: export TILE_FWK_DEVICE_ID=14")
-        return None
-    return int(os.environ['TILE_FWK_DEVICE_ID'])
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 T = pypto.DYNAMIC
@@ -323,8 +320,6 @@ def main():
     device_id = None
     if args.run_mode == "npu":
         device_id = get_device_id()
-        if device_id is None:
-            return
         torch.npu.set_device(device_id)
         logging.info("Running on NPU...")
 

@@ -36,13 +36,6 @@ from mrope_golden import mrope_golden
 from mrope_impl import mrope_pto_correct
 
 
-def get_device():
-    if "TILE_FWK_DEVICE_ID" in os.environ:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-        return f"npu:{device_id}"
-    return "cpu"
-
-
 def load_test_cases():
     json_path = os.path.join(os.path.dirname(__file__), "mrope_test_cases.json")
     if not os.path.exists(json_path):
@@ -54,10 +47,9 @@ def load_test_cases():
 
 @pytest.fixture(scope="module")
 def device():
-    dev = get_device()
-    if dev.startswith("npu"):
-        torch.npu.set_device(int(dev.split(":")[1]))
-    return dev
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+    return f"npu:{device_id}"
 
 
 @pytest.fixture(scope="module")

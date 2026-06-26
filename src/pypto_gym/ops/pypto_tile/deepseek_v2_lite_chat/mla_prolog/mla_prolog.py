@@ -18,13 +18,14 @@ ITER_14策略：
 目标：减少PyPTO内部的vec操作，利用torch_npu原生算子性能优势
 """
 
+import os
 import sys
 import torch
 import torch_npu
 import pypto
 from dataclasses import dataclass, field
 
-torch.npu.set_device(7)
+torch.npu.set_device(int(os.environ.get('TILE_FWK_DEVICE_ID', 0)))
 
 
 @dataclass

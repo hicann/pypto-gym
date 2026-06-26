@@ -34,10 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logging.info("Please set TILE_FWK_DEVICE_ID")
-        return None
-    return int(os.environ['TILE_FWK_DEVICE_ID'])
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 def golden_fused_swiglu_fwd(x, w_g, w_fc, b_g, b_fc):
@@ -73,8 +70,6 @@ def test_fwd(device_id):
 
 def main():
     device_id = get_device_id()
-    if device_id is None:
-        return
     torch.npu.set_device(device_id)
     test_fwd(device_id)
 

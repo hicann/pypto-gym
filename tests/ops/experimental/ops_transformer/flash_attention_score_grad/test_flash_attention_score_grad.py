@@ -50,17 +50,7 @@ from flash_attention_score_grad_golden import (
 
 
 def get_device_id():
-    """从环境变量获取 TILE_FWK_DEVICE_ID。"""
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        logger.info("Please set: export TILE_FWK_DEVICE_ID=0")
-        return 0
-    try:
-        return int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError:
-        logger.info(
-            "ERROR: TILE_FWK_DEVICE_ID must be int, got: %s",
-            os.environ["TILE_FWK_DEVICE_ID"])
-        return 0
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 class TestConfig:
@@ -219,8 +209,6 @@ def main():
     device_id = None
     if args.run_mode == "npu":
         device_id = get_device_id()
-        if device_id is None:
-            return
         torch.npu.set_device(device_id)
         logger.info("Running on NPU:%d\n", device_id)
 

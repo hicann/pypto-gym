@@ -203,25 +203,7 @@ def kv_cache_concat(k_cache, v_cache, block_table, atten_cfg, device: str):
 
 
 def get_env_device_id():
-    """
-    Get and validate TILE_FWK_DEVICE_ID from environment variable.
-
-    Returns:
-        int: The device ID if valid, None otherwise.
-    """
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logger.info("If no NPU environment is available, set --run_mode sim to run in simulation mode;")
-        logger.info("otherwise, set the environment variable TILE_FWK_DEVICE_ID.")
-        logger.info("Please set it before running this example:")
-        logger.info("  export TILE_FWK_DEVICE_ID=0")
-        raise ValueError(f"Please set TILE_FWK_DEVICE_ID.")
-
-    try:
-        device_id = int(os.environ['TILE_FWK_DEVICE_ID'])
-        return device_id
-    except ValueError:
-        logger.info(f"ERROR: TILE_FWK_DEVICE_ID must be an integer, got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        return None
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 def get_device(device_id: int = None, run_mode: str = "npu"):

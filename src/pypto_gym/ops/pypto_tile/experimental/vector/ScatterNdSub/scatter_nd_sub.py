@@ -21,19 +21,7 @@ from numpy.testing import assert_allclose
 
 
 def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        print("If no NPU environment is available, set --run_mode sim to run in simulation mode;")
-        print("otherwise, set the environment variable TILE_FWK_DEVICE_ID.")
-        print("Please set it before running this example:")
-        print("  export TILE_FWK_DEVICE_ID=0")
-        return None
-
-    try:
-        device_id = int(os.environ['TILE_FWK_DEVICE_ID'])
-        return device_id
-    except ValueError:
-        print(f"ERROR: TILE_FWK_DEVICE_ID must be an integer, got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        return None
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 @pypto.frontend.jit(
@@ -205,8 +193,6 @@ Examples:
 
     if args.run_mode == "npu":
         device_id = get_device_id()
-        if device_id is None:
-            return
         import torch_npu
         torch.npu.set_device(device_id)
         print("Running examples that require NPU hardware...")

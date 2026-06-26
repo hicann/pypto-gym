@@ -34,11 +34,14 @@ from mla_prolog_golden import mla_prolog_golden
 from numpy.testing import assert_allclose
 
 
+def prep_env():
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    torch.npu.set_device(device_id)
+
+
 def get_device():
-    if "TILE_FWK_DEVICE_ID" in os.environ:
-        device_id = int(os.environ["TILE_FWK_DEVICE_ID"])
-        return f"npu:{device_id}"
-    return "cpu"
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    return f"npu:{device_id}"
 
 
 def load_test_cases():
@@ -185,11 +188,10 @@ def test_deepseek_v2_lite_chat_mla_prolog():
             print(f"  {case['id']} — {case.get('description', '')}")
         return
 
+    prep_env()
     device = get_device()
     print("=================")
     print(device)
-    if device.startswith("npu"):
-        torch.npu.set_device(int(device.split(":")[1]))
 
     to_run = cases if not args.case_id else [c for c in cases if c["id"] == args.case_id]
 

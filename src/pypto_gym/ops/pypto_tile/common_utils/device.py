@@ -23,30 +23,7 @@ logger = create_logger(__name__)
 
 
 def get_env_device_id() -> int:
-    """Get and validate TILE_FWK_DEVICE_ID from environment variable.
-
-    Returns:
-        The device ID if valid.
-
-    Raises:
-        ValueError: If TILE_FWK_DEVICE_ID is not set or invalid.
-    """
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logger.info("If no NPU environment is available, set --run_mode sim "
-                    "to run in simulation mode;")
-        logger.info("otherwise, set the environment variable TILE_FWK_DEVICE_ID.")
-        logger.info("Please set it before running this example:")
-        logger.info("  export TILE_FWK_DEVICE_ID=0")
-        raise ValueError("Please set TILE_FWK_DEVICE_ID.")
-
-    try:
-        device_id = int(os.environ['TILE_FWK_DEVICE_ID'])
-        return device_id
-    except ValueError as e:
-        error_msg = (f"ERROR: TILE_FWK_DEVICE_ID must be an integer, "
-                     f"got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        logger.error(error_msg)
-        raise ValueError(error_msg) from e
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 def get_device(device_id: Optional[int] = None, run_mode: str = "npu") -> str:

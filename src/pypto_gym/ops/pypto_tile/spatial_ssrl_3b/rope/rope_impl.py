@@ -197,9 +197,11 @@ def apply_multimodal_rotary_pos_emb_pto_impl(
 if __name__ == "__main__":
     print("=== PyPTO RoPE Implementation Test ===")
     
+    import os
     import torch_npu
     
-    device = "npu:0"
+    _dev_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device = f"npu:{_dev_id}"
     
     seq_len, num_heads, head_dim = 31, 16, 128
     q_vision = torch.randn(seq_len, num_heads, head_dim, dtype=torch.float16, device=device)

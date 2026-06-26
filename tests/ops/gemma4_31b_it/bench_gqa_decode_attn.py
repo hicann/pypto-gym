@@ -179,7 +179,7 @@ def verify_outputs(kernel_args, eager_args, device):
 
 def main():
     parser = argparse.ArgumentParser(description="GQA decode: kernel vs eager benchmark")
-    parser.add_argument("--device", type=str, default="npu:0")
+    parser.add_argument("--device", type=str, default="npu")
     parser.add_argument("--warmup", type=int, default=WARMUP)
     parser.add_argument("--repeat", type=int, default=REPEAT)
     parser.add_argument("--skv", type=str, default="64,128,256,512,1024,2048",
@@ -190,8 +190,10 @@ def main():
 
     device = args.device
     if device.startswith("npu"):
-        device_id = int(device.split(":")[1]) if ":" in device else 9
-        os.environ.setdefault("TILE_FWK_DEVICE_ID", str(device_id))
+        if ":" in device:
+            device_id = int(device.split(":")[1])
+        else:
+            device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
         import torch_npu  # noqa: F401
         torch.npu.set_device(device_id)
         device = f"npu:{device_id}"

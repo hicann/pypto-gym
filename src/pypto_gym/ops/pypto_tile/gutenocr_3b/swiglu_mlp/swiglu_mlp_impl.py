@@ -21,6 +21,8 @@ SwiGLU MLP PyPTO融合算子实现
 """
 
 import logging
+import os
+
 import pypto
 import torch
 
@@ -119,7 +121,8 @@ def test_swiglu_precision():
     _logger.info("%s", "=" * 60)
 
     torch.manual_seed(42)
-    device = 'npu:0'
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device = f'npu:{device_id}'
 
     batch_size = 4
     hidden_size = 2048
@@ -186,7 +189,8 @@ def benchmark_swiglu_performance():
     import time
 
     torch.manual_seed(42)
-    device = 'npu:0'
+    device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    device = f'npu:{device_id}'
 
     test_configs = [
         (1, 2048, 11008),

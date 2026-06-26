@@ -234,28 +234,6 @@ def run_performance_test(kernel_func, data: Dict[str, Any]):
         logging.info(f"\n>> Speedup: {time_gold / time_npu:.2f}x")
 
 
-def get_device_id():
-    """
-    Get and validate TILE_FWK_DEVICE_ID from environment variable.
-
-    Returns:
-        int: The device ID if valid, None otherwise.
-    """
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logging.info("If no NPU environment is available, set --run_mode sim to run in simulation mode;")
-        logging.info("otherwise, set the environment variable TILE_FWK_DEVICE_ID.")
-        logging.info("Please set it before running this example:")
-        logging.info("  export TILE_FWK_DEVICE_ID=0")
-        return None
-
-    try:
-        device_id = int(os.environ['TILE_FWK_DEVICE_ID'])
-        return device_id
-    except ValueError:
-        logging.error(f"ERROR: TILE_FWK_DEVICE_ID must be an integer, got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        return None
-
-
 def _setup(device_id: int):
     """Bind the NPU device, JIT-compile the kernel and prepare common inputs."""
     import torch_npu  # noqa: F401
@@ -288,13 +266,9 @@ def main():
                     help="Choose test type: check correctness or measure performance.")
     args = parser.parse_args()
 
-    # # Enable debug options for development
-    if args.run_mode == "npu":
-        device_id = get_device_id()
-        if device_id is None:
-            return
-        import torch_npu
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+    if args.run_mode == "npu":
+        import torch_npu  # noqa: F401
     torch.npu.set_device(device_id)
 
     # 1. Compile Kernel (JIT)

@@ -60,21 +60,12 @@ AttentionBackwardOutput = collections.namedtuple("AttentionBackwardOutput", ["dq
 
 
 def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logging.info("Please set TILE_FWK_DEVICE_ID before running:")
-        logging.info("  export TILE_FWK_DEVICE_ID=0")
-        return 0
-    try:
-        return int(os.environ['TILE_FWK_DEVICE_ID'])
-    except ValueError:
-        return 0
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 @pytest.fixture(scope="module")
 def device():
     device_id = get_device_id()
-    if device_id is None:
-        pytest.skip("TILE_FWK_DEVICE_ID not set")
     torch.npu.set_device(device_id)
     return f'npu:{device_id}'
 
@@ -183,8 +174,6 @@ def _default_tile_config():
 
 def _setup_device():
     device_id = get_device_id()
-    if device_id is None:
-        return None, None
     torch.npu.set_device(device_id)
     return f'npu:{device_id}', device_id
 

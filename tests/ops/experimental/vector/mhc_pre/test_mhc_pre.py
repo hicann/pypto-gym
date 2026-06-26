@@ -56,15 +56,7 @@ ATOL = 0.0001
 
 
 def get_device_id():
-    """从环境变量获取 TILE_FWK_DEVICE_ID。"""
-    if "TILE_FWK_DEVICE_ID" not in os.environ:
-        print("Please set: export TILE_FWK_DEVICE_ID={device_id}")
-        return 0
-    try:
-        return int(os.environ["TILE_FWK_DEVICE_ID"])
-    except ValueError:
-        print(f"ERROR: TILE_FWK_DEVICE_ID must be int, got: {os.environ['TILE_FWK_DEVICE_ID']}")
-        return 0
+    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
 
 
 def setup_npu(device_id):
@@ -254,8 +246,6 @@ Examples:
     device_id = None
     if args.run_mode == "npu":
         device_id = get_device_id()
-        if device_id is None:
-            return
 
     try:
         for key, info in to_run:

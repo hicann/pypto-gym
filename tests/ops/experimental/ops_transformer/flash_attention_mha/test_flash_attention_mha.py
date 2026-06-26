@@ -48,17 +48,6 @@ MhaInputs = collections.namedtuple("MhaInputs",
 AttentionForwardOutput = collections.namedtuple("AttentionForwardOutput", ["o", "m", "l"])
 
 
-def get_device_id():
-    if 'TILE_FWK_DEVICE_ID' not in os.environ:
-        logging.info("Please set TILE_FWK_DEVICE_ID before running:")
-        logging.info("  export TILE_FWK_DEVICE_ID=0")
-        return None
-    try:
-        return int(os.environ['TILE_FWK_DEVICE_ID'])
-    except ValueError:
-        return None
-
-
 def create_inputs(batch_size, s1_size, s2_size, num_heads, head_dim, device):
     q_seqlens = [s1_size] * batch_size
     kv_seqlens = [s2_size] * batch_size
