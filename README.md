@@ -18,6 +18,11 @@ PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾
 - **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
 - **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
 
+### 目标用户
+
+- **算法开发者**：主要使用Tensor层次编程，快速实现和验证算法，专注于算法逻辑
+- **系统开发者**：可在Tensor和PTO虚拟指令集层次上进行三方框架对接或集成，以及工具链开发
+
 ## 环境准备
 
 当前仓库支持的 CANN 版本如下：
@@ -46,25 +51,6 @@ export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
 
-## HuggingFace 模型下载与运行时补丁
-
-`modeling/transformers/download_hf_model.py` 用于将 HuggingFace 模型卡下载到本地目录，`modeling/transformers/runtime_patch.py` 用于在本地模型目录外生成 PyPTO 运行时补丁覆盖层。各模型 README 会给出对应的 `model-id` 和 `model-family`。
-
-```bash
-export MODEL_PATH=/path/to/local-model
-export PYTHONPATH=$PWD/src:$PYTHONPATH
-
-python3 modeling/transformers/download_hf_model.py \
-    --model-id <org/model-card> \
-    --output-dir "$MODEL_PATH"
-
-python3 modeling/transformers/runtime_patch.py \
-    --model-family <model-family> \
-    --model-path "$MODEL_PATH"
-```
-
-未内置的模型可通过 `runtime_patch.py --family-name --auto-map --copy` 显式指定补丁映射。
-
 ## ⚡️快速上手
 
 ### 算子
@@ -87,7 +73,7 @@ pytest -v --forked
 
 具体测试范围参考 [pytest.ini](./pytest.ini) 配置
 
-### 3. 指定 SoC
+#### 3. 指定 SoC
 
 ```bash
 # 指定 NPU device id（覆盖 TILE_FWK_DEVICE_ID 环境变量）
@@ -200,7 +186,6 @@ pypto-gym/
 ├── tests/                                   # 测试用例
 │   ├── ops/                                 # 算子测试（与 src/pypto_gym/ops/ 对应）
 │   │   ├── arctic/                          # Arctic LSTM 算子测试
-│   │   ├── chunked_gdr/                     # Chunked GDR 算子测试
 │   │   ├── deepseek_v2_lite_chat/           # DeepSeek V2 Lite Chat 算子测试
 │   │   ├── deepseek_v32_exp/                # DeepSeek V3.2 算子测试
 │   │   ├── deepseek_v4/                     # DeepSeek V4 算子测试
@@ -235,14 +220,14 @@ pypto-gym/
 
 ## 算子总览
 
-| 模型目录 | 算子 | 说明 |
+| 所属模型 | 算子 | 说明 |
 |---------|------|------|
 | `arctic/` | sum_lstm | LSTM 推测器（Arctic-Inference），融合输入、RMSNorm、GELU、门控与细胞状态更新 |
 | `deepseek_v2_lite_chat/` | mla_prolog | MLA Prolog 预计算 |
-| `deepseek_v32_exp/` | mla_prolog_quant, lightning_indexer_prolog_quant, sparse_flash_attention_quant, sparse_attention_antiquant, mla_indexer_prolog_quant, lightning_indexer_quant | MLA Prolog、Lightning Indexer、稀疏注意力等 6 个量化/非量化算子 |
-| `deepseek_v4/` | mla_prolog_v4, mla_prolog_quant_v4, lightning_indexer_prolog_quant_v4, compressor, compress_flash_attention, sparse_compress_flash_attention, win_attention, hc_pre | MLA Prolog、压缩器、压缩/稀疏 Flash Attention、窗口注意力等 8 个算子 |
+| `deepseek_v32_exp/` | mla_prolog_quant, lightning_indexer_prolog_quant, sparse_flash_attention_quant, sparse_attention_antiquant, mla_indexer_prolog_quant, lightning_indexer_quant | MLA Prolog、Lightning Indexer、稀疏注意力等量化/非量化算子 |
+| `deepseek_v4/` | mla_prolog_v4, mla_prolog_quant_v4, lightning_indexer_prolog_quant_v4, compressor, compress_flash_attention, sparse_compress_flash_attention, win_attention, hc_pre | MLA Prolog、压缩器、压缩/稀疏 Flash Attention、窗口注意力等算子 |
 | `gemma4_31b_it/` | gqa_decode_attn, attn_softmax | GQA 解码注意力（KV 头均值，带宽降低 75%）、3-pass Softmax |
-| `glm_v4_5/` | attention_pre_quant, attention, attention_fusion, gate, select_experts, ffn_shared_expert_quant, moe_fusion | 注意力（含量化前处理与融合）、MoE 门控/专家选择/FFN/融合等 7 个算子 |
+| `glm_v4_5/` | attention_pre_quant, attention, attention_fusion, gate, select_experts, ffn_shared_expert_quant, moe_fusion | 注意力（含量化前处理与融合）、MoE 门控/专家选择/FFN/融合等算子 |
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
 | `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
@@ -254,10 +239,10 @@ pypto-gym/
 | `qwen3_next/` | gated_delta_rule | Chunk Gated Delta Rule，线性复杂度 O(n)，支持 1K-1M+ 序列长度 |
 | `qwen3_vl_8b_instruct_.../` | rms_norm | RMSNorm（hidden_size=2048） |
 | `spatial_ssrl_3b/` | rms_norm, rope | RMSNorm + RoPE（Vision 2D / 多模态 3D） |
-| `experimental/attention/` | BSA, chunked_gdr, incre_flash_attention_gqa_antiquant, incre_flash_attention_mla, incre_flash_attention, pfa_flash_attention | BSA、Chunked GDR、增量 Flash Attention（GQA/MLA）、PFA Flash Attention 等 6 个算子 |
-| `experimental/matmul/` | gmm_mxfp8, grouped_matmul_finalize_routing, grouped_matmul_swiglu_quant, quant_batch_matmul, quant_grouped_matmul_inplace_add, quant_matmul_reduce_sum, transpose_quant_batch_matmul | MXFP8 GMM、量化分组矩阵乘、量化批量矩阵乘、转置量化矩阵乘等 7 个算子 |
-| `experimental/ops_transformer/` | flash_attention_mha, flash_attention_mha_grad, flash_attention_score, flash_attention_score_grad, fused_swiglu, fused_swiglu_grad, lightning_indexer, mla_prolog, mla_prolog_mxfp_quant_v3, mla_prolog_quant_hifp8_v3, page_attention_quant, sparse_attention_antiquant_fp8, sparse_attention_antiquant_kv_split, sparse_attention_grad_tnd, sparse_attention_tnd, attention_worker_combine | Flash Attention（MHA/Score，含量化/反向）、MLA Prolog（含量化）、SwiGLU、Page Attention、稀疏注意力等 16 个算子 |
-| `experimental/vector/` | ApplyAdamWV2, GatherPaKvCache, QkvRmsNormRopeCache, ApplyRMSProp, BNTrainingReduce, InplaceAddRmsNorm, InterleaveRope, moe_gating_topk 等 | AdamW / RMSProp 更新、Paged Attention KV cache gather、QKV RMSNorm RoPE cache 融合、RMSNorm、RoPE、MoE 门控等 14 个算子 |
+| `experimental/attention/` | BSA, incre_flash_attention_gqa_antiquant, incre_flash_attention_mla, incre_flash_attention, pfa_flash_attention | BSA、增量 Flash Attention（GQA/MLA）、PFA Flash Attention 等算子 |
+| `experimental/matmul/` | gmm_mxfp8, grouped_matmul_finalize_routing, grouped_matmul_swiglu_quant, quant_batch_matmul, quant_grouped_matmul_inplace_add, quant_matmul_reduce_sum, transpose_quant_batch_matmul | MXFP8 GMM、量化分组矩阵乘、量化批量矩阵乘、转置量化矩阵乘等算子 |
+| `experimental/ops_transformer/` | flash_attention_mha, flash_attention_mha_grad, flash_attention_score, flash_attention_score_grad, fused_swiglu, fused_swiglu_grad, lightning_indexer, mla_prolog, mla_prolog_mxfp_quant_v3, mla_prolog_quant_hifp8_v3, page_attention_quant, sparse_attention_antiquant_fp8, sparse_attention_antiquant_kv_split, sparse_attention_grad_tnd, sparse_attention_tnd, attention_worker_combine | Flash Attention（MHA/Score，含量化/反向）、MLA Prolog（含量化）、SwiGLU、Page Attention、稀疏注意力等算子 |
+| `experimental/vector/` | ApplyAdamWV2, GatherPaKvCache, QkvRmsNormRopeCache, ApplyRMSProp, BNTrainingReduce, InplaceAddRmsNorm, InterleaveRope, moe_gating_topk 等 | AdamW / RMSProp 更新、Paged Attention KV cache gather、QKV RMSNorm RoPE cache 融合、RMSNorm、RoPE、MoE 门控等算子 |
 
 ## 添加新算子
 
@@ -282,5 +267,5 @@ pypto-gym/
 
 ## 联系我们
 
-- **问题反馈**：通过 GitCode Issues 提交
-- **功能建议**：通过 GitCode 讨论区交流
+- **问题反馈**：通过 [GitCode Issues](https://gitcode.com/cann/pypto-gym/issues) 提交
+- **功能建议**：通过 [GitCode 讨论区](https://gitcode.com/cann/pypto-gym/discussions) 交流
