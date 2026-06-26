@@ -73,7 +73,7 @@ class FinalizeRoutingConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "m", self.batch * self.topk)
         per_expert_m = self.m // self.num_experts
-        if per_expert_m < 128:
+        if per_expert_m <= 64:
             m_tile_shape = [per_expert_m, per_expert_m]
             k_tile_shape = [256, 512]
             n_tile_shape = [256, 512]
