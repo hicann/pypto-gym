@@ -186,6 +186,8 @@ def test_deepseek_v2_lite_chat_mla_prolog():
         return
 
     device = get_device()
+    print("=================")
+    print(device)
     if device.startswith("npu"):
         torch.npu.set_device(int(device.split(":")[1]))
 

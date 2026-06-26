@@ -2,12 +2,6 @@
 
 本目录包含了一系列 PyPTO deepseek V3.2 EXP 的开发样例代码，我们对 DeepSeek-V3.2-Exp 进行了拆解，交付了五个算子：mla prolog, lightning indexer prolog, sparese flash attention, mla_indexer_prolog和lightning indexer。
 
-## 产品支持情况
-
-- Ascend 950PR：支持
-- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
-
 ## 参数说明/约束
 -  shape 格式字段含义说明
     | 字段名       | 英文全称/含义                  | 取值规则与说明                                                                 |
@@ -320,7 +314,7 @@ def sparse_attention_antiquant_compute(query_nope, query_rope, nope_cache, topk_
 
 ## 产品支持情况
 
-- Ascend 950PR：支持
+- Ascend 950PR：不支持
 - Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
 - Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 

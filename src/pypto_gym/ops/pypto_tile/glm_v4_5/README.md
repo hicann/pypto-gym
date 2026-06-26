@@ -136,7 +136,7 @@ def attention_pre_quant(
 
 ## 产品支持情况
 
-- Ascend 950PR：支持
+- Ascend 950PR：不支持
 - Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
 - Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
@@ -330,7 +330,7 @@ def select_experts(
 
 ## 产品支持情况
 
-- Ascend 950PR：支持
+- Ascend 950PR：不支持
 - Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
 - Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
@@ -398,7 +398,7 @@ def ffn_shared_expert_quant(
 
 ## 产品支持情况
 
-- Ascend 950PR：支持
+- Ascend 950PR：不支持
 - Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
 - Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
@@ -536,7 +536,7 @@ def attention(
 
 ## 产品支持情况
 
-- Ascend 950PR：支持
+- Ascend 950PR：不支持
 - Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
 - Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
 
