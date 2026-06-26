@@ -91,21 +91,11 @@ k^R = ROPE(k^R_raw)                              # shape: [T, Dr]
 ```bash
 # 设置 NPU 设备 ID
 export TILE_FWK_DEVICE_ID=14
-export PTO_TILE_LIB_CODE_PATH=/usr/local/Ascend/cann/aarch64-linux
-```
-
-### 编译 PyPTO
-
-```bash
-cd /data/x00952168/pypto_agent/pypto
-python3 build_ci.py -f python3 --disable_auto_execute
-pip install build_out/pypto-*.whl --force-reinstall --no-deps
 ```
 
 ### 运行测试
 
 ```bash
-cd /data/x00952168/pypto_0326/models/experimental/ops_transformer/mla_prolog
 python3 mla_prolog.py
 ```
 
