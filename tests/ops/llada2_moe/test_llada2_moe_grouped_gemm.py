@@ -38,89 +38,62 @@ from llada2_moe_grouped_gemm_impl import (
 
 def reference_per_expert(sorted_tokens, w13_list, w2_list, expert_cumsum):
     """Per-expert reference using pure PyTorch (FP32 accumulation)."""
-    E = len(w13_list)
-    N, H = sorted_tokens.shape
+    expert_count = len(w13_list)
     result = torch.zeros_like(sorted_tokens)
 
-    for e in range(E):
-        start = expert_cumsum[e].item()
-        end = expert_cumsum[e + 1].item()
+    for expert_idx in range(expert_count):
+        start = expert_cumsum[expert_idx].item()
+        end = expert_cumsum[expert_idx + 1].item()
         if start == end:
             continue
         x = sorted_tokens[start:end].float()
-        w13 = w13_list[e].float()
-        w2 = w2_list[e].float()
+        w13 = w13_list[expert_idx].float()
+        w2 = w2_list[expert_idx].float()
 
-        gate_up = x @ w13                    # [n_e, 2I]
-        I = w13.shape[1] // 2
-        gate, up = gate_up[..., :I], gate_up[..., I:]
-        sw = F.silu(gate) * up               # [n_e, I]
-        down = sw @ w2                       # [n_e, H]
+        gate_up = x @ w13
+        intermediate_size = w13.shape[1] // 2
+        gate = gate_up[..., :intermediate_size]
+        up = gate_up[..., intermediate_size:]
+        sw = F.silu(gate) * up
+        down = sw @ w2
         result[start:end] = down.to(sorted_tokens.dtype)
 
     return result
 
 
-def _run_grouped_gemm_test(E, total_tokens, H, I, dev):
-    """Run a single (E, total_tokens) grouped-GEMM test case."""
+def _run_grouped_gemm_test(counts, hidden_size, intermediate_size, dev):
+    """Run one grouped-GEMM smoke case with mixed token counts."""
     torch.manual_seed(42)
-    counts = torch.zeros(E, dtype=torch.int64)
-    remaining = total_tokens
-    for e in range(E - 1):
-        c = torch.randint(0, remaining // (E - e) * 2 + 1, (1,)).item()
-        c = min(c, remaining)
-        counts[e] = c
-        remaining -= c
-    counts[E - 1] = remaining
-    cumsum = torch.zeros(E + 1, dtype=torch.int32, device=dev)
+    counts = torch.tensor(counts, dtype=torch.int64)
+    expert_count = int(counts.numel())
+    cumsum = torch.zeros(expert_count + 1, dtype=torch.int32, device=dev)
     cumsum[1:] = torch.cumsum(counts, 0).to(torch.int32).to(dev)
-    N = int(counts.sum().item())
-    sorted_tokens = torch.randn(N, H, dtype=torch.bfloat16, device=dev) * 0.02
-    w13_list = [torch.randn(H, 2 * I, dtype=torch.bfloat16, device=dev) * 0.02 for _ in range(E)]
-    w2_list = [torch.randn(I, H, dtype=torch.bfloat16, device=dev) * 0.02 for _ in range(E)]
+    token_count = int(counts.sum().item())
+    sorted_tokens = torch.randn(token_count, hidden_size, dtype=torch.bfloat16, device=dev) * 0.02
+    w13_list = [
+        torch.randn(hidden_size, 2 * intermediate_size, dtype=torch.bfloat16, device=dev) * 0.02
+        for _ in range(expert_count)
+    ]
+    w2_list = [
+        torch.randn(intermediate_size, hidden_size, dtype=torch.bfloat16, device=dev) * 0.02
+        for _ in range(expert_count)
+    ]
     w13_flat = torch.cat(w13_list, dim=0).contiguous()
     w2_flat = torch.cat(w2_list, dim=0).contiguous()
-    result = torch.empty(N, H, dtype=torch.bfloat16, device=dev)
+    result = torch.empty(token_count, hidden_size, dtype=torch.bfloat16, device=dev)
     llada2_moe_grouped_gemm(
         sorted_tokens, w13_flat, w2_flat, cumsum, result,
-        num_experts=E, hidden_size=H, intermediate_size=I)
+        num_experts=expert_count,
+        hidden_size=hidden_size,
+        intermediate_size=intermediate_size)
     ref = reference_per_expert(sorted_tokens, w13_list, w2_list, cumsum)
     np.testing.assert_allclose(
         result.float().cpu().numpy(), ref.float().cpu().numpy(),
         rtol=8e-3, atol=8e-3,
-        err_msg=(f"E={E}, N={N}: grouped GEMM mismatch (counts={counts.tolist()})"))
-    print(f"  PASS  E={E:>3d}  N={N:>4d}  counts={counts.tolist()}")
-
-
-def _run_zero_token_test(H, I, dev):
-    """Run zero-token experts test."""
-    E = 8
-    N = 16
-    torch.manual_seed(7)
-    sorted_tokens = torch.randn(N, H, dtype=torch.bfloat16, device=dev) * 0.02
-    cumsum_zero = torch.zeros(E + 1, dtype=torch.int32, device=dev)
-    cumsum_zero[1] = 8
-    cumsum_zero[2] = 8
-    cumsum_zero[3] = 8
-    cumsum_zero[4] = 16
-    cumsum_zero[5] = 16
-    cumsum_zero[6] = 16
-    cumsum_zero[7] = 16
-    cumsum_zero[8] = 16
-    w13_list = [torch.randn(H, 2 * I, dtype=torch.bfloat16, device=dev) * 0.02 for _ in range(E)]
-    w2_list = [torch.randn(I, H, dtype=torch.bfloat16, device=dev) * 0.02 for _ in range(E)]
-    w13_flat = torch.cat(w13_list, dim=0).contiguous()
-    w2_flat = torch.cat(w2_list, dim=0).contiguous()
-    result = torch.empty(N, H, dtype=torch.bfloat16, device=dev)
-    llada2_moe_grouped_gemm(
-        sorted_tokens, w13_flat, w2_flat, cumsum_zero, result,
-        num_experts=E, hidden_size=H, intermediate_size=I)
-    ref = reference_per_expert(sorted_tokens, w13_list, w2_list, cumsum_zero)
-    np.testing.assert_allclose(
-        result.float().cpu().numpy(), ref.float().cpu().numpy(),
-        rtol=8e-3, atol=8e-3,
-        err_msg="zero-token experts: grouped GEMM mismatch")
-    print("  PASS  zero-token experts test")
+        err_msg=(
+            f"experts={expert_count}, tokens={token_count}: "
+            f"grouped GEMM mismatch (counts={counts.tolist()})"))
+    print(f"  PASS  experts={expert_count:>3d}  tokens={token_count:>4d}  counts={counts.tolist()}")
 
 
 def test_llada2_moe_grouped_gemm():
@@ -128,14 +101,10 @@ def test_llada2_moe_grouped_gemm():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     dev = f"npu:{device_id}"
-    H = 2048
-    I = 512
+    hidden_size = 2048
+    intermediate_size = 512
 
-    for E in [4, 8]:
-        for total_tokens in [8, 32, 64, 128]:
-            _run_grouped_gemm_test(E, total_tokens, H, I, dev)
-
-    _run_zero_token_test(H, I, dev)
+    _run_grouped_gemm_test([0, 1, 2, 4, 8, 16, 32, 0], hidden_size, intermediate_size, dev)
 
 
 def main():

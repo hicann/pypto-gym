@@ -1,69 +1,55 @@
-# Gemma-4-31B-it NPU Migration Notes
+# Gemma-4-31B-it — NPU Migration
+
+## Model Info
 
 | Field | Value |
-|-------|-------|
+|------|-----|
 | HuggingFace | google/gemma-4-31b-it |
-| Architecture | Gemma4ForConditionalGeneration (VLM, text-only inference supported) |
-| Inference Script | `python3 ask_Gemma-4-31B-it.py` |
-| transformers Version | 4.52+ |
-| PyPTO Kernels | `src/pypto_gym/ops/pypto_tile/gemma4_31b_it/` |
-| Kernel Tests | `tests/ops/gemma4_31b_it/` |
+| Architecture | Gemma4ForConditionalGeneration (VLM; text-only inference supported) |
+| Params | ~31B |
+| Precision | bfloat16 |
 
-## Architecture
+## Environment
 
-| Parameter | Value |
-|-----------|-------|
-| hidden_size | 5376 |
-| intermediate_size | 21504 |
-| num_attention_heads | 32 |
-| num_key_value_heads | 16 (GQA ratio=2) |
-| head_dim | 256 (global: 512) |
-| num_hidden_layers | 60 |
-| sliding_window | 1024 |
-| Layer pattern | 5 sliding + 1 full |
-| dtype | bfloat16 |
-
-## PyPTO Kernels
-
-| Kernel | Description | Status |
-|--------|-------------|--------|
-| K1: Attention SoftMax | 3-pass tiled softmax, S_TILE=64 | Implemented |
-| K2: GQA Decode Attn | GQA with KV head averaging (16->4), S2_TILE=64, 75% KV bandwidth reduction | Implemented |
+| Field | Version |
+|------|------|
+| torch_npu | 2.10 |
+| transformers | 5.12.0 |
+| pypto | 0.2.1 |
+| pto-isa | v9.1.0 |
+| CANN | 9.1.0 |
+| NPU | Ascend 910B3 |
 
 ## Usage
 
 ```bash
 export MODEL_PATH=/path/to/gemma-4-31b-it
-export PYTHONPATH=$PWD/../../../src:$PYTHONPATH
 
+# download weights
 python3 ../download_hf_model.py \
     --model-id google/gemma-4-31b-it \
     --output-dir "$MODEL_PATH"
 
+# patch the checkpoint to the in-repo model definition
 python3 ../runtime_patch.py \
     --model-family gemma4_31b_it \
     --model-path "$MODEL_PATH"
 
-# Baseline (no PyPTO)
-python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH"
+# inference (baseline)
+python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU>
 
-# With PyPTO fused kernels
-python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --use_pypto
+# inference (PyPTO fused ops)
+python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU> --use_pypto
 
-# Benchmark
+# benchmark (baseline vs PyPTO)
 DEVICE=0 MODEL_PATH="$MODEL_PATH" bash bench_Gemma-4-31B-it.sh
 ```
 
-## Kernel Unit Tests
+## Archive Mapping
 
-```bash
-cd tests/ops/gemma4_31b_it
-python3 test_attn_softmax.py
-python3 test_gqa_decode_attn.py
-```
-
-## Hardware Requirements
-
-- Ascend 910B NPU (~64 GB HBM)
-- CANN 8.5.0+
-- torch_npu, pypto
+| Source (`{model_dir}/`) | Target (`{pypto_gym_repo}/`) | Action |
+|---|---|---|
+| `ask_Gemma-4-31B-it.py`, `bench_Gemma-4-31B-it.sh` | `modeling/transformers/gemma4_31b_it/` | overwrite |
+| `configuration_gemma4.py`, `modeling_gemma4.py` | `src/pypto_gym/transformers/gemma4_31b_it/` | overwrite |
+| `pto_kernels/` (excl. golden + test) | `src/pypto_gym/ops/pypto_tile/gemma4_31b_it/` | overwrite |
+| `pto_kernels/*/test/` | `tests/ops/gemma4_31b_it/` | new |

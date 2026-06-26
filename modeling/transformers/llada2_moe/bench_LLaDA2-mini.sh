@@ -1,6 +1,12 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# CANN Open Software License Agreement Version 2.0
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 # E2E benchmark for LLaDA2.0-mini: baseline vs PyPTO
 # Uses block-wise masked diffusion (gen_length/steps/block_length)
@@ -12,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MODEL_PATH="${MODEL_PATH:-/path/to/LLaDA2.0-mini}"
 OUTPUT_LENGTH="${OUTPUT_LENGTH:-100}"
-DEVICE="${DEVICE:-14}"
+DEVICE="${DEVICE:-0}"
 WARMUP="${WARMUP:-3}"
 ITERS="${ITERS:-10}"
 BASELINE_REPORT="${SCRIPT_DIR}/bench_baseline.json"

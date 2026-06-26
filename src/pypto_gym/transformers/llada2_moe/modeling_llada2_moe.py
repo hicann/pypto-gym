@@ -344,21 +344,26 @@ class LLaDA2MoeSparseMoeBlock(nn.Module):
         I = self.experts[0].gate_proj.out_features
         H = self.experts[0].gate_proj.in_features
 
-        w13 = torch.empty(E, H, 2 * I, device=device, dtype=dtype)
-        w2 = torch.empty(E, I, H, device=device, dtype=dtype)
+        # Stage the stacked weights on CPU and free each expert's device weights
+        # right after copying it, then move the finished stack back to the device.
+        # Allocating the empty device stacks up-front (originals + stacks resident
+        # simultaneously) is a transient ~2x peak that OOMs a 64GB die for large E;
+        # CPU staging keeps the device peak at ~1x.
+        w13 = torch.empty(E, H, 2 * I, device="cpu", dtype=dtype)
+        w2 = torch.empty(E, I, H, device="cpu", dtype=dtype)
         with torch.no_grad():
             for e, m in enumerate(self.experts):
                 w13[e, :, :I].copy_(m.gate_proj.weight.t())
                 w13[e, :, I:].copy_(m.up_proj.weight.t())
                 w2[e].copy_(m.down_proj.weight.t())
-        self.register_buffer("_pypto_w13_stack", w13.contiguous(), persistent=False)
-        self.register_buffer("_pypto_w2_stack", w2.contiguous(), persistent=False)
-
-        # Free original per-expert weights to avoid OOM (fused copies are sufficient)
-        for m in self.experts:
-            m.gate_proj.weight = None
-            m.up_proj.weight = None
-            m.down_proj.weight = None
+                # free this expert's device weights immediately to cap peak memory
+                m.gate_proj.weight = None
+                m.up_proj.weight = None
+                m.down_proj.weight = None
+        torch.npu.empty_cache() if hasattr(torch, 'npu') else None
+        self.register_buffer("_pypto_w13_stack", w13.to(device).contiguous(), persistent=False)
+        self.register_buffer("_pypto_w2_stack", w2.to(device).contiguous(), persistent=False)
+        del w13, w2
         torch.npu.empty_cache() if hasattr(torch, 'npu') else None
 
         if self.config.num_shared_experts is not None:
@@ -446,9 +451,21 @@ class LLaDA2MoeSparseMoeBlock(nn.Module):
         w13_flat = self._pypto_w13_stack.reshape(E * H, 2 * I).contiguous()
         w2_flat = self._pypto_w2_stack.reshape(E * I, H).contiguous()
 
+        # The grouped-GEMM kernel tiles each expert's token range with a dynamic
+        # per-expert unroll (max tile 64). Under real sparse routing the dynamic
+        # offsets let the kernel's MTE over-read/over-write the sorted in/out
+        # buffers by up to one tile past the last valid row (a codegen
+        # prefetch/alignment artifact for dynamic offsets; dense-routing op tests
+        # never exercise it). Pad the in/out buffers by one max-tile so any bounded
+        # overshoot lands in scratch rows instead of out-of-range DDR — otherwise
+        # the kernel raises aicore 507015 ("The DDR address of the MTE instruction
+        # is out of range").
+        pad_rows = 64
+        sorted_x = F.pad(sorted_x, (0, 0, 0, pad_rows))
         out_sorted = torch.empty_like(sorted_x)
         grouped_gemm(sorted_x, w13_flat, w2_flat, cumsum, out_sorted,
                      num_experts=E, hidden_size=H, intermediate_size=I)
+        out_sorted = out_sorted[:N * K]
 
         inv = torch.empty_like(sort_perm)
         inv[sort_perm] = torch.arange(N * K, device=sort_perm.device)
@@ -555,13 +572,6 @@ class LLaDA2MoeAttention(nn.Module):
             self.num_heads * self.head_dim, self.hidden_size, bias=config.use_bias
         )
         self.sliding_window = getattr(config, "sliding_window", None)
-
-    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return (
-            tensor.view(bsz, seq_len, self.num_heads, self.head_dim)
-            .transpose(1, 2)
-            .contiguous()
-        )
 
     def forward(
         self,

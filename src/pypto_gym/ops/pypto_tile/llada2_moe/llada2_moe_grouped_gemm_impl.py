@@ -8,10 +8,9 @@
 # -----------------------------------------------------------------------------------------------------------
 """Grouped GEMM kernel for LLaDA2 MoE: all experts in a single kernel call.
 
-Instead of calling per-expert llada2_expert_ffn E times (Python dispatch
-overhead dominates for E=256), this kernel uses pypto.loop over the expert
-dimension and pypto.loop_unroll over the token dimension, processing all
-experts' SwiGLU FFN in one JIT'd kernel invocation.
+Instead of a per-expert Python dispatch loop (overhead dominates for E=256),
+this kernel uses pypto.loop over the expert dimension and pypto.loop_unroll over
+the token dimension, processing all experts' SwiGLU FFN in one JIT'd kernel invocation.
 
 Input layout (prepared by the host):
   sorted_tokens  [N_total, H]   BF16  — tokens pre-sorted by expert assignment
@@ -62,7 +61,9 @@ _VEC_FIRST = int(os.environ.get("PYPTO_VEC_FIRST", "13"))
 
 @pypto.frontend.jit(
     runtime_options={"device_sched_mode": 1,
-                     "stitch_function_max_num": 64},
+                     "stitch_function_max_num": 64,
+                     # expert_cumsum read on host for per-expert slicing (required under CANN 9.1.0)
+                     "ready_on_host_tensors": ["expert_cumsum"]},
     pass_options={
         "cube_l1_reuse_setting": {-1: 2},
         "cube_nbuffer_setting": {-1: _CUBE_NBUF},
