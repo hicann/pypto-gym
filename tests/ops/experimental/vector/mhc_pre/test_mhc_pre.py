@@ -40,6 +40,8 @@ import torch_npu  # noqa: F401
 import numpy as np
 from numpy.testing import assert_allclose
 
+import pytest
+
 # golden 文件从同级目录导入
 from mhc_pre_golden import mhc_pre_golden
 # impl 文件使用包导入方式（假设 pypto_gym 已通过 pip install -e . 安装）
@@ -151,26 +153,34 @@ def run_mhc_pre_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     print("  ✓ Passed\n")
 
 
+@pytest.mark.soc("950", "910")
 def test_mhc_pre_bs128_n4_d5120(device_id=None, run_mode="npu"):
     """测试 case: B*S = 128"""
     run_mhc_pre_test(bs=128, N=4, D=5120, device_id=device_id, run_mode=run_mode, test_name="B*S = 128")
 
 
+@pytest.mark.soc("950", "910")
 def test_mhc_pre_bs8(device_id=None, run_mode="npu"):
     """测试 case: B*S = 8"""
     run_mhc_pre_test(bs=8, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 8")
 
 
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_mhc_pre_bs256(device_id=None, run_mode="npu"):
     """测试 case: B*S = 256"""
     run_mhc_pre_test(bs=256, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 256")
 
 
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_mhc_pre_bs1024(device_id=None, run_mode="npu"):
     """测试 case: B*S = 1024"""
     run_mhc_pre_test(bs=1024, N=4, D=5120, device_id=device_id, run_mode=run_mode, test_name="B*S = 1024")
 
 
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_mhc_pre_bs4096(device_id=None, run_mode="npu"):
     """测试 case: B*S = 4096"""
     run_mhc_pre_test(bs=4096, N=4, D=2560, device_id=device_id, run_mode=run_mode, test_name="B*S = 4096")

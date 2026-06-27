@@ -192,6 +192,7 @@ def run_moe_finalize_routing_v2_test(inputs: RunMoeFinalizeRoutingV2TestInputs):
 # 3. Level 0 测试：基础功能验证
 # ─────────────────────────────────────────────
 
+@pytest.mark.soc("950", "910")
 def test_moe_finalize_routing_v2_basic(device_id=None, run_mode="npu"):
     """Level 0: 基础功能验证，k_val=1，无可选参数。"""
     run_moe_finalize_routing_v2_test(RunMoeFinalizeRoutingV2TestInputs(
@@ -203,6 +204,7 @@ def test_moe_finalize_routing_v2_basic(device_id=None, run_mode="npu"):
     ))
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_moe_finalize_routing_v2_with_scales(device_id=None, run_mode="npu"):
     """Level 1: 路由权重测试，k_val=2。"""
@@ -215,6 +217,7 @@ def test_moe_finalize_routing_v2_with_scales(device_id=None, run_mode="npu"):
     ))
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_moe_finalize_routing_v2_8(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，k_val=1。"""
@@ -227,6 +230,7 @@ def test_moe_finalize_routing_v2_8(device_id=None, run_mode="npu"):
     ))
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_moe_finalize_routing_v2_128(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，k_val=1。"""
@@ -239,6 +243,7 @@ def test_moe_finalize_routing_v2_128(device_id=None, run_mode="npu"):
     ))
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_moe_finalize_routing_v2_8192(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，k_val=1。"""
@@ -251,6 +256,7 @@ def test_moe_finalize_routing_v2_8192(device_id=None, run_mode="npu"):
     ))
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_moe_finalize_routing_v2_16384(device_id=None, run_mode="npu"):
     """Level 0: drop_pad 场景验证，k_val=1。"""

@@ -260,6 +260,7 @@ def run_scatter_pa_kv_cache_test(
 # 3. Level 0 测试：SPEC.md P0 配置
 # ─────────────────────────────────────────────
 
+@pytest.mark.soc("950", "910")
 def test_config1_performance_p0(device_id=None, run_mode="npu"):
     """配置1_性能P0: num_tokens=8, 适中序列长度性能测试。"""
     run_scatter_pa_kv_cache_test(
@@ -269,6 +270,7 @@ def test_config1_performance_p0(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_config2_function_p0(device_id=None, run_mode="npu"):
     """配置2_功能P0: num_tokens=128, 较长序列功能验证。"""
@@ -279,6 +281,7 @@ def test_config2_function_p0(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_config3_boundary_p0(device_id=None, run_mode="npu"):
     """配置3_边界P0: num_tokens=4096, 最大序列长度边界测试。"""
@@ -293,6 +296,7 @@ def test_config3_boundary_p0(device_id=None, run_mode="npu"):
 # 4. Level 1 测试：小规模 & 泛化验证
 # ─────────────────────────────────────────────
 
+@pytest.mark.soc("950", "910")
 def test_small_scale(device_id=None, run_mode="npu"):
     """小规模验证: num_tokens=8, 确保基础功能正确。"""
     run_scatter_pa_kv_cache_test(
@@ -302,6 +306,7 @@ def test_small_scale(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_min_tokens(device_id=None, run_mode="npu"):
     """最小 tokens: num_tokens=1, 边界最低值测试。"""
@@ -312,6 +317,7 @@ def test_min_tokens(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_medium_scale(device_id=None, run_mode="npu"):
     """中等规模: num_tokens=500, 中间范围验证。"""
