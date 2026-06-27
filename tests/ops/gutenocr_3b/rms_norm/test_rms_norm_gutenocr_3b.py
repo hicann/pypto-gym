@@ -121,7 +121,7 @@ def run_single_case(case_data):
 
 
 @pytest.mark.parametrize("case_data", load_test_cases(), ids=lambda c: c["id"])
-def test_rms_norm(case_data):
+def test_rms_norm(device, case_data):
     run_single_case(case_data)
 
 

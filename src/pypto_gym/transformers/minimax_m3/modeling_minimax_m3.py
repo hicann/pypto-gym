@@ -640,8 +640,15 @@ class MiniMaxM3RotaryEmbedding(nn.Module):
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS.get(self.rope_type)
+        if self.rope_init_fn is None:
+            head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+            exponent = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device) / head_dim
+            inv_freq = 1.0 / (config.rope_theta ** exponent)
+            self.rope_init_fn = None
+            self.attention_scaling = 1.0
+        else:
+            inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
 
