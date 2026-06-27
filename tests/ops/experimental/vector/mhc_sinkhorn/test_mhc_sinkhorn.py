@@ -133,6 +133,7 @@ def run_mhc_sinkhorn_test(bs, N, N_out, seed, eps, num_iters, device_id=None, ru
     print("  ✓ Passed\n")
 
 
+@pytest.mark.soc("950", "910")
 def test_mhc_sinkhorn_bs8_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（8）。"""
     run_mhc_sinkhorn_test(
@@ -143,7 +144,7 @@ def test_mhc_sinkhorn_bs8_n4_n4(device_id=None, run_mode="npu"):
     )
 
 
-@pytest.mark.skip(reason="large test case")
+@pytest.mark.soc("950", "910")
 def test_mhc_sinkhorn_bs64_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（64）。"""
     run_mhc_sinkhorn_test(
@@ -154,6 +155,7 @@ def test_mhc_sinkhorn_bs64_n4_n4(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_mhc_sinkhorn_bs1024_n4_n4(device_id=None, run_mode="npu"):
     """小数据量基础功能验证（1024）。"""
@@ -165,6 +167,7 @@ def test_mhc_sinkhorn_bs1024_n4_n4(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_mhc_sinkhorn_bs2048_n4_n4(device_id=None, run_mode="npu"):
     """典型场景验证（2048）。"""
@@ -176,6 +179,7 @@ def test_mhc_sinkhorn_bs2048_n4_n4(device_id=None, run_mode="npu"):
     )
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_mhc_sinkhorn_bs4096_n4_n4(device_id=None, run_mode="npu"):
     """大规模验证（4096）。"""

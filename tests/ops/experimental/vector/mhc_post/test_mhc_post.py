@@ -160,15 +160,17 @@ def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     _run_golden_and_compare(x, h_res, h_out, h_post, result, bs, N, D, run_mode)
 
 
+@pytest.mark.soc("950", "910")
 def test_mhc_post_bs8_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=8, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 8, N = 4, D = 128")
 
 
-@pytest.mark.skip(reason="large test case")
+@pytest.mark.soc("950", "910")
 def test_mhc_post_bs256_n4_d128(device_id=None, run_mode="npu"):
     run_mhc_post_test(bs=256, N=4, D=128, device_id=device_id, run_mode=run_mode, test_name="B*S = 256, N = 4, D = 128")
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
     run_mhc_post_test(
@@ -180,6 +182,7 @@ def test_mhc_post_bs1024_n4_d5120(device_id=None, run_mode="npu"):
      test_name="B*S = 1024, N = 4, D = 5120")
 
 
+@pytest.mark.soc("950", "910")
 @pytest.mark.skip(reason="large test case")
 def test_mhc_post_bs4096_n4_d2560(device_id=None, run_mode="npu"):
     run_mhc_post_test(
