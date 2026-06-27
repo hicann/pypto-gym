@@ -294,8 +294,8 @@ def _run_kernel(inputs: _RunKernelInputs):
 
 
 def _verify_precision(dq_out, dk_out, dv_out, dq_golden, dk_golden, dv_golden):
-    rtol = 0.0078125
-    atol = 0.0001
+    rtol = 0.005
+    atol = 0.000025
     passed = True
     for name, npu_tensor, golden_tensor in [
         ("dQ", dq_out, dq_golden),

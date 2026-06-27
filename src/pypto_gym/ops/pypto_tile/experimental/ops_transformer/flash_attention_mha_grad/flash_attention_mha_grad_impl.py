@@ -121,6 +121,8 @@ def flash_attention_mha_grad_kernel_impl(
                     s2_off = kv_start + s2_idx * s2_tile
                     actual_s2 = (s2 - s2_idx * s2_tile).min(s2_tile)
 
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_ooo_scope=1)
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
                     do_i = pypto.view(do_2d, [s1_tile, head_dim], [s1_off, h_ofs], valid_shape=[actual_s1, head_dim])
                     o_i = pypto.view(o_2d, [s1_tile, head_dim], [s1_off, h_ofs], valid_shape=[actual_s1, head_dim])
@@ -128,6 +130,8 @@ def flash_attention_mha_grad_kernel_impl(
                     o_i_fp32 = pypto.cast(o_i, pypto.DT_FP32)
                     do_mul_oi = pypto.mul(o_i_fp32, do_i_fp32)
                     d_i = pypto.sum(do_mul_oi, -1, keepdim=True)
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_ooo_scope=-1)
 
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
                     v_j = pypto.view(v_2d, [s2_tile, head_dim], [s2_off, h_ofs], valid_shape=[actual_s2, head_dim])
@@ -145,9 +149,13 @@ def flash_attention_mha_grad_kernel_impl(
                     p_ij = pypto.exp(pypto.sub(s_ij, m_i))
                     p_ij = pypto.div(p_ij, l_i, precision_type=pypto.PrecisionType.INTRINSIC)
 
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_ooo_scope=2)
                     ds_ij = pypto.mul(p_ij, pypto.sub(dp_ij, d_i))
                     p_bf16 = pypto.cast(p_ij, pypto.DT_BF16)
                     ds_bf16 = pypto.cast(ds_ij, pypto.DT_BF16)
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_ooo_scope=-1)
 
                     pypto.set_cube_tile_shapes(c_tile_dkv[0], c_tile_dkv[1], c_tile_dkv[2])
                     dv_tile = pypto.matmul(p_bf16, do_i, pypto.DT_FP32, a_trans=True)
