@@ -155,7 +155,7 @@ def test_rope_spatial_ssrl_3b():
     parser = argparse.ArgumentParser(description="RoPE PyPTO Kernel 精度测试")
     parser.add_argument("case_id", nargs="?", help="运行单个用例")
     parser.add_argument("--list", action="store_true", help="列出所有用例")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     
     test_cases = load_test_cases()
     cases = test_cases.get("test_cases", [])

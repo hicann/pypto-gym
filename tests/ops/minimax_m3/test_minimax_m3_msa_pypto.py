@@ -16,6 +16,7 @@ Validates the two PyPTO MSA decode kernels against eager-torch references:
   * e2e       — indexer -> attention matches the torch-MSA reference end to end.
 """
 import os
+import sys
 
 import pytest
 import torch
@@ -24,6 +25,12 @@ try:
     import torch_npu  # noqa: F401
 except ImportError as exc:
     raise ImportError("torch_npu not available; this test only runs on Ascend NPU.") from exc
+
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_p = _DIR
+while _p != "/" and not os.path.isdir(os.path.join(_p, "src")):
+    _p = os.path.dirname(_p)
+sys.path.insert(0, os.path.join(_p, "src"))
 
 from pypto_gym.ops.pypto_tile.minimax.minimax_m3_msa_indexer_impl import (  # noqa: E402
     minimax_m3_msa_indexer, NIDX, D, BY, TOPK, LOCAL)

@@ -412,14 +412,14 @@ def test_sfa_bf16_b4_s2_seq64k_total_fp8_d():
     do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_total_fp8_d", is_p=False)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 @pytest.mark.skip(reason="perf")
 def test_sfa_bf16_b4_s2_seq64k_per_fp8_d():
     '''sfa decode测试函数'''
     do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_fp8_d", is_p=False)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
 def test_sfa_bf16_b1_s256_seq64k_fp8_p():
     '''sfa prefill测试函数'''

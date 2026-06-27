@@ -529,6 +529,7 @@ def test_sfa_bf16_b4_s2_seq64k_per_bf16_d_950():
     do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_bf16_d_950", is_p=False, is_soc_950=True)
 
 
+@pytest.mark.soc("950")
 @pytest.mark.skip(reason="bf16 perf")
 def test_sfa_bf16_b4_s2_seq64k_per_bf16_d():
     '''
