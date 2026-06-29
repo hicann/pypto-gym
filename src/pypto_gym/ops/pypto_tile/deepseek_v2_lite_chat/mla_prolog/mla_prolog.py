@@ -25,8 +25,6 @@ import torch_npu
 import pypto
 from dataclasses import dataclass, field
 
-torch.npu.set_device(int(os.environ.get('TILE_FWK_DEVICE_ID', 0)))
-
 
 @dataclass
 class HybridConfigs:
@@ -193,6 +191,7 @@ def mla_prolog_hybrid_optimized(hidden_states, kv_a_weight, kv_b_weight, ln_weig
     Stage 1 (torch_npu原生): kv_a_proj + split + RMSNorm
     Stage 2 (PyPTO融合): kv_b_proj + reshape + split + RoPE + assemble
     """
+    torch.npu.set_device(int(os.environ.get('TILE_FWK_DEVICE_ID', 0)))
     bsz, seq_len, hidden_size = hidden_states.shape
     kv_lora_rank = ln_weight.shape[0]
     rope_dim = cos.shape[1]

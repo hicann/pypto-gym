@@ -68,8 +68,7 @@ pytest tests/ops/glm_v4_5 -v --forked
 #### 2. 运行全部算子测试
 
 ```bash
-# 多卡并行执行，其中0，1，2 是可用的NPU device id， -n 参数为指定的device num
-ASCEND_VISIBLE_DEVICES=0,1,2 pytest -n 3 --dist=loadscope -v -s tests/
+pytest -v --forked
 ```
 
 具体测试范围参考 [pytest.ini](./pytest.ini) 配置

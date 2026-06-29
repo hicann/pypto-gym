@@ -42,7 +42,6 @@ from gmm_mxfp8_golden import GmmGoldenInputs, gen_golden
 
 # ── OL20: handle TILE_FWK_DEVICE_ID (defaults to 0) ──
 device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', '0'))
-torch.npu.set_device(device_id)
 
 
 _GMM_MXF8_TEST_CONFIGS = [
@@ -65,6 +64,7 @@ _GMM_MXF8_TEST_CONFIGS = [
 @pytest.mark.parametrize("tile_config", _GMM_MXF8_TEST_CONFIGS)
 def test_gmm_mxfp8(tile_config):
     """Validate the PyPTO kernel against the PyTorch reference implementation."""
+    torch.npu.set_device(device_id)
     m_size, k_size, n_size = tile_config.ori_shape
     group_list, b_trans = tile_config.group_list, tile_config.b_trans
     num_groups = len(group_list)

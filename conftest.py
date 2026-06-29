@@ -202,15 +202,8 @@ def pytest_collection_modifyitems(config, items):
     if not items:
         return
 
-    first_item = items[0]
-    item_path = str(first_item.fspath).replace(os.sep, "/")
-    has_ut = "/tests/ut" in item_path.lower() or "/benchmark/tests/" in item_path
-
-    if has_ut:
-        filtered_items = items
-    else:
-        target_soc = _get_soc_version()
-        filtered_items = [item for item in items if _is_case_match_soc(item, target_soc)]
+    target_soc = _get_soc_version()
+    filtered_items = [item for item in items if _is_case_match_soc(item, target_soc)]
 
     cards_per_case = config.getoption("--cards-per-case", 1)
     card_filtered_items = [item for item in filtered_items
