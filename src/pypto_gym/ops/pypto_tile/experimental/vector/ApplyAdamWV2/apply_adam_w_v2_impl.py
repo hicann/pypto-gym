@@ -35,6 +35,11 @@ M_TILE_LARGE = 7168
 VEC_TILE_M_LARGE = 16
 DEFAULT_TILE_CONFIG = [M_TILE, M_TILE, VEC_TILE_N]
 LARGE_M_TILE_CONFIG = [M_TILE_LARGE, VEC_TILE_M_LARGE, VEC_TILE_N]
+TARGET_M = 7168
+TARGET_N_TILE = 4096
+TARGET_VEC_TILE_M = 16
+TARGET_VEC_TILE_N = 512
+TARGET_K_AXIS_TILE_CONFIG = [TARGET_M, TARGET_VEC_TILE_M, TARGET_VEC_TILE_N, TARGET_N_TILE]
 
 
 def _adam_tile_meta(weight: pypto.Tensor, tile_config: list):
@@ -43,7 +48,8 @@ def _adam_tile_meta(weight: pypto.Tensor, tile_config: list):
     m_tile = tile_config[0]
     pypto.set_vec_tile_shapes(tile_config[1], tile_config[2])
     m_loops = pypto.ceildiv(m_dim, m_tile)
-    n_loops = pypto.ceildiv(n_dim, N_TILE)
+    n_tile = tile_config[3] if len(tile_config) > 3 else N_TILE
+    n_loops = pypto.ceildiv(n_dim, n_tile)
     return m_dim, n_dim, m_tile, m_loops, n_loops
 
 
@@ -81,19 +87,20 @@ def apply_adam_w_v2_kernel_fp32(
     tile_config: list,
 ):
     m_dim, n_dim, m_tile, m_loops, n_loops = _adam_tile_meta(weight, tile_config)
+    n_tile = tile_config[3] if len(tile_config) > 3 else N_TILE
 
     for m_idx in pypto.loop(m_loops, name="adamw_m_loop_fp32", idx_name="m_idx", unroll_list=[1]):
         m_offset = m_idx * m_tile
         valid_m = (m_dim - m_offset).min(m_tile)
         for n_idx in pypto.loop(n_loops, name="adamw_n_loop_fp32", idx_name="n_idx", unroll_list=[1]):
-            n_offset = n_idx * N_TILE
-            valid_n = (n_dim - n_offset).min(N_TILE)
+            n_offset = n_idx * n_tile
+            valid_n = (n_dim - n_offset).min(n_tile)
             valid_shape = [valid_m, valid_n]
 
-            w_tile = pypto.view(weight, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            g_tile = pypto.view(grad, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            m_state = pypto.view(m, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            v_state = pypto.view(v, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
+            w_tile = pypto.view(weight, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            g_tile = pypto.view(grad, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            m_state = pypto.view(m, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            v_state = pypto.view(v, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
 
             m_new = pypto.add(pypto.mul(m_state, beta1), pypto.mul(g_tile, one_m_b1))
             grad_sq = pypto.mul(g_tile, g_tile)
@@ -140,19 +147,23 @@ def apply_adam_w_v2_kernel_bf16(
     bf16_tile_config: list,
 ):
     m_dim, n_dim, m_tile, m_loops, n_loops = _adam_tile_meta(weight, bf16_tile_config)
+    n_tile = bf16_tile_config[3] if len(bf16_tile_config) > 3 else N_TILE
+    if len(bf16_tile_config) > 3:
+        pypto.experimental.set_operation_options(combine_axis=True)
+        pypto.set_pass_options(vec_nbuffer_setting={"DEFAULT": 4})
 
     for m_idx in pypto.loop(m_loops, name="adamw_m_loop_bf16", idx_name="m_idx", unroll_list=[1]):
         m_offset = m_idx * m_tile
         valid_m = (m_dim - m_offset).min(m_tile)
         for n_idx in pypto.loop(n_loops, name="adamw_n_loop_bf16", idx_name="n_idx", unroll_list=[1]):
-            n_offset = n_idx * N_TILE
-            valid_n = (n_dim - n_offset).min(N_TILE)
+            n_offset = n_idx * n_tile
+            valid_n = (n_dim - n_offset).min(n_tile)
             valid_shape = [valid_m, valid_n]
 
-            w_tile = pypto.view(weight, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            g_tile = pypto.view(grad, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            m_state = pypto.view(m, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
-            v_state = pypto.view(v, [m_tile, N_TILE], [m_offset, n_offset], valid_shape=valid_shape)
+            w_tile = pypto.view(weight, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            g_tile = pypto.view(grad, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            m_state = pypto.view(m, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
+            v_state = pypto.view(v, [m_tile, n_tile], [m_offset, n_offset], valid_shape=valid_shape)
 
             w_f32 = pypto.cast(w_tile, pypto.DT_FP32)
             g_f32 = pypto.cast(g_tile, pypto.DT_FP32)
@@ -223,10 +234,15 @@ def apply_adam_w_v2_wrapper(
     v_out = torch.empty_like(v)
 
     tile_config = _select_adam_tile_config(weight)
-    if weight.dtype == torch.bfloat16:
+    if weight.dtype == torch.bfloat16 and weight.shape[0] == TARGET_M and weight.shape[1] > 4096:
         kernel = apply_adam_w_v2_kernel_bf16
+        kernel_args = (list(TARGET_K_AXIS_TILE_CONFIG),)
+    elif weight.dtype == torch.bfloat16:
+        kernel = apply_adam_w_v2_kernel_bf16
+        kernel_args = (list(tile_config),)
     elif weight.dtype == torch.float32:
         kernel = apply_adam_w_v2_kernel_fp32
+        kernel_args = (list(tile_config),)
     else:
         raise TypeError(f"unsupported weight dtype {weight.dtype}; expected bf16 or fp32")
 
@@ -237,7 +253,7 @@ def apply_adam_w_v2_wrapper(
         float(beta2), float(one_m_b2),
         float(bc1), float(bc2),
         float(lr), float(weight_decay), float(eps),
-        list(tile_config),
+        *kernel_args,
     )
 
     return weight_out, m_out, v_out
