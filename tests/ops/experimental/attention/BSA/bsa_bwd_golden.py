@@ -30,7 +30,7 @@ BSABackwardBlockInputs = namedtuple(
     'BSABackwardBlockInputs',
     ['b', 'h_q', 'h_kv', 'u', 'sq', 'skv', 'bx', 'by', 'scale',
      'q_f', 'k_f', 'v_f', 'dout_f', 'out_f', 'lse',
-     'block_sparse_mask', 'd_q', 'd_k', 'd_v'])
+     'block_sparse_mask', 'd_q', 'd_k', 'd_v', 'ftype'])
 
 BSABackwardInputs = namedtuple(
     'BSABackwardInputs',
@@ -63,6 +63,7 @@ def _process_backward_block(block_inputs):
     dq = block_inputs.d_q
     dk = block_inputs.d_k
     dv = block_inputs.d_v
+    ftype = block_inputs.ftype
 
     q_start = u * bx
     q_end = min(q_start + bx, sq)
@@ -79,13 +80,13 @@ def _process_backward_block(block_inputs):
         k_block = k_f[b, h_kv, k_start:k_end, :]
         v_block = v_f[b, h_kv, k_start:k_end, :]
 
-        s_scores = torch.matmul(q_block, k_block.t()) * scale
+        s_scores = torch.matmul(q_block, k_block.t()).to(ftype) * scale
         p_probs = torch.exp(s_scores - lse_block.unsqueeze(-1))
-        ds = p_probs * (torch.matmul(do_block, v_block.t()) - sg_block.unsqueeze(-1))
+        ds = p_probs * (torch.matmul(do_block, v_block.t()).to(ftype) - sg_block.unsqueeze(-1))
 
-        dq[b, h_q, q_start:q_end, :] += torch.matmul(ds, k_block) * scale
-        dk[b, h_kv, k_start:k_end, :] += torch.matmul(ds.t(), q_block) * scale
-        dv[b, h_kv, k_start:k_end, :] += torch.matmul(p_probs.t(), do_block)
+        dq[b, h_q, q_start:q_end, :] += torch.matmul(ds.to(k_block.dtype), k_block).to(ftype) * scale
+        dk[b, h_kv, k_start:k_end, :] += torch.matmul(ds.t().to(q_block.dtype), q_block).to(ftype) * scale
+        dv[b, h_kv, k_start:k_end, :] += torch.matmul(p_probs.t().to(do_block.dtype), do_block).to(ftype)
 
 
 def bsa_backward_golden(inputs):
@@ -134,9 +135,9 @@ def bsa_backward_golden(inputs):
     dk = torch.zeros_like(key, dtype=ftype)
     dv = torch.zeros_like(value, dtype=ftype)
 
-    q_f, k_f, v_f = query.to(ftype), key.to(ftype), value.to(ftype)
+    q_f, k_f, v_f = query, key, value
     out_f = attention_out.to(ftype)
-    dout_f = dout.to(ftype)
+    dout_f = dout
 
     for flat_idx in range(b * hq):
         b_idx = flat_idx // hq
@@ -153,7 +154,7 @@ def bsa_backward_golden(inputs):
                 bx=bx, by=by, scale=scale,
                 q_f=q_f, k_f=k_f, v_f=v_f, dout_f=dout_f, out_f=out_f,
                 lse=softmax_lse, block_sparse_mask=block_sparse_mask,
-                d_q=dq, d_k=dk, d_v=dv)
+                d_q=dq, d_k=dk, d_v=dv, ftype=ftype)
             _process_backward_block(block_inputs)
 
-    return BSABackwardResult(d_q=dq.to(dtype), d_k=dk.to(dtype), d_v=dv.to(dtype))
+    return BSABackwardResult(d_q=dq, d_k=dk, d_v=dv)
