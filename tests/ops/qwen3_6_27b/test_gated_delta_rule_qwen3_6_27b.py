@@ -24,7 +24,7 @@ import torch
 
 _HERE = Path(__file__).parent
 _REPO_ROOT = _HERE.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src" / "pypto_gym" / "ops" / "pypto_tile"))
+sys.path.insert(0, str(_REPO_ROOT / "src" / "pypto_gym" / "ops" / "pypto_tensor"))
 
 from gated_delta_rule_golden import chunk_gated_delta_rule_golden
 

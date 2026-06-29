@@ -66,7 +66,7 @@ The actual config values are read from `Qwen3_5TextConfig` at runtime and passed
 
 ```python
 import sys
-from pypto_gym.ops.pypto_tile.qwen3_6_27b.gated_delta_rule import gated_delta_rule_impl
+from pypto_gym.ops.pypto_tensor.qwen3_6_27b.gated_delta_rule import gated_delta_rule_impl
 
 class Qwen3_6_27bPTOKernels:
     USE_PTO_GATED_DELTA_RULE = True
@@ -115,5 +115,5 @@ sys.modules["qwen3_6_27b_pto_kernels"].USE_PTO_GATED_DELTA_RULE = False
 
 ## Related Directories
 
-- **Ops**: `src/pypto_gym/ops/pypto_tile/qwen3_6_27b/` — PyPTO Gated Delta Rule kernel (`gated_delta_rule/`)
+- **Ops**: `src/pypto_gym/ops/pypto_tensor/qwen3_6_27b/` — PyPTO Gated Delta Rule kernel (`gated_delta_rule/`)
 - **Tests**: `tests/model_ops/qwen3_6_27b/` — correctness and performance tests for the 27B variant

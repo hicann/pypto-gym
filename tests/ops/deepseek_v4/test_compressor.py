@@ -26,7 +26,7 @@ _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
 import numpy as np
 from numpy.testing import assert_allclose
@@ -423,6 +423,7 @@ def _compressor_prep():
     return device
 
 
+@pytest.mark.soc("950", "910")
 def test_comp_128(enable_acl_graph=False):
     """Test Compressor"""
     print("=" * 60)

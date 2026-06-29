@@ -23,7 +23,7 @@ _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
 from deepseek_v4.win_attention_impl import deepseekv4_win_atten, get_mask, sliding_win_atten_graph
 
@@ -155,6 +155,7 @@ def win_atten_calc_tnd(input_params_win_attn, seqused_kv_list, sinks, q_tnd, \
     return atten_out
 
 
+@pytest.mark.soc("950", "910")
 def test_win_atten_tnd_mask(allow_in_graph=False) -> None:
 
     for b in [64]:

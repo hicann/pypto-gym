@@ -14,7 +14,7 @@
 
 | Operator | Toggle flag | Path |
 |----------|-------------|------|
-| `gated_delta_rule` | `USE_PTO_GATED_DELTA_RULE` | [`src/pypto_gym/ops/pypto_tile/qwen3_6_27b/gated_delta_rule/`](../../../src/pypto_gym/ops/pypto_tile/qwen3_6_27b/gated_delta_rule/) |
+| `gated_delta_rule` | `USE_PTO_GATED_DELTA_RULE` | [`src/pypto_gym/ops/pypto_tensor/qwen3_6_27b/gated_delta_rule/`](../../../src/pypto_gym/ops/pypto_tensor/qwen3_6_27b/gated_delta_rule/) |
 
 The fused operator replaces the chunk-prefill path in
 `Qwen3_5GatedDeltaNet.forward` (linear-attention layers). The decode and

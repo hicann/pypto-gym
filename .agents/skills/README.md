@@ -43,7 +43,7 @@ Agent 按照 Skill 定义的阶段自动编排：
 "用 pypto-gym 仓归档的代码还原 Qwen3-1.7B 的 PyPTO 融合状态并验证"
 
 # Agent 自动执行：
-# 1. 探测 src/pypto_gym/ops/pypto_tile/qwen3_1_7b/ 中的算子
+# 1. 探测 src/pypto_gym/ops/pypto_tensor/qwen3_1_7b/ 中的算子
 # 2. 探索 src/pypto_gym/transformers/qwen3_1_7b/ 中的模型修改
 # 3. 运行 restore_model_patch.sh 完成入网适配
 # 4. 验证 baseline 与 PyPTO 双模式均可推理

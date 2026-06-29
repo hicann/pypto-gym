@@ -32,17 +32,17 @@ import torch_npu  # noqa: F401
 # Patch: add 'default' rope type if missing (transformers >= 4.57 compat)
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 if "default" not in ROPE_INIT_FUNCTIONS:
-    def _compute_default_rope_parameters(config=None, device=None, seq_len=None, **kwargs):
+    def _compute_default_rope_params(config=None, device=None, seq_len=None, **kwargs):
         base = config.rope_theta
         partial_rotary_factor = getattr(config, "partial_rotary_factor", 1.0)
         head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
         dim = int(head_dim * partial_rotary_factor)
-        inv_freq = 1.0 / (
+        inv_freq_res = 1.0 / (
             base ** (torch.arange(0, dim, 2, dtype=torch.int64)
                      .to(device=device, dtype=torch.float) / dim)
         )
-        return inv_freq, 1.0
-    ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
+        return inv_freq_res, 1.0
+    ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_params
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -76,7 +76,7 @@ if args.use_pypto:
         shutil.copy2(patched_src, patched_dst)
         logging.info(f"[PyPTO] Installed patched modeling to {patched_dst}")
     # Import real kernel adapter module and register under expected name
-    from pypto_gym.ops.pypto_tile import llada2_moe as llada2_kernels
+    from pypto_gym.ops.pypto_tensor import llada2_moe as llada2_kernels
     llada2_kernels.USE_PTO_EXPERT_FFN = True
     sys.modules["llada2_pto_kernels"] = llada2_kernels
 

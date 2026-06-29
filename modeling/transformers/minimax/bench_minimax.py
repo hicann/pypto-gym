@@ -236,7 +236,7 @@ def _install_static_moe_m27(body, dev, use_pypto):
     capturable static-route forward (every token to experts 0..top_k-1)."""
     import types
     from torch.nn.functional import linear, silu
-    from pypto_gym.ops.pypto_tile.minimax import MoeDims, grouped_gemm
+    from pypto_gym.ops.pypto_tensor.minimax import MoeDims, grouped_gemm
     from pypto_gym.transformers.minimax_m27.modeling_minimax_m27 import _expert_weight
 
     def _dequant(block):

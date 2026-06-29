@@ -59,7 +59,7 @@ Key constraints:
 
 ```python
 import sys
-from pypto_gym.ops.pypto_tile.qwen3_5_9b.gated_delta_rule import gated_delta_rule_impl
+from pypto_gym.ops.pypto_tensor.qwen3_5_9b.gated_delta_rule import gated_delta_rule_impl
 
 class Qwen3_5_9bPTOKernels:
     USE_PTO_GATED_DELTA_RULE = True
@@ -120,5 +120,5 @@ Layer type alternation pattern (default): 3 linear_attention layers → 1 full_a
 
 ## Related Directories
 
-- **Ops**: `src/pypto_gym/ops/pypto_tile/qwen3_5_9b/` — PyPTO Gated Delta Rule kernel (`gated_delta_rule/`)
+- **Ops**: `src/pypto_gym/ops/pypto_tensor/qwen3_5_9b/` — PyPTO Gated Delta Rule kernel (`gated_delta_rule/`)
 - **Tests**: `tests/model_ops/qwen3_5_9b/` — correctness and performance tests

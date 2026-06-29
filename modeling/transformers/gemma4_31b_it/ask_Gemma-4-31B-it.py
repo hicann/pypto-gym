@@ -72,7 +72,7 @@ def setup_pypto(repo_root, model_path):
     print(f"[PyPTO] Installed patched modeling overlay at {overlay_dir}")
 
     # Import real kernel adapter module and register under expected name
-    from pypto_gym.ops.pypto_tile import gemma4_31b_it as gemma4_kernels
+    from pypto_gym.ops.pypto_tensor import gemma4_31b_it as gemma4_kernels
     gemma4_kernels.USE_PTO_SOFTMAX = True
     gemma4_kernels.USE_PTO_GQA = True
     sys.modules["gemma4_pto_kernels"] = gemma4_kernels

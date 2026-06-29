@@ -37,7 +37,7 @@ _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
 import numpy as np
 import pypto
@@ -585,6 +585,7 @@ def c128(enable_flash: bool, enable_high_perf: bool, enable_graph: bool, device:
     compare.compare(output_flash, attention_out, "golden vs npu", rtol=0.0078125, atol=0.0001)
 
 
+@pytest.mark.soc("950", "910")
 def test_c128_decode(enable_flash: bool = False, enable_high_perf: bool = False, enable_graph: bool = False, \
                     device_id: int = 0):
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', device_id))

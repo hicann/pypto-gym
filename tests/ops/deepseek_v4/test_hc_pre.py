@@ -22,7 +22,7 @@ _p = os.path.dirname(__file__)
 while not os.path.isdir(os.path.join(_p, 'src')):
     _p = os.path.dirname(_p)
 sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tile'))
+sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
 import pypto
 
@@ -212,7 +212,7 @@ def test_hc_pre_inmodel(t=16):
     print("comb compare success!!!")
 
 
-@pytest.mark.skip(reason="large test case")
+@pytest.mark.soc("950")
 def test_hc_pre(t=16, is_trans=False):
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch.npu.set_device(int(device_id))
