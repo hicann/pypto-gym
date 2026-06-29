@@ -182,17 +182,17 @@ def _process_kv_tile(inputs: ProcessKvTileInputs):
 def attention_forward_golden(q, k, v, scale):
     s1_size, head_dim = q.shape
     s2_size = k.shape[0]
-    q_f = q.cpu().to(torch.float32)
-    k_f = k.cpu().to(torch.float32)
-    v_f = v.cpu().to(torch.float32)
+    q_f = q.cpu()
+    k_f = k.cpu()
+    v_f = v.cpu()
     q_tile = Q_TILE
     k_tile = K_TILE
     q_tile_count = (s1_size + q_tile - 1) // q_tile
     k_tile_count = (s2_size + k_tile - 1) // k_tile
 
-    o_out = torch.zeros(s1_size, head_dim, dtype=torch.bfloat16)
-    l_out = torch.zeros(s1_size, 1, dtype=torch.float32)
-    m_out = torch.zeros(s1_size, 1, dtype=torch.float32)
+    o_out = torch.empty(s1_size, head_dim, dtype=torch.bfloat16)
+    l_out = torch.empty(s1_size, 1, dtype=torch.float32)
+    m_out = torch.empty(s1_size, 1, dtype=torch.float32)
 
     for q_tile_idx in range(q_tile_count):
         q_tile_start = q_tile_idx * q_tile
@@ -200,15 +200,15 @@ def attention_forward_golden(q, k, v, scale):
         q_tile_len = q_tile_end - q_tile_start
         q_tile_view = q_f[q_tile_start:q_tile_end, :]
 
-        oi_upd = torch.zeros(q_tile, head_dim, dtype=torch.float32)
-        li_upd = torch.zeros(q_tile, 1, dtype=torch.float32)
-        mi_upd = torch.full((q_tile, 1), float('-inf'), dtype=torch.float32)
+        oi_upd = torch.empty(q_tile, head_dim, dtype=torch.float32)
+        li_upd = torch.empty(q_tile, 1, dtype=torch.float32)
+        mi_upd = torch.empty(q_tile, 1, dtype=torch.float32)
 
         for k_tile_idx in range(k_tile_count):
             k_tile_start = k_tile_idx * k_tile
             k_tile_end = min(k_tile_start + k_tile, s2_size)
             k_tile_view = k_f[k_tile_start:k_tile_end, :]
-            v_tile_view = v_f[k_tile_start:k_tile_end, :].to(torch.bfloat16)
+            v_tile_view = v_f[k_tile_start:k_tile_end, :]
             scores = torch.matmul(q_tile_view.to(torch.float32), k_tile_view.to(torch.float32).T) * scale
 
             mij = scores.amax(dim=-1, keepdim=True)
@@ -223,7 +223,8 @@ def attention_forward_golden(q, k, v, scale):
                 if k_tile_idx == k_tile_count - 1:
                     pij_div = pij / lij
                     pij_bf16 = pij_div.to(torch.bfloat16)
-                    out_bf16 = torch.matmul(pij_bf16, v_tile_view)
+                    out_bf16 = torch.matmul(pij_bf16.to(torch.float32),
+                                            v_tile_view.to(torch.float32)).to(torch.bfloat16)
 
                     o_out[q_tile_start:q_tile_end, :] = out_bf16[:q_tile_len, :]
                     l_out[q_tile_start:q_tile_end, :] = lij[:q_tile_len, :]
@@ -290,9 +291,6 @@ def _run_kernel_and_verify(inputs, out_npu, l_out_npu, m_out_npu,
     """Run the kernel and verify outputs against golden."""
     logging.info("  Running kernel...")
     if perf_910:
-        a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
-        for _ in range(100):
-            a_max = torch.max(a)
         flash_attention_varlen_forward_kernel_910(
             inputs.q, inputs.k, inputs.v, out_npu, l_out_npu, m_out_npu,
             inputs.cu_seqlens_q, inputs.cu_seqlens_k, tile_config)
@@ -383,6 +381,9 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
 
     logging.info(f"  {'PASSED' if passed else 'FAILED'}")
     logging.info("")
+
+    assert passed, (f"Accuracy Compare Failed!")
+
     return passed
 
 
@@ -407,7 +408,13 @@ def test_01():
 
 @pytest.mark.soc("950")
 def test_02():
-    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128)
+    config = FlashAttentionTileShapeConfig(
+        q_tile=128, k_tile=128,
+        c1_cube_tile=[[128, 128], [128, 128], [128, 128]],
+        v1_tile=[128, 64],
+        c2_cube_tile=[[128, 128], [128, 128], [128, 128]],
+        v2_tile=[128, 64])
+    return run_test(batch_size=1, num_heads=8, s1_size=4096, s2_size=4096, dim=128, tile_config=config)
 
 
 @pytest.mark.soc("950")
