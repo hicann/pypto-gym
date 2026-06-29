@@ -70,7 +70,7 @@ def compute_rmsnorm_rsqrt(X_flat: pypto.Tensor, N_D: int, norm_eps: float) -> py
 
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1}, 
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}, "cube_nbuffer_setting":{-1: 4}})
+    pass_options={"cube_nbuffer_setting": {-1: 4}})
 def mhc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
     phi_T: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),           # [N*D, N²+2N] 固定值
@@ -95,7 +95,7 @@ def mhc_pre_kernel(
         - 使用 loop_unroll 处理 BS 轴，unroll_length=128，tileshape=1
     """
     pypto.experimental.set_operation_options(combine_axis=True)
-
+    pypto.set_pass_options(vec_nbuffer_setting={"DEFAULT": 4, "func8_3": 1})
     # ─────────────────────────────────────────────
     # 从 x.shape 获取维度（动态轴 vs 静态轴）
     # ─────────────────────────────────────────────
@@ -151,18 +151,12 @@ def mhc_pre_kernel(
         X_flat = pypto.cast(x_slice_flat, pypto.DT_FP32)  # [unroll_length, N*D] FP32
         pypto.set_pass_options(sg_set_scope=-1)
 
-        # cast 3D tensor (用于 Step 5 加权计算)
-        pypto.set_vec_tile_shapes(bs_tile * 2, N, D_tile)  # tileshape=1
-        pypto.set_pass_options(sg_set_scope=2)
-        x_fp32_3d = pypto.cast(x_slice_3d, pypto.DT_FP32)  # [unroll_length, N, D] FP32
-        pypto.set_pass_options(sg_set_scope=-1)
-
         # ─────────────────────────────────────────
         # Step 2: RMSNorm（Root Mean Square Layer Normalization）
         # ─────────────────────────────────────────
         # 计算 rsqrt = 1 / sqrt(mean(X_flat²) + norm_eps)
+        pypto.set_pass_options(sg_set_scope=2)
         pypto.set_vec_tile_shapes(bs_tile, D_tile)  # tileshape=1
-        pypto.set_pass_options(sg_set_scope=3)
         rsqrt_val = compute_rmsnorm_rsqrt(X_flat, N_D, norm_eps)  # [unroll_length, 1] FP32
         pypto.set_pass_options(sg_set_scope=-1)
 
@@ -180,6 +174,7 @@ def mhc_pre_kernel(
         pypto.set_cube_tile_shapes([16, 16], [512, 1024], [128, 128], enable_split_k=True)
         X_hat = pypto.matmul(X_flat, phi_T, pypto.DT_FP32)  # [unroll_length, N_SQUARED_PLUS_2N] FP32
 
+        pypto.set_pass_options(sg_set_scope=3)
         pypto.set_vec_tile_shapes(bs_tile, D_tile)  # tileshape=1
         X_hat_norm = pypto.mul(X_hat, rsqrt_val)  # [unroll_length, N_SQUARED_PLUS_2N] FP32（归一化）
 
@@ -210,14 +205,15 @@ def mhc_pre_kernel(
         H_pre_eps = pypto.add(H_pre, hc_eps)  # [unroll_length, N] FP32
 
         # reshape to 3D (equivalent to unsqueeze at -1)
-        H_pre_expanded = pypto.reshape(H_pre_eps, [unroll_length, N, 1], inplace=True)  # [unroll_length, N, 1] FP32
+        h_pre_expanded = pypto.reshape(H_pre_eps, [unroll_length, N, 1])  # [unroll_length, N, 1] FP32
 
-        # weighted_X
+        # weighted_x
         pypto.set_vec_tile_shapes(bs_tile, N, D_tile)  # tileshape=1
-        weighted_X = pypto.mul(H_pre_expanded, x_fp32_3d)  # [unroll_length, N, D] FP32
+        x_fp32_3d = pypto.cast(x_slice_3d, pypto.DT_FP32)  # [unroll_length, N, D] FP32
+        weighted_x = pypto.mul(h_pre_expanded, x_fp32_3d)  # [unroll_length, N, D] FP32
 
         # sum
-        h_in_fp32 = pypto.sum(weighted_X, 1)  # [unroll_length, D] FP32
+        h_in_fp32 = pypto.sum(weighted_x, 1)  # [unroll_length, D] FP32
 
         # cast to BF16
         pypto.set_vec_tile_shapes(bs_tile, D_tile)  # tileshape=1
@@ -263,11 +259,12 @@ def mhc_pre_kernel(
         pypto.assemble(h_in_tile, [bs_idx, 0], h_in)
         pypto.assemble(h_post_tile, [bs_idx, 0], h_post)
         pypto.assemble(h_res_tile, [bs_idx, 0, 0], h_res)  # 3D tensor 需要 3 个索引
-        
+        pypto.set_pass_options(sg_set_scope=-1)
 
 # ─────────────────────────────────────────────
 # Wrapper 函数（导出接口）
 # ─────────────────────────────────────────────
+
 
 def mhc_pre_wrapper(
     x: torch.Tensor,
