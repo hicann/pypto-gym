@@ -163,7 +163,7 @@ def flash_attention_mha_grad_kernel_impl(
                     pypto.set_vec_tile_shapes(v_tile_kv[0], v_tile_kv[1])
                     pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
 
-                    pypto.set_cube_tile_shapes(c_tile_dq[0], c_tile_dq[1], c_tile_dq[2])
+                    pypto.set_cube_tile_shapes(c_tile_dq[0], c_tile_dq[1], c_tile_dq[2], enable_split_k=True)
                     dq_tile = pypto.matmul(ds_bf16, k_j, pypto.DT_FP32)
                     pypto.set_cube_tile_shapes(c_tile_dkv[0], c_tile_dkv[1], c_tile_dkv[2])
                     dk_tile = pypto.matmul(ds_bf16, q_i, pypto.DT_FP32, a_trans=True)
