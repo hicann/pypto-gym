@@ -439,7 +439,7 @@ def get_tile_config(case_config):
     m_tile = 128
     k_tile = 128
     n_tile = 128
-    s2_tile = 2048
+    s2_tile = 1024
 
     n1 = case_config.n1
     n2 = case_config.n2
