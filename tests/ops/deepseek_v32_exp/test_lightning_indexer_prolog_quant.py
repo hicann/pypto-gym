@@ -296,7 +296,7 @@ def _indexer_compute_weights(inputs, dims):
     x_dtype = x.dtype
 
     weights = torch.matmul(x.to(torch.float32),
-                           w_idx_proj.to(torch.float32)).to(x_dtype).to(torch.float32)
+                           w_idx_proj.to(torch.float32))
     weights = weights * (n ** -0.5) * (d ** -0.5)
     return weights.to(torch.float16)
 
