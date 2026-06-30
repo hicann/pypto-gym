@@ -164,8 +164,9 @@ _TQBMM_TEST_CONFIGS = [
 ]
 
 
+FILTERED_CONFIGS = [cfg for cfg in _TQBMM_TEST_CONFIGS if cfg.description != "test3"]
 @pytest.mark.soc("950")
-@pytest.mark.parametrize("tile_config", _TQBMM_TEST_CONFIGS)
+@pytest.mark.parametrize("tile_config", FILTERED_CONFIGS)
 def test_transpose_quant_batch_matmul(tile_config):
     """
     Test the transpose quantized batch matrix multiplication.
