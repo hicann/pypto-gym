@@ -465,7 +465,8 @@ def lightning_indexer_prolog_quant(
         q_hd_m_tile = cur_max_unroll if t_tile < cur_max_unroll else q_hd[L0M_INDEX]
         pypto.set_cube_tile_shapes([q_hd_m_tile, q_hd_m_tile], [q_hd[L0K_INDEX], q_hd[L1K_INDEX]],
                                 [q_hd[L0N_INDEX], q_hd[L1N_INDEX]])
-        q_hadamard = pypto.matmul(q_cat, hadamard_q, x_dtype)  # (t_tile, head_num, head_dim)
+        q_hadamard = pypto.matmul(q_cat, hadamard_q, pypto.DT_FP32)  # (t_tile, head_num, head_dim), FP32
+        q_hadamard = pypto.cast(q_hadamard, x_dtype)
 
         pypto.set_semantic_label("Query-Quant")
         pypto.set_vec_tile_shapes(configs.t_sub_tile, head_num // configs.chunk_size, head_dim)
@@ -498,7 +499,8 @@ def lightning_indexer_prolog_quant(
         k_nope = pypto.cast(pypto.cast(k_nope, pypto.DT_FP32), k_bf16.dtype)
         k_concat = pypto.concat([k_roped, k_nope], -1)
         pypto.set_semantic_label("Key-Hadamard")
-        hadamard_k = pypto.matmul(k_concat, hadamard_k_in, x_dtype)  # (t_tile, head_dim), bf16
+        hadamard_k = pypto.matmul(k_concat, hadamard_k_in, pypto.DT_FP32)  # (t_tile, head_dim), FP32
+        hadamard_k = pypto.cast(hadamard_k, x_dtype)
         pypto.set_semantic_label("Key-Quant")
         k_res = prolog_quant(hadamard_k)
         k_cache_4d = pypto.reshape(k_res[0], [t_tile, 1, 1, head_dim], valid_shape=[t_tile, 1, 1, head_dim])
@@ -516,7 +518,7 @@ def lightning_indexer_prolog_quant(
                                 [w_linear[L0K_INDEX], w_linear[L1K_INDEX]],
                                 [w_linear[L0N_INDEX], w_linear[L1N_INDEX]])
         pypto.set_vec_tile_shapes(t_tile, head_num)
-        weights = pypto.cast(pypto.matmul(x, w_proj_in, x_dtype), pypto.DT_FP32)
+        weights = pypto.matmul(x, w_proj_in, pypto.DT_FP32)
         weights = pypto.mul(weights, 1.0 / (math.sqrt(head_num) * math.sqrt(head_dim)))
         weights_f16 = pypto.cast(weights, pypto.DT_FP16)
         pypto.assemble(weights_f16, [t_idx, 0], weights_out)
