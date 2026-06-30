@@ -25,7 +25,7 @@ Kernel 全程 4D，无 5D reshape/concat：
   1. ceil-div: s_loops = (S + S_TILE - 1) // S_TILE
   2. valid_s = (S - s_off).min(S_TILE)
   3. view(x|cos|sin, ..., valid_shape=[..., valid_s, ...])
-  4. gathermask → cast fp32 → mul/sub/add → cast 回 → assemble 写左/右半
+  4. 910 使用 gathermask；950(DAV_3510) 使用 deinterleave → cast fp32 → mul/sub/add → cast 回 → assemble 写左/右半
 
 4 个 kernel 实例：{N=1, N=128} × {bf16, fp16}。
 """
@@ -39,8 +39,10 @@ S_TILE_128 = 16
 S_TILE_128_SHORT = 2
 S_UNROLL_128 = [4, 2, 1]
 S_TILE_1 = 64
+S_TILE_128_950 = 12
 D = 64
 HALF = 32  
+ASCEND_950_NPUARCH = "DAV_3510"
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,52 @@ def interleave_rope_kernel_n128_bf16_unroll(
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
+
+
+@pypto.frontend.jit(
+    runtime_options={
+        "run_mode": pypto.RunMode.NPU,
+        "stitch_function_max_num": 512,
+        "device_sched_mode": 3,
+    },
+    pass_options={"vec_nbuffer_setting": {-1: 8}},
+)
+def interleave_rope_kernel_n128_bf16_950(
+    x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
+):
+    pypto.experimental.set_operation_options(combine_axis=True)
+    pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, D)
+    B = x.shape[0]
+    S = x.shape[2]
+    s_loops = (S + S_TILE_128_950 - 1) // S_TILE_128_950
+    for b in pypto.loop(B, name="b_loop"):
+        for n_blk in pypto.loop(128 // N_TILE_128, name="n_loop"):
+            n_off = n_blk * N_TILE_128
+            for s_blk in pypto.loop(s_loops, name="s_loop"):
+                s_off = s_blk * S_TILE_128_950
+                valid_s = (S - s_off).min(S_TILE_128_950)
+                vshape_x = [1, N_TILE_128, valid_s, D]
+                vshape_cs = [1, 1, valid_s, D]
+                x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128_950, D], [b, n_off, s_off, 0],
+                                 valid_shape=vshape_x)
+                c_t = pypto.view(cos, [1, 1, S_TILE_128_950, D], [b, 0, s_off, 0],
+                                 valid_shape=vshape_cs)
+                s_t = pypto.view(sin, [1, 1, S_TILE_128_950, D], [b, 0, s_off, 0],
+                                 valid_shape=vshape_cs)
+                pypto.set_pass_options(sg_set_scope=1)
+                x_e, x_o = pypto.deinterleave(x_t)
+                c_e, c_o = pypto.deinterleave(c_t)
+                s_e, s_o = pypto.deinterleave(s_t)
+                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, HALF)
+                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
+                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                pypto.assemble(ye, [b, n_off, s_off, 0], out)
+                pypto.assemble(yo, [b, n_off, s_off, HALF], out)
+                pypto.set_pass_options(sg_set_scope=-1)
+                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, D)
 
 
 @pypto.frontend.jit(
@@ -481,7 +529,10 @@ def interleave_rope_wrapper(
         f"unsupported dtype {x.dtype}"
 
     out = torch.empty_like(x)
-    if N == 128 and x.dtype == torch.bfloat16 and S == 1:
+    if (pypto.platform.npuarch == ASCEND_950_NPUARCH and N == 128 and x.dtype == torch.bfloat16
+            and S == 1024 and S_cs == S and B in (2, 8)):
+        kernel = interleave_rope_kernel_n128_bf16_950
+    elif N == 128 and x.dtype == torch.bfloat16 and S == 1:
         kernel = interleave_rope_kernel_n128_bf16_short_s
     elif N == 128 and x.dtype == torch.bfloat16 and S == 2:
         kernel = interleave_rope_kernel_n128_bf16_short_s_btile

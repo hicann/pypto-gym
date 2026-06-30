@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Dict
 
+import pytest
 import torch
 import torch_npu  # noqa: F401
 from numpy.testing import assert_allclose
@@ -153,10 +154,12 @@ def run_single_case(case: Dict):
     return result
 
 
+@pytest.mark.soc("950")
 def test_level0_npu_precision():
     run_single_case(load_cases()[0])
 
 
+@pytest.mark.soc("950")
 def test_level1_npu_precision():
     run_single_case(load_cases()[1])
 

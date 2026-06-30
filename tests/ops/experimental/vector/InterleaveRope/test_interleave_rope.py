@@ -22,6 +22,8 @@
 #   - level6: bf16, [4,1,2,64],      S_cs=S       (short sequence N=1)
 #   - level7: bf16, [2,1,8192,64],   S_cs=S       (large sequence N=1)
 #   - level8: bf16, [2,128,8192,64], S_cs=S       (large sequence multi-head)
+#   - level9: bf16, [8,128,1024,64], S_cs=S       (950 path)
+#   - level10: bf16, [2,128,1024,64], S_cs=S      (950 path)
 #
 # Compares the PyPTO kernel output against the pure-PyTorch golden using
 # -----------------------------------------------------------------------------
@@ -43,6 +45,7 @@ import sys
 import traceback
 
 import numpy as np
+import pytest
 import torch
 import torch_npu  # noqa: F401  # required to enable npu backend
 from numpy.testing import assert_allclose
@@ -57,8 +60,8 @@ DTYPE_MAP = {
     "bfloat16": torch.bfloat16,
 }
 
-# Required test levels - this kernel covers level0 / level1.
-REQUIRED_LEVELS = ("level4",)
+# Required test levels for this targeted 950 branch coverage.
+REQUIRED_LEVELS = ("level9", "level10")
 
 
 def _device() -> str:
@@ -181,14 +184,26 @@ def test_level8(device: str) -> bool:
     return _run_case(cases[0], device)
 
 
+@pytest.mark.soc("950")
+def test_level9(device: str) -> bool:
+    cases = [c for c in _load_cases() if c["id"] == "level9"]
+    return _run_case(cases[0], device)
+
+
+@pytest.mark.soc("950")
+def test_level10(device: str) -> bool:
+    cases = [c for c in _load_cases() if c["id"] == "level10"]
+    return _run_case(cases[0], device)
+
+
 def main() -> int:
     try:
         device = _device()
         print(f"Using device: {device}")
 
         all_ok = True
-        # 取消注释你要跑的 level；默认跑 level7 + level8
-        for runner in (test_level7, test_level8):
+        # 取消注释你要跑的 level；默认跑 950 分支新增规格。
+        for runner in (test_level9, test_level10):
             try:
                 ok = runner(device)
             except Exception:

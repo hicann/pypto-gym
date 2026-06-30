@@ -17,6 +17,7 @@ import os
 import sys
 import traceback
 
+import pytest
 import torch
 import torch_npu  # noqa: F401
 
@@ -169,6 +170,22 @@ def _run_case(case: dict, device: str) -> bool:
     LOGGER.info("  [key] shape=%s equal=%s", tuple(key_out.shape), key_equal)
     LOGGER.info("  [value] shape=%s equal=%s", tuple(value_out.shape), value_equal)
     return bool(key_equal and value_equal)
+
+
+@pytest.mark.soc("950")
+def test_level0(device_id=None, run_mode="npu"):
+    del device_id, run_mode
+    device = _device()
+    cases = [case for case in _load_cases() if case["id"] == "level0"]
+    assert _run_case(cases[0], device)
+
+
+@pytest.mark.soc("950")
+def test_level9(device_id=None, run_mode="npu"):
+    del device_id, run_mode
+    device = _device()
+    cases = [case for case in _load_cases() if case["id"] == "level9"]
+    assert _run_case(cases[0], device)
 
 
 def main() -> int:

@@ -46,6 +46,7 @@ import sys
 import traceback
 
 import numpy as np
+import pytest
 import torch
 import torch_npu  # noqa: F401  # required to enable npu backend
 from numpy.testing import assert_allclose
@@ -191,6 +192,7 @@ def test_level0(device: str) -> bool:
     return _run_case(cases[0], device)
 
 
+@pytest.mark.soc("950")
 def test_level1(device: str) -> bool:
     cases = [c for c in _load_cases() if c["id"] == "level1"]
     return _run_case(cases[0], device)
@@ -201,6 +203,7 @@ def test_level2(device: str) -> bool:
     return _run_case(cases[0], device)
 
 
+@pytest.mark.soc("950")
 def test_level3(device: str) -> bool:
     cases = [c for c in _load_cases() if c["id"] == "level3"]
     return _run_case(cases[0], device)

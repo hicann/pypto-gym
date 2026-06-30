@@ -155,6 +155,40 @@
       },
       "rtol": 0.0078125,
       "atol": 1e-4
+    },
+    {
+      "id": "level9",
+      "description": "bf16 950 path [B=8,N=128,S=1024,D=64], S_cs=S",
+      "seed": 42,
+      "input": {
+        "shape": [8, 128, 1024, 64],
+        "cos_shape": [8, 1, 1024, 64],
+        "sin_shape": [8, 1, 1024, 64],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "shape": [8, 128, 1024, 64],
+        "dtype": "bfloat16"
+      },
+      "rtol": 0.0078125,
+      "atol": 1e-4
+    },
+    {
+      "id": "level10",
+      "description": "bf16 950 path [B=2,N=128,S=1024,D=64], S_cs=S",
+      "seed": 42,
+      "input": {
+        "shape": [2, 128, 1024, 64],
+        "cos_shape": [2, 1, 1024, 64],
+        "sin_shape": [2, 1, 1024, 64],
+        "dtype": "bfloat16"
+      },
+      "output": {
+        "shape": [2, 128, 1024, 64],
+        "dtype": "bfloat16"
+      },
+      "rtol": 0.0078125,
+      "atol": 1e-4
     }
   ]
 }
