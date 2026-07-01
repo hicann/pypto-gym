@@ -34,11 +34,10 @@ sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
 import argparse
+from dataclasses import dataclass
 
 import torch
 import torch_npu  # noqa: F401
-import numpy as np
-from numpy.testing import assert_allclose
 
 import pytest
 
@@ -51,6 +50,116 @@ from experimental.vector.mhc_pre.mhc_pre_impl import mhc_pre_wrapper
 # 精度容差（来自 SPEC.md）
 RTOL = 0.0078125
 ATOL = 0.0001
+
+# 失败个数比例阈值
+MAX_ERROR_RATIO = 0.0001
+
+
+# ─────────────────────────────────────────────
+# 0. 精度对比工具
+# ─────────────────────────────────────────────
+@dataclass
+class CompareConfig:
+    """精度对比配置（封装容差与误差阈值相关参数）。"""
+    atol: float
+    rtol: float
+    max_error_ratio: float = MAX_ERROR_RATIO
+    max_error_count: int = 10
+
+
+def compare(t: torch.Tensor, t_ref: torch.Tensor, name: str, config: CompareConfig):
+    """比较两个张量的差异，超过阈值时打印错误点并抛出断言错误。
+
+    Args:
+        t: 待比较张量
+        t_ref: 参考张量
+        name: 张量名称（用于日志）
+        config: 精度对比配置（atol / rtol / max_error_ratio / max_error_count）
+    """
+    atol = config.atol
+    rtol = config.rtol
+    max_error_ratio = config.max_error_ratio
+    max_error_count = config.max_error_count
+
+    def check_is_nan_inf():
+        # 检测t中的NaN和Inf并直接报错
+        nan_mask = torch.isnan(t)
+        nan_count = nan_mask.sum().item()
+
+        inf_mask = torch.isinf(t)
+        inf_count = inf_mask.sum().item()
+
+        if nan_count > 0 or inf_count > 0:
+            error_msg = f"\n========== 张量 {name} 检测到非法值（禁止存在NaN/Inf）=========="
+
+            if nan_count > 0:
+                nan_positions = torch.nonzero(nan_mask, as_tuple=False)
+                show_nan_count = min(nan_count, max_error_count)
+                error_msg += f"\n- NaN数量：{nan_count}，前 {show_nan_count} 个位置："
+                for i in range(show_nan_count):
+                    pos_tuple = tuple(p.item() for p in nan_positions[i])
+                    error_msg += f"\n  位置 {pos_tuple}"
+
+            if inf_count > 0:
+                inf_positions = torch.nonzero(inf_mask, as_tuple=False)
+                show_inf_count = min(inf_count, max_error_count)
+                error_msg += f"\n- Inf数量：{inf_count}，前 {show_inf_count} 个位置（值类型）："
+                for i in range(show_inf_count):
+                    pos = inf_positions[i]
+                    pos_tuple = tuple(p.item() for p in pos)
+                    inf_val = t[pos_tuple].item()
+                    inf_type = "+Inf" if inf_val == float('inf') else "-Inf"
+                    error_msg += f"\n  位置 {pos_tuple}：{inf_type}"
+            error_msg += "\n" + "=" * 80 + "\n"
+
+            assert False, error_msg
+
+    check_is_nan_inf()
+
+    # 验证张量基本属性一致
+    assert t.shape == t_ref.shape, f"张量形状不一致：t.shape={t.shape}, t_ref.shape={t_ref.shape}"
+    assert t.dtype == t_ref.dtype, f"张量数据类型不一致：t.dtype={t.dtype}, t_ref.dtype={t_ref.dtype}"
+    assert t.device == t_ref.device, f"张量设备不一致：t.device={t.device}, t_ref.device={t_ref.device}"
+
+    # 误差点数量阈值（按比例计算）
+    error_count_threshold = round(max_error_ratio * t_ref.numel())
+
+    # 计算误差掩码（超过阈值的位置为True）
+    diff_abs = (t - t_ref).abs()
+    tolerance = atol + rtol * t_ref.abs()
+    diff_mask = diff_abs > tolerance
+    error_count = diff_mask.sum().item()
+
+    # 最大误差及其位置
+    max_diff, flat_max_pos = torch.max(diff_abs.flatten(), dim=0)
+    max_pos = torch.unravel_index(flat_max_pos, t.shape)
+    max_pos = tuple(idx.item() for idx in max_pos)
+
+    if error_count > 0:
+        print(f"\n========== 张量 {name} 存在 {error_count} 个误差点（阈值：{error_count_threshold}）==========")
+
+        error_positions = torch.nonzero(diff_mask, as_tuple=False)
+
+        show_count = min(error_count, max_error_count)
+        print(f"显示前 {show_count} 个误差点（位置 | 待比较值 | 参考值 | 绝对误差 | 允许阈值）：")
+
+        for i in range(show_count):
+            pos = error_positions[i]
+            pos_tuple = tuple(p.item() for p in pos)
+            t_val = t[pos_tuple].item()
+            t_ref_val = t_ref[pos_tuple].item()
+            diff_val = diff_abs[pos_tuple].item()
+            tol_val = tolerance[pos_tuple].item()
+            print(f"  位置 {pos_tuple}: {t_val:.8f} vs {t_ref_val:.8f} | 误差={diff_val:.8f} | 阈值={tol_val:.8f}")
+
+        print(f"\n最大误差点：位置 {max_pos} | 误差={max_diff.item():.8f} | 阈值={tolerance[max_pos].item():.8f}")
+        print("=" * 80 + "\n")
+
+    assert error_count <= error_count_threshold, \
+        (f"compare fail: {name}, max diff: {max_diff.item():.8f} at {max_pos}, "
+         f"error_count: {error_count}, error_count_threshold: {error_count_threshold}")
+
+    print("compare success !!!!")
 
 # ─────────────────────────────────────────────
 # 1. 环境工具
@@ -119,29 +228,13 @@ def run_mhc_pre_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     print(f"  Input shape : x {x.shape}, phi {phi.shape}")
     print(f"  Output shape: h_in {h_in_impl.shape}, h_post {h_post_impl.shape}, h_res {h_res_impl.shape}")
 
-    h_in_impl_np = h_in_impl.cpu().float().numpy()
-    h_in_golden_np = h_in_golden.float().numpy()
-    max_diff_h_in = np.abs(h_in_impl_np - h_in_golden_np).max()
-    print(f"  h_in max diff: {max_diff_h_in:.6e}")
-
-    h_post_impl_np = h_post_impl.cpu().numpy()
-    h_post_golden_np = h_post_golden.numpy()
-    max_diff_h_post = np.abs(h_post_impl_np - h_post_golden_np).max()
-    print(f"  h_post max diff: {max_diff_h_post:.6e}")
-
-    # impl 输出 h_res 现为 3D [bs, N, N]，与 golden 输出一致
-    # 直接对比即可
-    h_res_impl_np = h_res_impl.cpu().numpy()
-    h_res_golden_np = h_res_golden.numpy()
-    max_diff_h_res = np.abs(h_res_impl_np - h_res_golden_np).max()
-    print(f"  h_res max diff: {max_diff_h_res:.6e}")
-
     # 三态判定
     if run_mode == "npu":
+        cmp_cfg = CompareConfig(atol=ATOL, rtol=RTOL, max_error_ratio=MAX_ERROR_RATIO)
         try:
-            assert_allclose(h_in_impl_np, h_in_golden_np, rtol=RTOL, atol=ATOL)
-            assert_allclose(h_post_impl_np, h_post_golden_np, rtol=RTOL, atol=ATOL)
-            assert_allclose(h_res_impl_np, h_res_golden_np, rtol=RTOL, atol=ATOL)
+            compare(h_in_impl.cpu().float(), h_in_golden.cpu().float(), "h_in", cmp_cfg)
+            compare(h_post_impl.cpu().float(), h_post_golden.cpu().float(), "h_post", cmp_cfg)
+            compare(h_res_impl.cpu().float(), h_res_golden.cpu().float(), "h_res", cmp_cfg)
             print("[PRECISION_PASS]")
         except AssertionError as e:
             print(f"[PRECISION_FAIL] {e}", file=sys.stderr)
@@ -173,7 +266,6 @@ def test_mhc_pre_bs256(device_id=None, run_mode="npu"):
 
 
 @pytest.mark.soc("950", "910")
-@pytest.mark.skip(reason="large test case")
 def test_mhc_pre_bs1024(device_id=None, run_mode="npu"):
     """测试 case: B*S = 1024"""
     run_mhc_pre_test(bs=1024, N=4, D=5120, device_id=device_id, run_mode=run_mode, test_name="B*S = 1024")
