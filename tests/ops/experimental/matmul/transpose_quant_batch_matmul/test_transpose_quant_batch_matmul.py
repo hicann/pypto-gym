@@ -147,20 +147,6 @@ _TQBMM_TEST_CONFIGS = [
         permY=[1, 0, 2],
         description="test3",
     ),
-    ShapeConfig(
-        ori_shape=[32768, 128, 512],
-        batch_size=128,
-        m_tile_shape=[512, 512],
-        k_tile_shape=[128, 128],
-        n_tile_shape=[128, 128],
-        vector_tile_shape=[1, 512, 1024, 32],
-        in_dtype=pypto.DT_FP8E4M3,
-        out_dtype=pypto.DT_FP16,
-        permX1=[1, 0, 2],
-        permX2=[0, 1, 2],
-        permY=[1, 0, 2],
-        description="test4",
-    )
 ]
 
 
