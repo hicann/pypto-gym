@@ -134,7 +134,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
                         kj_assemble = pypto.view(kj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
                         vj_assemble = pypto.view(vj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
 
-                        pypto.set_vec_tile_shapes(128, 512)
+                        pypto.set_vec_tile_shapes(128, 128)
                         kj_fp32 = pypto.cast(kj_assemble, pypto.DT_FP32, pypto.CastMode.CAST_NONE)
                         cur_key_antiquant_scale = key_antiquant_scale[n2_idx]
                         kj_antiquant_scale_fp32 = pypto.cast(
@@ -143,7 +143,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
                         out_data_fp32 = pypto.mul(kj_fp32, kj_antiquant_scale_fp32)
                         kj_assemble_antiquanted = pypto.cast(out_data_fp32, pypto.DT_BF16, pypto.CastMode.CAST_NONE)
 
-                        pypto.set_vec_tile_shapes(128, 512)
+                        pypto.set_vec_tile_shapes(128, 128)
                         vj_fp32 = pypto.cast(vj_assemble, pypto.DT_FP32, pypto.CastMode.CAST_NONE)
                         cur_value_antiquant_scale = value_antiquant_scale[n2_idx]
                         vj_antiquant_scale_fp32 = pypto.cast(
