@@ -133,6 +133,7 @@ def flash_attention_varlen_forward_kernel(
     runtime_options={
         "device_sched_mode": 1,
         "stitch_function_max_num": 1024,
+        "ready_on_host_tensors": ["cu_seqlens_q", "cu_seqlens_k"],
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 1},
@@ -283,7 +284,7 @@ def flash_attention_varlen_forward_950(
                         pij_bf16, mij, lij = pypto.experimental.online_softmax(scores, scale)
                         pypto.set_pass_options(sg_set_ooo_scope=-1)
 
-                        pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])                        
+                        pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                         pypto.set_cube_tile_shapes(
                             tile_config.c2_cube_tile[0], tile_config.c2_cube_tile[1], tile_config.c2_cube_tile[2])
                         oij = pypto.matmul(v_tile_view, pij_bf16, out_dtype=pypto.DT_FP32, a_trans=True)
@@ -309,7 +310,7 @@ def flash_attention_varlen_forward_950(
                             pypto.assemble(li_new_r, [q_start + q_tile_start, h_idx], l_output)
                             pypto.assemble(out_bf16_t, [q_start + q_tile_start, h_offset], output)
 
-                        else: 
+                        else:
                             pypto.set_pass_options(sg_set_ooo_scope=-1)
 
                             oi_update[:] = oi_tmp
@@ -323,6 +324,7 @@ def flash_attention_varlen_forward_950(
     runtime_options={
         "device_sched_mode": 0,
         "stitch_function_max_num": 1024,
+        "ready_on_host_tensors": ["cu_seqlens_q", "cu_seqlens_k"],
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 8},
@@ -511,7 +513,7 @@ def flash_attention_varlen_forward(
                                 pypto.assemble(li_new, [q_start + q_tile_start, h_act_idx], l_output)
                                 pypto.assemble(mi_new, [q_start + q_tile_start, h_act_idx], m_output)
                                 pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
-                            else: 
+                            else:
                                 oi_update[:] = oi_tmp
                                 li_update[:] = li_new
                                 mi_update[:] = mi_new
@@ -521,6 +523,7 @@ def flash_attention_varlen_forward(
     runtime_options={
         "device_sched_mode": 3,
         "stitch_function_max_num": 256,
+        "ready_on_host_tensors": ["cu_seqlens_q", "cu_seqlens_k"],
     },
     pass_options={
         "cube_l1_reuse_setting": {0: 8, 1: 1},
