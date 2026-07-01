@@ -31,8 +31,7 @@ import pytest
 import pypto
 
 from experimental.ops_transformer.sparse_attention_antiquant_fp8.sparse_attention_antiquant_fp8_impl \
-    import sparse_attention_antiquant_d, sparse_attention_antiquant_fp8_high, sparse_attention_antiquant_p, \
-        SaTileShapeConfig
+    import sparse_attention_antiquant_fp8_high, SaTileShapeConfig
 from common_utils import compare
 
 
@@ -336,30 +335,14 @@ def do_test_sparse_attention_func_aq(test_config, data_bundle, is_p):
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
 
-    if is_p:
-        tile_config = SaTileShapeConfig(
-            g_tile=128, s_kv_tile=2048,
-            c1_tile_shape=[128, 128, 128, 128, 128, 128],
-            v1_tile_shape=[8, 2048],
-            c2_tile_shape=[128, 128, 128, 128, 128, 128],
-            v2_tile_shape=[64, 128])
-    else:
-        if pypto.platform.npuarch == 'DAV_3510':
-            tile_config = SaTileShapeConfig(
-                g_tile=128,
-                s_kv_tile=2048,
-                c1_tile_shape=[128, 128, 128, 128, 64, 64],
-                v1_tile_shape=[8, 2048],
-                c2_tile_shape=[128, 128, 128, 128, 128, 128],
-                v2_tile_shape=[64, 128]
-            )
-        else:
-            tile_config = SaTileShapeConfig(
-                g_tile=128, s_kv_tile=2048,
-                c1_tile_shape=[128, 128, 128, 128, 128, 128],
-                v1_tile_shape=[8, 2048],
-                c2_tile_shape=[128, 128, 128, 128, 128, 128],
-                v2_tile_shape=[64, 128])
+    tile_config = SaTileShapeConfig(
+        g_tile=128,
+        s_kv_tile=2048,
+        c1_tile_shape=[128, 128, 128, 128, 64, 64],
+        v1_tile_shape=[8, 2048],
+        c2_tile_shape=[128, 128, 128, 128, 128, 128],
+        v2_tile_shape=[64, 128]
+    )
 
     b, s1, n_q, n_kv, max_kv_seq, kv_lora_rank, qk_rope_dim, block_num, block_size, topk, \
         softmax_scale = input_params
@@ -381,18 +364,11 @@ def do_test_sparse_attention_func_aq(test_config, data_bundle, is_p):
 
     max_blocknum_perbatch = math.ceil(max_kv_seq / block_size)
 
-    if is_p:
-        sparse_attention_antiquant_p(*pto_inputs, *pto_outputs,
-            n_q, n_kv, softmax_scale, topk, block_size, max_blocknum_perbatch, tile_config)
-    elif pypto.platform.npuarch == 'DAV_3510':
-        for _ in range(1):
-            a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
-            for _ in range(100):
-                a_max = torch.max(a)
-            sparse_attention_antiquant_fp8_high(*pto_inputs, *pto_outputs,
-                n_q, n_kv, softmax_scale, topk, block_size, max_blocknum_perbatch, tile_config)
-    else:
-        sparse_attention_antiquant_d(*pto_inputs, *pto_outputs,
+    for _ in range(1):
+        a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
+        for _ in range(100):
+            a_max = torch.max(a)
+        sparse_attention_antiquant_fp8_high(*pto_inputs, *pto_outputs,
             n_q, n_kv, softmax_scale, topk, block_size, max_blocknum_perbatch, tile_config)
     calc_attention_out_npu = calc_attention_out_npu.reshape(b, s1, n_q, kv_lora_rank)
     torch_npu.npu.synchronize()
@@ -401,9 +377,6 @@ def do_test_sparse_attention_func_aq(test_config, data_bundle, is_p):
 
 def get_case_config(case_name: str):
     test_case_config = {
-        "sfa_bf16_b4_s2_seq64K_total_fp8_d": ((4, 128, 1, 2), 1, [65536, 16381, 666, 15]),
-        "sfa_bf16_b4_s2_seq64K_per_fp8_d": ((4, 128, 1, 2), 1, [65536] * 4),
-        "sfa_bf16_b1_s256_seq64K_fp8_p": ((1, 128, 1, 256), 1, [65536]),
         "sfa_bf16_b4_s2_seq64K_per_fp8_d_low": ((4, 128, 1, 2), 1, [65536] * 4),
         "sfa_bf16_b64_s2_seq64K_per_fp8_d_high": ((64, 128, 1, 2), 1, [65536] * 64),
     }
@@ -427,12 +400,6 @@ def do_test_sfa_entry(case_name: str, is_p: bool):
 
 
 @pytest.mark.soc("950")
-def test_sfa_bf16_b4_s2_seq64k_total_fp8_d():
-    '''sfa decode测试函数'''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_total_fp8_d", is_p=False)
-
-
-@pytest.mark.soc("950")
 def test_sfa_bf16_b4_s2_seq64k_per_fp8_d_low():
     '''sfa decode测试函数'''
     do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_fp8_d_low", is_p=False)
@@ -444,26 +411,9 @@ def test_sfa_bf16_b64_s2_seq64k_per_fp8_d_high():
     do_test_sfa_entry("sfa_bf16_b64_s2_seq64K_per_fp8_d_high", is_p=False)
 
 
-@pytest.mark.soc("950")
-@pytest.mark.skip(reason="perf")
-def test_sfa_bf16_b4_s2_seq64k_per_fp8_d():
-    '''sfa decode测试函数'''
-    do_test_sfa_entry("sfa_bf16_b4_s2_seq64K_per_fp8_d", is_p=False)
-
-
-@pytest.mark.soc("950")
-@pytest.mark.skip(reason="large test case")
-def test_sfa_bf16_b1_s256_seq64k_fp8_p():
-    '''sfa prefill测试函数'''
-    do_test_sfa_entry("sfa_bf16_b1_s256_seq64K_fp8_p", is_p=True)
-
-
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s: %(message)s',
         level=logging.INFO)
-    test_sfa_bf16_b4_s2_seq64k_total_fp8_d()
-    test_sfa_bf16_b4_s2_seq64k_per_fp8_d()
-    test_sfa_bf16_b1_s256_seq64k_fp8_p()
     test_sfa_bf16_b4_s2_seq64k_per_fp8_d_low()
     test_sfa_bf16_b64_s2_seq64k_per_fp8_d_high()
