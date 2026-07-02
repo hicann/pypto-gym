@@ -43,12 +43,12 @@ class FlashAttentionGradTileShapeConfig:
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 128,
+        "stitch_function_max_num": 256,
         "device_sched_mode": 3,
         "ready_on_host_tensors": ["actual_q", "actual_kv"],
     },
     pass_options={
-        "vec_nbuffer_setting": {-1: 1, 0: 4},
+        "cube_l1_reuse_setting": {-1: 1, 0: 4},
     }
 )
 def flash_attention_mha_grad_kernel_impl(
@@ -129,13 +129,12 @@ def flash_attention_mha_grad_kernel_impl(
                     dp_ij = pypto.matmul(do_i, v_j, pypto.DT_FP32, b_trans=True)
 
                     pypto.set_pass_options(sg_set_scope=1)
-                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
                     do_i_fp32 = pypto.cast(do_i, pypto.DT_FP32)
                     o_i_fp32 = pypto.cast(o_i, pypto.DT_FP32)
                     do_mul_oi = pypto.mul(o_i_fp32, do_i_fp32)
                     d_i = pypto.sum(do_mul_oi, -1, keepdim=True)
 
-                    pypto.set_vec_tile_shapes(v_tile_s[0], v_tile_s[1])
                     s_ij = pypto.mul(s_ij, scale)
                     p_ij = pypto.exp(pypto.sub(s_ij, m_i))
                     p_ij = pypto.div(p_ij, l_i, precision_type=pypto.PrecisionType.INTRINSIC)
@@ -147,15 +146,12 @@ def flash_attention_mha_grad_kernel_impl(
 
                     pypto.set_cube_tile_shapes(c_tile[0], c_tile[1], c_tile[2])
                     dv_tile = pypto.matmul(p_bf16, do_i, pypto.DT_FP32, a_trans=True)
-
-                    pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
-                    pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
-
                     dq_tile = pypto.matmul(ds_bf16, k_j, pypto.DT_FP32)
                     dk_tile = pypto.matmul(ds_bf16, q_i, pypto.DT_FP32, a_trans=True)
 
                     pypto.set_pass_options(sg_set_scope=2)
                     pypto.set_vec_tile_shapes(v_tile_d[0], v_tile_d[1])
+                    pypto.atomic_add(dv_tile, [s2_off, h_ofs], dv)
                     dq_final = pypto.mul(dq_tile, scale)
                     pypto.atomic_add(dq_final, [s1_off, h_ofs], dq)
                     dk_final = pypto.mul(dk_tile, scale)

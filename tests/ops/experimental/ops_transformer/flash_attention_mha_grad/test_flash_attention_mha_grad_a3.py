@@ -183,7 +183,7 @@ def _default_tile_config():
         s2_tile=S2_TILE,
         c_tile=[[256, 512], [128, 256], [128, 512]],
         v_tile_s=[64, 256],
-        v_tile_d=[64, 256],
+        v_tile_d=[256, 256],
     )
 
 
