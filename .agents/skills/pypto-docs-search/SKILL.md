@@ -9,11 +9,12 @@ description: 检索 PyPTO 算子开发资源——API 文档、按错误码排�
 
 ## 资源缓存
 
-`$PYPTO_DEVKIT_DIR`（默认 `${XDG_CACHE_HOME:-$HOME/.cache}/pypto-devkit`）下三类：
+`$PYPTO_DEVKIT_DIR`（默认 `${XDG_CACHE_HOME:-$HOME/.cache}/pypto-devkit`）下：
 
 | 子目录 | 内容 |
 |---|---|
 | `docs/` | API / 排障 / 教程 / 安装 / 工具文档 |
+| `pro_ops/` | PyPTO-Pro 算子样例（`pl.*` 用法参考，供 pypto-pro 工作流使用；**可选**，仅当源仓含该路径时才装配） |
 | `ops/` | 算子参考实现（照着写的权威范本） |
 | `tests/` | golden / 测试 |
 
@@ -25,7 +26,7 @@ description: 检索 PyPTO 算子开发资源——API 文档、按错误码排�
 python3 scripts/sync_devkit.py
 ```
 
-它把三类装配到缓存并写 `MANIFEST.json`。当前工作树已含某类资源时符号链接复用、免重复下载——保证磁盘上每类只有一份，`grep` 不会命中两份不一致的副本。成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/ ops/ tests/`。
+它把各类装配到缓存并写 `MANIFEST.json`。当前工作树已含某类资源时符号链接复用、免重复下载——保证磁盘上每类只有一份，`grep` 不会命中两份不一致的副本。成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/ ops/ tests/`（`pro_ops/` 为 PyPTO-Pro 工作流可选项，源仓无此路径时自动跳过，不影响成功判定）。
 
 ## 检索
 
