@@ -32,6 +32,7 @@ import argparse
 
 import torch
 import torch_npu  # noqa: F401
+import pypto
 import numpy as np
 from numpy.testing import assert_allclose
 
@@ -40,7 +41,7 @@ import pytest
 # golden 文件从同级目录导入
 from mhc_post_golden import mhc_post_golden
 # impl 文件使用包导入方式（假设 pypto_gym 已通过 pip install -e . 安装）
-from experimental.vector.mhc_post.mhc_post_impl import mhc_post_wrapper
+from experimental.vector.mhc_post.mhc_post_impl import mhc_post_wrapper, MhcPostConfig
 
 # 精度容差
 RTOL = 0.0078125
@@ -154,8 +155,23 @@ def run_mhc_post_test(bs, N, D, device_id=None, run_mode="npu", test_name=None):
     h_out = torch.randn(B, S, D, dtype=torch.bfloat16, device=device)
     h_post = torch.randn(B, S, N, dtype=torch.float32, device=device)
 
+    if pypto.platform.npuarch == 'DAV_3510':
+        if bs <= 32:
+            config = MhcPostConfig(vec_nbuffer=1)
+        elif bs <= 64:
+            config = MhcPostConfig(vec_nbuffer=2)
+        else:
+            config = MhcPostConfig(vec_nbuffer=4)
+    else:
+        if bs <= 32:
+            config = MhcPostConfig(vec_nbuffer=1)
+        elif bs <= 64:
+            config = MhcPostConfig(vec_nbuffer=4)
+        else:
+            config = MhcPostConfig(vec_nbuffer=8)
+
     # 执行 kernel wrapper
-    result = mhc_post_wrapper(x, h_res, h_out, h_post)
+    result = mhc_post_wrapper(x, h_res, h_out, h_post, config)
 
     _run_golden_and_compare(x, h_res, h_out, h_post, result, bs, N, D, run_mode)
 

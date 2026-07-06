@@ -21,20 +21,25 @@ mhc_post 算子实现 — loop_unroll(bs) + Python for(k) + pypto.view + axpy_ �
 公式：output[b*s, n, d] = h_post[b*s, n] * h_out[b*s, d] + sum_{k=0}^{N-1} h_res[b*s, k, n] * x[b*s, k, d]
 """
 
+from dataclasses import dataclass
 import pypto
 import torch
 import torch_npu
 
 
-@pypto.frontend.jit(
-    runtime_options={"stitch_function_max_num": 1024},
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}})
+@dataclass
+class MhcPostConfig:
+    vec_nbuffer: int
+
+
+@pypto.frontend.jit(runtime_options={"stitch_function_max_num": 1024})
 def mhc_post_kernel_bf16(
     x: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),       # [B*S, N, D] BF16
     h_res: pypto.Tensor([pypto.DYNAMIC, 4, 4], pypto.DT_FP32),              # [B*S, N, N] FP32
     h_out: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),      # [B*S, D] BF16
     h_post: pypto.Tensor([pypto.DYNAMIC, 4], pypto.DT_FP32),                # [B*S, N] FP32
     output: pypto.Tensor([pypto.DYNAMIC, 4, pypto.STATIC], pypto.DT_BF16),  # [B*S, N, D] BF16
+    mhc_post_config: MhcPostConfig,
 ):
     """mhc_post kernel — loop_unroll(bs) + Python for(k) + pypto.view + axpy_。
 
@@ -49,6 +54,9 @@ def mhc_post_kernel_bf16(
     4. cast result → BF16，assemble 写回
     """
     pypto.experimental.set_operation_options(combine_axis=True)
+
+    vec_nbuffer_value = mhc_post_config.vec_nbuffer
+    pypto.set_pass_options(vec_nbuffer_setting={-2: 1, -1: vec_nbuffer_value})
 
     BS = x.shape[0]
     N = 4
@@ -106,6 +114,7 @@ def mhc_post_wrapper(
     h_res: torch.Tensor,
     h_out: torch.Tensor,
     h_post: torch.Tensor,
+    mhc_post_config: MhcPostConfig,
     output: torch.Tensor = None,
 ) -> torch.Tensor:
     """算子 wrapper，供 test_mhc_post.py 调用。
@@ -122,6 +131,7 @@ def mhc_post_wrapper(
         h_res: [B, S, N, N] 流间混合权重矩阵 (FP32)
         h_out: [B, S, D] 输出项数据 (BF16)
         h_post: [B, S, N] 后处理权重 (FP32)
+        mhc_post_config: 算子配置（含 vec_nbuffer）
         output: 可选输出 tensor，如未提供则自动构造
 
     Returns:
@@ -151,7 +161,7 @@ def mhc_post_wrapper(
 
     mhc_post_kernel_bf16(
         x_reshaped, h_res_reshaped, h_out_reshaped, h_post_reshaped,
-        output_reshaped
+        output_reshaped, mhc_post_config
     )
 
     return output_reshaped.view(B, S, N, D)
