@@ -435,12 +435,6 @@ def get_case_config(case_name):
 
 
 def get_tile_config(case_config):
-
-    m_tile = 128
-    k_tile = 128
-    n_tile = 128
-    s2_tile = 1024
-
     n1 = case_config.n1
     n2 = case_config.n2
     group = n1 // n2
@@ -452,11 +446,12 @@ def get_tile_config(case_config):
 
     tile_config = AttentionTileConfig(
         g_tile=g_tile,
-        s2_tile=s2_tile,
-        c1_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
-        v1_tile=[m_tile, s2_tile],
-        c2_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
-        v2_tile=[m_tile, m_tile]
+        s2_tile=512,
+        v0_tile=[256, 128],
+        c1_tile=[[16, 16], [128, 128], [256, 256]],
+        v1_tile=[128, 512],
+        c2_tile=[[16, 16], [256, 512], [128, 128]],
+        v2_tile=[4, 128]
     )
     return tile_config
 

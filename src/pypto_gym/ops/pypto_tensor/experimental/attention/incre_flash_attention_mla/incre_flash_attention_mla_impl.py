@@ -389,7 +389,8 @@ def handle_other_tile(wv, lse, max_score, ctx):
 
     pypto.set_semantic_label("MLA_UpdateVec2")
     pypto.set_vec_tile_shapes(tc.v2_update_tile[0], tc.v2_update_tile[1])
-
+    if pypto.platform.npuarch != 'DAV_3510':
+        pypto.set_pass_options(sg_set_scope=1)
     new_max = pypto.maximum(tt.max_update, max_score)
     old_diff = pypto.sub(tt.max_update, new_max)
     exp_old = pypto.exp(old_diff)
@@ -413,6 +414,8 @@ def handle_other_tile(wv, lse, max_score, ctx):
 
     tt.sum_update[:] = new_lse
     tt.max_update[:] = new_max
+    if pypto.platform.npuarch != 'DAV_3510':
+        pypto.set_pass_options(sg_set_scope=-1)
 
 
 def compute_loop_s2(ctx):

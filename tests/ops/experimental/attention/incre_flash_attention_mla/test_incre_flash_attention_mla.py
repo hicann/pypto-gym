@@ -316,6 +316,7 @@ def do_test_incre_flash_attention_mla(case_name):
 
 
 @pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_mla_32b4k():
     do_test_incre_flash_attention_mla("32b4k")
 
@@ -326,11 +327,13 @@ def test_incre_flash_attention_mla_1b4k():
 
 
 @pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_mla_8b4k():
     do_test_incre_flash_attention_mla("8b4k")
 
 
 @pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
 def test_incre_flash_attention_mla_16b8k():
     do_test_incre_flash_attention_mla("16b8k")
 

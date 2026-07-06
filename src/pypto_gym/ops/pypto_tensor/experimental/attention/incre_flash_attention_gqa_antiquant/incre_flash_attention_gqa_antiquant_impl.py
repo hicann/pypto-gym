@@ -34,6 +34,7 @@ class AttentionTileConfig:
     """
     g_tile: int
     s2_tile: int
+    v0_tile: list
     c1_tile: list
     v1_tile: list
     c2_tile: list
@@ -42,14 +43,15 @@ class AttentionTileConfig:
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 1024,
+        "stitch_function_max_num": 513,
         "device_sched_mode": 1,
         "ready_on_host_tensors": ["block_table", "kv_actual_seqs"]
     },
     pass_options={
-        "cube_l1_reuse_setting": {-1: 8},
-        "cube_nbuffer_setting": {-1: 2},
-        "vec_nbuffer_setting": {0: 8},
+        "cube_l1_reuse_setting": {-1: 16},
+        "vec_nbuffer_setting": {-2: 1, -1: 16},
+        "ooo_sched_mode": "GAPMIN",
+        "sg_set_tunevf_mode": 1,
     }
 )
 def incre_flash_attention_gqa_antiquant_kernel(
@@ -65,7 +67,6 @@ def incre_flash_attention_gqa_antiquant_kernel(
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
 
-    # Step 1: Initialize kernel config
     dtype = query.dtype
     b, n1, s1, d = query.shape
     block_num, n2, block_size, _ = key.shape
@@ -74,7 +75,6 @@ def incre_flash_attention_gqa_antiquant_kernel(
     group = n1 // n2
     softmax_scale = d ** -0.5
 
-    # Step 2: Reshape Q, K, V to 2D
     q_2d_shape = (b * n1, s1 * d)
     kv_2d_shape = (block_num * block_size * n2, d)
 
@@ -82,20 +82,18 @@ def incre_flash_attention_gqa_antiquant_kernel(
     k_2d = pypto.reshape(key, kv_2d_shape, inplace=True)
     v_2d = pypto.reshape(value, kv_2d_shape, inplace=True)
 
-    # Calculate number of groups to iterate
     g_tile = tile_cfg.g_tile
     group_loop = group // g_tile
     s2_tile = tile_cfg.s2_tile
+    v0_tile = tile_cfg.v0_tile
     c1_tile = tile_cfg.c1_tile
     v1_tile = tile_cfg.v1_tile
     c2_tile = tile_cfg.c2_tile
     v2_tile = tile_cfg.v2_tile
 
     block_num = s2_tile // block_size
-   
-    # Step 3: Implement kernel logic with nested loops
-    # Loop over batch dimension
-    for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx", parallel=True):  
+
+    for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx", parallel=True):
         for s1_idx in pypto.loop(s1, name="LOOP_s1", idx_name="s1_idx"):
             cur_seq_len = kv_actual_seqs[b_idx] - (s1 - 1 - s1_idx)
             cur_seq_len.as_variable()
@@ -106,21 +104,15 @@ def incre_flash_attention_gqa_antiquant_kernel(
                     out_update = pypto.tensor([g_tile, d], pypto.DT_FP32, "out_update")
                     sum_update = pypto.tensor([g_tile, 1], pypto.DT_FP32, "sum_update")
                     max_update = pypto.tensor([g_tile, 1], pypto.DT_FP32, "max_update")
-
                     n1g_ofs = n2_idx * group + group_idx * g_tile
-                    
                     pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
                     for s2_idx in pypto.loop(s2_loop, name="LOOP_s2", idx_name="s2_idx", unroll_list=[16, 8, 1]):
-                        
-                        pypto.set_pass_options(sg_set_scope=1)
+                        pypto.set_pass_options(sg_set_scope=10001)
                         qi = pypto.view(q_2d, [g_tile, d], [b_idx * n1 + n1g_ofs, s1_idx * d])
-
                         actual_s2_tile = (cur_seq_len - s2_idx * s2_tile).min(s2_tile)
-                        # Create assembled tensor
                         kj_assemble = pypto.tensor([s2_tile, d], k_2d.dtype, "kj_assemble")
                         vj_assemble = pypto.tensor([s2_tile, d], v_2d.dtype, "vj_assemble")
                         idx = s2_idx * block_num
-                        # Copy blocks from 2D K tensor according to block table
                         for i in range(block_num):
                             block_idx = block_table[b_idx, idx + i]
                             block_idx_valid = block_idx.max(0)
@@ -130,11 +122,10 @@ def incre_flash_attention_gqa_antiquant_kernel(
                             vj_assemble[i * block_size:(i + 1) * block_size, 0:] = pypto.view(
                                 v_2d, [block_size, d], [(block_idx_valid * n2 + n2_idx) * block_size, 0]
                             )
-                        # Set valid shape (may be smaller than allocated size)
+                        pypto.set_pass_options(sg_set_ooo_scope=4)
                         kj_assemble = pypto.view(kj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
                         vj_assemble = pypto.view(vj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
-
-                        pypto.set_vec_tile_shapes(128, 128)
+                        pypto.set_vec_tile_shapes(v0_tile[0], v0_tile[1])
                         kj_fp32 = pypto.cast(kj_assemble, pypto.DT_FP32, pypto.CastMode.CAST_NONE)
                         cur_key_antiquant_scale = key_antiquant_scale[n2_idx]
                         kj_antiquant_scale_fp32 = pypto.cast(
@@ -142,8 +133,6 @@ def incre_flash_attention_gqa_antiquant_kernel(
                         )
                         out_data_fp32 = pypto.mul(kj_fp32, kj_antiquant_scale_fp32)
                         kj_assemble_antiquanted = pypto.cast(out_data_fp32, pypto.DT_BF16, pypto.CastMode.CAST_NONE)
-
-                        pypto.set_vec_tile_shapes(128, 128)
                         vj_fp32 = pypto.cast(vj_assemble, pypto.DT_FP32, pypto.CastMode.CAST_NONE)
                         cur_value_antiquant_scale = value_antiquant_scale[n2_idx]
                         vj_antiquant_scale_fp32 = pypto.cast(
@@ -151,13 +140,11 @@ def incre_flash_attention_gqa_antiquant_kernel(
                         )
                         vj_out_data_fp32 = pypto.mul(vj_fp32, vj_antiquant_scale_fp32)
                         vj_assemble_antiquanted = pypto.cast(vj_out_data_fp32, pypto.DT_BF16, pypto.CastMode.CAST_NONE)
-                        pypto.set_pass_options(sg_set_scope=-1)
-
+                        pypto.set_pass_options(sg_set_ooo_scope=1)
                         pypto.set_cube_tile_shapes(c1_tile[0], c1_tile[1], c1_tile[2])
                         sij = pypto.matmul(qi, kj_assemble_antiquanted, pypto.DT_FP32, a_trans=False, b_trans=True)
-                        
-                        pypto.set_pass_options(sg_set_scope=2)
-                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                        pypto.set_vec_tile_shapes(v2_tile[0], s2_tile)
+                        pypto.set_pass_options(sg_set_ooo_scope=1)
                         sij = pypto.view(sij, [g_tile, s2_tile], [0, 0], valid_shape=[g_tile, actual_s2_tile])
                         sij_scale = pypto.mul(sij, softmax_scale)
                         tilda_mij = pypto.amax(sij_scale, dim=-1, keepdim=True)
@@ -165,13 +152,11 @@ def incre_flash_attention_gqa_antiquant_kernel(
                         tilda_pij = pypto.exp(tsub)
                         tilda_pij_fp16 = pypto.cast(tilda_pij, dtype)
                         sum_local = pypto.sum(tilda_pij, dim=-1, keepdim=True)
-                        pypto.set_pass_options(sg_set_scope=-1)
-
+                        pypto.set_pass_options(sg_set_ooo_scope=-1)
                         pypto.set_cube_tile_shapes(c2_tile[0], c2_tile[1], c2_tile[2])
                         mm2_res = pypto.matmul(tilda_pij_fp16, vj_assemble_antiquanted, pypto.DT_FP32)
-
                         if pypto.is_loop_begin(s2_idx):
-                            pypto.set_pass_options(sg_set_scope=3)
+                            pypto.set_pass_options(sg_set_ooo_scope=2)
                             pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                             oi_tmp = mm2_res
                             out_update[:] = pypto.tensor(oi_tmp.shape, pypto.DT_FP32, "out_update")
@@ -182,13 +167,14 @@ def incre_flash_attention_gqa_antiquant_kernel(
                                 oi_final_4d = pypto.cast(pypto.reshape(out_update, [1, g_tile, 1, d]), dtype)
                                 out_ofs = [b_idx, n1g_ofs, s1_idx, 0]
                                 pypto.assemble(oi_final_4d, out_ofs, atten_out)
+                                pypto.set_pass_options(sg_set_ooo_scope=-1)
                             else:
                                 out_update[:] = oi_tmp
                                 sum_update[:] = sum_local
                                 max_update[:] = tilda_mij
-                            pypto.set_pass_options(sg_set_scope=-1)
+                                pypto.set_pass_options(sg_set_ooo_scope=-1)
                         else:
-                            pypto.set_pass_options(sg_set_scope=4)
+                            pypto.set_pass_options(sg_set_ooo_scope=3)
                             pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
                             max_new = pypto.maximum(max_update, tilda_mij)
                             t1 = pypto.sub(max_update, max_new)
@@ -200,20 +186,21 @@ def incre_flash_attention_gqa_antiquant_kernel(
                             sum_new = pypto.add(t6, t5)
                             sum_update[:] = sum_new
                             max_update[:] = max_new
-
                             oi_last = pypto.mul(out_update, t2)
                             oi_flash = pypto.mul(mm2_res, t4)
                             oi_tmp = pypto.add(oi_last, oi_flash)
                             if pypto.is_loop_end(s2_idx):
                                 oi_update_tmp = pypto.div(oi_tmp, sum_update,
                                                           precision_type=pypto.PrecisionType.INTRINSIC)
-                                pypto.set_vec_tile_shapes(1, g_tile, 1, d)
+                                pypto.set_vec_tile_shapes(1, v2_tile[0], 1, d)
                                 oi_final_4d = pypto.cast(pypto.reshape(oi_update_tmp, [1, g_tile, 1, d]), dtype)
                                 out_ofs = [b_idx, n1g_ofs, s1_idx, 0]
                                 pypto.assemble(oi_final_4d, out_ofs, atten_out)
+                                pypto.set_pass_options(sg_set_ooo_scope=-1)
                             else:
                                 out_update[:] = oi_tmp
-                            pypto.set_pass_options(sg_set_scope=-1)
+                                pypto.set_pass_options(sg_set_ooo_scope=-1)
+                        pypto.set_pass_options(sg_set_scope=-1)
 
 
 @allow_in_graph
@@ -228,7 +215,7 @@ def incre_flash_attention_gqa_antiquant(
     tile_config
 ):
     atten_out = torch.zeros_like(query)
-    input_values = [query, key, value, key_antiquant_scale, value_antiquant_scale, kv_actual_seqs, 
+    input_values = [query, key, value, key_antiquant_scale, value_antiquant_scale, kv_actual_seqs,
                     block_table, atten_out, tile_config]
     incre_flash_attention_gqa_antiquant_kernel(*input_values)
     return atten_out
