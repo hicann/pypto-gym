@@ -151,7 +151,7 @@ feasibility: {feasibility}
 ### 6.3 双视图需求
 
 - **是否需要**: {是 / 否}
-- **判定规则**: 归约类 API（row_max/row_sum 等）输出 `[行数,1]` 须设 `layout=pl.DN`（证据 `row_max.md:25`）；若该输出后续要参与 tile×tile 逐元素运算（需默认 ND 布局），则**必须**在同地址声明 DN + ND 双视图对（证据 `pro_ops/fa/test_fa_performance.py:478-483`）
+- **判定规则**: 归约类 API（row_max/row_sum 等）输出 `[行数,1]` 须设 `layout=pl.DN`（证据 `row_max.md:25`）；若该输出后续要参与 tile×tile 逐元素运算（需默认 ND 布局），则**必须**在同地址声明 DN + ND 双视图对
 - **原因**: {来源}
 
 ---

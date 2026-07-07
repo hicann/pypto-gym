@@ -22,6 +22,23 @@ python {脚本路径}
 
 ---
 
+## 资源缓存准备（会话开始，一次）
+
+调度 Stage 1 子代理前，使用 skill `pypto-docs-search` **仅装配（部署）一次开发资源缓存**——此处只运行缓存装配，**不在此进行任何检索 / explore**（PyPTO-Pro 的 API 文档、pro_ops 样例、教程无在线形态，必须本地在场）。检索留待后续各 Stage 按需进行：本次仅装配，不检索。之后 Stage 1 的 `pypto-pro-material-explore` 基于同一份缓存扫描生成 `PRO_MATERIAL_INDEX.md` 资料索引，后续各 Stage 按该索引中的缓存路径直接读取 API 文档、pro_ops 样例与教程。
+
+**装配命令（拉取源全部指向 `https://gitcode.com/gaoxiang618/pypto`）**：三个源 URL（`PYPTO_SRC_URL` docs 主仓 / `PYPTO_GYM_URL` ops+tests 算子仓 / `PYPTO_PRO_OPS_URL` pro_ops 样例）必须全部设为该地址，确保 docs（含 `pypto_pro/` 教程）与 pro_ops（a5 样例）从含 PyPTO-Pro 资料的源仓拉取，不落到默认官方仓：
+
+```bash
+PYPTO_SRC_URL=https://gitcode.com/gaoxiang618/pypto.git \
+PYPTO_GYM_URL=https://gitcode.com/gaoxiang618/pypto.git \
+PYPTO_PRO_OPS_URL=https://gitcode.com/gaoxiang618/pypto.git \
+python .agents/skills/pypto-docs-search/scripts/sync_devkit.py
+```
+
+装配成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/`（含 `pypto_pro/`）与 `pro_ops/`。装配失败（联网受限等）时先总结错误向用户汇报，不得凭空编造索引。
+
+---
+
 ## 子代理调度协议
 
 **所有 Stage 的子代理暂时统一使用 `subagent_type: general`。** 。
@@ -97,6 +114,7 @@ Stage 4 → 调度 general 子代理 + 自行加载 skill pypto-pro-op-develop
 | DESIGN.md 包含 §0–§9 十个章节 | `grep -c "^## §[0-9]" custom/<op>/DESIGN.md` 确认返回 10 |
 | §8 综合评估（准确性/泛化性/一致性）全部通过 | `grep "^## §8" custom/<op>/DESIGN.md` 确认 §8 存在，评估结论中无 ❌ 标记 |
 | §9 包含 Tile 数据流全景图 | `grep "^## §9" custom/<op>/DESIGN.md` 确认 §9 存在，并 `grep "load_tile\|store_tile\|\[双视图\]" custom/<op>/DESIGN.md` |
+| §8 含「目标测试 case」表且 ≥4 个具体 case（供 develop 直接实现） | `grep "目标测试 case" custom/<op>/DESIGN.md` 确认表存在，且表内 `test_` case 行数 ≥ 4（单动态轴算子按 design 例外说明，可 <4 但须注明原因） |
 | 无 "待定" 或 "TBD" | `grep -i "待定\|TBD\|TODO" custom/<op>/DESIGN.md` 应返回空 |
 
 → **不通过**：反馈缺失项，要求子代理补充对应轮次
@@ -131,7 +149,7 @@ Stage 4 → 调度 general 子代理 + 自行加载 skill pypto-pro-op-develop
 | 未作弊 | 核心计算应该都在一个 kernel 内进行，且host 端不允许进行核心计算步骤 | 检查 host 端部分代码，确保不做核心计算；检查文件中 kernel 数量，确保只存在一个 kernel |
 | 运行 | 代码可运行 | 执行 `python custom/<op>/test_{op}.py`，检查 exit code = 0 |
 | 精度 | 精度通过 | 从运行输出中确认 `PASS`（无 Traceback/Error/Exception） |
-| 泛化 | 至少2 个独立 test（整切+尾块） | `grep -c "def test_" custom/<op>/test_{op}.py` ≥ 2 |
+| 泛化 | 至少 4 个独立 test，且与 DESIGN.md §8「目标测试 case」一致 | `grep -c "def test_" custom/<op>/test_{op}.py` ≥ 4（test 应实现 §8 已确定的 case，非临时另造） |
 
 **orchestrator 职责**：在子代理返回后，**先执行静态检查（前 5 项）**，任一 FAIL 直接反馈。静态全部通过后，**再亲自运行**验证：
 
@@ -149,6 +167,6 @@ python custom/<op>/test_{op}.py
 
 - 算子名称
 - 数学公式 / 计算逻辑
-- 输入 / 输出 tensor 的 shape 与 dtype
+- 输入 / 输出 tensor 的 dtype （shape不需要向用户确认，在design阶段会进行设计，除非主动提供）
 
 随后启动 Stage 1。

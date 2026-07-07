@@ -60,10 +60,13 @@ def {op}_kernel(
 
 
 # ============================================================================
-# 测试函数 (至少两个：整除 case + 尾块 case)
+# 测试函数 (至少 4 个 case：整除 / 单轴尾块 / 双轴尾块 / 跨多 tile+尾块)
+# 详见 SKILL.md 步骤 6「测试 shape 选择」。跨 tile case 取能触发多 tile
+# 迭代的最小规模即可，不必放大，避免拖慢编译/执行或触发 OOM。
+# 单动态轴算子凑不出 4 个有区分度的 case 时，按 SKILL 例外说明处理。
 # ============================================================================
 def test_{op}_aligned():
-    """整除 case：所有 tile 维度均可整除"""
+    """整除 case：所有 tile 维度均可整除，如 [TILE_A, TILE_B]"""
     from {op}_golden import _get_device
     device = _get_device()
     torch.manual_seed(42)
@@ -81,7 +84,7 @@ def test_{op}_aligned():
 
 
 def test_{op}_tail():
-    """尾块 case：至少一个维度存在尾块"""
+    """单轴尾块 case：一个 tile 维度存在尾块，如 [TILE_A + 22, TILE_B]"""
     from {op}_golden import _get_device
     device = _get_device()
     torch.manual_seed(42)
@@ -98,7 +101,46 @@ def test_{op}_tail():
     logging.info("{op} tail PASS")
 
 
+def test_{op}_tail2d():
+    """双轴尾块 case：两个 tile 维度均存在尾块，如 [TILE_A + 22, TILE_B - 30]"""
+    from {op}_golden import _get_device
+    device = _get_device()
+    torch.manual_seed(42)
+
+    inp = torch.randn({SHAPE_WITH_TAIL_2D}, device=device, dtype={DTYPE})
+    out = torch.zeros_like(inp)
+    block_dim = {BLOCK_DIM}
+
+    {op}_kernel[None, block_dim](inp, out)
+    torch.npu.synchronize()
+
+    out_ref = {op}_golden(inp)
+    torch.testing.assert_close(out, out_ref, rtol={RTOL}, atol={ATOL})
+    logging.info("{op} tail2d PASS")
+
+
+def test_{op}_multitile():
+    """跨多 tile + 尾块 case：动态轴跨越 2-3 个 tile 并带尾块，
+    验证跨 tile 循环与状态持久化，如 [2 * TILE_A + 13, TILE_B - 7]"""
+    from {op}_golden import _get_device
+    device = _get_device()
+    torch.manual_seed(42)
+
+    inp = torch.randn({SHAPE_MULTITILE}, device=device, dtype={DTYPE})
+    out = torch.zeros_like(inp)
+    block_dim = {BLOCK_DIM}
+
+    {op}_kernel[None, block_dim](inp, out)
+    torch.npu.synchronize()
+
+    out_ref = {op}_golden(inp)
+    torch.testing.assert_close(out, out_ref, rtol={RTOL}, atol={ATOL})
+    logging.info("{op} multitile PASS")
+
+
 if __name__ == "__main__":
     test_{op}_aligned()
     test_{op}_tail()
+    test_{op}_tail2d()
+    test_{op}_multitile()
     logging.info("All tests passed!")

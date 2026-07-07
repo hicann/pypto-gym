@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-design
-description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 Stage 1 产物（SPEC.md、EXPLORE_REPORT.md），产出 DESIGN.md。核心输出为 tile 级别数据流图——决定 Phase 划分、API 映射、Tile 规划、UB 空间布局、循环与 Section 结构、分核策略、核间流水、尾块处理。每一步决策必须有 API 文档或已有样例做证据，严禁猜测。触发词：生成设计方案、tile 数据流、DESIGN.md、tile 级别设计、UB 空间规划。
+description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 Stage 1 产物（SPEC.md、EXPLORE_REPORT.md），产出 DESIGN.md。核心输出为 tile 级别数据流图——决定 Phase 划分、API 映射、Tile 规划、片上空间布局（UB/L1/L0）、循环与 Section 结构、分核策略、核间流水、尾块处理。每一步决策必须有 API 文档或已有样例做证据，严禁猜测。触发词：生成设计方案、tile 数据流、DESIGN.md、tile 级别设计、片上空间规划、UB 空间规划。
 ---
 
 # PyPTO-Pro Stage 3 — 迭代式方案设计
@@ -67,12 +67,12 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
    - **签名**：参数顺序、位置参数 vs 关键字参数（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
    - **使用约束**：dtype 限制、shape 要求、layout 要求、MemorySpace 要求、tmp tile 是否可与输入重叠等（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
    - **特性特点**：in-place 支持、尾块行为、与 `set_validshape` 的交互等
-   - **数值安全边界**（API 链含 exp/log/sqrt/reciprocal/tanh 等超越/非线性函数时强制）：分析该 API 在目标 dtype 下的溢出边界。例如 fp16 max≈65504，exp(11.09)≈65504，输入 >11 即溢出为 +inf，后续 inf/inf → NaN 传播。须在 §1 数值安全边界栏记录"输入范围→是否溢出→防护措施"（如 exp 前插 `pl.mins(_, 11.0)` 截断）
+   - **数值安全边界**（API 链含 exp/log/sqrt/reciprocal/tanh 等超越/非线性函数时强制）：分析该 API 在目标 dtype 下的溢出边界。例如 fp16 max≈65504，exp(11.09)≈65504，输入 >11 即溢出为 +inf，后续 inf/inf → NaN 传播。须在 §1 数值安全边界栏记录"输入范围→是否溢出→防护措施"（如 exp(x) 可以写作 (exp(x - max))/exp(max)）
 3. 在每个 Phase 内部，将计算步骤展开为具体的 API 序列
 4. 标注每个 API 的输入 tile、输出 tile
 5. 若 EXPLORE_REPORT.md 中有 unsupported 步骤，在此确认替代路径或阻断
 
-**注意**：本轮只确定计算 API（`load_tile`/`matmul`/`row_max`/`exp` 等），不涉及同步 API。同步点位置在 R4 标注，具体同步 API 由 R5/R6 填入。伪代码中同步点用占位注释 `// sync: {目的}` 标注。
+**注意**：本轮只确定计算 API（`load_tile`/`matmul`/`row_max`/`exp` 等），不涉及同步 API。伪代码中同步点用占位注释 `// sync: {目的}` 标注。
 
 **输出**：Phase 级 API 调用序列（伪代码形式），例如：
 
@@ -93,58 +93,63 @@ Phase 1 — 全局 max 归约:
 
 **流程**：
 
-0. 按模板 §2.1 的格式填写关键常量。列出所有 tile 尺寸（TS、TD 等）和派生常量（SCALE 等）。tile 尺寸是编译期对齐值，运行时通过 R7 的 `pl.min(D - offset, TILE)` + `set_validshape` 自动处理所有尾块场景（维度 < tile、整除、N+1 块且尾块不满）。公式常量若依赖实际维度值而非 tile 尺寸，应使用实际值
+0. 按模板 §2.1 的格式填写关键常量。列出所有 tile 尺寸（TS、TD 等）和派生常量（SCALE 等）。tile 尺寸是编译期对齐值，运行时通过 R7 设计的策略处理尾块场景（维度 < tile、整除、N+1 块且尾块不满）。公式常量若依赖实际维度值而非 tile 尺寸，应使用实际值
 1. 根据 R1 的 API 序列，列出所有涉及的 tile
 2. 对每个 tile，确定：
    - **shape**：由 API 操作数要求决定（如 `row_max(dst[M,1], src[M,N], tmp[M,N])` → 需 `[M,N]` 输入 + `[M,N]` scratch + `[M,1]` 输出）
-   - **dtype**：由精度需求决定（如 matmul 累加用 FP32，存储/传输用 FP16）
-   - **layout**：默认 `pl.ND`（行优先），或 `pl.DN`（维度转置）/`pl.NZ`/`pl.ZN` 等枚举，具体约束以 EXPLORE_REPORT §3.3 / API 文档为准。**术语**：Pro 用 `layout=pl.DN` 而非老 pypto 的 `blayout=2`/`ColMajor`（证据：`TileType.md:24`）
-   - **归约输出 layout 强制**（🚨 常见遗漏）：行向归约类 API（row_max/row_sum/row_reduce/row_expand_* 等）的 `[行数,1]` 输出**须设 `layout=pl.DN`**（证据：`row_max.md:25`、`row_sum.md:25`、`row_expand_sub.md:27` 明文"须设 `layout=pl.DN`"；对称的列向 col_* 输出为 `[1,列数]`，layout 要求以其 API 文档为准，不套用此规则）。**若该归约输出后续需参与 tile×tile 逐元素运算**（需默认 ND 布局），**必须在同地址声明 DN + ND 双视图对**——在 §3 双视图表中登记（证据：`pro_ops/fa/test_fa_performance.py:478-483` 的 `reduce_dst`(DN) / `reduce_dst_rm`(ND) 共用 addr）。具体 layout 以对应 API 文档为准，不假设 DN 归约输出可直接参与逐元素运算
+   - **dtype**：由用户需求决定
+   - **内存空间（`target_memory`）**：由该 tile 所参与的 API 决定——vector 计算 tile 用 `Vec`(UB)；含 cube/matmul 时，`load_tile` 的 GM 落点用 `Mat`(L1)，matmul 左/右操作数用 `Left`(L0A)/`Right`(L0B)，累加输出用 `Acc`(L0C)（证据：`pro_ops/matmul/test_matmul_8K_example.py:27-58`；空间枚举见 `TileType.md:35`）。此列直接决定 R3 的分节归属
+   - **layout**：默认按内存空间取（`Vec` 无约束，`Mat`/`Left`/`Right`/`Acc` 见 `TileType.md:42` 默认布局表），或 `pl.DN`（维度转置）/`pl.NZ`/`pl.ZN` 等枚举，具体约束以 EXPLORE_REPORT §3.3 / API 文档为准。
+   - **归约输出 layout 强制**（🚨 常见遗漏）：行向归约类 API（row_max/row_sum/row_reduce/row_expand_* 等）的 `[行数,1]` 输出**须设 `layout=pl.DN`**（证据：`row_max.md:25`、`row_sum.md:25`、`row_expand_sub.md:27` 明文"须设 `layout=pl.DN`"；对称的列向 col_* 输出为 `[1,列数]`，layout 要求以其 API 文档为准，不套用此规则）。**若该归约输出后续需参与 tile×tile 逐元素运算**（需默认 ND 布局），**必须在同地址声明 DN + ND 双视图对**——在 §3 双视图表中登记。具体 layout 以对应 API 文档为准，不假设 DN 归约输出可直接参与逐元素运算
    - **大小**：`prod(shape) × dtype_bytes`
-   - **Acc fractal 约束**（🚨 阻断级）：Acc(L0C) FP32/INT32 tile 的 `fractal=1024` 由框架自动设置，**无需手写**（见 EXPLORE_REPORT §3.4 / §5.2 及 `TileType.md`）；但必须保证 Acc tile 的**物理 M×N** 满足一个 fractal（FP32 ≥ 256 元素 = 1024 bytes）。当某维度逻辑值极小、可能使物理 tile 退化到 <fractal 时（如动态轴允许 `S_q=1`），tile shape 须 pad 到最小合规尺寸，运行时用 `set_validshape` 限制有效区。注意区分**逻辑维度**（可能极小）与**物理 tile 维度**（须满足 fractal）。
-3. 标注所有数据 tile（涉及 `load_tile`/`store_tile` 的 tile）的 `valid_shape=[-1,-1]`
-4. **`tile_dims` stride 安全性检查** 🚨（经验性检查项——在当前 pro_ops 样例与已知故障现象中，是 aicore/vector core 异常的常见根因之一）：
-   - 如果设计中使用了 `load_tile` + `tile_dims=[d0, d1]`（覆盖多维度），检查被覆盖的最外层维度 d0 在 3D 张量布局中的 **stride**（行间跳跃字节数）
-   - **低风险信号**：被覆盖的最外层维度 stride ≤ tile 面积（如 3D 布局 `[C,B,N]` + `tile_dims=[1,2]`，dim 1 stride = N ≈ 10KB 级别）。在当前样例与已知故障现象中，这类布局更容易让 DMA 尾块读取地址保持在物理分配范围内，并由 `set_validshape` 裁剪
-    - **高风险信号**：被覆盖的最外层维度 stride 巨大（如 3D 布局 `[B,C,N]` + `tile_dims=[0,2]`，dim 0 stride = C×N ≈ MB 级别）。在当前样例与已知故障现象中，这类布局更容易让 DMA 读取该维度尾块时每行跳跃过大，地址超出预期分配范围，运行时可能表现为 aicore exception（如 507015）或 vector core exception（如 507035）
-   - **修复方法**：对张量做 permute，将 stride 小的维度移到 `tile_dims` 的最外层。上例中 `[B,C,N]` → permute 为 `[C,B,N]`，`tile_dims` 从 `[0,2]` 改为 `[1,2]`，最外层 stride 从 C×N 降到 N
-   - **检查清单**：对每个 `load_tile` / `store_tile` 的 `tile_dims`：
-     1. 计算 dim d0 在张量布局中的 stride
-     2. 若 stride 超过 EXPLORE_REPORT §7 探测的 stride 经验阈值，标记为 **❌ 高风险**，优先考虑 permute 布局或调整 tile_dims，并结合本次 API 文档 / 样例证据确认修复路径
+   - **Acc fractal 约束**：必须保证 Acc tile 的**物理 M×N** 满足一个 fractal（FP32 ≥ 256 元素 = 1024 bytes）。当某维度逻辑值极小、可能使物理 tile 退化到 <fractal 时，tile shape 须 pad 到最小合规尺寸，运行时用 `set_validshape` 限制有效区。
+3. 为所有需要运行时设尾块有效区的 tile 标注 valid_shape=[-1,-1]。
+4. **`tile_dims` stride 安全性检查** 🚨（经验性预防项，与 develop pitfalls §2.3 对称）：`load_tile`/`store_tile` 用 `tile_dims=[d0, d1]` 覆盖高维（3D 及以上）张量时，DMA 以最外层维度 d0 为"行"遍历。若 d0 的 stride（其后所有维度乘积 × dtype 字节）过大，尾块读取地址易越出物理分配范围而挂死。**原则**：让 `tile_dims` 最外层维度的 stride 尽量小——stride 越接近 tile 面积越安全，越大越危险。对每个 `tile_dims` 计算 d0 的 stride，与 EXPLORE_REPORT §7 探测的经验阈值比对：超阈值即优先 permute 张量把小 stride 维度移到最外层（如 `[B,C,N]` + `tile_dims=[0,2]` → permute 为 `[C,B,N]` + `tile_dims=[1,2]`，d0 stride 从 C×N 降到 N），并以本次 API 文档 / 样例证据确认修复路径。
+> 症状为整除 shape 通过、尾块运行时挂死，多报 aicore/vector core 异常（507015 / 507035）。此二者为通用异常码、非本坑专属，仅作辅助信号，判据仍以 stride 与 §7 阈值的比对为准。
 
 **输出**：Tile 属性表：
 
-| 用途 | 变量名 | shape | dtype | layout | 大小 | 备注 |
-|------|--------|-------|-------|--------|------|------|
-| 输入暂存 | `tile_a` | `[64,128]` | FP32 | `—` | 32768 | valid_shape=[-1,-1] |
-| ... | ... | ... | ... | ... | ... | ... |
+| 用途 | 变量名 | shape | dtype | 内存空间 | layout | 大小 | 备注 |
+|------|--------|-------|-------|---------|--------|------|------|
+| 输入暂存 | `tile_a` | `[64,128]` | FP32 | UB(Vec) | `—` | 32768 | valid_shape=[-1,-1] |
+| ... | ... | ... | ... | ... | ... | ... | ... |
 
-> `—` 表示 layout 列留空即用默认 `pl.ND`（行优先）；非默认布局（如 `pl.DN`）显式写出。
+> 内存空间取 `Vec`(UB)/`Mat`(L1)/`Left`(L0A)/`Right`(L0B)/`Acc`(L0C)；`—` 表示 layout 列留空即用该内存空间的默认布局（`Vec` 为行优先 ND）；非默认布局（如 `pl.DN`）显式写出。
 
 ---
 
-### R3：UB 空间布局
+### R3：片上空间布局
 
-**核心问题**：tile 放在 UB 的哪个地址？如何分配管理？
+**核心问题**：每块 tile 放在哪个内存空间的哪个地址？如何分配管理？
+
+**内存空间**：tile 按 R2 确定的 `target_memory` 落到不同片上空间，**每个空间独立寻址、独立限容**——地址各自从 `0x00000` 起算，同一 addr 值在不同空间是不同物理位置（证据：`matmul.md:56-71` 示例中 L0A/L0B/L0C 同时都用 `addr=0x0000` 互不冲突，L1 内两块 tile 各占 `0x00000`/`0x10000`）：
+
+- `Vec`(UB)：vector 计算用；纯 vector 算子只涉及此空间（`TileType.md:35`：`Vec` 对应 UB）
+- `Mat`(L1)、`Left`(L0A)、`Right`(L0B)、`Acc`(L0C)：含 cube/matmul 的算子涉及。`matmul` 的操作数内存空间是**硬性约束**——`lhs` 只能 `Left`(L0A)、`rhs` 只能 `Right`(L0B)、`dst` 只能 `Acc`(L0C)，放错空间即报错（证据：`matmul.md:19-30`）
+- 典型数据流：`GM --load--> L1(Mat) --move--> L0A/L0B --matmul--> L0C(Acc)`，结果既可从 Acc 直接 `store` 回 GM（`matmul.md:86`、`8K_example.py:58`），也可先 `move` 到 UB 再后处理/store（`matmul_add_matmul_add.py:87` `# ACC -> UB`）
 
 **流程**：
 
-1. 基于 R2 的 tile 大小，从 `0x00000` 开始连续排列地址，不重叠，对齐到 32 字节
+1. 按 `target_memory` 把 R2 的 tile 分组，**每个内存空间各自从 `0x00000` 开始**连续排列地址，不重叠。UB/L1 首地址须 32 字节对齐（证据：`load_tile.md:29` "L1、UB buffer 首地址必须 32 字节对齐"）；L0A/L0B/L0C 的对齐以对应 API 文档 / 样例为准，不套用 32 字节
 2. 标注双视图对（同地址、不同 layout 视角）
 3. 分配方式首选 `make_tile_group` + `auto_mutex`，由框架自动管理 buffer 切换与同步；`make_tile` 手动分配为次选
-4. 验证所有 tile 总大小不超过 UB 上限（上限值以 EXPLORE_REPORT §7 探测的 UB 容量为准）
+4. **逐空间**验证该空间上的 tile 总大小不超过其容量上限。容量值以 EXPLORE_REPORT §7 探测记录为准——§7 必含 UB 容量；含 cube 时须补探 L1/L0 各空间容量（§7 未记录则回退 material-explore 补测，不得在此臆测数值）
 5. **R3↔R6 联合决策**：涉及核间流水时，double buffer 会让地址占用翻倍，因此地址表按 buffer 数参数化；是否需要 PONG 地址、buffer 数取值、以及哪些 tile 受其影响，均在 R3 先显式标出，待 R6 确定 pipeline 深度后回填确认
 
-**输出**：UB 地址映射表：
+**输出**：片上地址映射表（**按内存空间分节**，纯 vector 算子只有 UB 一节）：
 
-| 用途 | 变量名 | shape | dtype | layout | 地址 | 大小 | 备注 |
-|------|--------|-------|-------|--------|------|------|------|
-| 输入暂存 | `tile_a` | `[64,128]` | FP32 | `—` | `0x00000` | 32768 | valid_shape=[-1,-1] |
-| ... | ... | ... | ... | ... | ... | ... | ... |
+| 内存空间 | 用途 | 变量名 | shape | dtype | layout | 地址 | 大小 | 备注 |
+|---------|------|--------|-------|-------|--------|------|------|------|
+| UB(Vec) | 输入暂存 | `tile_a` | `[64,128]` | FP32 | `—` | `0x00000` | 32768 | valid_shape=[-1,-1] |
+| L1(Mat) | A 矩阵暂存 | `a_l1` | `[128,128]` | FP16 | `—` | `0x00000` | 32768 | make_tile_group |
+| L0C(Acc) | 累加结果 | `acc` | `[128,128]` | FP32 | `pl.NZ` | `0x00000` | 65536 | Acc FP32 自动 `fractal=1024` |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-> `—` 表示 layout 列留空即用默认 `pl.ND`（行优先）；非默认布局（如 `pl.DN`）显式写出。
+> `—` 表示 layout 列留空即用该内存空间的默认布局（Vec 无约束；其余空间见 `TileType.md:42` 默认布局表，如 Mat/Acc 默认 `pl.NZ`）；非默认布局显式写出。
 
-**UB 总用量**: {∑ 大小} bytes / {UB 上限} bytes = {百分比}
+**各空间总用量**（逐空间列出，无对应 tile 的空间可省略）:
+- UB(Vec): {∑ 大小} / {§7 UB 容量} = {百分比}
+- L1(Mat) / L0A / L0B / L0C（如有 cube）: {∑ 大小} / {§7 对应容量} = {百分比}——各空间容量来自 §7 探测记录
 
 ---
 
@@ -163,17 +168,14 @@ Phase 1 — 全局 max 归约:
    - **单 section 算子**（Phase 数 = 1）：可在该 section 内部获取（EXPLORE_REPORT §4/§5 定位的单 section 样例与教程均在 section 内调用）
    - **多 section 算子**（Phase 数 > 1）：需在 jit 函数体内、所有 section 声明之前获取一次，通过闭包变量共享给各 section（EXPLORE_REPORT §4 定位的多 section 样例）
    两种写法均合法。`num_cores = pl.get_block_num()`（动态获取），因为 core 数量因芯片而异。DESIGN.md §3 的伪代码须按实际 Phase 结构体现。
-5. **标注同步点位置**（只标注位置和目的，具体同步 API 由 R5/R6 填入）：
-   - 标注每个需要同步的位置（如"load_tile 后需等 MTE2 完成"）
-   - 标注同步目的（pipe 间依赖、核间依赖、sub-block 间依赖）
-6. **常量声明位置**：所有 tile 尺寸/公式编译期常量（TS、TD、SCALE 等）必须声明在 kernel 函数**外部**（模块级）。写进 kernel 函数体内会被 JIT 当作 IR 语句处理，触发编译错误 `Unsupported kwarg type for key: memref_size`（见 develop pitfalls §1.2）。伪代码骨架须把常量块画在 `@pl.jit` 装饰器之前
+5. **常量声明位置**：所有 tile 尺寸/公式编译期常量（TS、TD、SCALE 等）必须声明在 kernel 函数**外部**（模块级）。写进 kernel 函数体内会被 JIT 当作 IR 语句处理，触发编译错误 `Unsupported kwarg type for key: memref_size`（见 develop pitfalls §1.2）。伪代码骨架须把常量块画在 `@pl.jit` 装饰器之前
 
 **输出**：完整的 kernel 伪代码骨架：
 - 动态维度声明（DynVar）
 - tile 声明（make_tile_group）
 - section 声明
 - SPMD 参数获取（含位置说明）
-- 完整的循环嵌套结构（含同步点占位标注）
+- 完整的循环嵌套结构
 
 ---
 
@@ -181,19 +183,13 @@ Phase 1 — 全局 max 归约:
 
 **核心问题**：work item 如何分配到各物理核？
 
-**流程**：
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/multicore_tiling.md`。分核方式（strided loop / 扁平切 vs 二维切）、负载均衡原理、host 侧核数设置（`num_cores = min(core_num, total_tiles)`）、block_dim、host↔device tiling 传参（动态 shape / 标量 / TilingData / tiling_key）、UB 预算与 double buffer 方法论——全部照该文档执行，与经验推断冲突时以该文档为准。
 
-1. **分核方式**：当前默认使用 strided loop 分配 work item 到各物理核：
-   ```python
-   for i in pl.range(core_id, m_tile_num, num_cores):
-   ```
-   在当前样例中，各物理核独立处理不同 tile、通常无核间数据依赖（参考 EXPLORE_REPORT §4 定位的 strided loop 样例）
+**本轮须在 DESIGN.md §5 落实的产出**：
+- 分核方案
+- host 侧 `num_cores` 计算式
 
-2. **bar_all 屏障**（条件性）：仅当核间有数据依赖时使用。按当前样例与默认分核方式，若各核通过 strided loop 独立处理 work item，通常不需要 `bar_all`
-
-**输出**：
-- strided loop 分核方案
-- 是否需要 `bar_all` 的判断与理由
+**输出**：DESIGN.md §5（引用 multicore_tiling.md，填入上述两项产出）
 
 ---
 
@@ -207,7 +203,7 @@ Phase 1 — 全局 max 归约:
 
 **流程**：
 
-1. **汇总同步点**：承接 R4 的同步占位，统一决定每个位置使用哪类同步：
+1. **标注并汇总同步点**：基于 R4 的伪代码骨架，先标注每个需要同步的位置（如"load_tile 后需等 MTE2 完成"）及其目的（pipe 间依赖、核间依赖、sub-block 间依赖），再统一决定每个位置使用哪类同步：
    - `bar_v`：V pipe 内前后依赖的计算之间
    - `sync_src/sync_dst`：`load_tile`/`move`/`matmul` 等 pipe 级依赖
    - `set_cross_core`/`wait_cross_core`：仅用于 cross_core 流水
@@ -240,19 +236,38 @@ Phase 1 — 全局 max 归约:
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/tail_tile.md`。尾块的完整机制——`shape`/`valid_shape`/`-1`/`set_validshape`/`pad`/`fillpad`/`compact` 各参数分工与协同、ceiling division 计算 tile 数、`set_validshape` 有状态（每轮须重设）、**归约/matmul 尾块必须 `pad`+`fillpad`**（否则片上垃圾值污染整块归约/matmul）、静态子块 vs 动态尾块的选择、四类尾块全覆盖示例——全部照该文档执行，与经验推断冲突时以该文档为准。核心心智模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
+
+**本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的伪代码骨架。
+
+**输出**：DESIGN.md §7（引用 tail_tile.md 落地尾块代码）
+
+---
+
+### R7.5：目标测试 case 规划
+
+**核心问题**：本设计要交给 develop 验证的具体测试 shape 是哪几个？
+
+设计阶段必须**基于已确定的 tile 切分（R2 tile 尺寸）与尾块方案（R7）**，把测试 case 连同具体 shape 一次性确定下来，写入 DESIGN.md §8，供 develop 直接实现——develop 开工前即已知这些 case，不再自行重算。
+
 **流程**：
 
-1. **ceiling division 计算 tile 数**：`m_tile_num = (M + TILE_M - 1) // TILE_M`（覆盖维度 < tile、整除、N+1 块尾块不满所有场景，参考 EXPLORE_REPORT §4 定位含尾块处理的样例）
-2. **pl.min 计算尾块有效尺寸**：`valid_m = pl.min(M - m_off, TILE_M)`（满 tile = TILE，尾块 = 余数）
-3. **set_validshape 运行时告知硬件**：`pl.set_validshape(tile, valid_m, valid_n)`
-4. **跨迭代恒等值初始化**：如 `expands(gmax, -1e9)` 消除首迭代分支
-5. **条件分支选择 tile 形状**（如需）：可用 `is_tail = pl.min(1, TS - actual)` 标志位 + 模块级常量（参考 EXPLORE_REPORT §4 定位的 unalign 样例）
+1. **确定 case 集合**：
+   - 若 SPEC.md / 用户已给出目标 case，则**在其基础上追加**下述 4 个基础 case。
+   - 若无用户指定 case，则**直接确定为下述 4 个基础 case，不询问用户**。
+2. **4 个基础 case（按 tile 切分推导具体 shape，取值以 R2 tile 尺寸为基准）**：
 
-**注意**：如果算子涉及核间流水（R6），尾块的有效 shape（如 `actual_sq`/`actual_skv`）是流水 ctx 的一部分，必须随 ctx 在 event_id FIFO 中流转。consume 端通过错位取 ctx 获取对应 task 的有效 shape（参考 EXPLORE_REPORT §4 定位的深预计算样例中 ctx_arr → 错位取尾块 shape 的模式）。尾块处理须与 R6 联合设计，不能独立后置。
+   | case | 覆盖场景 | shape 取法（示例） |
+   |------|---------|-------------------|
+   | 全整除 | 所有 tile 维度均整除 | `[TILE_A, TILE_B]` |
+   | 单轴尾块 | 一个 tile 维度存在尾块 | `[TILE_A + 22, TILE_B]` |
+   | 双轴尾块 | 两个 tile 维度均存在尾块 | `[TILE_A + 22, TILE_B - 30]` |
+   | 跨多 tile + 尾块 | 动态轴跨越 2–3 个 tile 并带尾块，验证跨 tile 循环与状态持久化 | `[2 * TILE_A + 13, TILE_B - 7]`（取触发多 tile 迭代的最小规模即可，不必放大，避免拖慢编译/执行或触发 OOM） |
 
-编码期 `pl.Scalar` 内联相关注意事项见 develop pitfalls §1.1。
+3. **逐个验证 design 可适配**：对每个 case，核对当前 design（R2 tile 规划、R4 循环边界、R7 尾块处理、归约方案等）能否正确处理该 shape。**若发现某 case 适配不了，必须回溯对应轮次具体解决**（如尾块处理缺陷回 R7、循环边界错误回 R4、归约轴超单 tile 回 R0），**不得反过来删改 case 迁就 design**。
+4. **例外**：若算子凑不出 4 个有区分度的 case，则以覆盖到的边界类别（整除 / 尾块 / 跨多 tile）为准，不为凑数量制造冗余用例；此时在 DESIGN.md §8 与 MEMORY.md 说明实际可覆盖的 case 数与原因。
 
-**输出**：在 R4 的伪代码骨架中填入尾块处理代码。
+**输出**：DESIGN.md §8 的"目标测试 case"表（case 名 / 具体 shape / 覆盖场景 / design 适配确认），至少 4 个（单轴算子按例外处理）。
 
 ---
 
@@ -271,14 +286,16 @@ Phase 1 — 全局 max 归约:
 | | dtype 选择是否能保证精度（如累加用 FP32） | 回到 R2 调整 |
 | | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设 `layout=pl.DN`；若参与逐元素运算已建 DN+ND 双视图 | 回到 R2 补 layout / 双视图 |
 | | Acc tile 物理 M×N×dtype_bytes ≥ fractal（FP32 ≥ 1024 bytes；动态轴含极小维度时尤需检查） | 回到 R2 pad tile shape |
-| **泛化性** | 是否正确处理了尾块（ceiling division + set_validshape） | 回到 R7 补充 |
+| **泛化性** | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（R7.5 已完成） | 回到 R7.5 补充 / 回溯适配不了的轮次 |
+| | 是否正确处理了尾块（ceiling division + set_validshape） | 回到 R7 补充 |
 | | 归约轴可能超单 tile 时已采用 online/两遍法（非 TILE_N 大值兜底，R0 已判断） | 回到 R0 重设归约方案 |
 | | 循环边界是否正确（ceiling division、valid_m/valid_n 计算） | 回到 R4 修正 |
 | | 超越函数（exp/log/sqrt 等）在目标 dtype 范围内无溢出（§1 数值安全边界已分析） | 回到 R1 补溢出防护 |
-| | 跨 tile 状态是否正确初始化和持久化（如 expands 恒等值、muls 拷贝） | 回到 R1 或 R7 修正 |
+| | 跨 tile 状态是否正确初始化和持久化（如 expands 恒等值、muls 拷贝） | 回到 R0 或 R1 修正 |
 | | 同步策略在 SPEC §8 动态轴全范围下是否正确（num_cores、pipeline defer、event 分配是否随 total_work 变化而保持隔离） | 回到 R5/R6 修正 |
 | **一致性** | R0-R7 各轮输出是否存在矛盾（如 API 需要的 tile 在 R2 中缺失） | 回溯到矛盾产生的轮次修正 |
 | | 证据链是否完整（每个决策都有来源） | 补充缺失的文档引用或样例路径 |
+| | 每个内存空间（UB/L1/L0A/L0B/L0C）的 tile 总用量分别不超过各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | 回到 R3 重排地址 / R2 缩 tile |
 | | `tile_dims` 最外层维度 stride 不超过 EXPLORE_REPORT §7 探测阈值（R2 步骤 4 已检查） | 回到 R2 调整布局 |
 | **条件性检查** | 如跳过 R6，确认该算子确实无跨核数据传递 | 回到 R0 重新评估 |
 

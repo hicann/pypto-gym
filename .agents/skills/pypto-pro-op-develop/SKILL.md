@@ -51,6 +51,7 @@ description: PyPTO-Pro 算子 kernel 实现编码手册。以 DESIGN.md（初步
 | UB 地址映射表（所有 tile 的 shape/dtype/地址） | DESIGN.md §3 | 优先查 pro_ops 样例补全；仍缺失时回调 Stage 3 |
 | 循环结构（M-tile / N-tile 嵌套、ceiling division） | DESIGN.md §4 | 可与步骤 2 同步推进 |
 | 分核/流水/尾块策略 | DESIGN.md §5-7 | 参考 pro_ops 样例确认 |
+| 目标测试 case（≥4 个具体 shape） | DESIGN.md §8「目标测试 case」表 | **直接按此实现测试函数，不自行重算 shape**；缺失时回调 Stage 3 |
 | Tile 数据流全景图 | DESIGN.md §9 | 确认理解全局数据流 |
 | API 约束 / 相似样例 / 教程指导 | EXPLORE_REPORT.md §3-5 | 步骤 2/5 按需查阅 |
 
@@ -143,7 +144,10 @@ def _run_kernel(inp, out):
 > ⚠️ **atol 必须合理**：参考官方 PyPTO-Pro 教程与 pro_ops 样例，根据 golden 对比结果收紧。
 
 ```python
-# 示例：{input_shapes} 和 {dtype} 替换为 DESIGN.md 中的实际规格
+# 示例：以下仅展示单个 test 的基本结构（golden 导入 / 同设备 / assert_close）。
+# ⚠️ 最终产物须按下方「测试 shape 选择」拆为至少 4 个独立 test 函数，
+#    切勿照抄此单函数示例。完整 4-case 模板见 templates/impl_template.py。
+# {input_shapes} 和 {dtype} 替换为 DESIGN.md 中的实际规格
 from {op}_golden import {op}_golden, _get_device
 
 def test_{op}():
@@ -162,7 +166,18 @@ def test_{op}():
     logging.info("{op} PASS")
 ```
 
-**测试 shape 选择**：至少覆盖两个 case——所有 tile 维度均可整除的 shape（如 `[TILE_A, TILE_B]`），和至少一个 tile 维度存在尾块的 shape（如 `[TILE_A + 22, TILE_B - 30]`），具体取值以 DESIGN.md 中的 tile 尺寸为基准。**建议拆为两个独立的 test 函数**（如 `test_{op}_aligned` 整除 case + `test_{op}_tail` 尾块 case），orchestrator 门禁以 `def test_` 数量 ≥ 2 作为泛化性判据。
+**测试 shape 选择**：测试 case 已在 Stage 3 设计阶段（R7.5）基于 tile 切分确定，**直接从 DESIGN.md §8「目标测试 case」表读取具体 shape 实现，不自行重算**。该表至少含 4 个 case，覆盖整除 / 单轴尾块 / 双轴尾块 / 跨多 tile+尾块场景：
+
+| case（DESIGN.md §8） | 覆盖场景 |
+|---------------------|---------|
+| `test_{op}_aligned` | 全整除 |
+| `test_{op}_tail` | 单轴尾块 |
+| `test_{op}_tail2d` | 双轴尾块 |
+| `test_{op}_multitile` | 跨多 tile + 尾块 |
+
+**每个 case 拆为独立 test 函数**（命名沿用 DESIGN.md §8），orchestrator 门禁以 `def test_` 数量 ≥ 4 作为泛化性判据。
+
+> DESIGN.md §8 已确认这些 case 当前 design 均可适配。若实现中发现某 case 实际跑不通，属 design 失误（按步骤 7「Debug 状态下的决策权限」据实修正 kernel 并记录），不得删改 case 迁就实现。DESIGN.md §8 缺失或不足 4 个时回调 Stage 3。
 
 ### 步骤 7：本地验证与自修复闭环
 
@@ -186,7 +201,7 @@ python custom/<op>/test_<op>.py
 3. **修正范围**：可调整 API 调用序列、tile shape / dtype / layout / 地址、循环结构、同步策略、尾块处理等，只要最终运行验证 PASS 且不违反 kernel 结构约束。
 4. **记录修正**：在代码注释或 MEMORY.md 中记录"DESIGN.md 原方案 → 实际修正方案及依据"，便于后续追溯。
 
-**你负责完整自修复闭环**：遇到任何失败不得将问题抛回给 orchestrator（orchestrator 只做产物验收，不参与调试）。必须自行参照本 skill 各步骤以及 [references/pitfalls.md](references/pitfalls.md) 定位问题、修复代码、重新运行，直到 `PASS`。
+**你负责完整自修复闭环**：遇到任何失败不得将问题抛回给 orchestrator（orchestrator 只做产物验收，不参与调试）。必须自行参照本 skill 各步骤以及 [references/pitfalls.md](references/pitfalls.md) 定位问题、修复代码、重新运行，直到 `PASS`，过程中遇到的问题和问题解决方法记录到MEMORY.md中。
 
 ---
 

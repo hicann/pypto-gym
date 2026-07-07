@@ -186,4 +186,3 @@ reduce_dst_rm = pl.make_tile(pl.TileType(shape=[1, M], dtype=...),              
 pl.row_max(reduce_dst, qk_vec, tmp_vec)          # DN 视图写
 pl.maximum(reduce_dst_rm, reduce_dst_rm, gmax)   # ND 视图参与逐元素
 ```
-证据：`pro_ops/fa/test_fa_performance.py:478-483`（reduce_dst/reduce_dst_rm 共用 addr）、`491-496`（gsum/gsum_rm）。设计阶段预防见 design SKILL R2 双视图触发器 + design-template §3 双视图对表。

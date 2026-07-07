@@ -7,7 +7,7 @@ description: PyPTO-Pro 资料探索。构建 PRO_MATERIAL_INDEX.md 全量资料�
 
 构建 PyPTO-Pro 全量资料索引，基于索引从三个方向探索，为算子开发提供 API 映射、约束检查、样例参考和可行性分析。
 
-> **资料来源：devkit 缓存**。所有 API 文档 / pro_ops 样例 / 教程均在本地缓存 `$PYPTO_DEVKIT_DIR`（默认 `${XDG_CACHE_HOME:-$HOME/.cache}/pypto-devkit`）下，不在当前工作仓库内。首次或需要更新时先运行 skill `pypto-docs-search` 的 `scripts/sync_devkit.py` 装配缓存（PyPTO-Pro 内容源仓通过 `PYPTO_SRC_URL` 指定，如 `PYPTO_SRC_URL=https://gitcode.com/gaoxiang618/pypto.git`）。缓存目录结构：
+> **资料来源：devkit 缓存**。所有 API 文档 / pro_ops 样例 / 教程均在本地缓存 `$PYPTO_DEVKIT_DIR`（默认 `${XDG_CACHE_HOME:-$HOME/.cache}/pypto-devkit`）下，不在当前工作仓库内。首次或需要更新时先运行 skill `pypto-docs-search` 的 `scripts/sync_devkit.py` 装配缓存——三个源 URL（`PYPTO_SRC_URL` / `PYPTO_GYM_URL` / `PYPTO_PRO_OPS_URL`）**全部指向 `https://gitcode.com/gaoxiang618/pypto.git`**，确保 docs（含 `pypto_pro/` 教程）与 pro_ops（a5 样例）从含 PyPTO-Pro 资料的源仓拉取。缓存目录结构：
 >
 > | 缓存子目录 | 内容 | 对应源仓路径 |
 > |---|---|---|
@@ -29,12 +29,14 @@ description: PyPTO-Pro 资料探索。构建 PRO_MATERIAL_INDEX.md 全量资料�
 
 ## Step 0：确保 devkit 缓存就绪
 
-扫描前先确认缓存已装配（`$PYPTO_DEVKIT_DIR` 下存在 `docs/ pro_ops/`）。缺失时运行 `pypto-docs-search` 的装配脚本（PyPTO-Pro 内容源仓通过 `PYPTO_SRC_URL` 指定）：
+扫描前先确认缓存已装配（`$PYPTO_DEVKIT_DIR` 下存在 `docs/ pro_ops/`）。缺失时运行 `pypto-docs-search` 的装配脚本——三个源 URL 全部指向 `https://gitcode.com/gaoxiang618/pypto.git`：
 
 ```bash
 CACHE="${PYPTO_DEVKIT_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pypto-devkit}"
 if [ ! -d "$CACHE/docs/api" ] || [ ! -d "$CACHE/pro_ops" ]; then
   PYPTO_SRC_URL=https://gitcode.com/gaoxiang618/pypto.git \
+  PYPTO_GYM_URL=https://gitcode.com/gaoxiang618/pypto.git \
+  PYPTO_PRO_OPS_URL=https://gitcode.com/gaoxiang618/pypto.git \
     python3 <pypto-docs-search skill 目录>/scripts/sync_devkit.py
 fi
 ```
@@ -110,7 +112,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描仓库**
 2. 按 API 使用进一步筛选：搜索 `pl.row_max\|pl.matmul\|pl.exp\|pl.load_tile` 等关键 API
 3. 提取可复用模式：tile_group 用法、双视图技巧、循环结构等
 4. 遍历所有候选，收集**所有匹配的参考实现**，不要找到一个就停止
-5. **参考完整度甄别**（选参考时最关键）：对每个候选样例标注是否覆盖以下生产级模式——① 多 tile 归约（归约轴 > 单 tile）② 双视图（同地址 DN + ND tile 对）③ online 状态更新（running max/sum）。**优先选完整生产级实现，而非简化或走不同引擎路径的版本**。反例教训：softmax 类算子应优先选 `pro_ops/fa/test_fa_performance.py` 的 `softmax_body`（含多 N-tile online + 双视图 + 密集 bar_v，见 254-310 行、478-496 行），而非 `pro_ops/vf_api/test_softmax_dn.py`（VF 引擎简化路径，不含双视图/online）——只看"相似度"会漏掉最有价值的完整参考
+5. **参考完整度甄别**（选参考时最关键）：对每个候选样例标注是否覆盖以下生产级模式——① 多 tile 归约（归约轴 > 单 tile）② 双视图（同地址 DN + ND tile 对）③ online 状态更新（running max/sum）。**优先选完整生产级实现，而非简化或走不同引擎路径的版本**。
 6. **探测关键常量**：从样例中提取 UB 容量上限（如 `assert {addr} <= {N}*1024`），从 `tile_dims` 用法中推断 stride 经验阈值；记录值 + 样例路径
 
 **返回**：每个匹配实现的路径、相似度、**完整度标注（是否覆盖多tile归约/双视图/online）**、可复用点；关键常量（UB 容量/stride 经验阈值 + 来源路径）；若无匹配标注「无匹配」
