@@ -50,6 +50,7 @@ class FlashAttentionGradTileShapeConfig:
     pass_options={
         "vec_nbuffer_setting": {-2: 1, -1: 16},
         "cube_l1_reuse_setting": {-1: 16},
+        "sg_set_tunevf_mode": 1,
         "ooo_sched_mode": "GAPMIN",
     },
 )
