@@ -205,8 +205,9 @@ After each S4 dispatch, orchestrator appends the returned
 adopted/failed optimizations, constraints, and code config to
 `accumulated_context` for the next dispatch.
 
-- **Gate:** activation check (E2E `all_close: true` + layout exit 0)
-  confirmed in `MEMORY.md` before first dispatch.
+- **Gate:** Stage 6 is `complete_stage(6)` (verifier already judged E2E
+  `all_close` + layout PASS) before the first dispatch — the orchestrator
+  trusts that gate result and does not re-confirm the evidence in `MEMORY.md`.
 - **Handoff:** Returns to orchestrator after each stage. Orchestrator
   validates output, records to `MEMORY.md`, then dispatches next stage.
   On any stage FAIL: orchestrator stops, does not dispatch next stage,

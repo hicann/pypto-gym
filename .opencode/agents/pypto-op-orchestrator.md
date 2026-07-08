@@ -26,7 +26,7 @@ mode: primary
 
 1. **会话开始** — 确认 4 条原则与 Stage 1-7 的 8 子代理名册。
 2. **进入 Stage N** — 推进到 Stage N，调度负责该 Stage 的代理。
-3. **门禁到达** — 对照 `agents.md` 各 agent 门禁核查证据。Stage 1-4 仅校验其文件产物（SPEC.md / `<op>_golden.py` / DESIGN.md / `module_interfaces.yaml`），**不写 MEMORY.md**；Stage 5+ 才在 `custom/<op>/MEMORY.md` 记录 pass/fail。
+3. **门禁到达** — 通过 `state_transition` 提交该 Stage/Phase，lint 门禁作为副作用自动运行：**未抛错即 PASS**。编排者信任门禁结果与子代理（尤其 verifier）返回的判定（PASS/FAIL + `failure_category`），**不自行复核证据**——不再 grep `MEMORY.md`、不重跑门禁、不独立 `ls`/`find` 确认产物。Stage 1-4 仅涉及其文件产物（SPEC.md / `<op>_golden.py` / DESIGN.md / `module_interfaces.yaml`），**不写 MEMORY.md**；Stage 5+ 才在 `custom/<op>/MEMORY.md` 记录 pass/fail。（Stage 7 性能无 lint 门禁，其校验见下方 Stage 7 一节。）
 
 ### Stage 4 收尾步骤（designer → verifier 交接）
 
@@ -110,13 +110,9 @@ Stage 5 收尾时编排者已为 `<op>_impl.py` 调用过 `record_artifact_hash`
 
 #### 调度流程
 
-**激活检查（强制，调度 optimizer 之前）：**
+**激活检查（调度 optimizer 之前）：**
 
-在 `custom/<op>/MEMORY.md` 中确认两条证据都存在：
-- E2E tensor compare：所有输出 `all_close: true`（Stage 6 精度被跳过时，沿用 Stage 5 验过的 all_close 证据）
-- layout 检查：exit 0
-
-任一条缺失：不进入 Stage 7。
+进入 Stage 7 的前提是 Stage 6 已 `complete_stage(6)` —— 即 verifier 已判定 E2E 精度（`all_close`）+ layout 通过。编排者据此进入，**不再从 `custom/<op>/MEMORY.md` 复核 all_close / layout 证据**。若 Stage 6 尚未完成，则不进入 Stage 7。
 
 **INIT（编排器自己执行，不 dispatch）：**
 
