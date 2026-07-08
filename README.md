@@ -109,6 +109,13 @@ python3 modeling/transformers/qwen3_1_7b/ask_Qwen3-1.7B.py \
     --model-path /path/to/models/Qwen3-1.7B
 ```
 
+#### 4. 使用限制
+
+当前 PyPTO 在整网场景下存在以下限制：
+
+- **不支持多流并行**：PyPTO 算子无法跨流并行执行，相关任务需在单流内串行调度。
+- **不支持 superkernel**：整网场景下 PyPTO 算子不支持 superkernel 融合能力。
+
 ## 常见问题排查
 
 **Q: 报错 `NPU out of memory`**
