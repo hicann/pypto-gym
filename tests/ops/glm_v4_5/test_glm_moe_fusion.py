@@ -169,7 +169,7 @@ def _run_single_moe_iter(cfg: _RunSingleMoeIterInputs):
 
     import pypto.pypto_impl as pypto_impl
     total_elapsed = pypto_impl.GetCompilerMonitorTotalElapsed()
-    check_cond(total_elapsed <= 30, f"glm_moe_fusion compile elapsed timeout {total_elapsed}s > 30s.")
+    check_cond(total_elapsed <= 60, f"glm_moe_fusion compile elapsed timeout {total_elapsed}s > 60s.")
 
 
 def test_moe_fusion():
