@@ -894,7 +894,7 @@ class BuildCtrl():
         if self.third_party_path:
             print("third party set")
             update_env.update({"PYPTO_THIRD_PARTY_PATH": self.third_party_path})
-        
+        update_env.update({"PYPTO_ALLOW_WHL_BUILD": "1"})
         try:
             # 切换工作目录至 pypto 源码根目录 self.pypto_root
             os.chdir(self.pypto_root)
