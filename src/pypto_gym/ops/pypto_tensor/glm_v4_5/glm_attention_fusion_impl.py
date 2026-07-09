@@ -20,7 +20,6 @@ import pypto
 import pytest
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
-from .utils.golden import attn_golden
 
 
 np.random.seed(0)

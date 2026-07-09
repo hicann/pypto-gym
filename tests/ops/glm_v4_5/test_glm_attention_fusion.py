@@ -24,10 +24,9 @@ while not os.path.isdir(os.path.join(_p, 'src')):
 sys.path.insert(0, os.path.join(_p, 'src'))
 sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 
-import pypto
+import glm_v4_5.utils.attn_golden as attn_golden
 from glm_v4_5.glm_attention_fusion_impl import attention, get_qwen_common_config
 from common_utils import detailed_allclose_manual as compare
-from glm_v4_5.utils.golden import attn_golden
 
 
 np.random.seed(0)
