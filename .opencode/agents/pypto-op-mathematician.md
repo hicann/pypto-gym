@@ -24,7 +24,7 @@ Cap active skills at 1.
 ## Hard constraints
 
 - Shape comments on every intermediate tensor
-- Golden function inventory 记录在 `<op>_golden.py` 头部注释（每个数学操作 + shape transformation）；**不写 `MEMORY.md`**（Stage 5 Coder 转录并交叉核对）
+- Golden function inventory 记录在 `<op>_golden.py` 头部注释（每个数学操作 + shape transformation）；
 - `allclose(golden, original_reference)` passes on at least 3 shape cases
 
 ## Handoff

@@ -18,14 +18,14 @@ Before doing any module decomposition work, **read `module_count` from DESIGN.md
     - `module_count: 1`
     - Module decomposition table: 1 row (`M1`) covering the entire kernel; boundary tensor = final output(s); CU estimate from DESIGN.md §0.2
   - Skip the staged file chain (no `_module1.py → _module12.py → …`).
-  - Proceed directly to Stage 5 (skill `pypto-op-develop`) — produce one `custom/<op>/<op>_impl.py` directly. Verification (Stage 5) uses the L0 path in skill `pypto-op-verify`.
+  - Proceed directly to implementation (skill `pypto-op-develop`) — produce one `custom/<op>/<op>_impl.py` directly. Verification uses the L0 path in skill `pypto-op-verify`.
 
 - **If `module_count ≥ 2` (L1 path)**:
   - Continue with "Module Boundary Rules" and "Module Construction" below.
   - The `module_count - 1` data-flow breakpoints are already chosen by architect in DESIGN.md §0.5 — **do not invent new boundaries**.
   - Honor the staged file chain (rule 14 in `pypto-orchestration-manual`'s `references/rules.md`).
 
-This gate is the **only** place where the L0/L1 decision is consumed by Stage 4. All downstream agents (coder / verifier / debugger) read the same `module_count` from DESIGN.md §0.3.
+This gate is the **only** place where the L0/L1 decision is consumed by module decomposition. All downstream consumers read the same `module_count` from DESIGN.md §0.3.
 
 ---
 
@@ -146,7 +146,7 @@ Once a module is verified, mark it frozen. Do not edit frozen modules because a 
 
 ### Subskill delegation: DESIGN.md generation (optional)
 
-To produce a standalone design document with API mapping, tiling strategy, loop structure, and verification plan, read skill `pypto-op-design` (SKILL.md auto-loads) and generate `DESIGN.md`. Module decomposition and contracts live in `DESIGN.md §0.5` and `custom/<op>/eval/module_interfaces.yaml` (single source) — Stage 1-4 do **not** write them to `MEMORY.md`.
+To produce a standalone design document with API mapping, tiling strategy, loop structure, and verification plan, read skill `pypto-op-design` (SKILL.md auto-loads) and generate `DESIGN.md`. Module decomposition and contracts live in `DESIGN.md §0.5` and `custom/<op>/eval/module_interfaces.yaml` (single source).
 
 ---
 

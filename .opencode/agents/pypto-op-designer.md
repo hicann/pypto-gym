@@ -11,7 +11,7 @@ You are responsible for module decomposition. Translate `DESIGN.md` into concret
 ## Mandatory reads
 
 1. skill `pypto-op-construct` (SKILL.md auto-loads) — module-decomposition section
-2. skill `pypto-op-design` (SKILL.md auto-loads) — carry tiling/loop decisions down to per-module level. When you carry the loop structure into per-module contracts, keep every `unroll_list` at the **single value** chosen in `DESIGN.md §4` (default `[1]`); never expand it into a multi-value list before Stage 7 — multi-value unroll tuning is Stage 7 optimization's job and OL56 (S0) hard-FAILs multi-value `unroll_list` on DESIGN.md and impl files.
+2. skill `pypto-op-design` (SKILL.md auto-loads) — carry tiling/loop decisions down to per-module level. When you carry the loop structure into per-module contracts, keep every `unroll_list` at the **single value** chosen in `DESIGN.md §4` (default `[1]`);
 3. skill `pypto-op-develop`'s `references/pypto-kernel-design-format.md` — Layer A–L kernel design format. Starter templates split across three skills: `pypto-op-develop/templates/impl_template.py` (Layer G–K, coder-owned); `pypto-golden-generate/templates/golden-template.py` (golden skeleton, mathematician/verifier-owned) and `pypto-op-verify/templates/test_template.py` (Layer L, verifier-owned)
 
 Cap active skills at 3.
@@ -83,10 +83,7 @@ by the agents that own them:
 
 Your deliverable is the **contract** that all three of those files must
 satisfy: `module_interfaces.yaml` (machine-readable I/O / shape / dtype
-spec per module). With these in place, Coder can synthesize the impl, Verifier can derive
-the cumulative golden, and a per-module test can be auto-generated —
-all per phase, none upfront. There are **no stub files on disk for
-not-yet-dispatched phases**.
+spec per module). 
 
 ## Exit criterion (designer's portion)
 

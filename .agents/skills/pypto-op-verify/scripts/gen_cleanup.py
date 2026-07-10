@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
-"""Stage 5 cleanup (L1) without a coder dispatch.
+"""Module-integration cleanup (L1) — mechanical, no implementation pass.
 
-L1 cleanup produces two mechanical artifacts the coder used to hand-write:
+L1 cleanup produces two mechanical artifacts previously hand-written:
   1. `<op>_impl.py` — the final cumulative `<op>_module<suffix_N>_impl.py` with
      the wrapper symbol renamed `<op>_module<suffix_N>_wrapper` → `<op>_wrapper`
      and staging comments / stubs stripped. Same kernel logic, same bodies.
   2. `README.md` — reader-facing usage doc filled from SPEC.md front matter.
 
-The orchestrator runs this instead of dispatching the cleanup coder; the
-integrated impl is still verified downstream by the Stage 6 E2E gate.
+Run this instead of a hand cleanup pass; the integrated impl is still
+verified downstream by the final E2E gate.
 
 Usage::
 

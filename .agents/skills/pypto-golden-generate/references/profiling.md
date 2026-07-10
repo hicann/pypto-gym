@@ -2,7 +2,7 @@
 
 ## 说明
 
-**⛔ 强制步骤**：验证通过后，**必须**使用通用脚本 `scripts/profile_golden.py` 调用 `{op}_golden.py`，并通过 `torch_npu.profiler` 采集 golden 算子在 NPU 上的性能数据。golden 文件本身不包含 profiling 代码。**`GOLDEN_PERF_REPORT.md` 是 Stage 2 的强制交付物**，未生成不得进入 Stage 3。
+**⛔ 强制步骤**：验证通过后，**必须**使用通用脚本 `scripts/profile_golden.py` 调用 `{op}_golden.py`，并通过 `torch_npu.profiler` 采集 golden 算子在 NPU 上的性能数据。golden 文件本身不包含 profiling 代码。
 
 **核心目标**：对所有算子的 golden 都必须成功采集到正确的性能数据。无论算子输入多复杂，都要找到一种方式让 profiling 成功运行。
 

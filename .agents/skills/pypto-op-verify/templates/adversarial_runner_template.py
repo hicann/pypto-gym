@@ -9,7 +9,7 @@
 #
 # Verification runs on the NPU only (the kernel is executed via its impl
 # wrapper, which pins the NPU device at import). DO NOT rename the CLI flags,
-# the report keys, or the helper functions below — @pypto-op-debugger and the
+# the report keys, or the helper functions below — the debug tooling and the
 # lint gates bind to these names.
 #
 # Comparison semantics (DIRECT MODE — no cross-phase imports). For

@@ -7,7 +7,7 @@
 # custom/<op>/eval/test_inputs.py and fill the two op-specific blocks marked
 # "AGENT FILLS": PRIMARY_INPUT_ORDER and the body of make_inputs.
 #
-# Contract (verifier.md Step B.1):
+# Contract (Step B.1):
 #   - PRIMARY_INPUT_ORDER mirrors module_interfaces.yaml primary_inputs order;
 #     the runner maps make_inputs() keys to positional args through it.
 #   - make_inputs keys MUST match the golden's parameter names.
@@ -77,7 +77,7 @@ def make_inputs(case: dict) -> dict[str, "torch.Tensor | int"]:
         "x": torch.randn(shapes.get("x", [shapes.get("B", 1)]), dtype=dtype, device=DEVICE),
     }
 
-    # cancellation_stress hook (verifier.md B.6): engineer near-equal operands.
+    # cancellation_stress hook (Step B.6): engineer near-equal operands.
     cs = case.get("cancellation_stress")
     if cs:
         # deterministic under cs["seed"]; tighten the subtractive pair in

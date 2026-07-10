@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
-"""Validate custom/<op>/eval/module_interfaces.yaml wiring (verifier Step A.5.1).
+"""Validate custom/<op>/eval/module_interfaces.yaml wiring (Step A.5.1).
 
-Codifies the six validity rules the verifier previously checked by hand
-(.opencode/agents/pypto-op-verifier.md Step A.5.1):
+Codifies the six validity rules previously checked by hand (Step A.5.1):
 
   1. Every inputs[*].source == "primary" name exists in primary_inputs.
   2. Every inputs[*].source == "module_j" has j < current module id, and the
@@ -15,10 +14,10 @@ Codifies the six validity rules the verifier previously checked by hand
   5. Shape expressions parse using only + - * // and name/int tokens.
   6. dtype strings are from the allowed vocabulary.
 
-On FAIL the verifier appends a rejection block to MEMORY.md and stops so the
-orchestrator can re-dispatch architect/designer.
+On FAIL a rejection block is appended to MEMORY.md and the run stops so the
+upstream design can be revised.
 
-Assumed schema (the designer's emitter and this validator must agree):
+Assumed schema (the skeleton emitter and this validator must agree):
 
     primary_inputs:
       - {name: x, shape: "[B, T]", dtype: float32}
@@ -51,7 +50,7 @@ import sys
 from pathlib import Path
 
 # Emit on stdout with a bare (message-only) format so JSON / summary output
-# stays machine-parseable for the caller (verifier reads stdout).
+# stays machine-parseable for the caller (which reads stdout).
 _LOGGER = logging.getLogger("validate_yaml")
 
 DTYPE_VOCAB = {"float32", "float16", "bfloat16", "int32", "int64", "bool", "int"}

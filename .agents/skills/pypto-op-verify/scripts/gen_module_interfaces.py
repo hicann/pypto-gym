@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
-"""Generate a module_interfaces.yaml skeleton for @pypto-op-designer.
+"""Generate a module_interfaces.yaml skeleton for completion by hand.
 
-Codifies the deterministic parts of the YAML the designer used to transcribe by
-hand (.opencode/agents/pypto-op-designer.md): schema scaffolding, primary_inputs
+Codifies the deterministic parts of the YAML previously transcribed by
+hand: schema scaffolding, primary_inputs
 names (from the golden signature), and composition_verification (atol / rtol /
 shapes from SPEC.md front matter). The JUDGEMENT part — the modules[] boundaries
-and final_outputs wiring — is left as TODO stubs for the designer to fill from
+and final_outputs wiring — is left as TODO stubs to fill from
 DESIGN.md §0.5 dataflow breakpoints.
 
 After filling modules[], validate the result with the sibling validate_yaml.py.
@@ -63,7 +63,7 @@ def _parse_front_matter(content: str) -> dict:
 
 def _shape_for(name: str, p0_shapes: list) -> str:
     """Best-effort shape for a primary input from SPEC p0_shapes (dict form maps
-    by name; otherwise emit a TODO for the designer)."""
+    by name; otherwise emit a TODO)."""
     for item in p0_shapes or []:
         if isinstance(item, dict) and name in item:
             return str(list(item[name]))
@@ -93,7 +93,7 @@ def build_skeleton(op: str, params: list[str], meta: dict) -> str:
 
     lines += [
         "",
-        "# TODO (designer judgement): split into modules per DESIGN.md §0.5",
+        "# TODO (judgement): split into modules per DESIGN.md §0.5",
         "# breakpoints. source is 'primary' or 'module_<j>' with j < current id.",
         "modules:",
         "  - id: 1",
@@ -104,7 +104,7 @@ def build_skeleton(op: str, params: list[str], meta: dict) -> str:
         "    outputs:",
         f"      - {{name: TODO, shape: TODO, dtype: {default_dtype}}}",
         "",
-        "# TODO (designer): one entry per golden return value, keyed to producer.",
+        "# TODO: one entry per golden return value, keyed to producer.",
         "final_outputs:",
         "  - {name: TODO, source: module_1}",
         "",

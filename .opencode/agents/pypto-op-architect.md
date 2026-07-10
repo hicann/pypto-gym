@@ -45,6 +45,6 @@ Before finalizing tiling / memory plan, add `## Numerical Stability Profile` to 
 - **§0 Decomposition Decision** complete: `module_count` set per formula; heavy/light op classification filled; if `module_count ≥ 2`, §0.5 lists `module_count - 1` data-flow breakpoints (boundary tensor names + shapes).
 - **Layers A–L** populated.
 - **Numerical Stability Profile** populated.
-- Tile shape follows the pre-Stage-7 Tile shape baseline, with any API/shape hard-constraint exception documented.
+- Tile shape follows the pre-optimization Tile shape baseline, with any API/shape hard-constraint exception documented.
 
 The performance target sheet is **not** produced here.
