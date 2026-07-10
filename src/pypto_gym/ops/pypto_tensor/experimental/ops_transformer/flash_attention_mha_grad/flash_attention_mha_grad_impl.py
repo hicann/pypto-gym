@@ -53,6 +53,9 @@ class FlashAttentionGradTileShapeConfig:
         "sg_set_tunevf_mode": 1,
         "ooo_sched_mode": "GAPMIN",
     },
+    codegen_options={
+        "vf_options": " -mllvm -cce-vf-aa-between-iters=true -mllvm --tile-fusion-relax-loop-dependency-check=false "
+    },
 )
 def flash_attention_mha_grad_kernel_impl(
     q: pypto.Tensor([pypto.DYN, ...], pypto.DT_BF16),
