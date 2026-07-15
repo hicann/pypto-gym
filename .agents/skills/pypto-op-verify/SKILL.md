@@ -5,7 +5,7 @@ description: Validation runner requirements, detailed_tensor_compare usage, succ
 
 # PyPTO Complex Kernel — Validation and Deliverables
 
-## Templates (verifier-owned skeletons)
+## Templates (skill-owned skeletons)
 
 | File | Used at | Purpose |
 |------|---------|---------|
@@ -141,17 +141,17 @@ At the end, the agent must be able to report:
 
 ## Harness upgrades — inspection tensors
 
-The adversarial runner contract has been extended to give @pypto-op-debugger better narrowing signal on complex kernels (gated delta rule backward, kimi delta attention, etc.). Features specified in the **pypto-op-verifier** agent definition (`agents/pypto-op-verifier.md`):
+The adversarial runner contract has been extended to give downstream narrowing signal on complex kernels (gated delta rule backward, kimi delta attention, etc.). Features specified below:
 
 ### 1. NPU execution
 
 `adversarial_runner.py` runs the impl on the NPU and emits `status` + `first_failure` (with `failure_category`) in `evaluation_report.json`. The NPU result is the authoritative correctness signal.
 
-### 2. Inspection tensor protocol (pypto-op-verifier §B.5)
+### 2. Inspection tensor protocol (§B.5)
 
 `adversarial_runner.py --inspect <name>` compares per-iteration intermediate state inside a module instead of the terminal output, using `inspection_<name>` buffers that the impl assembles into and `module_<k>_inspect()` on the golden side. Emits drift-onset iteration in the report. Use when a module contains `pypto.loop(NT)` or a reverse scan; skip for elementwise / pure-cube modules. Information barrier (`_sanitize`) still applies.
 
-### 3. `cancellation_stress` input generation mode (pypto-op-verifier §B.6)
+### 3. `cancellation_stress` input generation mode (§B.6)
 
 `test_inputs.py::make_inputs(case)` must support a `cancellation_stress` knob when the op contains a subtractive accumulation. The generator engineers inputs where the subtracted pair's relative gap hits a target value (default `1e-5`), exposing catastrophic-cancellation bugs uniform-random inputs miss. At least one `L5_cancellation_stress_*` case per subtractive pair is mandatory for ops with such pairs.
 
@@ -160,13 +160,13 @@ The adversarial runner contract has been extended to give @pypto-op-debugger bet
 See `references/intermediate-snapshot-automation.md` for the full usage doc. Replaces the hand-written debug-stage file chain (see `custom/gated_delta_rule_backward/debug/` for the pre-automation pattern — 11 files per op) with a single manifest-driven pipeline:
 
 1. Author adds `# <<< SNAPSHOT:<point>` / `# >>> SNAPSHOT:<point>` marker pairs around the probe regions in `<op>_module<suffix>.py`.
-2. @pypto-op-debugger writes `custom/<op>/_debug/snapshot_manifest.yaml` listing the intermediates to probe.
+2. A snapshot manifest `custom/<op>/_debug/snapshot_manifest.yaml` is written listing the intermediates to probe.
 3. `python .agents/skills/pypto-op-verify/scripts/snapshot_generator.py custom/<op>/_debug/snapshot_manifest.yaml` produces the snapshot impl + golden-augmentation + bisect shell.
 4. `bash custom/<op>/_debug/run_snapshot_bisect.sh` runs the bisection and prints per-iteration drift-onset per intermediate, plus JSON to `custom/<op>/_debug/snapshot_report.json`.
 
 The snapshot-bisection tool binds to the inspection-tensor protocol (§B.5). It is a standalone deep-debug tool (`snapshot_bisect.py`), independent of the default per-case runner.
 
-**When @pypto-op-debugger invokes this path:** after a prefix-eval failure on the NPU where the module contains `pypto.loop(NT)` or a reverse scan, AND the module's single-shot output diff alone does not localize the bug to one expression.
+**When this path is invoked:** after a prefix-eval failure on the NPU where the module contains `pypto.loop(NT)` or a reverse scan, AND the module's single-shot output diff alone does not localize the bug to one expression.
 
 **Files:**
 - `scripts/snapshot_manifest_schema.py` — validator

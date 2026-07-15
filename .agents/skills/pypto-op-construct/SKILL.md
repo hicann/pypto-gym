@@ -18,11 +18,11 @@ Before doing any module decomposition work, **read `module_count` from DESIGN.md
     - `module_count: 1`
     - Module decomposition table: 1 row (`M1`) covering the entire kernel; boundary tensor = final output(s); CU estimate from DESIGN.md §0.2
   - Skip the staged file chain (no `_module1.py → _module12.py → …`).
-  - Proceed directly to implementation (skill `pypto-op-develop`) — produce one `custom/<op>/<op>_impl.py` directly. Verification uses the L0 path in skill `pypto-op-verify`.
+  - Proceed directly to implementation — produce one `custom/<op>/<op>_impl.py` directly. Verification uses the L0 path.
 
 - **If `module_count ≥ 2` (L1 path)**:
   - Continue with "Module Boundary Rules" and "Module Construction" below.
-  - The `module_count - 1` data-flow breakpoints are already chosen by architect in DESIGN.md §0.5 — **do not invent new boundaries**.
+  - The `module_count - 1` data-flow breakpoints are already chosen in DESIGN.md §0.5 — **do not invent new boundaries**.
   - Honor the staged file chain (rule 14 in `pypto-orchestration-manual`'s `references/rules.md`).
 
 This gate is the **only** place where the L0/L1 decision is consumed by module decomposition. All downstream consumers read the same `module_count` from DESIGN.md §0.3.
@@ -42,7 +42,7 @@ Read from DESIGN.md:
 - §0.5 `module_count - 1` data-flow breakpoints (boundary tensor names + shapes)
 - §0.4 heavy / light op classification for this kernel
 
-Do **not** introduce new breakpoints. If the breakpoints in DESIGN.md don't fit during construction, return control to the orchestrator and request the architect to revise DESIGN.md §0.5.
+Do **not** introduce new breakpoints. If the breakpoints in DESIGN.md don't fit during construction, return control and request a revision of DESIGN.md §0.5.
 
 ### R2 — Each module must contain ≥ 1 heavy op (backbone)
 
@@ -118,7 +118,7 @@ Each module should fall within **0.7 - 1.3 complexity unit**. The total module c
 module_count = min(round(total_complexity), ceil(effective_lines / 12))
 ```
 
-so per-module thickness is approximately uniform by construction. If during implementation a module ends up much thinner (< 0.5 CU, no heavy op) or much thicker (> 1.5 CU, integration too hard), return to the orchestrator and request the architect to revise DESIGN.md §0.5 breakpoints.
+so per-module thickness is approximately uniform by construction. If during implementation a module ends up much thinner (< 0.5 CU, no heavy op) or much thicker (> 1.5 CU, integration too hard), return control and request a revision of DESIGN.md §0.5 breakpoints.
 
 ### Write decomposition into the contract (mandatory)
 
@@ -152,7 +152,7 @@ To produce a standalone design document with API mapping, tiling strategy, loop 
 
 ## Module Construction (L1 path only)
 
-> If `module_count == 1` (L0 path), this section does not apply. Skip directly to skill `pypto-op-develop` (Stage 5) to produce a single `<op>_impl.py`.
+> If `module_count == 1` (L0 path), this section does not apply, skip directly.
 
 Goal: build each module in isolation before integration.
 

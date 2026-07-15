@@ -323,8 +323,8 @@ def generate(manifest_path: str | Path, *, dry_run: bool = False) -> Dict[str, P
     debug_dir.mkdir(parents=True, exist_ok=True)
 
     # Source module file — convention: custom/<op>/modules/<op>_module<suffix>_impl.py
-    # We pick the widest-suffix existing module file as the source, since by
-    # Stage 5 the latest staged file is the canonical one. If the manifest
+    # We pick the widest-suffix existing module file as the source, since the
+    # latest staged file is the canonical one. If the manifest
     # specifies a `source_impl` key in the future we'll honor it.
     candidates = sorted(op_dir.glob(f"{op}_module*.py"))
     if not candidates:

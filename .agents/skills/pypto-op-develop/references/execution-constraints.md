@@ -238,7 +238,7 @@ Python `[]` 切片语法内部会对 index 做 `int()` 转换，因此也不能�
 
 ```python
 acc = pypto.tensor([TILE, D], pypto.DT_FP32, "acc")
-for idx in pypto.loop(n, name="LOOP", idx_name="idx", unroll_list=[1]):  # Stage 6 之前单一值 (OL56)
+for idx in pypto.loop(n, name="LOOP", idx_name="idx", unroll_list=[1]):  # 实现阶段单一值 (OL56)
     tile = compute_something(...)
     if pypto.is_loop_begin(idx):
         acc[:] = tile          # 首次迭代：初始化
@@ -251,9 +251,9 @@ for idx in pypto.loop(n, name="LOOP", idx_name="idx", unroll_list=[1]):  # Stage
 
 - `pypto.tensor()` 创建的是未初始化随机值，**必须在 is_loop_begin 中初始化**
 - `unroll_list` 对内层循环使用，让编译器为不同迭代次数生成优化代码
-- **Stage 6 之前 `unroll_list` 只能含单一值（默认 `[1]`）**：直接照搬 DESIGN.md §4 中
-  Designer 选定的单一值，**不要自行扩成多值**（如 `[4, 2, 1]`）。多值会触发编译路径爆炸、
-  拖慢编译并使开发流程超时；多值展开调优仅允许在 Stage 7 optimization 进行（OL56 强制 FAIL，S0）
+- **实现阶段 `unroll_list` 只能含单一值（默认 `[1]`）**：直接照搬 DESIGN.md §4 中
+  选定的单一值，**不要自行扩成多值**（如 `[4, 2, 1]`）。多值会触发编译路径爆炸、
+  拖慢编译并使开发流程超时；多值展开调优仅允许在性能优化阶段进行（OL56 强制 FAIL，S0）
 
 ### 5.5 梯度算子的两趟设计模式
 

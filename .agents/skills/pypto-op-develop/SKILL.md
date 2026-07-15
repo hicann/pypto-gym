@@ -1,15 +1,15 @@
 ---
 name: pypto-op-develop
-description: PyPTO 算子 impl 编码手册。coder agent 收到调度时使用，先 per-Phase 累计构建 `<op>_module<k>_impl.py`，最后一个 Phase 通过验证后 cleanup 整理出 `<op>_impl.py` + `README.md`。基于 Layer A–L 设计规范，配合 `impl_template.py` 模板生成符合规范的 PyPTO 实现代码。触发词：实现算子、写 kernel、编写实现、写 impl、算子编码、code the op、op develop、kernel 实现。
+description: PyPTO 算子 impl 编码手册。用于 per-Phase 累计构建 `<op>_module<k>_impl.py`，最后一个 Phase 通过验证后 cleanup 整理出 `<op>_impl.py` + `README.md`。基于 Layer A–L 设计规范，配合 `impl_template.py` 模板生成符合规范的 PyPTO 实现代码。触发词：实现算子、写 kernel、编写实现、写 impl、算子编码、code the op、op develop、kernel 实现。
 ---
 
 # PyPTO 算子 impl 实现
 
-基于 Layer A–L 设计规范，生成 PyPTO kernel 实现文件。**仅负责 impl 部分**（Layer G–K）；golden 与 test 由 mathematician / verifier 在另外的 skill 中生成。
+基于 Layer A–L 设计规范，生成 PyPTO kernel 实现文件。**仅负责 impl 部分**（Layer G–K）；golden 与 test 不由本 skill 生成。
 
 > 资料获取统一使用 skill `pypto-docs-search`：按需搜索算子 API 文档、参考实现与 golden 等文件/目录/内容。
 
-> **新方式（per-Phase 阶段构建 + cleanup）**：每次 Phase 调度只生成**一个** `<op>_module<k>_impl.py`，然后停止。所有 Phase M_k 通过验证后，coder 再被调度一次执行 cleanup，把累计 impl 整理成 `<op>_impl.py` 并写 `README.md`。test 文件由 pypto-op-verifier 在 scaffolding step C 和 cleanup 调度时生成。
+> **新方式（per-Phase 阶段构建 + cleanup）**：每次 Phase 调度只生成**一个** `<op>_module<k>_impl.py`，然后停止。所有 Phase M_k 通过验证后，再被调度一次执行 cleanup，把累计 impl 整理成 `<op>_impl.py` 并写 `README.md`。test 文件不由本 skill 生成。
 
 ---
 
@@ -23,7 +23,7 @@ description: PyPTO 算子 impl 编码手册。coder agent 收到调度时使用�
 | 数学公式 | 理解计算逻辑 |
 | 输入 / 输出规格（shape、dtype） | tensor 描述符与 wrapper 数据准备 |
 | 支持的数据类型 | impl 类型处理 |
-| 精度要求 | 与 verifier 共享，记录到 MEMORY |
+| 精度要求 | 用于自验证，记录到 MEMORY |
 | 服务器类型 | 环境兼容性确认 |
 
 ### 设计方案信息（来自 DESIGN.md + module_interfaces.yaml）
@@ -44,7 +44,7 @@ description: PyPTO 算子 impl 编码手册。coder agent 收到调度时使用�
 | stage 标签（`# ===== (A) ... =====`） | 与 impl 中 `pypto_*` 子内核名一一对应 |
 | 输入 / 输出契约 | impl wrapper 的 layout 适配 |
 
-如以上信息不足，向 orchestrator 反馈缺失项；不要自行猜测。
+如以上信息不足，向上反馈缺失项；不要自行猜测。
 
 ---
 
@@ -59,7 +59,7 @@ description: PyPTO 算子 impl 编码手册。coder agent 收到调度时使用�
 | [scripts/environment_prepare.sh](scripts/environment_prepare.sh) | 环境初始化脚本 | 环境准备阶段按需执行 |
 | [scripts/list_idle_chip_ids.sh](scripts/list_idle_chip_ids.sh) | 输出当前可用 chip id 列表（兼容 910B / 910C） | 设置 `TILE_FWK_DEVICE_ID` 前执行 |
 
-> golden 模板和 test 模板由 pypto-op-verify 拥有，coder 不直接读取这些模板。
+> golden 模板和 test 模板不由本 skill 生成，本 skill 不直接读取这些模板。
 
 ---
 
@@ -105,12 +105,12 @@ export PTO_TILE_LIB_CODE_PATH=./pto_isa/pto-isa/
 
 ### 阶段二：代码生成（Layer A–L 方式）
 
-**目标**：每次 orchestrator 调度，生成**一个** impl 文件。
+**目标**：每次调度，生成**一个** impl 文件。
 
 | 调度场景 | 输出文件 | 触发条件 |
 |---------|---------|---------|
-| Per-Phase M_k 调度 | `custom/<op>/modules/<op>_module<k>_impl.py` | orchestrator 设置 `active_module: M_k` |
-| Cleanup 调度 | `custom/<op>/<op>_impl.py` + `custom/<op>/README.md` | 所有 Phase M_k 已通过 verifier 验证 |
+| Per-Phase M_k 调度 | `custom/<op>/modules/<op>_module<k>_impl.py` | `active_module: M_k` 已设置 |
+| Cleanup 调度 | `custom/<op>/<op>_impl.py` + `custom/<op>/README.md` | 所有 Phase M_k 已通过验证 |
 
 **禁止**：单次调度内生成多个 impl 文件、提前生成下一个模块、生成测试代码。
 
@@ -158,15 +158,15 @@ export PTO_TILE_LIB_CODE_PATH=./pto_isa/pto-isa/
    - 已知限制
    - 性能指标（来自 DESIGN.md）
 
-> Cleanup 调度中 coder 不生成 `test_<op>.py`，那是 verifier 的职责（用 `test_template.py` + `test_cases.json` 生成）。
+> Cleanup 调度中不生成 `test_<op>.py`（不由本 skill 负责）。
 
 ---
 
-### 阶段三：测试验证（与 verifier 协作）
+### 阶段三：自测试与自检
 
-coder **不直接运行 test**，由 verifier 在 Phase Stop / Stage Stop 时调用 `detailed_tensor_compare` 进行裁决。
+在 `<op>_impl.py` / `<op>_module<k>_impl.py` 文件内部添加自测试函数（置于 `if __name__ == "__main__":` 块中），用样例输入跑通 kernel 的基本功能，确认无 crash、输出 shape 与 dtype 正确。自测试仅用于编码侧快速自验证，将自验证结果记录到 `MEMORY.md`。
 
-**coder 在编码完成后的自检**：
+**编码完成后的自检**：
 
 1. **静态检查**（手动 grep，提交前确认）：
    - `grep -c '@pypto.frontend.jit' <文件>` 应为 1
@@ -181,7 +181,7 @@ python3 build_ci.py -f python3 --disable_auto_execute  # 如未安装 pypto
 echo $TILE_FWK_DEVICE_ID  # 必须有值
 ```
 
-3. **失败时**：将 stderr 中包含 `Errcode: F` / `ErrCode: F` 的错误码原文记入 MEMORY，并按 [references/error-code-troubleshooting.md](references/error-code-troubleshooting.md) 的流程排查。**不要自行修复架构 / 算法层级问题**，那是 architect / debugger 的职责。
+3. **失败时**：将 stderr 中包含 `Errcode: F` / `ErrCode: F` 的错误码原文记入 MEMORY，并按 [references/error-code-troubleshooting.md](references/error-code-troubleshooting.md) 的流程排查。**不要自行修复架构 / 算法层级问题**，向上反馈。
 
 ⚠️ 有 NPU 卡的情况下，禁止用 `run_mode=sim` 跑验证（OL42）。
 
@@ -194,7 +194,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 3. **优先使用 `@pypto.frontend.jit` 写法**：选择最新的非 wrapper 包装写法，参考 `https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/config/pypto-frontend-jit.md`，与现有示例和文档保持一致。
 4. **golden / impl / test 必须职责分离**：不要把 golden 逻辑、实现逻辑和测试逻辑混写到同一个文件中（OL15 强制 impl 不能 `import pypto`，OL46 强制 test 不能 `import pypto`，OL47 强制 impl 不能 `import torch`）。
 5. **动态数据范围使用 valid_shape**：当最后一块数据量可能小于固定块大小时，`pypto.view` / `pypto.reshape` 中必须指定 `valid_shape`。
-6. **动态循环边界使用 unroll_list**：当循环次数为动态值时，需要使用 `unroll_list`；多层循环嵌套时，最内层使用 `unroll_list`。**Stage 6 之前 `unroll_list` 只能含单一值**（默认 `[1]`）——照搬 DESIGN.md §4 中 Designer 选定的单值，禁止自行扩成多值（如 `[16, 8, 4, 2, 1]`）；多值会触发编译路径爆炸、拖慢编译并使开发流程超时，多值展开调优仅允许在 Stage 7 optimization（OL56 强制 FAIL，S0）。
+6. **动态循环边界使用 unroll_list**：当循环次数为动态值时，需要使用 `unroll_list`；多层循环嵌套时，最内层使用 `unroll_list`。**实现阶段 `unroll_list` 只能含单一值**（默认 `[1]`）——照搬 DESIGN.md §4 中选定的单值，禁止自行扩成多值（如 `[16, 8, 4, 2, 1]`）；多值会触发编译路径爆炸、拖慢编译并使开发流程超时，多值展开调优仅允许在性能优化阶段（OL56 强制 FAIL，S0）。
 7. **matmul / cube 场景**：必须确认 `set_cube_tile_shapes(...)` 已正确配置，并优先放在使用它的 `pypto_*` 子内核内部（详见 design-format §11c）。具体 tile 值见 DESIGN.md §3.2.5。
 8. **输出写回必须显式完成**：使用 `output[:] = ...`、`output.move(...)` 或 `pypto.assemble(..., output)`；不要写 `output = ...`（OL02）。
 9. **动态轴必须显式标注**：所有动态 shape 输入和输出都必须在 Tensor 注解中标成 `pypto.DYNAMIC` / `pypto.DYN`。**禁止** `pypto.Tensor()` / `pypto.Tensor([], dtype)` 这类空注解写法（门禁 OL25 会直接判 FAIL）；静态轴写常量整数，动态轴写 `pypto.DYNAMIC`，不可混淆。
@@ -202,7 +202,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 11. **lint / NPU 冲突按门禁处理**：NPU 运行通过不能作为忽略 lint 失败的理由；lint 失败时不得判定完成、不得写成 OLxx 误报，必须保持门禁合规的实现方向并继续修到 lint 通过。
 12. **Element 用于固定标量 dtype**：当标量参与计算且 dtype 不能依赖隐式映射时，显式使用 `pypto.Element(dtype, value)`。
 13. **避免同图内回环读写**：同一 Tensor 不要在同一图里既 `view` 读取又 `assemble` 回写。
-14. **设计方案优先**：如果设计方案中已有 tiling / loop 约束，编码时优先遵循设计方案；不得在 Stage 5 引入性能调优型 tile 分支。
+14. **设计方案优先**：如果设计方案中已有 tiling / loop 约束，编码时优先遵循设计方案；不得在实现阶段引入性能调优型 tile 分支。
 15. **Layer K 严禁 Python loop 驱动 kernel**（OL45）：chunk 迭代必须放进 Layer I 的 `pypto.loop(NT)` + `pypto.view(..., offsets=[...])`，**不要**在 Layer K 里 `for chunk in range(NT): kernel_npu(...)`。
 16. **`pypto.loop(1)` 是 layout-check 逃生口而非默认包装**（OL46，详见 design-format §11b）：仅当内核没有其他 `pypto.loop` 且 vector pipe 简单 op 需要满足布局检查时使用；如果已有 `pypto.loop(N)`，禁止再外加 `pypto.loop(1)`。
 17. **Tile shape 必须编译期静态**（OL48 强制）：`set_vec_tile_shapes(...)` 与 `set_cube_tile_shapes([...], [...], [...])` 的每个参数（含 list 元素）必须是 Python int 字面量，或解析到字面量的局部 / 模块级 Assign（如 `D = 128` 后写 `set_vec_tile_shapes(1, D)` 可接受）。**禁止**用 kernel 入参、`tensor.shape[i]`、SymbolicScalar（含 `B = x.shape[0]` 间接绑定）、运行时计算、`Call` 结果等动态值。违反 OL48 会判 S0 致命 FAIL。
@@ -222,7 +222,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
         return out
     ```
 
-    `pypto.zeros` 等 creation API 只能在 Layer H/I（JIT 图内，例如临时 workspace 张量）使用。debugger 修补 host wrapper allocation 报错时，**第一反应应当是改用 `torch.*`**，不要尝试调整 `pypto.zeros` 的关键字参数（这条路不通）。
+    `pypto.zeros` 等 creation API 只能在 Layer H/I（JIT 图内，例如临时 workspace 张量）使用。排查 host wrapper allocation 报错时，**第一反应应当是改用 `torch.*`**，不要尝试调整 `pypto.zeros` 的关键字参数（这条路不通）。
 19. **`pypto.is_loop_begin` / `pypto.is_loop_end` 必须直接写在 `@pypto.frontend.jit` body 内**：包含 `pypto.is_loop_begin(idx)` 或 `pypto.is_loop_end(idx)` 的逻辑必须直接出现在 `@pypto.frontend.jit` 装饰的函数体里。**禁止**把这类逻辑放进辅助函数（例如 Layer I 的 `_<op>_kernel_impl(...)`），再由 JIT body 调用——parser 会在编译期抛出 **`F00002, ValueError: Not concrete value`**，且报错栈不会指向具体行，定位困难。BAD/GOOD：
 
     ```python
@@ -256,7 +256,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
     ```
 
     **设计含义**：当 DESIGN.md 把 Layer I 设计为独立辅助函数（如 `_<op>_kernel_impl`），如果该 body 含 `pypto.is_loop_begin` / `pypto.is_loop_end`，Coder 必须把整个 body inline 到 Layer J 的 `@pypto.frontend.jit` 函数里，或在 Layer I 上加 `@pypto.frontend.function`。**这是模板 `impl_template.py` 默认 Layer I/J 切分的已知陷阱**。
-20. **直接采用 DESIGN.md tile**（Stage 5 默认）：第一次写 `<op>_module<k>_impl.py` 或集成 kernel 时，按 DESIGN.md §3.2.5 的 tile shape 原样落码。**禁止在 coder 阶段擅自引入训练/decode/核利用率等 cube-tile 分支**——性能调优是 Stage 7 的工作。若 DESIGN.md §3.2.5 未填好，交回 pypto-op-orchestrator 而不要猜。
+20. **直接采用 DESIGN.md tile**（默认）：第一次写 `<op>_module<k>_impl.py` 或集成 kernel 时，按 DESIGN.md §3.2.5 的 tile shape 原样落码。**禁止在实现阶段擅自引入训练/decode/核利用率等 cube-tile 分支**——性能调优是后续优化阶段的工作。若 DESIGN.md §3.2.5 未填好，交回上层而不要猜。
 
 ---
 
@@ -287,7 +287,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 |------|----------|
 | 模板占位符替换不完整 | 检查生成文件中是否残留 `{op}` / `<op>` / `<suffix_k>` 字面量，定位并修正 |
 | import 失败（找不到 impl/golden） | 确认文件已生成且在同一目录，wrapper 名为 `<op>_module<k>_wrapper`（OL08） |
-| 编译或执行超过 10 分钟且卡住 | 中断并杀掉相关进程，通知 verifier，记入 MEMORY 并升级 debugger |
+| 编译或执行超过 10 分钟且卡住 | 中断并杀掉相关进程，记入 MEMORY 并向上反馈 |
 
 ---
 
@@ -323,4 +323,4 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 15. `module_interfaces.yaml` 中 `active_module: M_k` 的契约（输入 / 输出形状、tile）已严格对应。
 16. Layer H 中的 stage 名（`pypto_stage_alpha` 等）与 `<op>_golden.py` 的 stage 标签一致。
 
-提交后由 verifier 用 `detailed_tensor_compare` + prefix-eval `--up-to-module k` + layout 检查裁决；FAIL 时将 failure_category 记入 MEMORY，等待 debugger 给出补丁建议。
+提交后等待验证裁决（`detailed_tensor_compare` + prefix-eval `--up-to-module k` + layout 检查）；FAIL 时将 failure_category 记入 MEMORY，等待补丁建议。

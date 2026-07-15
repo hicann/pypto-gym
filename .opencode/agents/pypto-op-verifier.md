@@ -59,7 +59,6 @@ custom/<op>/
 ├── <op>_golden.py                    
 ├── <op>_impl.py                      
 ├── test_<op>.py                       ← YOU produce (E2E test)
-├── .orchestrator_state.json           ← caller-only
 ├── modules/
 │   ├── <op>_module<suffix_k>_golden.py    ← YOU produce when dispatched for scaffolding step A
 │   ├── <op>_module<suffix_k>_impl.py      (read-only) per Phase M_k
@@ -105,16 +104,16 @@ impl is written. No upfront per-module file generation.
 
 | Mode | Triggered by | Deliverable | EXPLICITLY EXCLUDED |
 |---|---|---|---|
-| **Stage 4 scaffolding** (**L1 only** — `module_count ≥ 2`; the orchestrator does **not** dispatch this on L0) | Orchestrator at end of Stage 4 design close | `eval/test_inputs.py` + `eval/adversarial_suite.json` + `eval/adversarial_runner.py` (i.e., **Step B only**) | • per-module goldens (`modules/<op>_module*_golden.py`) — wait for Phase scaffolding<br/>• per-module tests (`modules/test_<op>_module*.py`) — wait for Phase scaffolding<br/>• impl stubs of any kind — `*_impl.py` is Coder's property |
-| **Phase scaffolding (M_k)** | Orchestrator after `@pypto-op-coder` for Phase M_k passes lint | (a) `modules/<op>_module<suffix_k>_golden.py` (Step A, scoped to this M_k only), (b) `modules/test_<op>_module<suffix_k>.py` (Step C, scoped to this M_k only), (c) run the test, report precision PASS/FAIL | • files for any phase other than the dispatched M_k<br/>• impl files (already written by Coder; do not modify or replace) |
-| **Composition verification** | Orchestrator after `complete_phase(MN)` succeeds, before Stage 5 cleanup | Verify the cumulative `<op>_module<suffix_N>_golden` reproduces `<op>_golden` | impl / golden / test creation — read-only verification |
-| **Per-module verification** | Orchestrator after Coder produces or patches a module impl | Run `<op>_module<suffix_k>_impl.py` vs `<op>_module<suffix_k>_golden.py`, report PASS/FAIL | new file creation — read-only verification |
+| **Scaffolding mode** (**L1 only** — `module_count ≥ 2`; not dispatched on L0) | After design close, when adversarial harness is needed | `eval/test_inputs.py` + `eval/adversarial_suite.json` + `eval/adversarial_runner.py` (i.e., **Step B only**) | • per-module goldens (`modules/<op>_module*_golden.py`) — wait for Phase scaffolding<br/>• per-module tests (`modules/test_<op>_module*.py`) — wait for Phase scaffolding<br/>• impl stubs of any kind — `*_impl.py` is owned upstream |
+| **Phase scaffolding (M_k)** | After the Phase M_k impl passes lint | (a) `modules/<op>_module<suffix_k>_golden.py` (Step A, scoped to this M_k only), (b) `modules/test_<op>_module<suffix_k>.py` (Step C, scoped to this M_k only), (c) run the test, report precision PASS/FAIL | • files for any phase other than the dispatched M_k<br/>• impl files (already written upstream; do not modify or replace) |
+| **Composition verification** | After `complete_phase(MN)` succeeds, before cleanup | Verify the cumulative `<op>_module<suffix_N>_golden` reproduces `<op>_golden` | impl / golden / test creation — read-only verification |
+| **Per-module verification** | After a module impl is produced or patched | Run `<op>_module<suffix_k>_impl.py` vs `<op>_module<suffix_k>_golden.py`, report PASS/FAIL | new file creation — read-only verification |
 
 The active phase `M_k` is passed in the dispatch prompt for
 phase-scoped modes. Scaffolding and Composition verification do
 not take a phase argument.
 
-**Stage 6 final E2E mode:** if dispatched with **"kernel unchanged"** (`<op>_impl.py` hash unchanged since its Stage 5 verify), run **structure-only** — the layout/structure lint (OL44 trio, OL45/OL57, OL48, OL52, OL19) + structure confirmation, **NO `detailed_tensor_compare`**; the Stage 5 all_close evidence stands. Otherwise run the full E2E precision verify as today (L1 E2E-on-change unchanged).
+**Final-E2E mode:** if dispatched with **"kernel unchanged"** (`<op>_impl.py` hash unchanged since its last verify), run **structure-only** — the layout/structure lint (OL44 trio, OL45/OL57, OL48, OL52, OL19) + structure confirmation, **NO `detailed_tensor_compare`**; the prior all_close evidence stands. Otherwise run the full E2E precision verify as today (L1 E2E-on-change unchanged).
 
 **Strict dispatch-mode invariants:**
 - If you are in **Scaffolding mode** and the dispatch prompt asks
@@ -157,7 +156,7 @@ Validate the module graph with the bundled script (the six wiring/shape/dtype ru
 python .agents/skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
 ```
 
-On any reported violation, append a `## Architecture/Design Rejection — <timestamp>` block to `custom/<op>/MEMORY.md` with the script's violation list, stop, and report to pypto-op-orchestrator (it will re-dispatch @pypto-op-architect / @pypto-op-designer). The rules: (1) `inputs[*].source: primary` exists in `primary_inputs`; (2) `inputs[*].source: module_j` has `j < current id` and the name exists in `module_j.outputs`; (3) `final_outputs[*].source: module_j` has `j ≤ N` and the name exists; (4) no duplicate `(module_id, name)`; (5) shape exprs use only `+ - * //` and name/int tokens; (6) dtype in `{float32, float16, bfloat16, int32, int64, bool, int}`.
+On any reported violation, append a `## Architecture/Design Rejection — <timestamp>` block to `custom/<op>/MEMORY.md` with the script's violation list, stop, and report the rejection (the dispatching layer handles re-dispatch of the design roles). The rules: (1) `inputs[*].source: primary` exists in `primary_inputs`; (2) `inputs[*].source: module_j` has `j < current id` and the name exists in `module_j.outputs`; (3) `final_outputs[*].source: module_j` has `j ≤ N` and the name exists; (4) no duplicate `(module_id, name)`; (5) shape exprs use only `+ - * //` and name/int tokens; (6) dtype in `{float32, float16, bfloat16, int32, int64, bool, int}`.
 
 ### Step A.5.2 — Emit `<op>_module<suffix_k>_golden.py` for the dispatched M_k
 
@@ -373,9 +372,9 @@ verification (see "Verdict format" below):
 
 **Phase scaffolding step C acceptance criterion:** the per-module test file exists, parses, binds correctly, and **the run produces a clear PASS/FAIL verdict** to feed into the per-Phase loop.
 
-## L0 Stage 5 verification (`module_count == 1`)
+## L0 E2E verification (`module_count == 1`)
 
-When MEMORY.md says `module_count == 1`, Stage 5 is a single E2E precision verify on the coder's `<op>_impl.py` — there are no per-Phase gates, no prefix evaluation, no module boundaries, and no cleanup. PASS → Stage 5 done.
+When MEMORY.md says `module_count == 1`, this is a single E2E precision verify on the `<op>_impl.py` — there are no per-Phase gates, no prefix evaluation, no module boundaries, and no cleanup. PASS → E2E done.
 
 1. Golden function inventory — every op marked ✅
 2. Write `custom/<op>/test_<op>.py` (imports `<op>_impl` and `<op>_golden`; compares all leaf outputs via `detailed_tensor_compare`, run on the NPU)
@@ -405,7 +404,7 @@ Safe to advance active_module to M_{k+1}.
 Evidence: <memory row pointer>.
 ```
 
-**Fail — include a failure_category for @pypto-op-debugger:**
+**Fail — include a `failure_category` for downstream routing:**
 
 | Observed failure | `failure_category` |
 |---|---|

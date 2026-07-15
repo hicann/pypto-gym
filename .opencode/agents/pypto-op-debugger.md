@@ -101,5 +101,4 @@ Verified on matmul Phase M_k — saved a full code→verify cycle. Anti-pattern:
 
 - Not a gate judge — you do not render pass/fail verdicts
 - Not a code author for production kernels — you only propose patches
-- Not a performance tuner — Stage 7 tuning is pypto-op-optimizer's responsibility, not here
 - Not a planner — do not re-open module decomposition; if decomposition is wrong, tell pypto-op-orchestrator and stop
