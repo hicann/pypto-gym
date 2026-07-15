@@ -83,4 +83,23 @@ falls back to the upstream chunk function in that case.
 
 ## Testing
 
-Tests under [`tests/ops/qwen3_6_27b/`](../../../../../../tests/ops/qwen3_6_27b/).
+Tests under [`tests/ops/qwen3_6_27b/`](../../../../../../tests/ops/qwen3_6_27b/). Run
+`python3 tests/ops/qwen3_6_27b/test_gated_delta_rule_qwen3_6_27b.py` (NPU) for the
+`[PRECISION_PASS]` marker; the chunk case is precision-checked against the torch
+golden and the recurrent/decode case is asserted to fall back upstream.
+
+> **验证范围说明（scenario-B 限制）：** 被替换的原算子是 FLA 的融合
+> `chunk_gated_delta_rule`（Triton/CUDA 实现），在 Ascend 上**不可用**——故无法在本硬件直接
+> 对拍 kernel 与真实上游融合算子。golden 采用纯 torch 的 `chunk_gated_delta_rule_golden`
+> 作为替代基准；算法等价性由构造保证并经精度测试核对，但未对拍上游 CUDA kernel。**残余风险**
+> 同 3.5：golden 是本仓库转写，关闭方式（需 GPU 机器）为对拍 `chunk_gated_delta_rule_golden`
+> 与真实 `fla.ops.gated_delta_rule.chunk_gated_delta_rule`。另：本算子的 test_cases 形状由
+> 真实 27B `config.json` 推导（Nv=48），非 live 27B 打点（权重过大，见 test_cases.json `source`）。
+
+## 状态
+
+| 维度 | 状态 |
+|------|------|
+| 单算子精度 | ✅ chunk 路径测试通过（`[PRECISION_PASS]`）— `test_gated_delta_rule_qwen3_6_27b.py`，max abs err **8.6e-5**（bf16 I/O，rtol 1e-2 / atol 5e-2）。recurrent/decode 路径显式断言回退上游（非静默跳过）。test_cases.json 的 output shape 由测试强制校验 |
+| 整网集成 | ✅ 已接入 — `sys.modules` 注入 + `USE_PTO_GATED_DELTA_RULE` 开关（模型上 NPU 后再开启，step-22 时序）+ `NotImplementedError` → 上游 torch fallback |
+| ACLGraph | ✅ 算子级已验证 — 已 `torch.library` 注册 `pypto::gated_delta_rule_qwen3_6`（Meta+NPU），`gated_delta_rule_pypto` 为图捕获入口；kernel 无 in-kernel synchronize（stream 顺序），故 capture-clean。`test_gated_delta_rule_aclgraph_qwen3_6_27b.py` 验证：注册 op == wrapper 逐位一致、Meta 推导正确、`torch.compile(fullgraph)` 无 graph break、**真实 torchair aclgraph（reduce-overhead）capture+replay 逐位一致（diff=0）**。整网 aclgraph 经实测（同架构 9B 真实模型）被 **vendored modeling 的 in-place/aliasing op** 阻塞（torchair 捕获报 `refer to a single memory location, clone() needed`，与 Kimi 同类）——经注册 op 路由后捕获可越过本算子、止于该 vendored op，故**本算子非瓶颈**；整网捕获需上游 modeling 修复（trust_remote_code 范围） |

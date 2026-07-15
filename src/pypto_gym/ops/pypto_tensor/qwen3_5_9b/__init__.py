@@ -25,11 +25,12 @@ Qwen3.5-9B PyPTO 融合算子库
 - sys.modules["qwen3_5_9b_pto_kernels"] 提供 USE_PTO_GATED_DELTA_RULE 开关和 gated_delta_rule_wrapper 函数
 """
 
-from .gated_delta_rule.gated_delta_rule_impl import gated_delta_rule_wrapper
+from .gated_delta_rule.gated_delta_rule_impl import gated_delta_rule_wrapper, gated_delta_rule_pypto
 
 USE_PTO_GATED_DELTA_RULE = False
 
 __all__ = [
     'USE_PTO_GATED_DELTA_RULE',
     'gated_delta_rule_wrapper',
+    'gated_delta_rule_pypto',
 ]

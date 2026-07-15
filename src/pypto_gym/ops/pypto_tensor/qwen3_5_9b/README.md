@@ -36,3 +36,9 @@ Wrappers enforce these constraints at call time and raise
 The kernels are wired into the model through the
 [modeling_qwen3_5.py](../../../transformers/qwen3_5_9b/modeling_qwen3_5.py)
 shim — see that file for the monkey-patch hook pattern.
+
+## Tests
+
+Single-op precision + aclgraph capture tests live at `tests/ops/qwen3_5_9b/`
+(`test_gated_delta_rule_qwen3_5_9b.py`, `test_gated_delta_rule_aclgraph_qwen3_5_9b.py`,
+`gated_delta_rule_golden.py`, `test_cases.json`).

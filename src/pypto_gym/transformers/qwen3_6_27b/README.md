@@ -31,89 +31,85 @@ When `USE_PTO_GATED_DELTA_RULE` is `True`, the kernel must provide:
 
 ```python
 def gated_delta_rule_wrapper(
-    query: torch.Tensor,   # (B, num_k_heads, S, head_k_dim)
-    key: torch.Tensor,     # (B, num_k_heads, S, head_k_dim)
-    value: torch.Tensor,   # (B, num_v_heads, S, head_v_dim)
-    g: torch.Tensor,       # (B, num_v_heads, S) — per-timestep decay
-    beta: torch.Tensor,    # (B, num_v_heads, S) — per-timestep gate
-    initial_state: torch.Tensor | None,
-    output_final_state: bool,
+    query: torch.Tensor,   # [B, S, Nv, D]  (q/k already broadcast to Nv=48 by repeat_interleave)
+    key: torch.Tensor,     # [B, S, Nv, D]
+    value: torch.Tensor,   # [B, S, Nv, D]
+    *,
+    g: torch.Tensor,       # [B, S, Nv]  (fp32 log-gate, <= 0)
+    beta: torch.Tensor,    # [B, S, Nv]
+    initial_state: torch.Tensor | None,   # [B, Nv, D, D] or None (chunk path: None)
+    output_final_state: bool = True,
     use_qk_l2norm_in_kernel: bool = True,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:   # (core_attn_out [B,S,Nv,D], last_state [B,Nv,D,D])
     ...
 ```
 
-Same signature as the 9B variant but expects the 27B model's tensor shapes (larger hidden size, more attention heads, etc.). The modeling code at line ~530 checks `sys.modules.get("qwen3_6_27b_pto_kernels")` and falls back to the original chunk kernel on `NotImplementedError`.
+Envelope (raises `NotImplementedError` otherwise → upstream fallback): `B=1`, `Nv=48`,
+`D=128`, `initial_state is None`, `use_qk_l2norm_in_kernel=True`. The modeling hook checks
+`sys.modules.get("qwen3_6_27b_pto_kernels")` and falls back to the upstream chunk kernel on
+`NotImplementedError` (so the decode/recurrent path always runs upstream).
 
 ## 27B vs 9B Model Dimensions
 
-The 27B variant uses significantly larger model dimensions. Typical configuration differences:
+Real values from each model's `config.json` (text config). The only dimension the
+gated_delta_rule kernel depends on is `linear_num_value_heads` (Nv, the per-head loop
+count); `linear_*_head_dim` is 128 for both.
 
-| Parameter | 9B (typical) | 27B (typical) |
-|-----------|-------------|---------------|
-| `hidden_size` | 4096 | larger embedding dimension |
-| `intermediate_size` | 12288 | larger FFN hidden dim |
-| `num_hidden_layers` | 32 | deeper model |
-| `num_attention_heads` | 16 | more attention heads |
-| `linear_num_key_heads` | 16 | potentially more |
-| `linear_num_value_heads` | 32 | potentially more |
+| Parameter | 9B | 27B |
+|-----------|----:|----:|
+| `hidden_size` | 4096 | 5120 |
+| `intermediate_size` | 12288 | 17408 |
+| `num_hidden_layers` | 32 | 64 |
+| `num_attention_heads` | 16 | 24 |
+| `linear_num_key_heads` | 16 | 16 |
+| `linear_num_value_heads` (Nv) | 32 | **48** |
+| `linear_{key,value}_head_dim` (D) | 128 | 128 |
 
-The actual config values are read from `Qwen3_5TextConfig` at runtime and passed through to the PyPTO kernel which must handle the corresponding tensor shapes.
+The kernel is compiled for `Nv=48`, `D=128` (enforced by the wrapper envelope).
 
 ## Usage
 
-### 1. Load kernel module
+The supported entry point is the ask script, which performs the
+inject-before-transformers-import + enable-after-NPU-load sequence correctly:
+
+```bash
+MODEL_PATH=/path/to/Qwen3.6-27B \
+  python3 modeling/transformers/qwen3_6_27b/ask_Qwen3.6-27B.py --use_pypto --device 0
+# baseline vs PyPTO timing:
+python3 modeling/transformers/qwen3_6_27b/bench_qwen3_6_27b.py --model-path /path/to/Qwen3.6-27B [--use_pypto]
+```
+
+Injection contract (what the ask script does):
 
 ```python
 import sys
-from pypto_gym.ops.pypto_tensor.qwen3_6_27b.gated_delta_rule import gated_delta_rule_impl
-
-class Qwen3_6_27bPTOKernels:
-    USE_PTO_GATED_DELTA_RULE = True
-
-    @staticmethod
-    def gated_delta_rule_wrapper(*args, **kwargs):
-        return gated_delta_rule_impl(*args, **kwargs)
-
-sys.modules["qwen3_6_27b_pto_kernels"] = Qwen3_6_27bPTOKernels
+import qwen3_6_27b_pto_kernels as pk        # the ops package, before `import transformers`
+sys.modules["qwen3_6_27b_pto_kernels"] = pk
+# ... load model, move to NPU ...
+pk.USE_PTO_GATED_DELTA_RULE = True          # enable AFTER the model is on the NPU
 ```
 
-### 2. Instantiate model
+The kernel module exposes `USE_PTO_GATED_DELTA_RULE` and `gated_delta_rule_wrapper`
+(see `src/pypto_gym/ops/pypto_tensor/qwen3_6_27b/__init__.py`). Set the flag to `False`
+to disable at runtime.
 
-```python
-from pypto_gym.transformers.qwen3_6_27b.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
-from pypto_gym.transformers.qwen3_6_27b.configuration_qwen3_5 import Qwen3_5Config
-
-config = Qwen3_5Config()
-model = Qwen3_5ForConditionalGeneration(config).npu()
-```
-
-### 3. Disable at runtime
-
-```python
-sys.modules["qwen3_6_27b_pto_kernels"].USE_PTO_GATED_DELTA_RULE = False
-```
-
-## HuggingFace `auto_map`
-
-```json
-{
-  "auto_map": {
-    "AutoConfig": "pypto_gym/transformers/qwen3_6_27b/configuration_qwen3_5.Qwen3_5Config",
-    "AutoModelForVision2Seq": "pypto_gym/transformers/qwen3_6_27b/modeling_qwen3_5.Qwen3_5ForConditionalGeneration"
-  }
-}
-```
+> **Note on loading:** the real `Qwen3.6-27B/config.json` has **no `auto_map`**, so the model
+> loads the **built-in** `qwen3_5` architecture from the installed `transformers` package
+> (`trust_remote_code` has no bundled file to load). `modeling_qwen3_5.py` / `configuration_qwen3_5.py`
+> in this repo are **archival snapshots** of that built-in code with the PyPTO injection hook + Huawei
+> NOTICE added (for reference/restore; upstream relative imports kept) — they are **not** loaded at
+> runtime: the ask script imports the built-in class and injects PyPTO via `sys.modules` + monkey-patch.
+> There is no `Qwen3_5Config()`-from-scratch path; always load real weights via `from_pretrained(MODEL_PATH)`.
 
 ## File Table
 
 | File | Description |
 |------|-------------|
-| `__init__.py` | Package init (SPDX license header) |
-| `configuration_qwen3_5.py` | `Qwen3_5Config`, `Qwen3_5TextConfig`, `Qwen3_5VisionConfig` — multimodal config with 27B-specific defaults (larger hidden_size, wider intermediate, more layers) |
+| `__init__.py` | Package init (CANN license header) |
+| `configuration_qwen3_5.py` | `Qwen3_5Config`, `Qwen3_5TextConfig`, `Qwen3_5VisionConfig` — archival snapshot, byte-identical to the qwen3_5_9b config class except the reuse NOTICE (its class defaults are the upstream/9B values). The real 27B dimensions (hidden_size 5120, 64 layers, Nv 48) come from the weights `config.json` at load, not from these class defaults |
 | `modeling_qwen3_5.py` | Full model graph with GDR chunk injection at `sys.modules.get("qwen3_6_27b_pto_kernels")` — identical code structure to qwen3_5_9b but separate kernel namespace |
 
 ## Related Directories
 
 - **Ops**: `src/pypto_gym/ops/pypto_tensor/qwen3_6_27b/` — PyPTO Gated Delta Rule kernel (`gated_delta_rule/`)
-- **Tests**: `tests/model_ops/qwen3_6_27b/` — correctness and performance tests for the 27B variant
+- **Tests**: `tests/ops/qwen3_6_27b/` — single-op precision test (`[PRECISION_PASS]`, chunk vs torch golden) + `test_cases.json`

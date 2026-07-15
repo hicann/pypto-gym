@@ -39,10 +39,13 @@ Scope (caller-enforced via wrapper assertions):
 Out-of-scope shapes raise ``NotImplementedError``. The modeling-layer hook
 falls back to the upstream chunk function in that case.
 """
+__all__ = ["gated_delta_rule_wrapper", "gated_delta_rule_pypto"]
+
 from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+import torch_npu  # noqa: F401  registers the NPU dispatch key for the torch.library impl
 from torch._dynamo import allow_in_graph
 
 import pypto
@@ -281,4 +284,40 @@ def gated_delta_rule_wrapper(
     return core_attn_out, last_state_data if output_final_state else None
 
 
-__all__ = ["gated_delta_rule_wrapper"]
+# ---------------------------------------------------------------------------
+# torch.library registration (torch.compile / torchair aclgraph capture).
+# ---------------------------------------------------------------------------
+# See the matching block in the Qwen3.5-9B impl. Registers
+# `pypto::gated_delta_rule_qwen3_6` (Meta + NPU) so the kernel is graph-capturable;
+# reached via `gated_delta_rule_pypto`, leaving the eager path unchanged.
+pyptolib = torch.library.Library("pypto", "FRAGMENT")  # type: ignore[arg-type]
+
+if not hasattr(torch.ops.pypto, "gated_delta_rule_qwen3_6"):
+    pyptolib.define(
+        "gated_delta_rule_qwen3_6(Tensor query, Tensor key, Tensor value, "
+        "Tensor g, Tensor beta, Tensor? initial_state, bool use_qk_l2norm_in_kernel) "
+        "-> (Tensor, Tensor)")
+
+    @torch.library.impl(pyptolib, "gated_delta_rule_qwen3_6", "Meta")  # type: ignore[arg-type]
+    def _gdr_qwen3_6_meta(query, key, value, g, beta, initial_state, use_qk_l2norm_in_kernel):
+        b, s, nv, d = query.shape
+        out = torch.empty((b, s, nv, d), dtype=query.dtype, device=query.device)
+        state = torch.empty((b, nv, d, d), dtype=torch.float32, device=query.device)
+        return out, state
+
+    @torch.library.impl(pyptolib, "gated_delta_rule_qwen3_6", "NPU")  # type: ignore[arg-type]
+    def _gdr_qwen3_6_npu(query, key, value, g, beta, initial_state, use_qk_l2norm_in_kernel):
+        return gated_delta_rule_wrapper(
+            query, key, value, g=g, beta=beta, initial_state=initial_state,
+            output_final_state=True, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel)
+
+
+def gated_delta_rule_pypto(query, key, value, *, g, beta, initial_state=None,
+                           use_qk_l2norm_in_kernel=True):
+    """aclgraph-capturable entry: routes through ``torch.ops.pypto.gated_delta_rule_qwen3_6``.
+
+    Same result as ``gated_delta_rule_wrapper`` (always returns ``(out, state)``),
+    but as a registered custom op it can be captured by torch.compile / torchair aclgraph.
+    """
+    return torch.ops.pypto.gated_delta_rule_qwen3_6(
+        query, key, value, g, beta, initial_state, use_qk_l2norm_in_kernel)

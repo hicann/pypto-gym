@@ -1,6 +1,6 @@
 {
   "op_name": "gated_delta_rule",
-  "source": "Qwen3.6-27B (ported from the Qwen3.5-9B capture; shapes updated for linear_num_value_heads=48 with linear_num_key_heads=16 pre-broadcast to Nv=48 by repeat_interleave; 16-token prefill + 5-token greedy decode, single layer = 1/48 linear layers)",
+  "source": "Qwen3.6-27B. Shapes DERIVED FROM THE REAL Qwen3.6-27B config.json (linear_num_value_heads=48, linear_num_key_heads=16 pre-broadcast to Nv=48 by repeat_interleave, head_k_dim=head_v_dim=128) for the same two call sites that fire in Qwen3_5GatedDeltaNet.forward (16-token prefill + decode). NOTE: shapes are config-derived (verified against config.json), NOT captured from a live 27B forward (the 27B weights are too large to probe on this box); the call structure is identical to the 3.5 capture, only the head count differs. Input tensor VALUES are synthetic.",
   "description": "Two paths fire in Qwen3_5GatedDeltaNet.forward (line 510 / 522): recurrent path on decode (seq_len==1, has cache), chunk path on prefill or chunked-decode. Qwen3.6-27B config: num_v_heads=48, num_k_heads=16, head_k_dim=head_v_dim=128 (q/k already broadcast to Nv=48 by repeat_interleave). g is fp32 (forced by .float() on A_log + softplus). use_qk_l2norm_in_kernel=True so the op pre-normalizes q,k internally. initial_state for recurrent comes from the cache as bf16; last_recurrent_state output is always fp32. End-to-end gate: bf16-realistic (atol 5e-2, rtol 1e-2) for fused outputs; --strict mode promotes to fp32 and gates at 3e-3.",
   "test_cases": [
     {
@@ -26,7 +26,7 @@
       "atol": 0.05,
       "strict_rtol": 0.003,
       "strict_atol": 0.003,
-      "fuse_path": "pypto"
+      "fuse_path": "upstream"
     },
     {
       "id": "case_002_chunk_prefill",

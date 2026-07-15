@@ -21,6 +21,10 @@
 # NOTICE: This file was modified by Huawei Technologies Co., Ltd. in 2026 to
 # leverage pypto technology for fusing multiple small operators within the network.
 #
+# NOTICE: The "qwen3_5" filenames here are intentional, not a stray copy from qwen3_5_9b:
+# Qwen3.6-27B's config.json declares model_type="qwen3_5", reusing the Qwen3.5 architecture
+# and differing only in config scalars (Nv 32->48).
+#
 from huggingface_hub.dataclasses import strict
 
 from ...configuration_utils import PreTrainedConfig

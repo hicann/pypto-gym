@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 # coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# SPDX-License-Identifier: Apache-2.0
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """Pure-torch reference for the gated_delta_rule fused kernel.
 
 Mirrors the chunk_gated_delta_rule algorithm used by Qwen3.6-27B during
-prefill. Imported by ``test_gated_delta_rule.py`` for precision comparison.
+prefill. Imported by ``test_gated_delta_rule_qwen3_6_27b.py`` for precision
+comparison.
 """
 import torch
 import torch.nn.functional as F
@@ -29,7 +36,10 @@ def _init_state(initial_state, B, N, D_k, D_v, value):
 
 def _run_chunk_recurrence(query, key, v_processed, k_cumdecay, g_cum,
                            decay_mask, state, chunks, chunk_size):
-    """Run the chunk-wise recurrence loop for gated delta rule attention."""
+    """Run the chunk-wise recurrence loop for gated delta rule attention.
+
+    Returns both the per-token output and the final recurrence state (the state
+    is rebound each chunk, so it must be returned — not just mutated in place)."""
     attn_out = torch.zeros_like(key)
     attn_mask = torch.triu(
         torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device),
@@ -44,7 +54,7 @@ def _run_chunk_recurrence(query, key, v_processed, k_cumdecay, g_cum,
             state * g_cum[:, :, i, -1, None, None].exp()
             + (k_i * (g_cum[:, :, i, -1, None] - g_cum[:, :, i]).exp()[..., None]).transpose(-1, -2) @ v_new
         )
-    return attn_out
+    return attn_out, state
 
 
 def _prepare_chunk_tensors(query, key, value, beta, g, chunk_size):
@@ -118,7 +128,7 @@ def chunk_gated_delta_rule_golden(
     k_cumdecay = A @ (k_beta * g_cum.exp().unsqueeze(-1))
 
     state = _init_state(initial_state, B, N, D_k, D_v, value)
-    attn_out = _run_chunk_recurrence(
+    attn_out, state = _run_chunk_recurrence(
         query, key, v_processed, k_cumdecay, g_cum, decay_mask, state, chunks, chunk_size)
 
     attn_out = attn_out.reshape(B, N, total_S, D_v)

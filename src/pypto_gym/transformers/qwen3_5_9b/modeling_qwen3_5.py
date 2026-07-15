@@ -529,13 +529,17 @@ class Qwen3_5GatedDeltaNet(nn.Module):
             # to the original chunk function.
             import sys
             pto_kernels = sys.modules.get("qwen3_5_9b_pto_kernels")
-            chunk_fn = self.chunk_gated_delta_rule
-            if (
+            # PyPTO JIT kernel binds to NPU; never route CPU tensors through it.
+            # Computed as a plain bool (not a 4-way `if`) to satisfy the
+            # conditional-complexity rule while keeping the vendored forward inline.
+            use_pto = (
                 pto_kernels is not None
                 and getattr(pto_kernels, "USE_PTO_GATED_DELTA_RULE", False)
                 and not use_precomputed_states
-            ):
-                chunk_fn = pto_kernels.gated_delta_rule_wrapper
+                and query.device.type == "npu"
+            )
+            chunk_fn = (pto_kernels.gated_delta_rule_wrapper
+                        if use_pto else self.chunk_gated_delta_rule)
             try:
                 core_attn_out, last_recurrent_state = chunk_fn(
                     query,

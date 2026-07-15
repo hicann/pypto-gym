@@ -26,7 +26,7 @@
       "atol": 0.05,
       "strict_rtol": 0.003,
       "strict_atol": 0.003,
-      "fuse_path": "pypto"
+      "fuse_path": "upstream"
     },
     {
       "id": "case_002_chunk_prefill",
