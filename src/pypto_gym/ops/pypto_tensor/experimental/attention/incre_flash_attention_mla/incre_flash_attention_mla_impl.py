@@ -405,7 +405,7 @@ def handle_other_tile(wv, lse, max_score, ctx):
     if pypto.cond(pypto.is_loop_end(ctx.s2_idx)):
         tt.out_update[:] = pypto.div(out_tmp, pypto.reshape(new_lse, [tc.g_tile, 1]), 
                                      precision_type=pypto.PrecisionType.INTRINSIC)
-        pypto.set_vec_tile_shapes(1, tc.v2_tile[0], 1, tc.v2_tile[1])
+        pypto.set_vec_tile_shapes(1, 1, tc.v2_tile[0], tc.v2_tile[1])
         out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, 1, tc.g_tile, kp.q_d]), dtype)
         out_off = [ctx.b_idx, ctx.s1_idx, ctx.n2_idx * kp.group + ctx.group_idx * tc.g_tile, 0]
         pypto.assemble(out_4d, out_off, lt.attention_output)
@@ -517,14 +517,14 @@ def compute_loop_b(ctx):
 @pypto.frontend.jit(
     pass_options={
         "vec_nbuffer_setting": {-1: 2, 0: 8}, 
-        "cube_l1_reuse_setting": {-1: 2},
+        "cube_l1_reuse_setting": {-1: 2, 1: 1},
         "cube_nbuffer_setting": {-1: 2}
     },
     runtime_options={
         "stitch_function_max_num": 256, 
         "device_sched_mode": 3,
         "ready_on_host_tensors": ["block_table", "kv_actual_seqs"],
-        "max_workspace_kb": 15498368
+        "max_workspace_kb": 15504998
     }
 )
 def incre_flash_attention_mla_kernel(
