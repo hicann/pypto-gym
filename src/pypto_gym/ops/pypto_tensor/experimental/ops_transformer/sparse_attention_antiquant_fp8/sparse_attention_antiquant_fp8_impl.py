@@ -282,7 +282,8 @@ def sparse_attention_antiquant_compute(tensors, config, tile_config, parallel=Fa
     runtime_options={
         "stitch_function_max_num": 512,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+        "max_workspace_kb": 2981888
     },
     host_options={"compile_monitor_enable": 0},
 )

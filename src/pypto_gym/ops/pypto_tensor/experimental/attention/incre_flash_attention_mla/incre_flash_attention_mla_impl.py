@@ -523,7 +523,8 @@ def compute_loop_b(ctx):
     runtime_options={
         "stitch_function_max_num": 256, 
         "device_sched_mode": 3,
-        "ready_on_host_tensors": ["block_table", "kv_actual_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_actual_seqs"],
+        "max_workspace_kb": 15498368
     }
 )
 def incre_flash_attention_mla_kernel(

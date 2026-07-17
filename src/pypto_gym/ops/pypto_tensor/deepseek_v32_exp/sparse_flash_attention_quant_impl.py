@@ -389,7 +389,8 @@ def sparse_flash_attention_quant_compute_flash(query_nope, query_rope, key_nope_
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 3,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+        "max_workspace_kb": 458752,
     }
 )
 def sparse_flash_attention_quant_d_950(

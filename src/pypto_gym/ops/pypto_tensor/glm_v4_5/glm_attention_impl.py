@@ -238,7 +238,8 @@ def ifa_func_kernel(
     runtime_options={
         "stitch_function_max_num": 900,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+        "max_workspace_kb": 2000000
     },
     pass_options={
         "cube_l1_reuse_setting": {0: 16, 1: 8},
@@ -548,7 +549,8 @@ def ifa_func_kernel_for_950(
     runtime_options={
         "stitch_function_max_num": 512,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+        "max_workspace_kb": 428672
     },
     pass_options={
         "cube_l1_reuse_setting": {0: 16, 1: 8},

@@ -256,7 +256,8 @@ def options_list():
             "runtime_options": {
                 "stitch_function_max_num": 256,
                 "device_sched_mode": 2,
-                "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+                "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+                "max_workspace_kb": 1490944,
             },
             }
     else:
@@ -332,7 +333,8 @@ def sparse_attention_antiquant_d(
     runtime_options={
         "stitch_function_max_num": 384,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
+        "max_workspace_kb": 2236416,
     },
 )
 def sparse_attention_antiquant_d_large_batch(

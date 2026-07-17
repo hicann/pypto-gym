@@ -134,6 +134,7 @@ def flash_attention_varlen_forward_kernel(
         "device_sched_mode": 1,
         "stitch_function_max_num": 1024,
         "ready_on_host_tensors": ["cu_seqlens_q", "cu_seqlens_k"],
+        "max_workspace_kb": 271772
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 1},
