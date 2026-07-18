@@ -21,7 +21,7 @@ import re
 import torch
 
 # PyPTO 数据类型映射
-# 参考：tools/verifier/parse_dump_tensors.py 和 https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/datatype/DataType.md
+# 参考：https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/datatype/DataType.md
 DTYPE_MAP = {
     0: ('int4', torch.int8, 1),            # DT_INT4: 4位有符号整数，2个元素打包成1个int8存储
     1: ('int8', torch.int8, 1),            # DT_INT8: 8位有符号整数

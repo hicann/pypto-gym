@@ -18,12 +18,10 @@ description: PyPTO 算子精度问题调试技能。提供两种精度对比方�
 | 关键词 | 触发模式 | 执行子技能 |
 |--------|---------|-----------|
 | **精度工具**、**精度对比**、**文件保存**、`pass_verify_save` | `mode="verify"` | `precision-verify` |
-| **Pass精度**、**Pass校验**、**PreCheck**、**PostCheck** | `mode="pass"` | `precision-pass` |
 | **二分**、**上板二分**、**检查点tensor** | `mode="binary"` | `precision-binary-search` |
 
 **示例触发语句**：
 - "用精度工具方式调试" → 直接调用 `precision-verify`
-- "用Pass精度校验" → 直接调用 `precision-pass`
 - "用二分方式定位" → 直接调用 `precision-binary-search`
 - "用文件保存方法对比" → 直接调用 `precision-verify`
 
@@ -111,13 +109,8 @@ def your_kernel(...)
     ├── Tensor Graph FAIL → 使用精度工具对比法保存中间结果比对，找出首个失败的 op
     │                       参考 → precision-verify/SKILL.md
     │
-    └── Tensor Graph PASS → 进行 Pass 校验，找到首个出错的 Pass，dump Pass 数据对比
-                        │
-                        ├── Pass 校验 FAIL → 定位出错的 Pass/OP
-                        │                   参考 → precision-pass/SKILL.md
-                        │
-                        └── Pass 校验 PASS → 上板二分定位，找到首个出错的 op
-                                            参考 → precision-binary-search/SKILL.md
+    └── Tensor Graph PASS → 上板二分定位，找到首个出错的 op
+                            参考 → precision-binary-search/SKILL.md
 ```
 
 #### 情况 A：tensor_graph Verify FAIL → 前端代码问题
@@ -137,26 +130,11 @@ def your_kernel(...)
 4. 运行测试生成数据
 5. 使用对比工具分析结果，找出首个不匹配的检查点
 
-#### 情况 B：tensor_graph Verify PASS → Pass 精度校验
+#### 情况 B：tensor_graph Verify PASS → 上板二分定位
 
 | 项目         | 说明                                                  |
 | ------------ | ----------------------------------------------------- |
 | **日志特征** | tensor_graph 验证 PASS，需进一步定位精度问题来源      |
-| **原因**     | 问题可能在 Pass、Codegen 或 Machine 执行阶段          |
-| **处理**     | 使用 Pass 精度校验定位问题 Pass，如未定位则上板二分   |
-
-**操作步骤**：
-
-1. 阅读 [precision-pass/SKILL.md](precision-pass/SKILL.md) 了解详细步骤
-2. 配置 PreCheck/PostCheck 开启 Pass 级别验证
-3. 分析验证结果，定位问题 Pass
-4. 若 Pass 校验未定位问题，继续使用上板二分方法
-
-#### 情况 C：Pass 校验未定位问题 → 上板二分定位
-
-| 项目         | 说明                                                  |
-| ------------ | ----------------------------------------------------- |
-| **日志特征** | 前两种方式定位未发现明显问题，但上板结果与 golden 不一致  |
 | **原因**     | 问题可能在 Codegen 或 Machine 执行阶段                |
 | **处理**     | 添加中间变量的返回输出，二分对比上板数据找到首个出错的 op |
 
@@ -170,19 +148,18 @@ def your_kernel(...)
 
 **步骤 4：子技能执行完成后的处理**
 
-- 如果子技能返回"已定位到问题 op/Pass" → 结束，汇报问题位置
-- 如果子技能返回"需要继续 Pass 校验" → 调用 `precision-pass`
+- 如果子技能返回"已定位到问题 op" → 结束，汇报问题位置
 - 如果子技能返回"需要继续二分" → 调用 `precision-binary-search`
 
 ## 方法对比
 
-| 特性         | 精度工具对比法                                               | Pass 精度校验法                                   | 二分对比法                                       |
-| ------------ | ------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------ |
-| **实现方式** | 使用 `pypto.pass_verify_save()` 保存到文件，使用 `torch.save()` 保存 golden | 使用 PreCheck/PostCheck、pass_compare 和上板比对 | 使用检查点 tensor 作为输入参数，在内存中直接对比 |
-| **适用场景** | Tensor Graph 校验失败，需要快速定位首个失败的 op             | Tensor Graph 校验通过，定位问题 Pass             | Tensor Graph 和 Pass 校验通过，需上板真实数据    |
-| **定位粒度** | Op 级别                                                      | Pass 级别                                         | Op 级别                                          |
-| **代码修改** | 不需要修改 kernel 函数签名                                   | 配置验证开关                                      | 需要修改 kernel 函数签名，添加检查点参数         |
-| **使用难度** | 简单，只需添加检查点调用                                     | 中等，需配置和上板比对                            | 较复杂，需要管理检查点 tensor                    |
+| 特性         | 精度工具对比法                                               | 二分对比法                                       |
+| ------------ | ------------------------------------------------------------ | ------------------------------------------------ |
+| **实现方式** | 使用 `pypto.pass_verify_save()` 保存到文件，使用 `torch.save()` 保存 golden | 使用检查点 tensor 作为输入参数，在内存中直接对比 |
+| **适用场景** | Tensor Graph 校验失败，需要快速定位首个失败的 op             | Tensor Graph 校验通过，需上板真实数据定位        |
+| **定位粒度** | Op 级别                                                      | Op 级别                                          |
+| **代码修改** | 不需要修改 kernel 函数签名                                   | 需要修改 kernel 函数签名，添加检查点参数         |
+| **使用难度** | 简单，只需添加检查点调用                                     | 较复杂，需要管理检查点 tensor                    |
 
 
 ## 参考资料
