@@ -52,6 +52,13 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 - index: gather, scatter, index_select...
 - activation: relu, sigmoid, softmax...
 
+### 步骤 2.5: 本地映射优先
+
+在发起 Explore subagent 之前，先查本地映射 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)：
+- 命中 A/B 类条目 → 直接取 Pypto API / 组合方案，并读对应 [examples/](examples/) 下的 kernel 参考骨架（占位符约定见 [examples/README.md](examples/README.md)）。
+- 命中后仍需 Explore 深挖具体约束与生产实现；未命中则进入步骤 3 全量探索。
+- 多策略算子参考 [references/strategy-comparison.md](references/strategy-comparison.md) 选型。
+
 ### 步骤 3: 并行探索
 
 将 API 探索、参考实现搜索和约束探索合并为**三个并行的 Explore subagent**，分别负责不同的资源类。必须在**同一条消息中同时发起所有 Agent 调用**，确保并行执行。三个 subagent 均用 skill `pypto-docs-search` 检索各自的资源类。
@@ -114,6 +121,7 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 
 | Subagent | 查什么 | 内容 | 优先级 |
 |----------|------|----------|--------|
+| **本地映射** | `references/torch-pypto-op-mapping.md`、`examples/<op>.md` | Torch↔Pypto 映射与 kernel 骨架 | **首查** |
 | **1 API 文档** | `pypto-<op>.md` | 具体 API 签名/约束 | **主要** |
 | | `pypto-from_torch.md` | 入口约束 | **必查** |
 | | `pypto-set_vec_tile_shapes.md`（及 `set_cube_tile_shapes`） | Tiling 约束 | 条件 |
@@ -140,6 +148,8 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 | 激活 | relu, sigmoid, softmax | `pypto.{op}` |
 | 构造 | zeros, ones, full, arange | `pypto.{op}` |
 | 类型转换 | cast | `pypto.cast` |
+
+> 完整 92 算子映射见 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)；本表仅为高频速查。
 
 **常见 Substitute（无直接 API）**：
 - `mean` → `sum/count`
