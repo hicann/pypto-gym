@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
-"""pypto-op-claude-monitor — cost extractor for a PyPTO Agent Team run.
+"""pypto-op-monitor — cost extractor for a PyPTO Agent Team run.
 
 The metrics extractor behind the skill: it parses the orchestrator transcript plus
 every subagent transcript, charges each wall-clock gap to reasoning, tool execution,
@@ -9,6 +9,16 @@ subagent dispatch/lifecycle, setup, user-wait, or idle, and rolls up the token u
 recorded in each assistant event (input / cache read / cache write / output) and the
 Read/Write/Edit file footprint (calls, lines, edit ±lines, distinct files) — per agent,
 per prompt, per stage, and run-wide.
+
+Two transcript sources are supported behind one report; the default is Claude Code when run
+under Claude Code (CLAUDECODE=1), otherwise opencode — override with --source:
+  * Claude Code — on-disk JSONL (orchestrator + subagents/*.jsonl); per-event gaps are
+    charged to the time buckets.
+  * opencode    — `opencode export <sessionID>` JSON with explicit per-message and
+    per-tool start/end timing; subagents are child sessions joined via the parent's
+    `task` tool metadata.
+Both parsers share one record shape and one tool classifier, so every downstream section
+is source-agnostic.
 
 The text report presents seven sections, in this order, each carrying BOTH a time and
 a token cost (input / cache / output / total) alongside wall and active time:
@@ -28,12 +38,15 @@ import json
 import logging
 import os
 import re
+import sqlite3
+import subprocess
 import sys
-from collections import defaultdict
+import tempfile
+from collections import Counter, defaultdict, namedtuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-logger = logging.getLogger("pypto-op-claude-monitor")
+logger = logging.getLogger("pypto-op-monitor")
 
 # --- workflow model -------------------------------------------------------------
 
@@ -48,28 +61,45 @@ ROLE_DEFAULT_STAGE = {
 }
 SUPPORT = "support"
 ORCH = "orchestrator"
-DISPATCH_TOOLS = {"Task", "Agent"}
-# Tools whose "execution time" is really a human answering — charge to user_wait,
-# never to compute tool-exec.
-HUMAN_WAIT_TOOLS = {"AskUserQuestion"}
-# File-interaction tools. Calls are counted by name (a call with no result still counts);
-# the read/write/edit size metrics are resolved from the toolUseResult shape.
-FILE_READ_TOOLS = {"Read"}
-FILE_WRITE_TOOLS = {"Write"}
-FILE_EDIT_TOOLS = {"Edit", "MultiEdit", "NotebookEdit"}
 # Reasoning / setup gaps longer than this are treated as idle (agent paused, user away
-# between turns) rather than real model generation. Tool-execution gaps are NEVER capped
-# here — a verify Bash can legitimately run 30+ min. Override with --idle-threshold.
+# between turns) rather than model generation. Tool-execution gaps are NEVER capped — a
+# verify Bash can legitimately run 30+ min. Override with --idle-threshold.
 DEFAULT_IDLE_THRESHOLD_S = 600.0
-# The token buckets carried in each assistant event's message.usage; mapped to short keys.
+# Sentinel prompt id for usage/reads seen before any user turn is established.
+PREAMBLE = "__preamble__"
+OC_SESSION_PREFIX = "ses_"           # opencode session ids look like ses_XXXXXXXX
+DEFAULT_OPENCODE_DB = os.path.join(
+    os.path.expanduser("~"), ".local", "share", "opencode", "opencode.db")
+# Token buckets carried per assistant event: Claude's message.usage keys → short names.
 USAGE_FIELDS = (
     ("input_tokens", "input"),
     ("output_tokens", "output"),
     ("cache_read_input_tokens", "cache_read"),
     ("cache_creation_input_tokens", "cache_creation"),
 )
-# Sentinel prompt id for usage/reads seen before any user turn is established.
-PREAMBLE = "__preamble__"
+
+# --- tool vocabulary (one classifier, one spec per source) ----------------------
+# Claude Code and opencode name the same underlying tools differently (TitleCase vs
+# lowercase). A SourceSpec is a source's vocabulary; classify_tool maps any tool name to
+# its cost category, so both parsers route the same way: dispatch = a subagent spawn (its
+# result/metadata joins the child); human = a human answering (→ user_wait, never compute);
+# read/write/edit = file interactions; everything else = plain tool-exec.
+SourceSpec = namedtuple("SourceSpec", "dispatch human read write edit")
+CLAUDE_SPEC = SourceSpec(
+    dispatch={"Task", "Agent"}, human={"AskUserQuestion"},
+    read={"Read"}, write={"Write"}, edit={"Edit", "MultiEdit", "NotebookEdit"})
+OPENCODE_SPEC = SourceSpec(
+    dispatch={"task"}, human=set(), read={"read"}, write={"write"}, edit={"edit"})
+
+
+def classify_tool(name, spec):
+    """Map a tool name to its cost category within a source's vocabulary:
+    'dispatch' / 'human' / 'read' / 'write' / 'edit', or 'tool' for plain tool-exec.
+    """
+    for cat in ("dispatch", "human", "read", "write", "edit"):
+        if name in getattr(spec, cat):
+            return cat
+    return "tool"
 
 
 @dataclass
@@ -258,12 +288,14 @@ def agent_label(m):
     return f"{tag} {m['role']}{mod}"
 
 
-# --- core: parse one transcript -------------------------------------------------
+# --- shared record model (both sources fill this identical per-transcript record) ---
 
-def parse_transcript(jsonl_path, ctx, index, idle_threshold=DEFAULT_IDLE_THRESHOLD_S):
-    """Parse one transcript into a time/token/read record; mutates the index join tables."""
-    rec = {
-        "path": jsonl_path, "role": ctx.role, "agent_type": ctx.agent_type,
+def _new_record(path, ctx):
+    """Blank per-transcript record. Identical skeleton for every source (Claude /
+    opencode) so the downstream aggregation and rendering stay source-agnostic.
+    """
+    return {
+        "path": path, "role": ctx.role, "agent_type": ctx.agent_type,
         "description": ctx.description, "depth": ctx.depth, "stage": ctx.stage,
         "module": ctx.module,
         "start": None, "end": None, "wall_s": None, "active_s": 0.0,
@@ -278,187 +310,13 @@ def parse_transcript(jsonl_path, ctx, index, idle_threshold=DEFAULT_IDLE_THRESHO
         "file_ops": defaultdict(_blank_ops),
         "prompts": {}, "prompt_order": [],
     }
-    if not (jsonl_path and os.path.exists(jsonl_path)):
-        rec["file_ops"] = {}
-        rec["prompts_list"] = []
-        rec["files_touched"] = 0
-        rec["reads"] = {"calls": 0, "files": 0, "lines": 0, "bytes": 0}
-        rec["writes"] = {"calls": 0, "files": 0, "lines": 0, "bytes": 0,
-                         "creates": 0, "updates": 0}
-        rec["edits"] = {"calls": 0, "files": 0, "added": 0, "removed": 0}
-        rec["tokens_total"] = 0
-        return rec
 
-    def ensure_bucket(pid, source, text, ts):
-        if pid not in rec["prompts"]:
-            rec["prompts"][pid] = _new_prompt(pid, source, text, ts, len(rec["prompt_order"]))
-            rec["prompt_order"].append(pid)
-        return rec["prompts"][pid]
 
-    id2name = {}            # tool_use id -> tool name (within this transcript)
-    prev_ts = None
-    cur_pid = None          # promptId of the turn currently in flight
-    with open(jsonl_path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            rec["events"] += 1
-            ts = parse_ts(ev.get("timestamp"))
-            typ = ev.get("type")
-            msg = ev.get("message") or {}
-            content = msg.get("content") if isinstance(msg, dict) else None
-            usage = msg.get("usage") if isinstance(msg, dict) else None
-            pid = ev.get("promptId")
-            tur = ev.get("toolUseResult")
-
-            # a user event carrying a promptId opens (or continues) a turn
-            if pid is not None:
-                ensure_bucket(pid, ev.get("promptSource"), _first_text(content), ts)
-                cur_pid = pid
-            active_pid = cur_pid if cur_pid is not None else PREAMBLE
-
-            # index tool_use / tool_result; collect block stats; count Read calls
-            result_ids = []
-            is_assistant = (typ == "assistant")
-            if isinstance(content, list):
-                for b in content:
-                    if not isinstance(b, dict):
-                        continue
-                    bt = b.get("type")
-                    if bt == "tool_use":
-                        name = b.get("name")
-                        tid = b.get("id")
-                        if tid:
-                            id2name[tid] = name
-                            if ts is not None:
-                                index.use[tid] = (name, ts)
-                        if name in FILE_READ_TOOLS:
-                            rec["read_calls"] += 1
-                            ensure_bucket(active_pid, "startup", "", ts)["read_calls"] += 1
-                        elif name in FILE_WRITE_TOOLS:
-                            rec["write_calls"] += 1
-                            ensure_bucket(active_pid, "startup", "", ts)["write_calls"] += 1
-                        elif name in FILE_EDIT_TOOLS:
-                            rec["edit_calls"] += 1
-                            ensure_bucket(active_pid, "startup", "", ts)["edit_calls"] += 1
-                    elif bt == "tool_result":
-                        rid = b.get("tool_use_id")
-                        if rid:
-                            result_ids.append(rid)
-                            if ts is not None:
-                                index.res[rid] = ts
-                    elif bt == "thinking":
-                        rec["thinking_blocks"] += 1
-            if is_assistant:
-                rec["assistant_events"] += 1
-
-            # token usage → per-record and per-prompt
-            if isinstance(usage, dict):
-                bucket = ensure_bucket(active_pid, "startup", "", ts)
-                for src_key, dst_key in USAGE_FIELDS:
-                    v = usage.get(src_key) or 0
-                    rec["tokens"][dst_key] += v
-                    bucket["tokens"][dst_key] += v
-                bucket["assistant_events"] += 1
-
-            # file-interaction footprint (read / write / edit) → per-record + per-prompt.
-            # The op is resolved from the toolUseResult shape (Write also carries a
-            # structuredPatch, so check its oldString-free create/update shape distinctly).
-            if isinstance(tur, dict):
-                op = fp = None
-                if isinstance(tur.get("file"), dict):                       # Read
-                    op, f = "read", tur["file"]
-                    fp = f.get("filePath") or "?"
-                    lines_n, bytes_n = int(f.get("numLines") or 0), len(f.get("content") or "")
-                elif "oldString" in tur and "filePath" in tur:             # Edit
-                    op, fp = "edit", tur.get("filePath") or "?"
-                    added_n, removed_n = _patch_counts(tur.get("structuredPatch"))
-                elif "content" in tur and "filePath" in tur \
-                        and tur.get("type") in ("create", "update"):        # Write
-                    op, fp = "write", tur.get("filePath") or "?"
-                    wc = tur.get("content") or ""
-                    lines_n, bytes_n = len(wc.splitlines()), len(wc)
-                if op:
-                    by = rec["file_ops"][fp]
-                    bucket = ensure_bucket(active_pid, "startup", "", ts)
-                    bucket["files"].add(fp)
-                    if op == "read":
-                        by["reads"] += 1
-                        by["read_lines"] += lines_n
-                        by["read_bytes"] += bytes_n
-                        bucket["read_lines"] += lines_n
-                    elif op == "write":
-                        by["writes"] += 1
-                        by["write_lines"] += lines_n
-                        by["write_bytes"] += bytes_n
-                        by["creates" if tur.get("type") == "create" else "updates"] += 1
-                        bucket["write_lines"] += lines_n
-                    else:  # edit
-                        by["edits"] += 1
-                        by["added"] += added_n
-                        by["removed"] += removed_n
-                        bucket["edit_added"] += added_n
-                        bucket["edit_removed"] += removed_n
-
-            # time bookkeeping
-            if ts is not None:
-                if rec["start"] is None or ts < rec["start"]:
-                    rec["start"] = ts
-                if rec["end"] is None or ts > rec["end"]:
-                    rec["end"] = ts
-
-            # charge the gap (prev -> this) to the right bucket
-            if prev_ts is not None and ts is not None:
-                gap = (ts - prev_ts).total_seconds()
-                if gap < 0:
-                    gap = 0.0
-                if is_assistant:
-                    # model generation; an over-threshold "reasoning" gap is really idle
-                    if gap > idle_threshold:
-                        rec["idle_s"] += gap
-                    else:
-                        rec["reasoning_s"] += gap
-                elif result_ids:
-                    # split the gap across results in this event (usually exactly one)
-                    share = gap / len(result_ids)
-                    for rid in result_ids:
-                        name = id2name.get(rid, "unknown")
-                        if name in DISPATCH_TOOLS:
-                            rec["dispatch_wait_s"] += share
-                            rec["dispatch_calls"] += 1
-                        elif name in HUMAN_WAIT_TOOLS:
-                            # time spent waiting on a human, not compute
-                            rec["user_wait_s"] += share
-                            rec["human_wait_calls"] += 1
-                        else:
-                            # real tool execution — never capped (verifies run long)
-                            rec["toolexec_s"] += share
-                            rec["tool_time"][name] += share
-                            rec["tool_calls"][name] += 1
-                else:
-                    # gap before a plain user prompt / attachment; big ones are human idle
-                    if gap > idle_threshold:
-                        rec["idle_s"] += gap
-                    else:
-                        rec["setup_s"] += gap
-            else:
-                # still count the call even if untimed
-                for rid in result_ids:
-                    name = id2name.get(rid, "unknown")
-                    if name in DISPATCH_TOOLS:
-                        rec["dispatch_calls"] += 1
-                    elif name in HUMAN_WAIT_TOOLS:
-                        rec["human_wait_calls"] += 1
-                    else:
-                        rec["tool_calls"][name] += 1
-            if ts is not None:
-                prev_ts = ts
-
+def _finalize_record(rec):
+    """Close out a parsed record: compute wall/active, freeze the defaultdicts, and roll
+    per-file counters into the reads/writes/edits summaries + the per-prompt list. Shared
+    by every source so their records are byte-for-byte comparable downstream.
+    """
     if rec["start"] and rec["end"]:
         rec["wall_s"] = (rec["end"] - rec["start"]).total_seconds()
     rec["active_s"] = rec["reasoning_s"] + rec["toolexec_s"] + rec["setup_s"]
@@ -490,6 +348,359 @@ def parse_transcript(jsonl_path, ctx, index, idle_threshold=DEFAULT_IDLE_THRESHO
         prompts_list.append(pk)
     rec["prompts_list"] = prompts_list
     return rec
+
+
+def _ensure_bucket(rec, pid, source, text, ts):
+    """Get (or open) the per-turn (per-prompt) bucket for prompt id `pid`."""
+    if pid not in rec["prompts"]:
+        rec["prompts"][pid] = _new_prompt(pid, source, text, ts, len(rec["prompt_order"]))
+        rec["prompt_order"].append(pid)
+    return rec["prompts"][pid]
+
+
+def _add_tokens(rec, bucket, add):
+    """Fold one assistant event's token counts into the record and its turn bucket."""
+    for key, val in add.items():
+        rec["tokens"][key] += val
+        bucket["tokens"][key] += val
+
+
+def _charge_gap(rec, seconds, threshold, work_key):
+    """Charge a positive gap to real work (`work_key`), or to idle beyond the threshold."""
+    if seconds <= 0:
+        return
+    rec["idle_s" if seconds > threshold else work_key] += seconds
+
+
+def _apply_read(by, bucket, fp, lines, nbytes):
+    by["reads"] += 1
+    by["read_lines"] += lines
+    by["read_bytes"] += nbytes
+    bucket["read_lines"] += lines
+    bucket["files"].add(fp)
+
+
+def _apply_write(by, bucket, fp, content, created):
+    lines = len(content.splitlines())
+    by["writes"] += 1
+    by["write_lines"] += lines
+    by["write_bytes"] += len(content)
+    by["creates" if created else "updates"] += 1
+    bucket["write_lines"] += lines
+    bucket["files"].add(fp)
+
+
+def _apply_edit(by, bucket, fp, added, removed):
+    by["edits"] += 1
+    by["added"] += added
+    by["removed"] += removed
+    bucket["edit_added"] += added
+    bucket["edit_removed"] += removed
+    bucket["files"].add(fp)
+
+
+# --- parse: Claude Code transcript (JSONL; gaps inferred between events) ---------
+
+def parse_transcript(jsonl_path, ctx, index, idle_threshold=DEFAULT_IDLE_THRESHOLD_S):
+    """Parse one Claude Code JSONL transcript into the shared time/token/file record;
+    mutates the index join tables.
+    """
+    rec = _new_record(jsonl_path, ctx)
+    if not (jsonl_path and os.path.exists(jsonl_path)):
+        return _finalize_record(rec)
+
+    id2name = {}            # tool_use id -> tool name (within this transcript)
+    prev_ts = None
+    cur_pid = None          # promptId of the turn currently in flight
+    with open(jsonl_path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rec["events"] += 1
+            ts = parse_ts(ev.get("timestamp"))
+            msg = ev.get("message") or {}
+            content = msg.get("content") if isinstance(msg, dict) else None
+            usage = msg.get("usage") if isinstance(msg, dict) else None
+            pid = ev.get("promptId")
+            tur = ev.get("toolUseResult")
+
+            # a user event carrying a promptId opens (or continues) a turn
+            if pid is not None:
+                _ensure_bucket(rec, pid, ev.get("promptSource"), _first_text(content), ts)
+                cur_pid = pid
+            active_pid = cur_pid if cur_pid is not None else PREAMBLE
+
+            # index tool_use / tool_result; count file-op calls (a call counts even if it
+            # later errors with no result); collect thinking blocks
+            result_ids = []
+            is_assistant = ev.get("type") == "assistant"
+            for b in content if isinstance(content, list) else ():
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "tool_use":
+                    name = b.get("name")
+                    tid = b.get("id")
+                    if tid:
+                        id2name[tid] = name
+                        if ts is not None:
+                            index.use[tid] = (name, ts)
+                    cat = classify_tool(name, CLAUDE_SPEC)
+                    if cat in ("read", "write", "edit"):
+                        rec[cat + "_calls"] += 1
+                        _ensure_bucket(rec, active_pid, "startup", "", ts)[cat + "_calls"] += 1
+                elif bt == "tool_result":
+                    rid = b.get("tool_use_id")
+                    if rid:
+                        result_ids.append(rid)
+                        if ts is not None:
+                            index.res[rid] = ts
+                elif bt == "thinking":
+                    rec["thinking_blocks"] += 1
+            if is_assistant:
+                rec["assistant_events"] += 1
+
+            # token usage → record + per-turn bucket
+            if isinstance(usage, dict):
+                bucket = _ensure_bucket(rec, active_pid, "startup", "", ts)
+                _add_tokens(rec, bucket, {dst: usage.get(src) or 0 for src, dst in USAGE_FIELDS})
+                bucket["assistant_events"] += 1
+
+            # file footprint: the op is resolved from the toolUseResult shape (Read carries a
+            # `file`; Edit an `oldString`; Write a create/update `content`).
+            if isinstance(tur, dict):
+                op = fp = None
+                if isinstance(tur.get("file"), dict):                       # Read
+                    op, f = "read", tur["file"]
+                    fp = f.get("filePath") or "?"
+                    lines_n, bytes_n = int(f.get("numLines") or 0), len(f.get("content") or "")
+                elif "oldString" in tur and "filePath" in tur:             # Edit
+                    op, fp = "edit", tur.get("filePath") or "?"
+                    added_n, removed_n = _patch_counts(tur.get("structuredPatch"))
+                elif "content" in tur and "filePath" in tur \
+                        and tur.get("type") in ("create", "update"):        # Write
+                    op, fp = "write", tur.get("filePath") or "?"
+                    wc = tur.get("content") or ""
+                if op:
+                    by = rec["file_ops"][fp]
+                    bucket = _ensure_bucket(rec, active_pid, "startup", "", ts)
+                    if op == "read":
+                        _apply_read(by, bucket, fp, lines_n, bytes_n)
+                    elif op == "write":
+                        _apply_write(by, bucket, fp, wc, tur.get("type") == "create")
+                    else:
+                        _apply_edit(by, bucket, fp, added_n, removed_n)
+
+            # extend the transcript's [start, end]
+            if ts is not None:
+                if rec["start"] is None or ts < rec["start"]:
+                    rec["start"] = ts
+                if rec["end"] is None or ts > rec["end"]:
+                    rec["end"] = ts
+
+            # charge the gap (prev -> this) to the bucket implied by THIS event
+            if prev_ts is not None and ts is not None:
+                gap = max(0.0, (ts - prev_ts).total_seconds())
+                if is_assistant:                        # model was generating (or idle)
+                    _charge_gap(rec, gap, idle_threshold, "reasoning_s")
+                elif result_ids:                        # a tool / dispatch was running
+                    share = gap / len(result_ids)       # usually exactly one result
+                    for rid in result_ids:
+                        name = id2name.get(rid, "unknown")
+                        cat = classify_tool(name, CLAUDE_SPEC)
+                        if cat == "dispatch":
+                            rec["dispatch_wait_s"] += share
+                            rec["dispatch_calls"] += 1
+                        elif cat == "human":
+                            rec["user_wait_s"] += share
+                            rec["human_wait_calls"] += 1
+                        else:                           # real tool-exec — never capped
+                            rec["toolexec_s"] += share
+                            rec["tool_time"][name] += share
+                            rec["tool_calls"][name] += 1
+                else:                                   # gap before a plain user prompt
+                    _charge_gap(rec, gap, idle_threshold, "setup_s")
+            elif result_ids:                            # untimed: count the call only
+                for rid in result_ids:
+                    name = id2name.get(rid, "unknown")
+                    cat = classify_tool(name, CLAUDE_SPEC)
+                    if cat == "dispatch":
+                        rec["dispatch_calls"] += 1
+                    elif cat == "human":
+                        rec["human_wait_calls"] += 1
+                    else:
+                        rec["tool_calls"][name] += 1
+            if ts is not None:
+                prev_ts = ts
+
+    return _finalize_record(rec)
+
+
+# --- parse: opencode session (JSON export; explicit per-message / per-tool timing) ---
+
+def opencode_export(session_id, opencode_bin="opencode"):
+    """Return the parsed JSON of `opencode export <session_id>`.
+
+    opencode streams the export to stdout; a large session overruns the OS pipe buffer
+    and a piped capture truncates at a 64K/96K boundary, so we redirect to a temp file
+    (the shape a shell `>` redirect produces) and read it back.
+    """
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="ocexport-")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            subprocess.run([opencode_bin, "export", session_id], stdout=fh,
+                           stderr=subprocess.DEVNULL, check=True)
+        with open(path, "rb") as fh:
+            return json.loads(fh.read().decode("utf-8"))
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _oc_ts(ms):
+    """opencode timestamps are epoch milliseconds → tz-aware datetime."""
+    if ms is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _oc_diff_counts(diff):
+    """Added / removed line counts from an opencode edit `metadata.diff` (unified diff)."""
+    added = removed = 0
+    for ln in (diff or "").splitlines():
+        if ln.startswith("+++") or ln.startswith("---"):
+            continue
+        if ln.startswith("+"):
+            added += 1
+        elif ln.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def _oc_read_lines(output):
+    """Lines returned by an opencode `read`: count the `N: ` line-number prefixes inside
+    the tool output's <content> block (opencode does not report a line count separately).
+    """
+    if not isinstance(output, str):
+        return 0
+    m = re.search(r"<content>(.*?)</content>", output, re.S)
+    body = m.group(1) if m else output
+    return len(re.findall(r"(?m)^\s*\d+:", body))
+
+
+def parse_opencode_session(session_json, ctx, index, idle_threshold=DEFAULT_IDLE_THRESHOLD_S):
+    """Parse one `opencode export` session into the shared record shape; mutates the index
+    join tables (parent `task` tool → child session).
+    """
+    rec = _new_record("opencode:" + (session_json.get("info", {}) or {}).get("id", "?"), ctx)
+    all_ts = []
+    prev_end = None
+    cur_pid = None
+    for msg in session_json.get("messages") or []:
+        rec["events"] += 1
+        info = msg.get("info") or {}
+        role = info.get("role")
+        mt = info.get("time") or {}
+        created, completed = _oc_ts(mt.get("created")), _oc_ts(mt.get("completed"))
+        parts = msg.get("parts") or []
+        all_ts += [x for x in (created, completed) if x]
+
+        # a user message opens (or continues) a turn; assistant work attributes to it
+        if role == "user":
+            text = next((p.get("text") or "" for p in parts if p.get("type") == "text"), "")
+            cur_pid = info.get("id") or PREAMBLE
+            _ensure_bucket(rec, cur_pid, "user", text, created)
+        active_pid = cur_pid if cur_pid is not None else PREAMBLE
+
+        # gap between the previous message's end and this one → setup / idle
+        if prev_end is not None and created is not None:
+            _charge_gap(rec, (created - prev_end).total_seconds(), idle_threshold, "setup_s")
+
+        # tokens — opencode bills reasoning separately from output; fold it in so the four
+        # bucket total reconciles to opencode's own per-message / session total.
+        if role == "assistant":
+            rec["assistant_events"] += 1
+            tk = info.get("tokens") or {}
+            cache = tk.get("cache") or {}
+            bucket = _ensure_bucket(rec, active_pid, "startup", "", created)
+            _add_tokens(rec, bucket, {
+                "input": tk.get("input") or 0,
+                "output": (tk.get("output") or 0) + (tk.get("reasoning") or 0),
+                "cache_read": cache.get("read") or 0,
+                "cache_creation": cache.get("write") or 0,
+            })
+            bucket["assistant_events"] += 1
+
+        # parts: reasoning blocks + timed tool executions (with file interactions)
+        tools_in_msg = 0.0
+        for p in parts:
+            if p.get("type") == "reasoning":
+                rec["thinking_blocks"] += 1
+                continue
+            if p.get("type") != "tool":
+                continue
+            name = p.get("tool")
+            st = p.get("state") or {}
+            tt = st.get("time") or {}
+            s, e = _oc_ts(tt.get("start")), _oc_ts(tt.get("end"))
+            dur = max(0.0, (e - s).total_seconds()) if (s and e) else 0.0
+            all_ts += [x for x in (s, e) if x]
+            tools_in_msg += dur
+            cat = classify_tool(name, OPENCODE_SPEC)
+            if cat == "dispatch":
+                rec["dispatch_wait_s"] += dur
+                rec["dispatch_calls"] += 1
+                child = (st.get("metadata") or {}).get("sessionId")
+                if child and s and e:
+                    index.use[child] = ("task", s)
+                    index.res[child] = e
+            elif cat == "human":
+                rec["user_wait_s"] += dur
+                rec["human_wait_calls"] += 1
+            else:
+                rec["toolexec_s"] += dur
+                rec["tool_time"][name] += dur
+                rec["tool_calls"][name] += 1
+
+            # file interactions (read / write / edit) — metrics from the tool state
+            fp = (st.get("input") or {}).get("filePath")
+            if not fp or cat not in ("read", "write", "edit"):
+                continue
+            rec[cat + "_calls"] += 1
+            by = rec["file_ops"][fp]
+            bucket = _ensure_bucket(rec, active_pid, "startup", "", created)
+            bucket[cat + "_calls"] += 1
+            if cat == "read":
+                out = st.get("output")
+                _apply_read(by, bucket, fp, _oc_read_lines(out), len(out or ""))
+            elif cat == "write":
+                wc = (st.get("input") or {}).get("content") or ""
+                _apply_write(by, bucket, fp, wc, not (st.get("metadata") or {}).get("exists"))
+            else:
+                added_n, removed_n = _oc_diff_counts((st.get("metadata") or {}).get("diff"))
+                _apply_edit(by, bucket, fp, added_n, removed_n)
+
+        # reasoning = the assistant message span minus the tool time inside it (the same
+        # "thinking proxy" the Claude source infers from gaps)
+        if role == "assistant" and created and completed:
+            _charge_gap(rec, (completed - created).total_seconds() - tools_in_msg,
+                        idle_threshold, "reasoning_s")
+
+        prev_end = completed or created or prev_end
+
+    if all_ts:
+        rec["start"], rec["end"] = min(all_ts), max(all_ts)
+    return _finalize_record(rec)
 
 
 # --- discovery ------------------------------------------------------------------
@@ -534,12 +745,80 @@ def load_run(project_path, session_id, subagents_dir, index,
     return records
 
 
+def _oc_child_ids(session_json):
+    """Child session ids spawned by this session, in dispatch order (parent `task`
+    tool → state.metadata.sessionId).
+    """
+    out = []
+    for msg in session_json.get("messages") or []:
+        for p in msg.get("parts") or []:
+            if p.get("type") == "tool" and p.get("tool") == "task":
+                csid = (p.get("state", {}).get("metadata") or {}).get("sessionId")
+                if csid:
+                    out.append(csid)
+    return out
+
+
+def load_opencode_run(root_session_id, index, idle_threshold=DEFAULT_IDLE_THRESHOLD_S,
+                      opencode_bin="opencode"):
+    """Parse an opencode run: the root session as orchestrator, plus every descendant
+    session reached through `task`-tool dispatch (BFS, so any nesting is covered).
+    """
+    root = opencode_export(root_session_id, opencode_bin)
+    root_ctx = AgentContext(ORCH, ORCH, "orchestrator main session", 0, ORCH, None)
+    records = [parse_opencode_session(root, root_ctx, index, idle_threshold)]
+    seen = {root_session_id}
+    queue = [(csid, root, 1) for csid in _oc_child_ids(root)]
+    while queue:
+        csid, _parent, depth = queue.pop(0)
+        if csid in seen:
+            continue
+        seen.add(csid)
+        try:
+            sj = opencode_export(csid, opencode_bin)
+        except Exception as exc:                                  # noqa: BLE001
+            logger.warning("[pypto-op-monitor] opencode export %s failed: %s", csid, exc)
+            continue
+        info = sj.get("info") or {}
+        atype = info.get("agent") or "unknown"
+        desc = info.get("title") or ""
+        stage, module = resolve_stage(atype, desc)
+        ctx = AgentContext(short_role(atype), atype, desc, depth, stage, module)
+        r = parse_opencode_session(sj, ctx, index, idle_threshold)
+        r["agent_id"] = csid
+        r["tool_use_id"] = csid          # the child's own id joins it to the parent task
+        records.append(r)
+        queue.extend((gc, sj, depth + 1) for gc in _oc_child_ids(sj))
+    return records
+
+
+def list_opencode_sessions(db_path=DEFAULT_OPENCODE_DB):
+    """List top-level opencode sessions (no parent) with their child count and last-active
+    time, newest first. Reads the opencode sqlite store read-only (stdlib sqlite3).
+    """
+    if not os.path.exists(db_path):
+        return None
+    con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
+    try:
+        rows = con.execute(
+            "SELECT id, parent_id, title, agent, time_updated FROM session").fetchall()
+    finally:
+        con.close()
+    kids = Counter(r[1] for r in rows if r[1])
+    tops = [(r[0], r[2], r[3], r[4]) for r in rows if not r[1]]
+    tops.sort(key=lambda r: r[3] or 0, reverse=True)
+    return [{"id": sid, "title": title, "agent": agent,
+             "children": kids.get(sid, 0), "updated_ms": upd}
+            for sid, title, agent, upd in tops]
+
+
 # --- aggregation ----------------------------------------------------------------
 
 def compute_lifecycle(records, index, tol=5.0):
-    """Join each subagent to its spawning Agent/Task call (via meta.toolUseId) to derive
-    parent-observed dispatch duration and, for synchronous dispatch only, spawn+close
-    overhead (async dispatch is labelled not-measurable rather than a misleading 0.0s).
+    """Join each subagent to its spawning dispatch call — Claude `meta.toolUseId` or the
+    opencode parent `task` tool, both keyed through `index` — to derive parent-observed
+    dispatch duration and, for synchronous dispatch only, spawn+close overhead (async
+    dispatch is labelled not-measurable rather than a misleading 0.0s).
     """
     rows = []
     for r in records:
@@ -616,9 +895,27 @@ def build_report(records, index):
     assistant_events = sum(r["assistant_events"] for r in records)
     thinking_blocks = sum(r["thinking_blocks"] for r in records)
 
+    # Operator-generation window: the run STARTS at the first recorded activity and ENDS when
+    # the last dispatched agent finishes — NOT when the top-level orchestrator SESSION is
+    # finally closed, which can outlive the run by hours or days (left open / reused for
+    # follow-up). Every dispatched agent (stages 1-7 + support helpers, incl. any nested
+    # orchestrator) runs only during the run, so their last end marks its end; the root
+    # transcript (stage == ORCH) is the sole record that can outlive it. Fall back to the full
+    # span only for a single-agent run with no dispatched agents.
     starts = [r["start"] for r in records if r["start"]]
-    ends = [r["end"] for r in records if r["end"]]
-    wall = (max(ends) - min(starts)).total_seconds() if starts and ends else None
+    sub_ends = [r["end"] for r in records if r["end"] and r["stage"] != ORCH]
+    all_ends = [r["end"] for r in records if r["end"]]
+    run_start = min(starts) if starts else None
+    run_end = max(sub_ends) if sub_ends else (max(all_ends) if all_ends else None)
+    wall = (run_end - run_start).total_seconds() if (run_start and run_end) else None
+    # Clip the root orchestrator's span (the only record that can outlive the run) to the
+    # window, so its per-agent / per-stage wall reflects the run, not the session lifetime.
+    if run_end is not None:
+        for r in records:
+            if r["end"] and r["end"] > run_end:
+                r["end"] = run_end
+                if r["start"]:
+                    r["wall_s"] = (r["end"] - r["start"]).total_seconds()
 
     stages = []
     for key in sorted(by_stage, key=stage_sort_key):
@@ -655,8 +952,7 @@ def build_report(records, index):
             "user_wait_s": user_wait_total, "idle_s": idle_total,
             "human_wait_calls": human_wait_calls,
             "assistant_events": assistant_events, "thinking_blocks": thinking_blocks,
-            "wall_s": wall, "start": min(starts) if starts else None,
-            "end": max(ends) if ends else None,
+            "wall_s": wall, "start": run_start, "end": run_end,
             "tool_calls_total": sum(tool_calls.values()),
             "tokens": tokens, "tokens_total": sum(tokens.values()),
             "reads": reads_t, "writes": writes_t, "edits": edits_t,
@@ -717,7 +1013,7 @@ def render_text(report, session_label, location):
     tk = t["tokens"]
     lines.append("")
     lines.append("1  OVERALL COSTS")
-    lines.append(f"    wall {fmt_dur(t['wall_s'])} (calendar span)    active agent-time "
+    lines.append(f"    wall {fmt_dur(t['wall_s'])} (run: start→last stage)    active agent-time "
                  f"{fmt_dur(active_t)}  =  reason {fmt_dur(t['reasoning_s'])} + tools "
                  f"{fmt_dur(t['toolexec_s'])} + setup {fmt_dur(t['setup_s'])}")
     lines.append(f"    tokens {fmt_tokens(t['tokens_total'])} total  =  input {fmt_tokens(tk['input'])} "
@@ -751,7 +1047,8 @@ def render_text(report, session_label, location):
     lines.append(f"    {'TOTAL':<28} {t['transcripts']:>3} {fmt_dur(t['reasoning_s']):>8} "
                  f"{fmt_dur(t['toolexec_s']):>8} {fmt_dur(t['wall_s']):>9} {fmt_dur(active_t):>8} "
                  f"{fo_t:>9}  {tc(t['tokens'], t['tokens_total'])}")
-    lines.append("    stage 'wall' = Σ member spans (they overlap); TOTAL 'wall' = calendar span.")
+    lines.append("    stage 'wall' = Σ member spans (they overlap); TOTAL 'wall' = run span "
+                 "(first activity → last stage; excludes the orchestrator session's idle tail).")
 
     # ---- 3  PER-AGENT COSTS ------------------------------------------------------
     lines.append("")
@@ -1005,30 +1302,40 @@ def to_jsonable(report, session_label, location):
 
 # --- main -----------------------------------------------------------------------
 
-def main(argv=None):
-    p = argparse.ArgumentParser(
-        description="Time + token + file-interaction cost extractor for a PyPTO Agent Team run.")
-    p.add_argument("--projects-root", default=default_projects_root())
-    p.add_argument("--project", default=None,
-                   help="project dir under projects-root (default: derived from cwd)")
-    p.add_argument("--session", default=None,
-                   help="session id (default: most recently active with subagents)")
-    p.add_argument("--all-sessions", action="store_true",
-                   help="aggregate every session under the project")
-    p.add_argument("--list-sessions", action="store_true",
-                   help="list sessions that have subagent logs, then exit")
-    p.add_argument("--json", action="store_true", help="emit JSON instead of a text report")
-    p.add_argument("--idle-threshold", type=float, default=DEFAULT_IDLE_THRESHOLD_S,
-                   help="seconds; reasoning/setup gaps longer than this are counted as idle "
-                        f"rather than work (default {int(DEFAULT_IDLE_THRESHOLD_S)}). Tool "
-                        "execution gaps are never capped.")
-    args = p.parse_args(argv)
-    _init_logging()
+def _emit(report, session_label, location, as_json):
+    if as_json:
+        logger.info("%s", json.dumps(to_jsonable(report, session_label, location),
+                                     indent=2, ensure_ascii=False))
+    else:
+        logger.info("%s", render_text(report, session_label, location))
 
+
+def _running_under_claude_code():
+    """True when this process was spawned by Claude Code, which sets CLAUDECODE=1 in the
+    environment of every process it spawns; opencode does not set it. Detecting Claude Code
+    positively is the reliable direction, so opencode is the default fallback.
+    """
+    return os.environ.get("CLAUDECODE") == "1"
+
+
+def _detect_source(args):
+    if args.source in ("claude", "opencode"):
+        return args.source
+    # An explicit opencode session id is unambiguous.
+    if args.session and str(args.session).startswith(OC_SESSION_PREFIX):
+        return "opencode"
+    # Otherwise detect Claude Code positively (it sets CLAUDECODE=1); everything else —
+    # opencode, or no harness at all — falls back to opencode.
+    if _running_under_claude_code():
+        return "claude"
+    return "opencode"
+
+
+def _run_claude(args):
     project = args.project or encode_project_dir(os.getcwd())
     project_path = os.path.join(args.projects_root, project)
     if not os.path.isdir(project_path):
-        logger.error("[pypto-op-claude-monitor] project dir not found: %s", project_path)
+        logger.error("[pypto-op-monitor] project dir not found: %s", project_path)
         avail = sorted(os.path.basename(d) for d in glob.glob(os.path.join(args.projects_root, "*"))
                        if os.path.isdir(d))
         for a in avail:
@@ -1038,7 +1345,7 @@ def main(argv=None):
     sessions = find_sessions(project_path)
     if args.list_sessions:
         if not sessions:
-            logger.info("[pypto-op-claude-monitor] no sessions with subagents under %s", project_path)
+            logger.info("[pypto-op-monitor] no sessions with subagents under %s", project_path)
             return 0
         for sid, sub, mtime in sessions:
             n = len(glob.glob(os.path.join(sub, "*.meta.json")))
@@ -1047,8 +1354,8 @@ def main(argv=None):
         return 0
 
     if not sessions:
-        logger.error("[pypto-op-claude-monitor] no subagent logs found under %s", project_path)
-        logger.error("[pypto-op-claude-monitor] (a session only gets a subagents/ dir once the orchestrator "
+        logger.error("[pypto-op-monitor] no subagent logs found under %s", project_path)
+        logger.error("[pypto-op-monitor] (a session only gets a subagents/ dir once the orchestrator "
                      "dispatches its first agent)")
         return 1
 
@@ -1062,7 +1369,7 @@ def main(argv=None):
         if args.session:
             match = [s for s in sessions if s[0] == args.session]
             if not match:
-                logger.error("[pypto-op-claude-monitor] session %s has no subagents", args.session)
+                logger.error("[pypto-op-monitor] session %s has no subagents", args.session)
                 return 1
             sid, sub, _ = match[0]
         else:
@@ -1070,13 +1377,86 @@ def main(argv=None):
         records = load_run(project_path, sid, sub, index, args.idle_threshold)
         session_label, location = sid, sub
 
-    report = build_report(records, index)
-    if args.json:
-        logger.info("%s", json.dumps(to_jsonable(report, session_label, location),
-                                     indent=2, ensure_ascii=False))
-    else:
-        logger.info("%s", render_text(report, session_label, location))
+    _emit(build_report(records, index), session_label, location, args.json)
     return 0
+
+
+def _run_opencode(args):
+    if args.list_sessions:
+        sess = list_opencode_sessions(args.opencode_db)
+        if sess is None:
+            logger.error("[pypto-op-monitor] opencode db not found: %s", args.opencode_db)
+            return 2
+        if not sess:
+            logger.info("[pypto-op-monitor] no opencode sessions in %s", args.opencode_db)
+            return 0
+        for s in sess:
+            stamp = datetime.fromtimestamp((s["updated_ms"] or 0) / 1000.0,
+                                           timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            logger.info("%s  %3d children  %-24s last-active %sZ  %s", s["id"], s["children"],
+                        (s["agent"] or "-")[:24], stamp, (s["title"] or "")[:48])
+        return 0
+
+    root = args.session
+    if not root:
+        sess = list_opencode_sessions(args.opencode_db) or []
+        runs = [s for s in sess if s["children"] > 0] or sess
+        if not runs:
+            logger.error("[pypto-op-monitor] no --session given and no opencode run discoverable "
+                         "(pass --session ses_... or check --opencode-db)")
+            return 1
+        root = runs[0]["id"]
+
+    index = DispatchIndex()
+    if args.all_sessions:
+        sess = list_opencode_sessions(args.opencode_db) or []
+        roots = [s["id"] for s in sess if s["children"] > 0] or [s["id"] for s in sess]
+        records = []
+        for rid in roots:
+            records.extend(load_opencode_run(rid, index, args.idle_threshold, args.opencode_bin))
+        session_label, location = f"ALL ({len(roots)} opencode runs)", "opencode:" + args.opencode_db
+    else:
+        records = load_opencode_run(root, index, args.idle_threshold, args.opencode_bin)
+        session_label, location = root, "opencode:" + root
+
+    _emit(build_report(records, index), session_label, location, args.json)
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(
+        description="Time + token + file-interaction cost extractor for a PyPTO Agent Team run "
+                    "(Claude Code or opencode transcripts).")
+    p.add_argument("--source", choices=("auto", "claude", "opencode"), default="auto",
+                   help="transcript source (default: auto — opencode for a ses_... session; else "
+                        "Claude Code when run under Claude Code (CLAUDECODE=1), otherwise opencode)")
+    p.add_argument("--projects-root", default=default_projects_root(),
+                   help="[claude] logs root (default: ~/.claude/projects)")
+    p.add_argument("--project", default=None,
+                   help="[claude] project dir under projects-root (default: derived from cwd)")
+    p.add_argument("--session", default=None,
+                   help="session id (claude: default most-recent with subagents; "
+                        "opencode: the run's root ses_... id)")
+    p.add_argument("--all-sessions", action="store_true",
+                   help="aggregate every session (claude: under the project; opencode: every run)")
+    p.add_argument("--list-sessions", action="store_true",
+                   help="list sessions/runs, then exit")
+    p.add_argument("--json", action="store_true", help="emit JSON instead of a text report")
+    p.add_argument("--idle-threshold", type=float, default=DEFAULT_IDLE_THRESHOLD_S,
+                   help="seconds; reasoning/setup gaps longer than this are counted as idle "
+                        f"rather than work (default {int(DEFAULT_IDLE_THRESHOLD_S)}). Tool "
+                        "execution gaps are never capped.")
+    p.add_argument("--opencode-bin", default="opencode",
+                   help="[opencode] opencode executable used for `opencode export` (default: opencode)")
+    p.add_argument("--opencode-db", default=DEFAULT_OPENCODE_DB,
+                   help="[opencode] sqlite store used by --list-sessions / run discovery "
+                        f"(default: {DEFAULT_OPENCODE_DB})")
+    args = p.parse_args(argv)
+    _init_logging()
+
+    if _detect_source(args) == "opencode":
+        return _run_opencode(args)
+    return _run_claude(args)
 
 
 if __name__ == "__main__":
