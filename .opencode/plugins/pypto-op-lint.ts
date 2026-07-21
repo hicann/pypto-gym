@@ -183,7 +183,17 @@ export const PyptoOpLintPlugin: Plugin = async (input) => {
   // tool.execute.* hooks do not carry agent identity. Remember the latest
   // chat agent by session and skip instant lint only for known non-PyPTO
   // agents. All other agents, including pypto-op-* subagents, keep lint on.
-  const LINT_SKIP_AGENTS = new Set(["build", "plan", "general", "explore", "scout"]);
+  // pypto-pro-op-* agents belong to the PyPTO-Pro workflow (uses @pl.jit, not
+  // @pypto.frontend.jit); gym OL rules (e.g. OL01) do not apply to them.
+  const LINT_SKIP_AGENTS = new Set([
+    "build", "plan", "general", "explore", "scout",
+    "pypto-pro-op-orchestrator",
+    "pypto-pro-op-planner",
+    "pypto-pro-op-mathematician",
+    "pypto-pro-op-architect",
+    "pypto-pro-op-coder",
+    "pypto-pro-op-verifier",
+  ]);
   const agentBySession = new Map<string, string>();
   function rememberAgent(input: { sessionID?: unknown; agent?: unknown }): void {
     if (typeof input.sessionID !== "string" || typeof input.agent !== "string") return;

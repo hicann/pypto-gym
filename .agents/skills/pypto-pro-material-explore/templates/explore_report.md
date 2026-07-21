@@ -26,41 +26,37 @@ feasibility: {feasibility}
 ### 1.3 可能会涉及的 API 类别
 
 > 以下为常见类别提示，实际 API 以本次 PRO_MATERIAL_INDEX §A 扫描结果为准。
+> **性能强制**：Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
 
-| 类别 | 是否涉及 | 关键 API |
-|------|---------|----------|
-| 数据搬运 | {是/否} | `load_tile` / `store_tile` / `load` / `store` / `move` |
-| 矢量计算 — 逐元素 | {是/否} | `add` / `sub` / `mul` / `div` / `maximum` / `relu` / `neg` / `cast` |
-| 矢量计算 — 数学 | {是/否} | `exp` / `muls` / `expands` |
-| 矢量计算 — 归约 | {是/否} | `row_max` / `row_sum` / `col_max` / `col_sum` / `row_reduce` / `col_reduce` |
-| 矢量计算 — 广播 | {是/否} | `row_expand_sub` / `row_expand_div` / `col_expand_sub` |
-| 矩阵计算（Cube） | {是/否} | `matmul` / `matmul_acc` |
-| VF 计算 | {是/否} | `vf.add` / `vf.mul` / `vf.reduce` / `vf.cast` |
-| 同步控制 | {auto/手动} | `pl.system.sync_src/sync_dst` / `pl.system.bar_v` / `pl.system.bar_all` / `mutex_lock/unlock` |
-| 系统访问 | 是 | `get_block_idx` / `get_block_num` |
-| 控制流 | 是 | `section_vector` / `section_cube` / `pl.range` |
-| 工具 | {是/否} | `DynVar` / `set_validshape` |
+| 类别 | 是否涉及 | 关键 API | 指定算子是否覆盖 |
+|------|---------|----------|------------------|
+| 数据搬运 | {是/否} | `load_tile` / `store_tile` / `load` / `store` / `move` | {覆盖 / 未覆盖} |
+| VF 计算（Vector 数值计算强制） | {是/否} | `vf.add` / `vf.mul` / `vf.max` / `vf.cast` / `vf.exp_sub` / `vf.muls` 等 | 覆盖（FA/lightning/vf_api） |
+| 矩阵计算（Cube） | {是/否} | `matmul` / `matmul_acc` | 覆盖（matmul 类样例） |
+| 系统访问 | 是 | `get_block_idx` / `get_block_num` | 覆盖 |
+| 控制流 | 是 | `section_vector` / `section_cube` / `pl.range` | 覆盖 |
+| 工具 | {是/否} | 动态维度声明 / `set_validshape` / `make_tile_group` | 覆盖 |
 
 ---
 
 ## 2. 公式分解
 
-| 步骤 | 操作类型 | 数学表达 | pl.* 调用链 | 说明 |
-|------|----------|----------|------------|------|
-| {n} | {op_type} | {math_expr} | `pl.{api1}` → `pl.{api2}` | {desc} |
+| 步骤 | 操作类型 | 数学表达 | vf.* 调用链（vec）/ pl.* 调用链（cube） | 说明 |
+|------|----------|----------|--------------------------------------|------|
+| {n} | {op_type} | {math_expr} | `vf.{api1}` → `vf.{api2}`（vec）/ `pl.{api1}`（cube） | {desc} |
 
 ---
 
 <!-- REQUIRED -->
 ## 3. API 文档探索
 
-> **来源**: Explore subagent 1 — 基于 `PRO_MATERIAL_INDEX.md` §A
+> **来源**: 探索方向 1 — 基于 `PRO_MATERIAL_INDEX.md` §A
 
 ### 3.1 API 映射结果
 
-| 步骤 | 数学表达 | PyPTO-Pro pl.* 调用链 | 状态 | 约束满足 |
-|------|----------|-----------------------|------|----------|
-| {n} | {expr} | `pl.{api1}` → `pl.{api2}` | {直接可用/需组合/不支持} | {✓/⚠/✗} |
+| 步骤 | 数学表达 | vf.* 调用链（vec）/ pl.* 调用链（cube） | 状态 | 约束满足 |
+|------|----------|--------------------------------------|------|----------|
+| {n} | {expr} | `vf.{api1}` → `vf.{api2}`（vec）/ `pl.{api1}`（cube） | {直接可用/需组合/不支持} | {✓/⚠/✗} |
 
 ### 3.2 替代方案
 
@@ -68,9 +64,9 @@ feasibility: {feasibility}
 
 ### 3.3 API 约束
 
-| API | 约束项 | 要求 | 结果 |
-|-----|--------|------|------|
-| {api} | {constraint} | {requirement} | {✓/⚠/✗} |
+| API | 约束项 | 要求 | 结果 | 参数语义/寄存器级行为 |
+|-----|--------|------|------|----------------------|
+| {api} | {constraint} | {requirement} | {✓/⚠/✗} | {参数语义说明，如 offset 单位、layout 取值、寄存器映射关系等} |
 
 ### 3.4 MemorySpace 约束
 
@@ -83,25 +79,46 @@ feasibility: {feasibility}
 <!-- REQUIRED -->
 ## 4. 算子样例探索
 
-> **来源**: Explore subagent 2 — 基于 `PRO_MATERIAL_INDEX.md` §B
-> **注意**: pro_ops/ 下文件是 API 用法参考 + 功能测试，非 production 标准
+> **来源**: 探索方向 2 — 基于 `PRO_MATERIAL_INDEX.md` §B（官方指定算子）
+> **注意**: 官方指定算子为精选实现参考。a5 目录下其余文件不得参考。
 
-### 4.1 匹配样例
+### 4.1 全量样例参考（按 cube/vec 组成分类）
 
-<!-- 无匹配时填写：无匹配参考实现 -->
+> 全量阅读索引 §B 中所有官方指定算子样例，按 cube/vec 组成分类记录参考价值。
 
-| # | 示例路径 | 索引 §B.x | 相似度 | 完整度（多tile归约/双视图/online） | 可复用点 |
-|---|----------|-----------|--------|-----------------------------------|----------|
-| {n} | `pro_ops/{category}/{file}` | {B.x} | {高/中/低} | {✅多tile归约 ✅双视图 ✅online / 部分 / 简化路径} | {可复用点} |
+**纯 Cube 样例**（matmul 类）：
 
-> **选参考原则**：优先选完整度高的生产级实现，而非仅相似度高的简化/异引擎版本。若最相似样例是简化路径，须在此标注并另找完整参考。
+| # | 示例路径 | 可复用点 |
+|---|----------|----------|
+| {n} | `{path}` | {cube tile 管理 / K 累加链 / matmul_acc phase / L1/L0 布局 / set_mm_layout_transform} |
+
+**纯 Vec 样例**（elementwise 类、vf_api 类）：
+
+| # | 示例路径 | 可复用点 |
+|---|----------|----------|
+| {n} | `{path}` | {vf 指令组合 / make_tile_group 双缓冲 / auto_mutex / load_align/store_align} |
+
+**VC 融合样例**（FA 类、lightning_indexer 类）：
+
+| # | 示例路径 | 可复用点 |
+|---|----------|----------|
+| {n} | `{path}` | {section_cube→acc_to_vec→section_vector 衔接 / cross_core 流水 / 多 Phase 分块} |
+
+> **选参考原则**：优先从当前算子对应分类中提取直接可复用模式；同时从所有样例中提取通用写法参考（API 用法、分核策略、同步事件管理、尾块处理等）。
 
 ### 4.2 可复用模式
 
+**直接可复用**（来自当前算子对应分类的样例）：
 - **pl.* 调用链**：{api_usage}
 - **Tile 配置**：{tile_config}
 - **同步策略**：{sync_pattern}
 - **循环结构**：{loop_pattern}
+
+**通用写法参考**（来自所有样例）：
+- **API 用法**：{如 vf.gather/vf.astype/vf.reduce_* 的参数语义与调用方式}
+- **分核策略**：{分核覆盖/重叠/空转检查}
+- **同步事件管理**：{event_id 分配/隔离}
+- **尾块处理**：{valid_shape/compact/fillpad 用法}
 
 ### 4.3 差异分析
 
@@ -114,7 +131,7 @@ feasibility: {feasibility}
 <!-- REQUIRED -->
 ## 5. 教程与设计指南探索
 
-> **来源**: Explore subagent 3 — 基于 `PRO_MATERIAL_INDEX.md` §C
+> **来源**: 探索方向 3 — 基于 `PRO_MATERIAL_INDEX.md` §C
 
 ### 5.1 适用的设计模式
 
@@ -145,30 +162,24 @@ feasibility: {feasibility}
 
 ### 6.2 同步策略建议
 
-- **推荐方案**: {auto_mutex / 手动 sync + bar_all}
+- **推荐方案**: `make_tile_group` + `auto_mutex`（所有需要 buffer 切换/轮转的场景）；`make_tile` 仅限单次 scratch tile，其 pipe 级依赖用手动 `sync_src`/`sync_dst`；`cross_core` 跨核同步另用 `sync_cross_core` 类
 - **理由**: {来源}
-
-### 6.3 双视图需求
-
-- **是否需要**: {是 / 否}
-- **判定规则**: 归约类 API（row_max/row_sum 等）输出 `[行数,1]` 须设 `layout=pl.DN`（证据 `row_max.md:25`）；若该输出后续要参与 tile×tile 逐元素运算（需默认 ND 布局），则**必须**在同地址声明 DN + ND 双视图对
-- **原因**: {来源}
 
 ---
 
 <!-- REQUIRED -->
 ## 7. 环境常量快照
 
-> **来源**: Explore subagent 1（API 文档约束）+ Explore subagent 2（pro_ops 样例 assert）
-> 从当前仓库的 API 文档和 pro_ops 样例中提取硬件/版本相关常量。下游 Stage 3/4 全部引用本节，不再各自写死。
+> **来源**: 探索方向 1（API 文档约束）+ 探索方向 2（官方指定算子 assert）
+> 从当前仓库的 API 文档和官方指定算子中提取硬件/版本相关常量。下游 Stage 3/4 全部引用本节，不再各自写死。
+> ⚠️ 以上常量值来自模板预填的参考值，实际填充时须以本次文档遍历/样例扫描得到的值为准。若遍历结果与参考值不同，以遍历结果覆盖。
 
 | 常量 | 探测值 | 来源路径 | 备注 |
 |------|--------|----------|------|
-| UB 容量 | {N} KB | {pro_ops 样例 assert 路径} | {如 `assert {addr} <= {N}*1024`} |
-| cross_core event_id 上限 | {N} | {API 文档路径} | 本次资料探索确认的上限值；Stage 3/4 涉及 event_id 分配时统一引用本项，不在下游重复定义固定数值 |
-| 地址对齐要求 | {N} 字节 | {API 文档路径} | 本次资料探索确认的对齐要求；Stage 3/4 的地址规划与代码实现统一引用本项，不在下游重复固化 |
-| Cube tile 对齐 | {N} | {教程/文档路径} | {tile 尺寸对齐要求} |
-| tile_dims stride 经验阈值 | {N} KB | {pro_ops 样例推断} | 非文档明文，为基于样例的经验推断值 |
+| UB 容量 | 248 KB | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/多核切分与Tiling.md` §5.2 | A5/DAV_3510；官方指定算子 assert 可交叉验证 |
+| cross_core event_id 上限 | 16 | `set_cross_core_wait_cross_core.md` 参数范围表 | API 文档固定值，取值范围 `[0, 16)` |
+| 地址对齐要求 | 32 字节 | `load_tile.md` 参数范围表 | UB/L1 首地址须 32 字节对齐 |
+| Cube tile 对齐 | {N} | {教学/文档路径} | {tile 尺寸对齐要求} |
 
 ---
 

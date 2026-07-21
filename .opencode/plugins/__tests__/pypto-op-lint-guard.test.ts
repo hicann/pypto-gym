@@ -85,6 +85,35 @@ test("skips lint for built-in non-PyPTO agents", async () => {
   }
 });
 
+test("skips lint for PyPTO-Pro agents", async () => {
+  const plugin = await PyptoOpLintPlugin({
+    $,
+    client: { app: { log: async () => {} } },
+    directory: process.cwd(),
+    worktree: process.cwd(),
+    project: {},
+  } as never);
+  const before = plugin["tool.execute.before"];
+
+  for (const agent of [
+    "pypto-pro-op-orchestrator",
+    "pypto-pro-op-planner",
+    "pypto-pro-op-mathematician",
+    "pypto-pro-op-architect",
+    "pypto-pro-op-coder",
+    "pypto-pro-op-verifier",
+  ]) {
+    const sessionID = `session-${agent}`;
+    await rememberAgent(plugin, agent, sessionID);
+    await expect(
+      before?.(
+        { tool: "bash", sessionID } as never,
+        { args: { command: "echo '{}' > /tmp/qat/.orchestrator_state.json" } } as never,
+      ),
+    ).resolves.toBeUndefined();
+  }
+});
+
 test("runs lint for PyPTO subagents", async () => {
   const plugin = await PyptoOpLintPlugin({
     $,

@@ -28,6 +28,21 @@ PyPTO-Gym 仓库内置的 AI Agent Skills，用于自动化完成 HuggingFace �
 | [`pypto-op-knowledge`](./pypto-op-knowledge/SKILL.md) | — | 算子开发经验表 / 问题查找表串行查询 | 查经验表、查问题表 |
 | [`pypto-memory-template`](./pypto-memory-template/SKILL.md) | — | 算子级 `custom/<op>/MEMORY.md` 模板：必需章节、机器可读字段、更新节奏 | MEMORY.md 模板 |
 
+### PyPTO-Pro 算子开发（4-Stage 工作流）
+
+> 由 [`pypto-pro-op-orchestrator`](../.opencode/agents/pypto-pro-op-orchestrator.md) 编排，与上方 9-Agent Stage 1–7 团队独立，配套 `pypto-pro-*` 系列 skill。资料（API 文档 / 算子样例 / 教程）通过 `pypto-docs-search` 的 `sync_devkit.py` 装配到 `$PYPTO_DEVKIT_DIR` 本地缓存。
+
+| Skill | 版本 | 用途 | 触发词 |
+|-------|------|------|--------|
+| [`pypto-pro-op-plan`](./pypto-pro-op-plan/SKILL.md) | — | Stage 1 规划：串行加载 intent-understand + material-explore | Stage 1 规划 |
+| [`pypto-pro-intent-understand`](./pypto-pro-intent-understand/SKILL.md) | — | 将自然语言算子描述转化为结构化 SPEC.md | 开发/实现/创建某个算子 |
+| [`pypto-pro-material-explore`](./pypto-pro-material-explore/SKILL.md) | — | 构建 PRO_MATERIAL_INDEX.md 资料索引 + 三方向探索产出 EXPLORE_REPORT.md | 资料探索、API 探索、API 映射 |
+| [`pypto-pro-golden-generate`](./pypto-pro-golden-generate/SKILL.md) | — | Stage 2 生成 torch + torch_npu NPU golden + CPU golden + 性能报告 | 生成 golden、reference implementation |
+| [`pypto-pro-op-design`](./pypto-pro-op-design/SKILL.md) | — | Stage 3 迭代式约束收敛生成 DESIGN.md（R0–R8 + Tile 数据流全景图） | 生成设计方案、tile 数据流、DESIGN.md |
+| [`pypto-pro-op-develop`](./pypto-pro-op-develop/SKILL.md) | — | Stage 4 Kernel 实现：纯vec/纯cube/CV融合 + 自修复闭环 | 实现算子、写 kernel、pypto-pro develop |
+| [`pypto-pro-environment-check`](./pypto-pro-environment-check/SKILL.md) | — | PyPTO-Pro 环境体检（两步法：事实验证 + 脚本诊断），只检测不修复 | 环境检查、环境问题、environment check |
+| [`pypto-pro-op-perf-tune`](./pypto-pro-op-perf-tune/SKILL.md) | — | PyPTO-Pro 上板性能采集与分析（msprof + kernel-level 加速比对比） | 上板性能、NPU profiling、性能对比、加速比 |
+
 ### 精度与调试
 
 | Skill | 版本 | 用途 | 触发词 |

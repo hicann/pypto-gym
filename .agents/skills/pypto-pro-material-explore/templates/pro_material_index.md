@@ -1,28 +1,24 @@
 # PyPTO-Pro 全部资料索引
 
 > **自动生成时间**: {timestamp}
-> **说明**: 本索引由 Step 1 的 bash 扫描命令动态生成，覆盖 devkit 缓存 `$PYPTO_DEVKIT_DIR` 下全部 PyPTO-Pro 相关资料。每次执行须重新扫描，不得直接拷贝本模板。路径统一为缓存内绝对路径（`$PYPTO_DEVKIT_DIR/...`），下游 Stage 可直接 `Read`。
+> **说明**: 本索引 §A/§C 由扫描命令动态生成，§B 为官方指定算子固定清单。每次执行须重新扫描 §A/§C，§B 以官方最新指定清单为准。
 
 ---
 
-## §A API 文档（`$PYPTO_DEVKIT_DIR/docs/api/`）
+## §A API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）
 
-> 搜索范围：`$PYPTO_DEVKIT_DIR/docs/api/` 递归搜索所有含 "pypto_pro" / "PyPTO-Pro" 关键字的 `.md` 文档
+> 搜索范围：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 递归获取所有 `.md` 文档
 
 ### 扫描命令
 
 ```bash
-# 主扫描：获取所有含 pypto_pro 标记的 API 文档（唯一权威来源，不预设目录）
-grep -rl "pypto_pro\|PyPTO-Pro" "$PYPTO_DEVKIT_DIR/docs/api/" --include="*.md" | sort
+# 主扫描：获取所有 PyPTO-Pro API 文档（现已统一归档至 $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/）
+find $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ -name "*.md" | sort
 
 # API 总索引（固定）
 # $PYPTO_DEVKIT_DIR/docs/pypto_api_list.md
 
-# 按目录路径自动分组：
-#   SIMD-API/  → 按子目录（基础数据结构/计算API/...）分节
-#   Utils-API/ → 独立分节
-#   SIMT-API/  → 独立分节
-#   其余       → 归入"其他"分节
+# 按目录路径自动分组（以 $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ 下实际子目录为准）
 ```
 
 ### A.1 API 总索引
@@ -33,41 +29,44 @@ grep -rl "pypto_pro\|PyPTO-Pro" "$PYPTO_DEVKIT_DIR/docs/api/" --include="*.md" |
 
 ### A.2+ 按扫描结果填充
 
-<!-- 将 grep -rl 扫描结果按目录路径分组为多个三级标题 `### A.x {分类名}（N 文档）`。分类按 SIMD-API 子目录 / Utils-API / SIMT-API / 其他 拆分。若无结果保留空表（标注 `<!-- 空 -->`）。 -->
+<!-- 将 find 扫描结果按目录路径分组为多个三级标题 `### A.x {分类名}（N 文档）`。按 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 下实际子目录拆分。若无结果保留空表（标注 `<!-- 空 -->`）。 -->
 
 | # | 文档 | 路径 | 子类别 |
 |---|------|------|--------|
-| {n} | {name} | `{cache_path}` | {category} |
+| {n} | {name} | `{relative_path}` | {category} |
 
 ---
 
-## §B 算子样例（`$PYPTO_DEVKIT_DIR/pro_ops/`）
+## §B 官方指定算子样例
 
-> 按 pro_ops 子目录拆分（以实际扫描结果为准，不预设固定子目录列表）
+> **重要**：以下为官方明确允许 agent 开发算子时参考的算子代码，是**唯一的算子写法参考来源**。`$PYPTO_DEVKIT_DIR/pro_ops/` 下其余文件**不得**作为样例参考或索引对象（orchestrator 资源缓存准备时已按清单清理，仅保留清单内文件）。
+>
+> **生成方式**：直接复制 `.agents/skills/pypto-pro-material-explore/references/official_samples.md` 的清单内容。清单是该统一索引来源的唯一维护点——增删样例时只改该文件，无需改动其他文件。
 
 ### 扫描命令
 
 ```bash
-find "$PYPTO_DEVKIT_DIR/pro_ops" -name "*.py" | sort
+# 直接读取统一清单文件（orchestrator 资源缓存准备时已按此清单清理 pro_ops/）
+cat .agents/skills/pypto-pro-material-explore/references/official_samples.md
 ```
 
-### 按子目录填充
+### 按清单填充
 
-<!-- 将扫描结果按子目录分组。每个子目录一个三级标题 `### B.x {子目录名}（N 文件）`，子目录名按字典序排列。 -->
+<!-- 将 references/official_samples.md 的表格内容复制到此处。路径保持 $PYPTO_DEVKIT_DIR/pro_ops/... 形式。 -->
 
-| # | 文件 | 路径 |
-|---|------|------|
-| {n} | {name} | `{cache_path}` |
+| # | 算子名称 | 缓存相对路径 | 类型 | 描述 |
+|---|---------|-------------|------|------|
+| {从 official_samples.md 复制} | | | | |
 
 ---
 
-## §C 教程文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/`）
+## §C 教程文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`）
 
 ### 扫描命令
 
 ```bash
-# 覆盖整个 pypto_pro 目录（含 tutorials/ 及未来可能新增的子目录）
-find "$PYPTO_DEVKIT_DIR/docs/pypto_pro" -name "*.md" | sort
+# 覆盖 $PYPTO_DEVKIT_DIR/docs/pypto_pro/guide 目录
+find $PYPTO_DEVKIT_DIR/docs/pypto_pro/guide -name "*.md" | sort
 ```
 
 ### 按扫描结果填充
@@ -76,4 +75,4 @@ find "$PYPTO_DEVKIT_DIR/docs/pypto_pro" -name "*.md" | sort
 
 | # | 文档 | 路径 |
 |---|------|------|
-| {n} | {name} | `{cache_path}` |
+| {n} | {name} | `{relative_path}` |
