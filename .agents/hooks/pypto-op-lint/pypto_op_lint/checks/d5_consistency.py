@@ -785,7 +785,7 @@ def check_ol50(ctx: CheckContext) -> Finding:
                 )
             return ctx.make_finding(
                 "OL50", "FAIL",
-                f"[S1] {impl_file} 第 {wrapper.lineno} 行: wrapper `{wrapper.name}` 的 "
+                f"{impl_file} 第 {wrapper.lineno} 行: wrapper `{wrapper.name}` 的 "
                 f"参数顺序与 module_interfaces.yaml 不一致。\n"
                 f"  expected (primary_inputs 顺序): {expected}\n"
                 f"  actual:                         {actual}\n"
@@ -1475,7 +1475,7 @@ def check_ol53(ctx: CheckContext) -> Finding:
         more = f" 等共 {len(bad)} 行" if len(bad) > 8 else ""
         return ctx.make_finding(
             "OL53", "FAIL",
-            f"[S2] {memory_file}: Golden function inventory 共 {n_rows} 行中 "
+            f"{memory_file}: Golden function inventory 共 {n_rows} 行中 "
             f"{len(bad)} 行带 ❌/未解决标记 ({bad_lines}{more})。\n"
             f"修正方针: 将每行更新为 ✅ 并附 impl 中对应 PyPTO 调用的行号; "
             f"如果有意省略, 请在另一行注明理由。残留 ❌ 时 complete_stage 不通过。",

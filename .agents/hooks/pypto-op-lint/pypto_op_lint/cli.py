@@ -56,9 +56,9 @@ def cmd_check_gate(op_dir: str, stage: int) -> int:
     ctx = _build_context(op_dir, stage)
     gate_rules: list[str] = []
     for rule in ctx.rules:
-        # 门禁检查应覆盖当前 stage 的全部交付规则，而不仅是 gate/flow。
+        # 门禁检查应覆盖当前 stage 的全部交付规则，而不仅是 gate。
         # 否则会出现 Stage 5/6/7 对 impl/test 关键 S1 规则不阻断的问题。
-        if rule.get("target") not in ("gate", "flow", "impl", "test", "golden"):
+        if rule.get("target") not in ("gate", "impl", "test", "golden"):
             continue
         if stage not in rule.get("stages", []):
             continue

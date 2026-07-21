@@ -97,7 +97,7 @@ def check_ol01(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL01",
                 "FAIL",
-                f"[S0 致命] {impl_file} 中存在 {len(jit_funcs)} 个 @pypto.frontend.jit 装饰的函数 "
+                f"{impl_file} 中存在 {len(jit_funcs)} 个 @pypto.frontend.jit 装饰的函数 "
                 f"({names})；项目惯例要求每个 impl 文件有且仅有 1 个 JIT 入口（Layer J）。"
                 f"请将多余的 JIT 入口合并为单一 kernel，子计算用普通函数（Layer H/I）承担。",
                 file=impl_file,
@@ -106,7 +106,7 @@ def check_ol01(ctx: CheckContext) -> Finding:
         return ctx.make_finding(
             "OL01",
             "FAIL",
-            f"[S0 致命] {impl_file} 中未找到字面 @pypto.frontend.jit 装饰的函数。"
+            f"{impl_file} 中未找到字面 @pypto.frontend.jit 装饰的函数。"
             f"OL01 仅接受唯一正规形 **@pypto.frontend.jit**（允许 @pypto.frontend.jit(...) "
             f"带参数调用语法）。**任何别名形式都被拒绝**，包括但不限于:\n"
             f"  - `import pypto as pt` + @pt.frontend.jit        ← 顶层包别名禁用\n"
@@ -394,7 +394,7 @@ def check_ol07(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL07",
                 "FAIL",
-                f"[S0 致命] {impl_file} 使用了非正规 PyPTO 导入 {bad_text}。"
+                f"{impl_file} 使用了非正规 PyPTO 导入 {bad_text}。"
                 "本 agent 算子开发流程只允许文件顶层写 `import pypto`，"
                 "禁止 alias、`import pypto.frontend as F` 与 from-import。"
                 "这与 OL01 的字面 @pypto.frontend.jit 要求保持一致，"
@@ -406,7 +406,7 @@ def check_ol07(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL07",
                 "FAIL",
-                f"[S0 致命] {impl_file} 中未 import pypto——"
+                f"{impl_file} 中未 import pypto——"
                 "这是 PyPTO 算子实现的基础前提，缺少 import 说明该文件不是合法的 kernel 实现。"
                 "修复方式：在文件顶层添加唯一正规导入 `import pypto`；不要使用 alias 或 from-import。",
                 file=impl_file,
@@ -857,7 +857,7 @@ def check_ol45(ctx: CheckContext) -> Finding:
                         return ctx.make_finding(
                             "OL45",
                             "FAIL",
-                            f"[S0] Layer K 包装函数 `{top.name}` 包含 Python "
+                            f"Layer K 包装函数 `{top.name}` 包含 Python "
                             f"`for ... in range(...)` 逐块调用 JIT kernel。"
                             f"请将分块迭代移入 `_kernel_impl`，改用 "
                             f"`pypto.loop(NT)` + `pypto.view(..., offsets=[nt*BT, ...])`。"
@@ -912,7 +912,7 @@ def check_ol46(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL46",
                     "WARN",
-                    f"[S2] {impl_file}: `{top.name}` 用 `pypto.loop(1)` 包装了内层 "
+                    f"{impl_file}: `{top.name}` 用 `pypto.loop(1)` 包装了内层 "
                     f"`pypto.loop(N)`。请移除外层 `pypto.loop(1)` — 它仅用于"
                     f"作用域内不存在其他 pypto.loop 的场景（布局检查要求的"
                     f"vector-pipe 简单算子）。",
@@ -966,7 +966,7 @@ def check_ol47(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL47",
                     "INFO",
-                    f"[S3] {impl_file}: `{top.name}` 在 `_kernel_impl` 顶层设置了 tile shapes"
+                    f"{impl_file}: `{top.name}` 在 `_kernel_impl` 顶层设置了 tile shapes"
                     f"同时调用了 {helper_calls} 个 `pypto_*` 子 kernel。"
                     f"建议将每个 `set_*_tile_shapes` 移到对应的子 kernel 内部，"
                     f"使各阶段的 matmul/vec 操作能使用各自最优的 tile 布局。",
@@ -1153,7 +1153,7 @@ def check_ol48(ctx: CheckContext) -> Finding:
                         for msg in _cube_tile_pair_errors(axis, arg):
                             cube_struct.append((msg, node.lineno))
         if violations or cube_struct:
-            lines = [f"[S0 致命] {impl_file} 中 tile 参数违规："]
+            lines = [f"{impl_file} 中 tile 参数违规："]
             if violations:
                 lines.append(
                     "· 非编译期静态值（必须是 Python int 字面量或解析到字面量的局部/模块 Assign）："
@@ -1263,7 +1263,7 @@ def check_ol49(ctx: CheckContext) -> Finding:
                     return ctx.make_finding(
                         "OL49",
                         "FAIL",
-                        f"[S1] {impl_file} 第 {loop_call.lineno} 行：`pypto.loop(..., unroll_list=...)` "
+                        f"{impl_file} 第 {loop_call.lineno} 行：`pypto.loop(..., unroll_list=...)` "
                         f"出现在外层（其 body 内还嵌套了另一个 pypto.loop）。"
                         f"unroll_list **只能放在最内层** pypto.loop —— 外层加 unroll_list 会触发"
                         f"编译路径爆炸或寄存器拷贝 pass 引起的精度异常。"
@@ -1356,7 +1356,7 @@ def check_ol56(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL56",
                 "FAIL",
-                "[S0] DESIGN.md 的 ```python``` 代码块中存在多值 "
+                "DESIGN.md 的 ```python``` 代码块中存在多值 "
                 "`pypto.loop(..., unroll_list=[...])`。Stage 6 之前 unroll_list "
                 "只能含单一值（默认 `[1]`；有依据时可用其它单值），多值会触发"
                 "编译路径爆炸、拖慢编译并导致开发超时。多值展开调优请留到 "
@@ -1382,7 +1382,7 @@ def check_ol56(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL56",
                     "FAIL",
-                    f"[S0] {impl_file} 第 {hits[0]} 行："
+                    f"{impl_file} 第 {hits[0]} 行："
                     f"`pypto.loop(..., unroll_list=[...])` 含 2 个及以上值。"
                     f"Stage 6 之前 unroll_list 只能含单一值（默认 `[1]`；有依据"
                     f"时可用其它单值）——多值会触发编译路径爆炸、拖慢编译并导致"
@@ -1478,7 +1478,7 @@ def check_ol52(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL52",
                     "FAIL",
-                    f"[S1] {impl_file} 第 {lineno} 行: `pypto.view(...)` 的 shape/offsets "
+                    f"{impl_file} 第 {lineno} 行: `pypto.view(...)` 的 shape/offsets "
                     f"rank 不一致 (shape={shape_len} dims, offsets={offsets_len} dims)。"
                     f"pypto.view 不是 reshape, 而是抽取 **同 rank 的 sub-view** 的 API。"
                     f"请将两个 list 的长度对齐。若要改变 rank, 应使用 `pypto.reshape(...)`。"
@@ -1493,7 +1493,7 @@ def check_ol52(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL52",
                     "FAIL",
-                    f"[S1] {impl_file} 第 {lineno} 行: `pypto.view(...)` 的 shape/valid_shape "
+                    f"{impl_file} 第 {lineno} 行: `pypto.view(...)` 的 shape/valid_shape "
                     f"rank 不一致 (shape={shape_len} dims, valid_shape={valid_len} dims)。"
                     f"shape, offsets, valid_shape 三者必须 rank 一致。"
                     f"(参考 `docs/zh/api/operation/pypto-view.md`)",
@@ -1633,7 +1633,7 @@ def check_ol57(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL57",
                     "FAIL",
-                    f"[S0] {impl_file}: JIT 图代码函数 `{name}` 内出现非 pypto.loop/loop_unroll/range 的 "
+                    f"{impl_file}: JIT 图代码函数 `{name}` 内出现非 pypto.loop/loop_unroll/range 的 "
                     f"Python {kind} 循环 (第 {lineno} 行)。@pypto.frontend.jit 配下"
                     f"(kernel 本体及其调用的所有函数) 的迭代可用 `pypto.loop(...)` / `pypto.loop_unroll(...)` "
                     f"或 `for ... in range(...)`; "
@@ -1808,7 +1808,7 @@ def check_ol58(ctx: CheckContext) -> Finding:
                     return ctx.make_finding(
                         "OL58",
                         "FAIL",
-                        f"[S0] Layer K wrapper `{top.name}` (第 {bad_call.lineno} 行) "
+                        f"Layer K wrapper `{top.name}` (第 {bad_call.lineno} 行) "
                         f"调用 `pypto.{api_name}(...)`。`pypto.{api_name}` 是 JIT-context "
                         f"creation API, 仅在 `@pypto.frontend.jit` 函数体内合法; "
                         f"在 host wrapper 调用会 runtime crash "
@@ -1854,7 +1854,7 @@ def check_ol58(ctx: CheckContext) -> Finding:
                         return ctx.make_finding(
                             "OL58",
                             "FAIL",
-                            f"[S0] Layer K wrapper `{top.name}` 调用 JIT kernel `{callee}` "
+                            f"Layer K wrapper `{top.name}` 调用 JIT kernel `{callee}` "
                             f"(第 {sub.lineno} 行) 时传入 `{arg.id}`, 但 `{arg.id}` 来自 "
                             f"`pypto.{api_name}(...)` (第 {ev_line} 行)。"
                             f"host wrapper 内 output buffer 必须用 torch.* 预分配 "
@@ -1869,7 +1869,7 @@ def check_ol58(ctx: CheckContext) -> Finding:
                         return ctx.make_finding(
                             "OL58",
                             "FAIL",
-                            f"[S0] Layer K wrapper `{top.name}` 调用 JIT kernel `{callee}` "
+                            f"Layer K wrapper `{top.name}` 调用 JIT kernel `{callee}` "
                             f"(第 {sub.lineno} 行) 时传入 output `{arg.id}`, 但 `{arg.id}` "
                             f"未在 wrapper 内分配, 也不是 wrapper 参数。"
                             f"output buffer 必须用 `torch.empty / torch.zeros / "

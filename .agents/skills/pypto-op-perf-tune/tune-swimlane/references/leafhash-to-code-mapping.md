@@ -10,13 +10,13 @@
 
 ```bash
 # 查看所有 leafHash 的代码映射
-python3 ../scripts/leafhash_to_code.py <output_dir>
+python3 scripts/leafhash_to_code.py <output_dir>
 
 # 查看指定 leafHash
-python3 ../scripts/leafhash_to_code.py <output_dir> --leafhash 3907163356593077760
+python3 scripts/leafhash_to_code.py <output_dir> --leafhash 3907163356593077760
 
 # 输出 JSON
-python3 ../scripts/leafhash_to_code.py <output_dir> --json result.json
+python3 scripts/leafhash_to_code.py <output_dir> --json result.json
 ```
 
 **输入文件**（`output_dir` 中）：

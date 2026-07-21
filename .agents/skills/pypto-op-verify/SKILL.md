@@ -141,7 +141,7 @@ At the end, the agent must be able to report:
 
 ## Harness upgrades — inspection tensors
 
-The adversarial runner contract has been extended to give downstream narrowing signal on complex kernels (gated delta rule backward, kimi delta attention, etc.). Features specified below:
+The adversarial runner contract has been extended to give @pypto-op-debugger better narrowing signal on complex kernels (gated delta rule backward, kimi delta attention, etc.). Features specified in the **pypto-op-verifier** agent definition (`.opencode/agents/pypto-op-verifier.md`):
 
 ### 1. NPU execution
 

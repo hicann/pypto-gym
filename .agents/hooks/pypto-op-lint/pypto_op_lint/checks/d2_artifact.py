@@ -212,7 +212,7 @@ def check_ol54(ctx: CheckContext) -> Finding:
     if problems:
         return ctx.make_finding(
             "OL54", "FAIL",
-            f"[S1] {memory_file} `{expected_heading}` 章节的自我评审未完成。\n"
+            f"{memory_file} `{expected_heading}` 章节的自我评审未完成。\n"
             + "\n".join(f"  - {p}" for p in problems)
             + f"\n修正方针: 每个条目按 `- [x] <说明>` 填写, 必要时附 evidence "
               f"(impl 行号或对应代码片段)。只要存在一个 `- [ ]` / 缺失项, "

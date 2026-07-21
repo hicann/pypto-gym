@@ -357,16 +357,12 @@ def _rule_fix_hint(rule_id: str) -> str:
         "OL08": "kernel 内不可调用 print/logging 等宿主侧函数",
         "OL25": "pypto.Tensor() 不可为空参数，须填写 shape 与 dtype，如 pypto.Tensor([N, M], pypto.DT_FP32)",
         "OL26": "kernel 参数必须张量在前、标量在后",
-        "OL28": "使用 sigmoid/softmax/sin/cos 等仅支持 FP32 的 API 时，输入 dtype 必须是 FP32",
-        "OL29": "Tensor 注解至少含一维 pypto.DYNAMIC，避免全静态导致泛化能力下降",
         # D3 三文件分离
         "OL16": "impl 文件禁止 import golden 模块；如需对照，请在 test 文件中导入",
         "OL17": "test 文件中禁止定义 @pypto.frontend.jit 函数",
         "OL18": "test 文件须同时 import impl wrapper 与 golden 函数",
         # D5 一致性
-        "OL30": "在 SPEC.md front matter 中填写 supported_dtypes，并在 test 中覆盖对应 dtype",
         "OL31": "在 DESIGN.md front matter 设置 dynamic_axes，并在 impl Tensor 注解使用 pypto.DYNAMIC",
-        "OL32": "在 SPEC.md front matter 的 tolerance 中填写 atol/rtol，并校准 test 断言阈值",
         "OL34": (
             "在 SPEC.md front matter 的 p0_shapes 填写 P0 形状，并在 test 用例覆盖。"
             "格式: [[1024,128]] 或 [{x: [4,2560]}]（value 必须是 list，不支持 {B:4} 纯标量）"
