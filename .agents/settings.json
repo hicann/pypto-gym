@@ -1,0 +1,50 @@
+{
+    "hooks": {
+        "PostToolUse": [
+            {
+                "matcher": "Write|Edit|MultiEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/pypto-op-lint/pypto_op_lint.py --hook post-edit",
+                        "timeout": 20
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/pypto-op-lint/pypto_op_lint.py --hook post-bash",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "PreToolUse": [
+            {
+                "matcher": "Write|Edit|MultiEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/pypto-op-lint/pypto_op_lint.py --hook pre-edit-backup",
+                        "timeout": 15
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/pypto-op-lint/pypto_op_lint.py --hook stop",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ]
+    }
+}
