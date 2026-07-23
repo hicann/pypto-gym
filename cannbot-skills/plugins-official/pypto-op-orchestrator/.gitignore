@@ -1,0 +1,13 @@
+.opencode
+.claude
+.trae
+.marscode
+.traecli
+.cursor
+.codeartsdoer
+.github
+.copilot
+
+# OpenCode state-machine source (the repository root ignores generic lib/ directories).
+!hooks/opencode/lib/
+!hooks/opencode/lib/state-transition-core.ts

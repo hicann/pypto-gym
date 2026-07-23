@@ -1,0 +1,11 @@
+{
+  "name": "pypto-infra-tools",
+  "description": "PyPTO-Gym 仓库静态规范修复技能集。",
+  "version": "2.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot-skills",
+  "repository": "https://gitcode.com/cann/cannbot-skills",
+  "license": "CANN-2.0"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "pypto-model-tools",
+  "description": "PyPTO 模型迁移、融合算子集成和模型格式转换技能集。",
+  "version": "2.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot-skills",
+  "repository": "https://gitcode.com/cann/cannbot-skills",
+  "license": "CANN-2.0"
+}

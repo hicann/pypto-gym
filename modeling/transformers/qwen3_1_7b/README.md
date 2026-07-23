@@ -28,7 +28,7 @@
 ## 下载模型
 
 ```bash
-python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id Qwen/Qwen3-1.7B \
     --output-dir {model_weight_dir}
 ```
@@ -36,7 +36,7 @@ python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
 ## PYPTO入网适配
 
 ```bash
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     {model_weight_dir} qwen3_1_7b
 ```
 

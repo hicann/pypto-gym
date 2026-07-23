@@ -23,7 +23,7 @@
 ## 下载模型
 
 ```bash
-python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id internlm/Spatial-SSRL-3B \
     --output-dir /path/to/models/spatial_ssrl_3b
 ```
@@ -31,7 +31,7 @@ python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
 ## PYPTO入网适配
 
 ```bash
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     /path/to/models/spatial_ssrl_3b spatial_ssrl_3b
 ```
 

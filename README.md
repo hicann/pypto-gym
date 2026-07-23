@@ -89,7 +89,7 @@ pytest tests/ops/glm_v4_5 -v --forked --device 1
 #### 1. 下载模型权重
 
 ```bash
-python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id Qwen/Qwen3-1.7B \
     --output-dir /path/to/models/Qwen3-1.7B
 ```
@@ -97,7 +97,7 @@ python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
 #### 2. 入网适配
 
 ```bash
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     /path/to/models/Qwen3-1.7B qwen3_1_7b
 ```
 
@@ -266,6 +266,15 @@ pypto-gym/
 - [PyPTO 主仓](https://gitcode.com/cann/pypto)
 - [PyPTO 文档中心](https://pypto.gitcode.com)
 - [PyPTO 贡献指南](https://gitcode.com/cann/pypto/blob/master/CONTRIBUTION.md)
+
+## Agent 能力快速上手
+
+PyPTO-Gym 提供 PyPTO 算子开发、PyPTO-Pro 算子开发、模型适配和基础设施治理四类 Agent 能力。完整索引与安装说明见 [cannbot-skills/README.md](cannbot-skills/README.md)，各场景的快速上手指南见：
+
+- [PyPTO 算子开发快速上手](cannbot-skills/plugins-official/pypto-op-orchestrator/quickstart.md)
+- [PyPTO-Pro 算子开发快速上手](cannbot-skills/plugins-official/pypto-pro-op-orchestrator/quickstart.md)
+- [PyPTO 模型工具快速上手](cannbot-skills/plugins-official/pypto-model-tools/quickstart.md)
+- [PyPTO 基础设施工具快速上手](cannbot-skills/plugins-official/pypto-infra-tools/quickstart.md)
 
 ## 相关信息
 

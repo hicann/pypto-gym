@@ -28,7 +28,7 @@ python3 ask_gutenocr_3b.py --prompt "你好" --device 0 --use_pto
 ## 下载模型
 
 ```bash
-python3 ../../.agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id rootsautomation/GutenOCR-3B \
     --output-dir ${GUTENOCR_MODEL_PATH}
 ```
@@ -36,7 +36,7 @@ python3 ../../.agents/skills/pypto-fused-op-integration/scripts/download_hf_mode
 ## PYPTO入网适配
 
 ```bash
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     ${GUTENOCR_MODEL_PATH} gutenocr_3b
 ```
 

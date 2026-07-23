@@ -38,7 +38,7 @@ $MODEL_PATH/
 
 ```bash
 # 下载模型权重
-python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id prithivMLmods/Qwen3-VL-8B-Instruct-Unredacted-MAX \
     --output-dir "$MODEL_PATH"
 ```
@@ -47,7 +47,7 @@ python3 .agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
 
 ```bash
 # 下载后自动注入 PyPTO 融合代码和算子
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     "$MODEL_PATH" qwen3_vl_8b_instruct_unredacted_max
 ```
 
@@ -128,7 +128,7 @@ pip install transformers==5.12.0 accelerate --trusted-host pypi.org --trusted-ho
 #    src/pypto_gym/transformers/qwen3_vl_8b_instruct_unredacted_max/     → 根目录 (.py) + config.json
 #    src/pypto_gym/ops/pypto_tensor/qwen3_vl_8b_instruct_unredacted_max/  → pto_kernels/
 #    或直接运行 restore_model_patch.sh（推荐）：
-bash .agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     "$MODEL_PATH" qwen3_vl_8b_instruct_unredacted_max
 
 # ③ 验证

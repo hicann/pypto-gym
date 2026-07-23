@@ -38,7 +38,7 @@ export PYTHONPATH=$PWD/../../../src:$PYTHONPATH
 ```bash
 export MODEL_PATH=/path/to/Phi-3-mini-4k-instruct
 
-python3 ../../.agents/skills/pypto-fused-op-integration/scripts/download_hf_model.py \
+python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_model.py \
     --model-id microsoft/Phi-3-mini-4k-instruct \
     --output-dir "$MODEL_PATH"
 ```
@@ -48,7 +48,7 @@ python3 ../../.agents/skills/pypto-fused-op-integration/scripts/download_hf_mode
 ```bash
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-bash $REPO_ROOT/.agents/skills/pypto-fused-op-integration/scripts/restore_model_patch.sh \
+bash $REPO_ROOT/cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
     "$MODEL_PATH" phi_3_mini_4k_instruct
 ```
 

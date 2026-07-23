@@ -138,7 +138,7 @@ python test_scatter_pa_kv_cache.py --run_mode sim
 - **Golden 参考**：`examples/scatter_pa_kv_cache.py`（100% 匹配）
 - **生产级实现**：`models/glm_v4_5/glm_attention_fusion.py`（Line 461-462）
 - **API 文档**：`docs/api/operation/pypto-scatter_update.md`
-- **执行约束**：`.agents/skills/pypto-op-develop/references/execution-constraints.md`
+- **执行约束**：`../../../../../../../cannbot-skills/ops/pypto-op-develop/references/execution-constraints.md`
 
 ## 性能目标
 
