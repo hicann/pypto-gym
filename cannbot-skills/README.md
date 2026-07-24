@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/License-CANN%20OSL%20v2.0-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Ascend%20NPU-orange?style=flat-square)
 
-📖 [PyPTO 算子开发](plugins-official/pypto-op-orchestrator/quickstart.md) · [PyPTO-Pro 算子开发](plugins-official/pypto-pro-op-orchestrator/quickstart.md) · [模型工具](plugins-official/pypto-model-tools/quickstart.md) · [基础设施工具](plugins-official/pypto-infra-tools/quickstart.md)
+📖 [PyPTO 算子开发](plugins-official/pypto-op-orchestrator/quickstart.md) · [PyPTO-Pro 算子开发](plugins-official/pypto-pro-op-orchestrator/quickstart.md) · [模型工具](plugins-official/pypto-model-tools/quickstart.md) · [算子产物校验](plugins-official/pypto-kernel-validator/quickstart.md)
 
 ---
 
@@ -50,11 +50,11 @@ opencode
 | **PyPTO 算子开发** | Stage 1–7 全流程融合算子开发与调优 | [pypto-op-orchestrator](plugins-official/pypto-op-orchestrator/AGENTS.md) |
 | **PyPTO-Pro 算子开发** | Stage 1–4 精简流程算子开发与调优 | [pypto-pro-op-orchestrator](plugins-official/pypto-pro-op-orchestrator/AGENTS.md) |
 | **模型适配** | HF 模型上 NPU、融合算子整网集成、模型格式转换 | [pypto-model-tools](plugins-official/pypto-model-tools/AGENTS.md) |
-| **仓库治理** | Python 静态规范检查与自动修复 | [pypto-infra-tools](plugins-official/pypto-infra-tools/AGENTS.md) |
+| **算子产物校验** | KernelBench 评测把关：反作弊 + 精度 + 性能统一校验 | [pypto-kernel-validator](plugins-official/pypto-kernel-validator/AGENTS.md) |
 
 ### 技能清单
 
-**算子开发**（ops/，共 26 个）
+**算子开发**（ops/，共 27 个）
 
 | 类别 | 技能 | 说明 |
 |------|------|------|
@@ -64,7 +64,7 @@ opencode
 | 知识参考 | `pypto-op-knowledge`、`pypto-api-explore`、`pypto-docs-search`、`pypto-memory-template` | 领域知识库、API 速查、文档检索、经验模板复用 |
 | 代码开发 | `pypto-op-develop`、`pypto-op-construct` | 算子核心实现与工程脚手架搭建 |
 | Golden 与精度 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug` | Golden 生成、精度对比、精度问题排查 |
-| 验证与检视 | `pypto-op-verify`、`pypto-op-review` | 算子功能验证与代码检视 |
+| 验证与检视 | `pypto-op-verify`、`pypto-op-review`、`pypto-kernel-validate` | 算子功能验证、代码检视与产物校验（反作弊 + 精度 + 性能） |
 | 性能调优 | `pypto-op-perf-tune` | 算子性能采集、分析与自动调优 |
 | 监控与调试 | `pypto-op-monitor`、`pypto-general-debug` | 任务进度监控与通用问题诊断 |
 | **Pro 专属** | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check` | PyPTO-Pro 精简流程的八项专属技能 |
@@ -79,12 +79,6 @@ opencode
 
 > 模型插件的 `init.sh` 同时安装 8 个算子支撑 skill（`pypto-intent-understand` 等），仅由 `pypto-fused-op-integration` 按需调用，不计入独立 skill 数。
 
-**仓库治理**（infra/，共 1 个）
-
-| 技能 | 说明 |
-|------|------|
-| `pypto-static-check-repire` | Python 代码静态规范检查与自动修复 |
-
 ## 🔍 项目架构
 
 ### 目录结构
@@ -93,12 +87,11 @@ opencode
 cannbot-skills/
 ├── ops/                  # 算子 Skills（PyPTO classic + PyPTO-Pro）
 ├── model/                # 模型适配与推理优化 Skills
-├── infra/                # 仓库治理 Skills
 └── plugins-official/     # 官方 Plugins（开发路径入口，含 Agents）
     ├── pypto-op-orchestrator/      # PyPTO classic 算子开发（8 Subagent + 状态机）
     ├── pypto-pro-op-orchestrator/  # PyPTO-Pro 算子开发（5 Subagent）
     ├── pypto-model-tools/          # 模型适配工具集（安装时附带 8 个算子支撑 skill）
-    └── pypto-infra-tools/          # 基础设施治理工具
+    └── pypto-kernel-validator/     # 算子产物校验（反作弊 + 精度 + 性能，单 Subagent）
 ```
 
 ### 三层架构

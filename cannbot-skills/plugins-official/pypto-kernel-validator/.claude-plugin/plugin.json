@@ -1,0 +1,14 @@
+{
+  "name": "pypto-kernel-validator",
+  "description": "PyPTO 算子产物校验：反作弊（脚本机械检测 + LLM 语义审阅）+ 精度 + 性能，输出统一 skill_report.json。",
+  "version": "1.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot-skills",
+  "repository": "https://gitcode.com/cann/cannbot-skills",
+  "license": "CANN-2.0",
+  "agents": [
+    "./agents/pypto-kernel-validator.md"
+  ]
+}

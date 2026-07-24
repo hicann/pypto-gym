@@ -51,4 +51,5 @@
 | 查 API / 文档 / golden 用法 | skill `pypto-api-explore` / `pypto-docs-search` |
 | 把 HF 模型端到端跑通 NPU | skill `hf-npu-e2e-workflow` / `pypto-fused-op-integration` |
 | 模型格式互转（PyTorch/ONNX/safetensors） | skill `pypto-convert-model` |
+| 校验算子产物（反作弊+精度+性能，KernelBench 把关） | skill `pypto-kernel-validate`（agent `pypto-kernel-validator`） |
 | 完整 skill 索引 | [`cannbot-skills/README.md`](cannbot-skills/README.md) |

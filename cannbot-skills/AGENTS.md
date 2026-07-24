@@ -6,7 +6,7 @@
 
 1. **Skills 开发与优化** — 创建可复用的技能模块，为 PyPTO 算子开发 Agent 提供专业能力支持
 2. **Agents 创建** — 设计专业化子代理，实现职责分工和模块化开发
-3. **业务工作流** — 构建多 Agent 协作编排，覆盖 PyPTO/PyPTO-Pro 算子开发、模型适配、仓库治理等完整场景
+3. **业务工作流** — 构建多 Agent 协作编排，覆盖 PyPTO/PyPTO-Pro 算子开发、模型适配等完整场景
 4. **效果评测** — 持续验证 Skills 和 Agents 的实际效果，优化交付质量
 
 ## 核心原则
@@ -46,18 +46,15 @@ CANNBot Skills — PyPTO-Gym 架构（自底向上）
 │    plugins-official/*/agents/ 目录       │
 ├─────────────────────────────────────────┤
 │        Skills（知识能力层）              │  定义怎么做（具体实现）
-│    ops/、model/、infra/ 下的各 Skill 子目录 │
+│    ops/、model/ 下的各 Skill 子目录     │
 ├─────────────────────────────────────────┤
 │        References（知识层）              │  定义如何做得更好
 │    内嵌在 Skills 中的最佳实践            │
-├─────────────────────────────────────────┤
-│    Infrastructure（基础设施层）          │  提供底层工具支持
-│    infra/ 目录下的工具类 Skill           │
 └─────────────────────────────────────────┘
      ↑ 效果评测横向覆盖所有层级 ↑
 ```
 
-> 注：`ops/`、`model/`、`infra/` 分别对应算子开发、模型适配、仓库治理三大业务领域。
+> 注：`ops/`、`model/` 分别对应算子开发、模型适配两大业务领域。
 
 ## 项目结构
 
@@ -67,13 +64,11 @@ cannbot-skills/
 │   ├── pypto-api-explore/
 │   ├── pypto-op-design/
 │   ├── pypto-pro-op-develop/
-│   └── ...                   # 共 26 个 Skill 子目录
+│   └── ...                   # 共 27 个 Skill 子目录
 ├── model/                    # 模型适配与推理优化 Skills
 │   ├── hf-npu-e2e-workflow/
 │   ├── pypto-convert-model/
 │   └── pypto-fused-op-integration/
-├── infra/                    # 仓库治理 Skills
-│   └── pypto-static-check-repire/
 ├── plugins-official/         # 官方 Plugin（Plugin 配置 + Agents + 安装入口）
 │   ├── pypto-op-orchestrator/       # PyPTO classic 算子开发
 │   │   ├── agents/                  # Agent 定义（.md）
@@ -83,7 +78,7 @@ cannbot-skills/
 │   │   └── quickstart.md            # 快速入门
 │   ├── pypto-pro-op-orchestrator/   # PyPTO-Pro 算子开发
 │   ├── pypto-model-tools/           # 模型适配工具集
-│   └── pypto-infra-tools/           # 基础设施治理工具
+│   └── pypto-kernel-validator/      # 算子产物校验（单 Subagent）
 ├── AGENTS.md                 # 本文件（开发者指南）
 └── README.md                 # 项目说明与技能索引
 ```
@@ -98,7 +93,7 @@ cannbot-skills/
 |------|------------|------|
 | 编排与知识类 | `pypto-orchestration-manual`、`pypto-intent-understand`、`pypto-op-knowledge`、`pypto-api-explore`、`pypto-docs-search`、`pypto-memory-template` | 编排入口、需求理解、领域知识、API 速查、文档检索、经验复用 |
 | 方案与开发类 | `pypto-op-plan`、`pypto-op-design`、`pypto-op-develop`、`pypto-op-construct` | 实施计划、方案设计、代码开发、工程脚手架 |
-| 验证与调优类 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug`、`pypto-op-verify`、`pypto-op-review`、`pypto-op-perf-tune` | Golden 生成、精度对比与排查、功能验证、代码检视、性能调优 |
+| 验证与调优类 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug`、`pypto-op-verify`、`pypto-op-review`、`pypto-op-perf-tune`、`pypto-kernel-validate` | Golden 生成、精度对比与排查、功能验证、代码检视、性能调优、产物校验（反作弊 + 精度 + 性能） |
 | 监控与调试类 | `pypto-op-monitor`、`pypto-general-debug` | 任务监控、通用诊断 |
 | Pro 专属类 | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check` | PyPTO-Pro 精简流程的全部八项技能 |
 
@@ -109,12 +104,6 @@ cannbot-skills/
 | `hf-npu-e2e-workflow` | HF 模型到昇腾 NPU 端到端迁移 |
 | `pypto-fused-op-integration` | 融合算子入网集成与整网验证 |
 | `pypto-convert-model` | PyTorch/ONNX/safetensors 模型格式互转 |
-
-### 仓库治理（infra/）
-
-| 技能 | 说明 |
-|------|------|
-| `pypto-static-check-repire` | Python 代码静态规范检查与自动修复 |
 
 ## 详细规范
 

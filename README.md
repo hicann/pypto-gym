@@ -269,12 +269,12 @@ pypto-gym/
 
 ## Agent 能力快速上手
 
-PyPTO-Gym 提供 PyPTO 算子开发、PyPTO-Pro 算子开发、模型适配和基础设施治理四类 Agent 能力。完整索引与安装说明见 [cannbot-skills/README.md](cannbot-skills/README.md)，各场景的快速上手指南见：
+PyPTO-Gym 提供 PyPTO 算子开发、PyPTO-Pro 算子开发、模型适配和算子产物校验四类 Agent 能力。完整索引与安装说明见 [cannbot-skills/README.md](cannbot-skills/README.md)，各场景的快速上手指南见：
 
 - [PyPTO 算子开发快速上手](cannbot-skills/plugins-official/pypto-op-orchestrator/quickstart.md)
 - [PyPTO-Pro 算子开发快速上手](cannbot-skills/plugins-official/pypto-pro-op-orchestrator/quickstart.md)
 - [PyPTO 模型工具快速上手](cannbot-skills/plugins-official/pypto-model-tools/quickstart.md)
-- [PyPTO 基础设施工具快速上手](cannbot-skills/plugins-official/pypto-infra-tools/quickstart.md)
+- [PyPTO 算子产物校验快速上手](cannbot-skills/plugins-official/pypto-kernel-validator/quickstart.md)
 
 ## 相关信息
 

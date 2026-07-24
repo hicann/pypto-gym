@@ -120,13 +120,13 @@ VERSION="1.0.0"
 # --- Plugin-specific filters ---
 EXCLUDED_SKILL=""
 # Skill whitelist (space-separated list) - references shared ops
-INCLUDED_SKILLS="pypto-static-check-repire"
+INCLUDED_SKILLS="pypto-kernel-validate"
 # Agent whitelist (shell pattern) - uses local agents/
-INCLUDED_AGENT_PATTERN="__none__"
-SKILL_CATEGORY="infra"
+INCLUDED_AGENT_PATTERN="pypto-kernel-validator"
+SKILL_CATEGORY="ops"
 INSTALL_OPENCODE_HOOKS=false
-DISPLAY_NAME="PyPTO Infra Tools"
-SAMPLE_PROMPT="按静态检查报表逐项修复当前 PyPTO 仓库"
+DISPLAY_NAME="PyPTO Kernel Validator"
+SAMPLE_PROMPT="校验指定 op_dir 下的 PyPTO 算子产物（反作弊 + 精度 + 性能），输出 skill_report.json"
 
 agent_is_included() {
     # The variable intentionally contains the plugin-specific agent glob.
