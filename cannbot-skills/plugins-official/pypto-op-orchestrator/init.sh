@@ -25,6 +25,14 @@ err()  { echo -e "  ${RED}✗${NC}${DIM} $*${NC}"; }
 info() { echo -e "  ${DIM}${CYAN}→${NC}${DIM} $*${NC}"; }
 step() { echo -e "${DIM}$*${NC}"; }
 
+list_entry_names() (
+    local entry
+    shopt -s dotglob nullglob
+    for entry in "$1"/*; do
+        printf '%s\n' "${entry##*/}"
+    done
+)
+
 # Safe install config file with backup and conflict handling.
 # $1 = generated temp file path
 # $2 = target file path
@@ -459,7 +467,7 @@ if [ "$TOOL" = "opencode" ]; then
         # Check if skill is in whitelist (space-separated list)
         echo "$INCLUDED_SKILLS" | grep -qw "$name" || continue
         [ -n "$EXCLUDED_SKILL" ] && [ "$name" = "$EXCLUDED_SKILL" ] && continue
-        ln -sfn "$(realpath "$skill_dir")" "$CANNBOT_DIR/skills/$name"
+        ln -sfn "$skill_dir" "$CANNBOT_DIR/skills/$name"
         skill_count=$((skill_count + 1))
     done
     step1_summary="skills(${skill_count}) "
@@ -482,7 +490,7 @@ if [ "$TOOL" = "opencode" ]; then
         name=$(basename "$agent_entry")
         base_name="${name%.md}"
         agent_is_included "$base_name" || continue
-        ln -sfn "$(realpath "$agent_entry")" "$CANNBOT_DIR/agents/$name"
+        ln -sfn "$agent_entry" "$CANNBOT_DIR/agents/$name"
         agent_count=$((agent_count + 1))
     done
     step1_summary="${step1_summary}agents(${agent_count})"
@@ -517,7 +525,7 @@ if [ "$TOOL" = "opencode" ]; then
         ok "AGENTS.md already in project directory"
     else
         if [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-            PLUGIN_ROOT_ABS="$(realpath "$PLUGIN_ROOT")"
+            PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
             ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
             tmpfile=$(mktemp)
             sed \
@@ -541,7 +549,7 @@ elif [ "$TOOL" = "claude" ]; then
     if [ "$config_src" = "$config_target" ]; then
         info "$(basename "$config_target") already at target location"
     elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-        PLUGIN_ROOT_ABS="$(realpath "$PLUGIN_ROOT")"
+        PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
         ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
         tmpfile=$(mktemp)
         sed \
@@ -569,7 +577,7 @@ else
     if [ "$config_src" = "$config_target" ]; then
         info "$(basename "$config_target") already at target location"
     elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-        PLUGIN_ROOT_ABS="$(realpath "$PLUGIN_ROOT")"
+        PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
         ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
         tmpfile=$(mktemp)
         sed \
@@ -618,7 +626,7 @@ else
         echo "$INCLUDED_SKILLS" | grep -qw "$name" || continue
         [ -n "$EXCLUDED_SKILL" ] && [ "$name" = "$EXCLUDED_SKILL" ] && continue
         target="$DISCOVERY/$name"
-        ln -sfn "$(realpath "$skill_dir")" "$target"
+        ln -sfn "$skill_dir" "$target"
         link_count=$((link_count + 1))
     done
 
@@ -651,7 +659,7 @@ else
         base="${name%.md}"
         agent_is_included "$base" || continue
         target="$AGENT_DISCOVERY/$name"
-        ln -sfn "$(realpath "$agent_entry")" "$target"
+        ln -sfn "$agent_entry" "$target"
         agent_link_count=$((agent_link_count + 1))
     done
 
@@ -669,7 +677,8 @@ step "[4/5] Checking resource provisioning..."
 info "Development resources are provisioned on demand by the installed Skills."
 if [ "$LEVEL" = "project" ] && [ "$TOOL" = "opencode" ] &&
    git -C "$INSTALL_BASE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git_common_dir="$(git -C "$INSTALL_BASE" rev-parse --path-format=absolute --git-common-dir)"
+    git_common_dir="$(git -C "$INSTALL_BASE" rev-parse --git-common-dir)"
+    git_common_dir="$(cd "$INSTALL_BASE" && cd "$git_common_dir" && pwd -P)"
     mkdir -p "$git_common_dir/info"
     touch "$git_common_dir/info/exclude"
     grep -Fqx '/.opencode/' "$git_common_dir/info/exclude" ||
@@ -688,7 +697,7 @@ health_errors=""
 for sub in skills agents; do
   target="$CANNBOT_DIR/$sub"
   if [ -d "$target" ]; then
-    if ! find "$target" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    if ! list_entry_names "$target" | grep -q .; then
       health_errors="${health_errors}\n  ${YELLOW}⚠${NC} $sub/ is empty"
     fi
   else
@@ -723,14 +732,14 @@ MANIFEST="$CONFIG_ROOT/cannbot-manifest.json"
 
 SKILLS_JSON="[]"
 if [ -d "$CANNBOT_DIR/skills" ]; then
-  SKILLS_JSON=$(find "$CANNBOT_DIR/skills" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null |
+  SKILLS_JSON=$(list_entry_names "$CANNBOT_DIR/skills" |
     LC_ALL=C sort |
     python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
 fi
 
 AGENTS_JSON="[]"
 if [ -d "$CANNBOT_DIR/agents" ]; then
-  AGENTS_JSON=$(find "$CANNBOT_DIR/agents" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null |
+  AGENTS_JSON=$(list_entry_names "$CANNBOT_DIR/agents" |
     LC_ALL=C sort |
     python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
 fi
