@@ -45,8 +45,7 @@ class AttentionTileConfig:
     runtime_options={
         "stitch_function_max_num": 513,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_actual_seqs"],
-        "max_workspace_kb": 672502
+        "ready_on_host_tensors": ["block_table", "kv_actual_seqs"]
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 16},

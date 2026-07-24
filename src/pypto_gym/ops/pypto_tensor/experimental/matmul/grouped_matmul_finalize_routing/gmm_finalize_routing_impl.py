@@ -126,8 +126,7 @@ class FinalizeRoutingInputs:
     },
     runtime_options={
         "stitch_function_max_num": 128,
-        "device_sched_mode": 1,
-        "max_workspace_kb": 262198},
+        "device_sched_mode": 1},
 )
 def gmm_finalize_routing_kernel(
     x1: pypto.Tensor(),

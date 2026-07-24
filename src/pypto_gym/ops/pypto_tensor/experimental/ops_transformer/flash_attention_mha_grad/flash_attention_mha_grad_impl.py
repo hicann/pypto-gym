@@ -45,8 +45,7 @@ class FlashAttentionGradTileShapeConfig:
     runtime_options={
         "stitch_function_max_num": 513,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["actual_q", "actual_kv"],
-        "max_workspace_kb": 131328
+        "ready_on_host_tensors": ["actual_q", "actual_kv"]
     },
     pass_options={
         "vec_nbuffer_setting": {-2: 1, -1: 16},

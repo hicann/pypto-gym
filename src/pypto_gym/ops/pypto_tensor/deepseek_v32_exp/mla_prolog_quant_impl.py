@@ -715,8 +715,7 @@ def options_list():
     if pypto.platform.npuarch == 'DAV_3510':
         return {
             "runtime_options": {
-                "device_sched_mode": 3,
-                "max_workspace_kb": 131072},
+                "device_sched_mode": 3},
             }
     else:
         return {

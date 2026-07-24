@@ -40,10 +40,7 @@ import torch_npu
 @pypto.frontend.jit(
     pass_options={
         "vec_nbuffer_setting": {-2: 1, -1: 8}
-    },
-    runtime_options={
-        "max_workspace_kb": 27776
-    },
+    }
 )
 def inplace_add_rms_norm_kernel_bf16(
     x1: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16), 

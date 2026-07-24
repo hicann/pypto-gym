@@ -549,8 +549,7 @@ def ifa_func_kernel_for_950(
     runtime_options={
         "stitch_function_max_num": 512,
         "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
-        "max_workspace_kb": 428672
+        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
     },
     pass_options={
         "cube_l1_reuse_setting": {0: 16, 1: 8},

@@ -71,8 +71,7 @@ def compute_rmsnorm_rsqrt(X_flat: pypto.Tensor, N_D: int, norm_eps: float) -> py
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 128, 
-        "device_sched_mode": 1,
-        "max_workspace_kb": 465260}, 
+        "device_sched_mode": 1}, 
     pass_options={"cube_nbuffer_setting": {-1: 4}})
 def mhc_pre_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),

@@ -646,8 +646,7 @@ def mla_prolog_quant_compute(
     },
     runtime_options={
         "device_sched_mode": 2,
-        "stitch_function_max_num": 128,
-        "max_workspace_kb": 1827328
+        "stitch_function_max_num": 128
     }
 )
 def mla_prolog_quant(
