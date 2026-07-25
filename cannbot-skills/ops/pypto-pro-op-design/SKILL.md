@@ -11,7 +11,7 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 - 每个决策必须包含**结论 + 推导过程 + 证据来源**
 - 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威），运行验证暴露设计失误时可据实修正
 - 每轮发现的矛盾必须回溯修正前序决策，不允许累积到 R8 再处理
-- 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
+- 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
 
 ## 两条性能强制（设计阶段须落实）
 
@@ -177,13 +177,13 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 **核心问题**：work item 如何分配到各物理核？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/多核切分与Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
 
 **本轮须在 DESIGN.md §5 落实的产出**：
 - 分核方案
 - host 侧 `num_cores` 计算式
 
-**输出**：DESIGN.md §5（引用 多核切分与Tiling.md，填入上述两项产出）
+**输出**：DESIGN.md §5（引用 multi_core_partitioning_and_Tiling.md，填入上述两项产出）
 
 ---
 
@@ -225,11 +225,11 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/尾块处理.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
 
 **本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的伪代码骨架。
 
-**输出**：DESIGN.md §7（引用 尾块处理.md 落地尾块代码）
+**输出**：DESIGN.md §7（引用 tail_block_handling.md 落地尾块代码）
 
 ---
 

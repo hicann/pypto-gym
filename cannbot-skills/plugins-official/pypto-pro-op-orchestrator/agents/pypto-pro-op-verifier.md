@@ -26,6 +26,7 @@ tools:
 ## 全局硬性规则（违反即失败）
 
 - 禁止执行任何环境配置命令（conda activate / source set_env.sh / export / pip install 等），默认环境已由用户预配完毕
+- 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行脚本只允许：`python {脚本路径}`
 - 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/golden/test/impl 等）——你是裁判不是选手
 - 所有检查必须**实际执行命令并捕获输出**，不得只输出命令字符串而声称"已检查"
@@ -94,15 +95,15 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 | 1 | **import 门禁** | test_{op}.py 必须使用 pypto_pro.language API，禁止 pypto（非 Pro）前端 API | `grep "import pypto_pro.language as pl" custom/<op>/test_{op}.py` 存在；`grep "@pypto.frontend.jit" custom/<op>/test_{op}.py` 应返回空；`grep "import pypto.frontend" custom/<op>/test_{op}.py` 应返回空。任一不满足 → FAIL |
 | 2 | 文件 | `custom/<op>/test_{op}.py` 存在 | 文件存在检查 |
 | 3 | 设备 | 测试设备与 golden 一致 | `grep -c "npu:" custom/<op>/test_{op}.py` 若每个 test 函数各自硬编码不同设备号 → FAIL。test 须导入 `{op}_golden._get_device()` |
-| 4 | 精度标准 | 使用方案A混合容差标准，禁止 assert_close 和自定义 atol/rtol | `grep "assert_close" custom/<op>/test_{op}.py` 应返回空；`grep "_assert_precision" custom/<op>/test_{op}.py` 应返回非空；`grep "atol_override" custom/<op>/test_{op}.py` 应返回空。任一不满足 → FAIL |
-| 5 | **未作弊** ⚠️ | 所有的核心计算逻辑集中在单一 kernel 函数内，host 端不得进行任何核心计算步骤（host 端预处理尽可能少，仅 reshape/cast/输出分配/num_cores 计算）；文件中只允许存在一个 kernel；**`{op}_wrapper` 只调用一次 kernel**；**禁止在循环中调用 kernel**。**作弊是绝对红线，绝不容忍任何形式的作弊行为（host 端做核心计算、多 kernel 分担计算、wrapper 多次调用 kernel 分担计算、循环调用 kernel 分担计算等）。** 发现作弊 → 立即 FAIL，不得以"精度通过"或"性能达标"为由放行 | 检查 host 端代码确保不做核心计算；检查文件中 kernel 数量确保仅一个；检查 `{op}_wrapper` 内对 `{op}_kernel` 的调用仅一次；检查 kernel 调用不在任何 for/while 循环内；检查无 `import pypto`（非 Pro）规避 |
+| 4 | 精度标准 | 使用方案A混合容差标准，禁止 assert_close 和自定义 atol/rtol。精度对比必须用 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比 | `grep "assert_close" custom/<op>/test_{op}.py` 应返回空；`grep "_assert_precision" custom/<op>/test_{op}.py` 应返回非空；`grep "atol_override" custom/<op>/test_{op}.py` 应返回空；`grep "golden_cpu" custom/<op>/test_{op}.py` 应返回非空。任一不满足 → FAIL |
+| 5 | **未作弊** ⚠️ | 所有的核心计算逻辑集中在单一 kernel 函数内，host 端不得进行任何核心计算步骤（host 端只做支撑性操作：reshape/view/permute、dtype 转换、输出分配、num_cores 等标量参数计算）；文件中只允许存在一个 kernel；**`{op}_wrapper` 只调用一次 kernel**；**禁止在循环中调用 kernel**。**作弊是绝对红线，绝不容忍任何形式的作弊行为。** 发现作弊 → 立即 FAIL，不得以"精度通过"或"性能达标"为由放行。**判定标准是计算实质，不是命名** | **核心计算定义**：算子 SPEC 声明的数学语义对应的计算——输出值依赖于输入张量数值大小关系的决策步骤（比较/排序/选择/去重/索引重排）。host 端只允许做与输入数值无关的支撑性操作（reshape/view/permute、dtype 转换、输出分配、num_cores 等标量参数计算）。**机械规则**：① 文件中 `@pl.jit` kernel 仅一个；② `{op}_wrapper` 内对 `{op}_kernel` 调用仅一次；③ kernel 调用不在任何 for/while 循环内；④ 无 `import pypto`（非 Pro）规避。**语义判定**（须读 wrapper 函数体，命中即 FAIL）：⑤ host 端出现值依赖变换——输出依赖于输入数值大小关系的操作（如排序/选择类 API 调用、Python 循环按值筛选/去重）；⑥ kernel 只产出中间/候选结果，host 端从中筛选/提取/转换出最终输出；⑦ wrapper 内 `assert`/`if` 把算子定义声明的维度/dtype/参数支持范围缩减为单点；⑧ test 输入的数据分布/value_range 偏离 DESIGN.md §8 目标测试 case。**命名无关**："post-processing"/"extraction"/"formatting" 等措辞不改变 host 端做核心计算的事实 |
 | 6 | 性能强制 — buffer | 需要 buffer 切换/轮转的 tile 用 `make_tile_group` | grep `make_tile`（非 group）确认仅用于单次使用 scratch tile（不参与轮转），无 `make_tile` + 手动 `sync_src`/`sync_dst` 管 buffer 轮转的写法；auto_mutex=True 的 tile 上无手动 pipe 级 sync |
 | 7 | 性能强制 — vf | Vector 数值计算用 `vf.*` 手写 | grep 检查 Vector 数值计算是否用 `vf.*` 指令手写（在 `@pl.vector_function` 内执行）；**此项为硬性 FAIL 项，不可降级。** 若 DESIGN.md §1 将 vec 步骤映射到 `pl.*` 而非 `vf.*`，报 `design_violation`（回退 Stage 3）；若 DESIGN.md 正确但实现偏离，报 `perf_violation`（回退 Stage 4） |
 | 8 | 运行 | 代码可运行 | 执行 `python custom/<op>/test_{op}.py`，检查 exit code = 0 |
 | 9 | 精度 | 精度通过 | 从运行输出中确认 `PASS`（无 Traceback/Error/Exception），且输出含 `matched_ratio=` 和 `max_abs_error=` 指标行 |
 | 10 | 泛化 | 至少 4 个独立 test，且与 DESIGN.md §8「目标测试 case」一致 | `grep -c "def test_" custom/<op>/test_{op}.py` ≥ 4（test 应实现 §8 已确定的 case，非临时另造） |
 | 11 | 动态维度声明 | impl 中动态维度声明与 API 文档/官方指定算子一致 | 检查动态维度声明方式与 `docs/` 和官方指定算子样例一致（不含不存在的 API） |
-| 12 | **入口函数命名** | test 文件暴露 `{op_name}_wrapper` 入口函数（host 适配 + 调 kernel，参数和返回值与算子定义一致，test_{op}_* 应通过它调 kernel）；wrapper **只调用一次 kernel**，host 端预处理尽可能少 | `grep "^def {op_name}_wrapper(" custom/<op>/test_{op}.py` 确认存在；确认 test_{op}_* 调 `{op_name}_wrapper` 而非直接调 `{op_name}_kernel`；确认 wrapper 内对 kernel 的调用仅一次。缺失/命名不对/直接调 kernel/wrapper 多次调 kernel → FAIL |
+| 12 | **入口函数命名** | test 文件暴露 `{op_name}_wrapper` 入口函数（host 适配 + 调 kernel，参数和返回值与算子定义一致，test_{op}_* 应通过它调 kernel）；wrapper **只调用一次 kernel**，host 端预处理尽可能少。**optional 参数签名合规**：若 `cases.yaml` 中存在省略某个输入参数的 case（该参数的 `input_shape` 位置为 `null` 或缺失），则 `{op_name}_wrapper` 签名中该参数**必须带默认值**（`=None`），否则外部调用方省略该参数时会触发 `TypeError` | `grep "^def {op_name}_wrapper(" custom/<op>/test_{op}.py` 确认存在；确认 test_{op}_* 调 `{op_name}_wrapper` 而非直接调 `{op_name}_kernel`；确认 wrapper 内对 kernel 的调用仅一次。**签名检查**：读取 `cases.yaml`，若某输入参数在部分 case 中省略（`input_shape` 对应位置为 null 或列表更短），检查 `def {op_name}_wrapper(` 行中该参数是否有 `=None` 默认值——无默认值 → FAIL（报 `signature_mismatch`）。缺失/命名不对/直接调 kernel/wrapper 多次调 kernel/optional 参数无默认值 → FAIL |
 | 13 | **交付态 import 安全** ⚠️ | `test_{op}.py` 在交付单元（仅 `test_{op}.py` + `{op}_golden.py`，无 `precision_compare.py`/`{op}_golden_cpu.py`）下能被作为模块加载通过，顶层不触发 dev-only 模块的 `ImportError` | 模拟交付加载：把 `custom/<op>/test_{op}.py` 与 `custom/<op>/{op}_golden.py` 复制到临时空目录（**不带** `precision_compare.py`、`{op}_golden_cpu.py`），执行 `python -c "import importlib.util as u,sys; s=u.spec_from_file_location('m',sys.argv[1]); m=u.module_from_spec(s); s.loader.exec_module(m)" <tmp>/test_{op}.py`。exit code ≠ 0 或抛 `ModuleNotFoundError`/`ImportError` → FAIL（报 `delivery_import_unsafe`）。背景：交付单元被作为模块加载时，顶层代码会全部执行 |
 
 ---
@@ -137,7 +138,7 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 | `golden_failure` | golden 自验证 exit code ≠ 0 | 回退 Stage 2 修复 |
 | `design_violation` | TBD/伪代码留空/分配方式/VF 映射不合规 | 回退 Stage 3 修正对应轮次 |
 | `import_violation` | import 门禁失败（用非 Pro API） | 回退 Stage 4 修复 |
-| `cheating` | host 端做核心计算/多 kernel/wrapper 多次调用 kernel 分担计算/循环调用 kernel 分担计算/规避门禁 | 回退 Stage 4，红线重写 |
+| `cheating` | host 端做核心计算（值依赖变换/候选筛选/规格砍单/测试输入偷换，含以任何命名伪装者）/多 kernel/wrapper 多次调用 kernel 分担计算/循环调用 kernel 分担计算/规避门禁/未声明实现偏差却产出偏离 DESIGN.md 的代码 | 回退 Stage 4，红线重写 |
 | `perf_violation` | buffer 轮转/vf 性能强制不合规 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
 | `precision_failure` | test 运行无 PASS | 回退 Stage 4 修复 |
 | `runtime_failure` | test 运行报错（非环境） | 回退 Stage 4 修复 |

@@ -46,7 +46,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 |----------|------|----------|
 | API 文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`（递归） | `find` 获取所有 `.md` 文件 |
 | 官方指定算子样例 | 见 [references/official_samples.md](references/official_samples.md) | 读取清单文件，不扫描 a5 全目录 |
-| 教程文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`（递归） | `find` 获取所有 `.md` 文件 |
+| 教程文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`（递归） | `find` 获取所有 `.md` 文件 |
 
 > **§B 说明**：官方指定算子样例是**唯一的算子写法参考来源**，`$PYPTO_DEVKIT_DIR/pro_ops/` 下其余文件不得作为样例参考或索引对象（orchestrator 资源缓存准备时已按清单清理，仅保留清单内文件）。清单后续可能增减，增减时**只改 [references/official_samples.md](references/official_samples.md)**，无需改动其他文件。
 
@@ -60,7 +60,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 - 每个子类别标题后标注 `（N 文档）` / `（N 文件）` 的计数
 - §A 按目录路径自动分组展示（按 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 下实际子目录分节）
 - §B 复制 `references/official_samples.md` 清单，不动态扫描
-- §C 列出 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide` 下全部 `.md`
+- §C 列出 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials` 下全部 `.md`
 - 若某个扫描目录不存在或为空，保留空表（标注 `<!-- 空 -->`）
 
 ---
@@ -86,7 +86,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 4. 逐文档读取相关 API 文档，提取约束：dtype 支持、shape 范围、layout 要求、MemorySpace 约束
 5. **vf 指令参数语义强制记录**：对映射到的每个 `vf.*` 指令，读其文档全文，记录：每个参数的语义（如 offset 单位是字节还是元素、layout 参数的可选取值及行为）、寄存器级行为（如 `vf.astype` 如何在 BF16/FP32 寄存器间映射、输入输出寄存器数量关系）、与 `pl.*` 同名 API 的差异（如 `vf.gather` vs `pl.gather` 的参数签名差异）。若文档含 layout/参数范围等约束表则逐一记录。vf 文档结构以实际为准。
 6. 提取 Tile 规格约束（TileType 文档）、MemorySpace 约束、DataType 枚举值
-7. **探测关键常量**：从 API 文档与教学文档中提取硬件/版本相关常量——UB 容量上限（直接查 `多核切分与Tiling.md` §5.2，A5/DAV_3510 为 248KB）、cross_core event_id 上限（`max_event_id` 默认值）、地址对齐要求、Cube tile 对齐要求等，记录值 + 文档路径
+7. **探测关键常量**：从 API 文档与教学文档中提取硬件/版本相关常量——UB 容量上限（直接查 `multi_core_partitioning_and_Tiling.md` §5.2，A5/DAV_3510 为 248KB）、cross_core event_id 上限（`max_event_id` 默认值）、地址对齐要求、Cube tile 对齐要求等，记录值 + 文档路径
   8. 未找到直接对应的 vf API → **优先尝试用其他 vf API 组合 + 循环结构手动实现**。在 EXPLORE_REPORT §3 中记录组合方案及可行性分析依据。仅当穷尽 vf 组合方案仍不可行时，才标记 unsupported 并说明已尝试的组合路径
 9. **动态维度声明方式**：从 API 文档（如 Tensor 数据结构文档）和官方指定算子样例中确认动态维度的正确声明方式，在 EXPLORE_REPORT §3 中记录
 
@@ -115,7 +115,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 
 ### 方向 3：教程与设计指南
 
-**搜索范围**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`（基于索引 §C）
+**搜索范围**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`（基于索引 §C）
 
 **任务**：
 
@@ -149,7 +149,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 3. `§A` API 文档数量与 `find $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ -name "*.md" | wc -l` 结果一致（不遗漏任何文档）
 4. `§A` 按 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 下实际子目录分组，无遗漏
 5. `§B` 与 `references/official_samples.md` 清单一致，不含 pro_ops 下其余文件
-6. `§C` 下列出 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide` 下全部 `.md` 文件
+6. `§C` 下列出 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials` 下全部 `.md` 文件
 7. 所有路径为相对路径
 
 ### EXPLORE_REPORT.md

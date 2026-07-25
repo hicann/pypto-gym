@@ -60,13 +60,13 @@ cat .opencode/skills/pypto-pro-material-explore/references/official_samples.md
 
 ---
 
-## §C 教程文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`）
+## §C 教程文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）
 
 ### 扫描命令
 
 ```bash
-# 覆盖 $PYPTO_DEVKIT_DIR/docs/pypto_pro/guide 目录
-find $PYPTO_DEVKIT_DIR/docs/pypto_pro/guide -name "*.md" | sort
+# 覆盖 $PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials 目录
+find $PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials -name "*.md" | sort
 ```
 
 ### 按扫描结果填充

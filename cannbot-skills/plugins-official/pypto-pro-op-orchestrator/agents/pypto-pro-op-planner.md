@@ -21,6 +21,7 @@ tools:
 ## 全局硬性规则（违反即失败）
 
 - 禁止执行任何环境配置命令（conda activate / source set_env.sh / export / pip install 等），默认环境已由用户预配完毕，任何环境报错应反馈，不得自行修改
+- 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行脚本只允许：`python {脚本路径}`
 - 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）
 - pypto（非 Pro）系统的 lint 规则（如 OL01 要求 `@pypto.frontend.jit`）不适用于 Pro 工作流

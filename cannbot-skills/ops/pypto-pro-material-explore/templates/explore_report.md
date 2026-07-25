@@ -176,7 +176,7 @@ feasibility: {feasibility}
 
 | 常量 | 探测值 | 来源路径 | 备注 |
 |------|--------|----------|------|
-| UB 容量 | 248 KB | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/多核切分与Tiling.md` §5.2 | A5/DAV_3510；官方指定算子 assert 可交叉验证 |
+| UB 容量 | 248 KB | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md` §5.2 | A5/DAV_3510；官方指定算子 assert 可交叉验证 |
 | cross_core event_id 上限 | 16 | `set_cross_core_wait_cross_core.md` 参数范围表 | API 文档固定值，取值范围 `[0, 16)` |
 | 地址对齐要求 | 32 字节 | `load_tile.md` 参数范围表 | UB/L1 首地址须 32 字节对齐 |
 | Cube tile 对齐 | {N} | {教学/文档路径} | {tile 尺寸对齐要求} |

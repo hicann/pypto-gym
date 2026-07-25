@@ -202,7 +202,7 @@ def {op}_kernel(
 
 ## §5 分核策略（R5 输出）
 
-> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/多核切分与Tiling.md`（分核方式 / 负载均衡 / 核数设置 / tiling 传参一切以此为准）。
+> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`（分核方式 / 负载均衡 / 核数设置 / tiling 传参一切以此为准）。
 
 ### 分核方式
 
@@ -254,7 +254,7 @@ def {op}_kernel(
 
 ## §7 尾块处理（R7 输出）
 
-> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/尾块处理.md`（尾块的完整机制——一切以此为准）。
+> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`（尾块的完整机制——一切以此为准）。
 
 ### 尾块处理方案
 
@@ -271,7 +271,7 @@ valid_n = pl.min(N - n_off, TD)
 pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 ```
 
-- **是否需要尾块填充**: {逐元素→否 / 归约或 matmul→是，具体填充方式见 尾块处理.md}
+- **是否需要尾块填充**: {逐元素→否 / 归约或 matmul→是，具体填充方式见 tail_block_handling.md}
 
 ---
 

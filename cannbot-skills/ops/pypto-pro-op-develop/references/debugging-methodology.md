@@ -22,11 +22,11 @@
 | 症状（现象） | 优先检查方向 | pro 参考锚点 |
 |--------------|--------------|--------------|
 | **到处都错**（输出 shape 对但值大面积错） | 数学公式实现 / cast 顺序 / layout / 输入输出维度是否与 golden 一致 | `{op}_golden.py` 公式、DESIGN.md §0 维度契约 / §1 API 映射 |
-| **只有大 shape 失败** | 片上容量（UB/L1/L0）是否超限 / tile 切分 / 归约轴是否可能超单 tile 却用了单 tile 假设 | DESIGN.md §2 Tile 规划 / §3 片上布局、`多核切分与Tiling.md` §5.2 UB 预算 |
-| **只有尾块失败**（整除通过、非整除失败） | 持久化 tile 的有效形状是否跨迭代残留未重置 / 边界切片 / 归约·matmul 尾块是否漏做填充 | `尾块处理.md` §3.1（有效形状裁剪搬运）、§4.2（归约/matmul 必须填充）、§8 常见坑 |
+| **只有大 shape 失败** | 片上容量（UB/L1/L0）是否超限 / tile 切分 / 归约轴是否可能超单 tile 却用了单 tile 假设 | DESIGN.md §2 Tile 规划 / §3 片上布局、`multi_core_partitioning_and_Tiling.md` §5.2 UB 预算 |
+| **只有尾块失败**（整除通过、非整除失败） | 持久化 tile 的有效形状是否跨迭代残留未重置 / 边界切片 / 归约·matmul 尾块是否漏做填充 | `tail_block_handling.md` §3.1（有效形状裁剪搬运）、§4.2（归约/matmul 必须填充）、§8 常见坑 |
 | **同步告警 / 流水结果异常** | 同侧计算排序与跨 section 数据交接是否混淆 / 多组流水事件是否隔离 / buffer 生命周期 | DESIGN.md §6 同步与核间流水、官方指定算子（FA/lightning）的跨核同步用法 |
 | **整体精度对，个别位置 NaN/Inf** | 超越函数（exp/log/sqrt 等）在目标 dtype 下是否溢出 | DESIGN.md §1 超越函数数值安全边界 |
-| **多核结果错 / 累加异常** | 分核是否重叠或遗漏 / 累加语义（覆盖写 vs 原子累加）/ 累加前输出是否需预清零 | `多核切分与Tiling.md` §2 跨步循环、`原子操作/store_atomic.md` |
+| **多核结果错 / 累加异常** | 分核是否重叠或遗漏 / 累加语义（覆盖写 vs 原子累加）/ 累加前输出是否需预清零 | `multi_core_partitioning_and_Tiling.md` §2 跨步循环、`原子操作/store_atomic.md` |
 
 > 表中「优先检查方向」只指出应先看哪里。**具体错误码 → 根因 → 修复**以运行时抛出的报错信息与 API 文档原文为准，不套用固定结论。
 
@@ -45,16 +45,16 @@
    各 tile 的 layout 是否满足所用 API 的要求。具体 layout 取值以 API 文档与 DESIGN 为准。（DESIGN.md §2/§3、相关 API 文档）
 
 3. **tile 与片上容量**
-   各片上内存空间的 tile 总占用是否分别超出各自容量；tile 切分是否合理。（DESIGN.md §3 逐空间用量、EXPLORE_REPORT §7 容量、`多核切分与Tiling.md` §5.2）
+   各片上内存空间的 tile 总占用是否分别超出各自容量；tile 切分是否合理。（DESIGN.md §3 逐空间用量、EXPLORE_REPORT §7 容量、`multi_core_partitioning_and_Tiling.md` §5.2）
 
 4. **尾块处理**
-   tile 数是否向上取整；每轮迭代是否重置持久化 tile 的有效形状（有效形状是有状态的，跨迭代会残留）；归约/matmul 尾块是否做了填充。核心心智：物理形状固定、有效形状随位置变。（`尾块处理.md` §3/§4/§8）
+   tile 数是否向上取整；每轮迭代是否重置持久化 tile 的有效形状（有效形状是有状态的，跨迭代会残留）；归约/matmul 尾块是否做了填充。核心心智：物理形状固定、有效形状随位置变。（`tail_block_handling.md` §3/§4/§8）
 
 5. **同步与所有权**
    区分两类同步——同侧计算的先后排序，与跨 section 的数据交接，二者机制不同、不可互相替代；确认生产方在数据产生后发信号、消费方在使用前等信号；多组流水的事件是否互相隔离。（DESIGN.md §6、官方指定算子（FA/lightning）的跨核同步用法）
 
 6. **分核与流水生命周期**
-   分核是否覆盖全部 tile、有无重叠或空转；多缓冲的地址与同步是否随缓冲份数正确规划；跨 tile 的状态（如 running max/sum）是否正确初始化与持久化。（`多核切分与Tiling.md` §2/§5.3、DESIGN.md §5/§6）
+   分核是否覆盖全部 tile、有无重叠或空转；多缓冲的地址与同步是否随缓冲份数正确规划；跨 tile 的状态（如 running max/sum）是否正确初始化与持久化。（`multi_core_partitioning_and_Tiling.md` §2/§5.3、DESIGN.md §5/§6）
 
 7. **数值边界**
    值在何处改变 dtype：是否过早降精度、是否在不合适的 dtype 下归约、matmul 累加精度是否足够、超越函数是否可能溢出。（DESIGN.md §1 数值安全边界）

@@ -421,6 +421,8 @@ attention_golden 验证报告
 ## 15. CPU Golden 生成（精度校验用）
 
 > **强制步骤**：NPU golden 和性能报告完成后，**必须**生成 CPU 更高精度 golden `{op}_golden_cpu.py`，供 Stage 4 test 精度校验使用（方案A混合容差标准，见 `../pypto-pro-op-develop/scripts/precision_compare.py`）。
+>
+> **golden 职责边界**：`{op}_golden.py`（NPU）仅用于 Stage 2 性能测试和提供 `_get_device()` 给 Stage 4 test 选设备；Stage 4 精度对比的参考实现**必须**是 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比。
 
 ### 生成方式
 

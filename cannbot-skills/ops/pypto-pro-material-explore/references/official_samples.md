@@ -20,6 +20,7 @@
 | 7 | fa_perf_tkv_preload | `pro_ops/fa/test_fa_perf_tkv_preload_dn_vf_bufid_dynrank.py` | FlashAttention 生产级 | |
 | 8 | fa_tilingkey_attn_mask | `pro_ops/fa/test_fa_tilingkey_attn_mask.py` | FlashAttention 教学 | |
 | 9 | fa_with_mask | `pro_ops/fa/test_fa_with_mask.py` | FlashAttention 性能（mask + NBuffer + auto_mutex） | |
-| 10 | quant_lightning_indexer_vf | `pro_ops/lightning_indexer/test_quant_lightning_indexer_vf.py` | VF TopK | |
-| 11 | layernorm_tile_group_vf | `pro_ops/vf_api/test_layernorm_tile_group_vf.py` | VF LayerNorm | |
-| 12 | softmax_tile_group_vf | `pro_ops/vf_api/test_softmax_tile_group_vf.py` | VF Softmax | |
+| 10 | flex_attention | `pro_ops/fa/test_flex_attention.py` | FlexAttention 性能 | |
+| 11 | quant_lightning_indexer_vf | `pro_ops/lightning_indexer/test_quant_lightning_indexer_vf.py` | VF TopK | |
+| 12 | layernorm_tile_group_vf | `pro_ops/vf_api/test_layernorm_tile_group_vf.py` | VF LayerNorm | |
+| 13 | softmax_tile_group_vf | `pro_ops/vf_api/test_softmax_tile_group_vf.py` | VF Softmax | |

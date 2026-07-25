@@ -124,7 +124,7 @@ INCLUDED_SKILLS="pypto-docs-search pypto-pro-environment-check pypto-pro-golden-
 # Agent whitelist (shell pattern) - uses local agents/
 INCLUDED_AGENT_PATTERN="pypto-pro-op-*"
 SKILL_CATEGORY="ops"
-INSTALL_OPENCODE_HOOKS=false
+INSTALL_OPENCODE_HOOKS=true
 DISPLAY_NAME="PyPTO-Pro Operator Dev Team"
 SAMPLE_PROMPT="使用 PyPTO-Pro 开发一个 softmax 算子，支持 float16 数据类型"
 
@@ -495,9 +495,8 @@ if [ "$TOOL" = "opencode" ]; then
     done
     step1_summary="${step1_summary}agents(${agent_count})"
     if [ "$INSTALL_OPENCODE_HOOKS" = true ]; then
-        mkdir -p "$CANNBOT_DIR/plugins" "$CANNBOT_DIR/hooks/pypto-op-lint"
+        mkdir -p "$CANNBOT_DIR/plugins"
         cp -a "$PLUGIN_ROOT/hooks/opencode/." "$CANNBOT_DIR/plugins/"
-        cp -a "$PLUGIN_ROOT/hooks/pypto-op-lint/." "$CANNBOT_DIR/hooks/pypto-op-lint/"
         step1_summary="${step1_summary} hooks"
     fi
     ok "Linked: $step1_summary"

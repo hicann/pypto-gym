@@ -9,7 +9,7 @@ description: PyPTO-Pro 算子 kernel 实现编码手册。所有算子（纯vec/
 
 > **角色说明**：PyPTO-Pro 的 Stage 4 由单个 `general` 子代理全包完成，暂时没有拆分为 coder / verifier / debugger 等多个专用代理。因此本 skill 的承担者需独自完成 **开发 → 验证 → 发现问题 → 分析根因 → 解决问题 → 再验证** 的完整闭环，直到能够交付符合全部要求的算子代码。
 
-> **方法论优先**：本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、vf 指令组合、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide`）、官方指定算子（`PRO_MATERIAL_INDEX.md` §B），理解后据实实现。
+> **方法论优先**：本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、vf 指令组合、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）、官方指定算子（`PRO_MATERIAL_INDEX.md` §B），理解后据实实现。
 
 ---
 
@@ -173,7 +173,7 @@ description: PyPTO-Pro 算子 kernel 实现编码手册。所有算子（纯vec/
 - **测试 case 直接取自 DESIGN.md §8「目标测试 case」表**，不自行重算 shape。每个 case 拆为独立 `def test_` 函数、命名沿用 §8；orchestrator 门禁以 `def test_` 数量 ≥ 4 为泛化性判据（覆盖整除 / 单轴尾块 / 双轴尾块 / 跨多 tile+尾块）。§8 已确认这些 case 均可适配；若某 case 跑不通属 design 失误，按步骤 7 据实修正 kernel，**不得删改 case 迁就实现**。§8 缺失或不足 4 个时回调 Stage 3。
 - **⚠️ 设备必须与 golden 一致**：kernel 异步执行，设备不一致会让 NPU 错误污染 golden、traceback 误指向 torch。**不要硬编码 `npu:0`**，从 `{op}_golden.py` 导入 `_get_device()`（golden 模板已通过 `TILE_FWK_DEVICE_ID` 环境变量选择设备）。
 - **⚠️ atol 取值有据**：精度阈值由 `precision_compare.py` 按 dtype 自动查表（方案A混合容差标准），**禁止自定义 atol/rtol**。阈值表见 `scripts/precision_compare.py`（与《生态算子精度标准》§2.2 一致）。
-- **精度验证使用 `precision_compare.check_precision`**（方案A混合容差标准）。模板已内置 `_assert_precision` 辅助函数，test 函数只需调用 `_assert_precision(output, *inputs, label="...")`，内部自动完成 CPU golden 计算 + 精度对比。
+- **精度验证使用 `precision_compare.check_precision` + `{op}_golden_cpu`**（方案A混合容差标准）。模板已内置 `_assert_precision` 辅助函数，test 函数只需调用 `_assert_precision(output, *inputs, label="...")`，内部自动完成 CPU golden 计算 + 精度对比。**精度对比的参考实现必须是 `{op}_golden_cpu`（CPU FP32 更高精度），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比**——`{op}_golden` 仅用于 Stage 2 性能测试和提供 `_get_device()`。
 - **⚠️ 复制精度对比脚本（仅 dev 态）**：编写 test 文件前，将 `scripts/precision_compare.py` 复制到算子目录 `custom/<op>/`（与 `test_<op>.py` 同级）。该脚本仅用于本地 dev 自测，供 `_assert_precision` 在 dev 环境运行时 import。
 - **⚠️ 交付态 import 安全（硬性要求）**：算子的**交付单元仅含 `test_{op}.py` + `{op}_golden.py` 两个文件**——`precision_compare.py`、`{op}_golden_cpu.py` 是 dev-only 自测工具，**只在 `custom/<op>/` 本地自测时使用，不进入交付单元**。交付单元被作为模块加载时会执行其全部顶层代码——若 `precision_compare`、`{op}_golden_cpu` 的 import 写在模块顶层，此时会直接 `ModuleNotFoundError`，导致交付态全部 case 0 分。因此这两个 dev-only 依赖的 import **必须写在函数体内**（仿 [impl_template.py.tmpl](templates/impl_template.py.tmpl) 的 `_assert_precision`，import 在函数内 → 模块加载不触发 → 安全），**或在顶层用 `try/except ImportError` 容错**（仿已交付的 rms_norm）。**禁止裸顶层 `from precision_compare import` / `from {op}_golden_cpu import`**。`test_{op}.py` 必须能在仅含 `test_{op}.py` + `{op}_golden.py` 两文件的环境下被作为模块加载通过。
 - **host 维度适配**：若 DESIGN.md §0 维度契约要求 kernel 只处理 2D 而 SPEC 需 1D/多维，在调用侧做 reshape 适配（模板见 impl_template）。
@@ -200,6 +200,7 @@ python custom/<op>/test_<op>.py
 **② 定位到哪一层就修哪一层**：遵循「先修模型、再修 kernel」——根因在模型层（DESIGN.md / 维度契约）时先改正 DESIGN，别在错误设计上给 kernel 打补丁；根因在 kernel 实现时直接改代码。修改 DESIGN.md 后直接在 develop 内继续，不需回 Stage 3。以实际证据为准（查阅方式见步骤 1-2），可调整 API 序列、tile 属性/地址、循环结构、同步策略、尾块处理等，只要最终 PASS 且不违反两条性能强制与 kernel 结构约束。**⚠️ Vector 数值计算遇到当前 vf 方案不可行时（如 NPU 崩溃、精度不达标），优先尝试用其他 vf API 组合 + 循环结构手动实现替代方案，而非直接退化成 `pl.*` 标量写法——退化到 pl 会严重牺牲性能。**
 **③ 记录修正**：在代码注释或 MEMORY.md 中记录"DESIGN.md 原方案 → 实际修正方案及依据"，便于后续追溯。
 **④ 重跑验证**：修复后重新运行。若 `PASS` 且无告警，debug 结束；若暴露新问题，针对新问题回到 ① 再走一轮。
+**⑤ 诚实失败退出（capability_gap）**：若在②中穷尽 vf API 组合方案 + 循环结构替代方案后，根因确属框架能力不足（如目标 dtype 精度限制使纯 kernel 方案无法产出正确结果、vf API 缺失关键能力），**不得以 host 端核心计算绕过**。此时返回 `capability_gap` verdict + 失败证据（编译错误原文 / 精度报告、已尝试的 vf 方案清单及各自失败原因、为何无法在 kernel 内解决的判断依据）给 orchestrator，由 orchestrator 回退 Stage 3 重新设计或上报用户。**capability_gap 是诚实失败，不是作弊许可**——禁止以"vf 不可行"为由把核心计算挪到 host 端，否则按作弊红线处理。
 
 ### 步骤 8：交付前自检
 
@@ -210,10 +211,12 @@ python custom/<op>/test_<op>.py
 | `test_{op}.py` 为最终单文件 | 确认文件存在；增量模式的临时中间产物（中间量 store / golden 辅助函数）已清理 |
 | 设备与 golden 一致 | 确认已导入 `{op}_golden._get_device()`，未在各 test 中硬编码分散的 `npu:` 设备号 |
 | atol 有据 | 确认 test 使用 `_assert_precision`（非 `torch.testing.assert_close`），无自定义 atol/rtol；golden 从 `{op}_golden_cpu` 导入（CPU 更高精度），非 `{op}_golden`（NPU 同 dtype） |
-| 核心计算在单 kernel 内 | 确认文件中仅一个 kernel 函数（`@pl.jit` 装饰）；**所有的核心计算逻辑集中在单一 kernel 函数内**；host 端只做必要适配（reshape/cast/输出分配/num_cores 计算），不做核心计算；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊） |
+| 核心计算在单 kernel 内（含语义反作弊） | 确认文件中仅一个 kernel 函数（`@pl.jit` 装饰）；**所有的核心计算逻辑集中在单一 kernel 函数内**；host 端只做支撑性操作（reshape/view/permute、dtype 转换、输出分配、num_cores 等标量参数计算），不做核心计算；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊）。**语义自检**：host 端无值依赖变换（输出依赖于输入数值大小关系的操作，如排序/选择/去重/索引重排）；kernel 输出是最终结果而非中间/候选（host 端不从中筛选/提取）；无 `assert`/`if` 砍算子定义声明的维度/dtype/参数支持范围到单点；**判定标准是计算实质不是命名**——"post-processing"/"extraction" 等措辞不改变 host 端做核心计算的事实 |
 | ≥4 个独立 test 且与 §8 一致 | 确认 `def test_` 数量 ≥ 4，命名与覆盖对齐 DESIGN.md §8「目标测试 case」，非临时另造 |
 | Vector 数值计算用 vf.* 手写 | 确认核心计算用 `vf.*` 指令手写（在 `@pl.vector_function` 内执行），非 `pl.*` 级计算 API。若 DESIGN.md §1 将 vec 步骤映射到 `pl.*` 而非 `vf.*`，视为 DESIGN.md 失误，须修正为 `vf.*` 并重新实现 |
-| **入口函数命名合规** | 确认文件中暴露了名为 `{op_name}_wrapper` 的可调用入口函数（签名与算子 schema 一致）。外部调用方按命名约定查找 `{op_name}_wrapper` 和 `{op_name}`，推荐 `_wrapper` 后缀以与 kernel `_kernel` 配对。wrapper **只调用一次 kernel**，host 端预处理尽可能少（仅 reshape/cast/输出分配/num_cores 计算），test_{op_name}_* 通过 wrapper 调 kernel 而非直接调 `{op_name}_kernel` |
+| **入口函数命名合规** | 确认文件中暴露了名为 `{op_name}_wrapper` 的可调用入口函数（签名与算子 schema 一致）。外部调用方按命名约定查找 `{op_name}_wrapper` 和 `{op_name}`，推荐 `_wrapper` 后缀以与 kernel `_kernel` 配对。wrapper **只调用一次 kernel**，host 端预处理尽可能少（仅 reshape/cast/输出分配/num_cores 计算），test_{op_name}_* 通过 wrapper 调 kernel 而非直接调 `{op_name}_kernel`。**optional 参数必须带默认值**：若 `cases.yaml` 中存在省略某个输入参数的 case（该参数的 `input_shape` 位置为 `null` 或列表更短），则 `{op_name}_wrapper` 签名中该参数必须设 `=None` 默认值，否则外部调用方省略该参数时会触发 `TypeError` |
+| **实现偏差已声明** | 若实现与 DESIGN.md 任何关键常量、算法步骤、tile 布局有偏离，确认已在回复中显式列出偏离点 + 原因 + 是否需回退 Stage 3。**静默偏离视为违规** |
+| **测试输入与算子定义一致** | 确认 test 函数的输入 shape/dtype/value_range 取自 DESIGN.md §8「目标测试 case」，未偷换数据分布以规避算法弱点。若 SPEC/DESIGN 指定了 value_range 或数据分布，test 须沿用，不得自行替换 |
 
 > 增量模式须在**清理临时产物、合并为最终单文件之后**再自检——自检针对交付态，不针对中间态。
 
