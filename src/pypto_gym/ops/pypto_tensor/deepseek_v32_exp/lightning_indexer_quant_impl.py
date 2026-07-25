@@ -23,10 +23,7 @@ Example:
 """
 import sys
 from dataclasses import dataclass
-import torch
-from pypto.operation import op_wrapper
 import pypto
-from pypto import pypto_impl
 
 
 @dataclass
@@ -139,7 +136,7 @@ def lightning_indexer_decode_compute(
     for b_idx in pypto.loop(0, b, 1, name="LI_LOOP_BATCH", idx_name="b_idx"):
         cur_seq = act_seq_key[b_idx]
         cur_block = (cur_seq + block_size - 1) // block_size
-        last_seq = cur_seq - (cur_block - 1) * block_size
+        _last_seq = cur_seq - (cur_block - 1) * block_size
         # static tensor for rawShape assemble
         max_tensor = pypto.tensor([MAX_LI_S1, MAX_LI_S2], pypto.DT_FP32, "max_tensor")
         for s1_tile_idx in pypto.loop(0, s1_loop, 1, name="LI_LOOP_S1", idx_name="s1_loop"):

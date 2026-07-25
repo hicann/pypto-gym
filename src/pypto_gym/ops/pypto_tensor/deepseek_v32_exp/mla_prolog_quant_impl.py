@@ -208,7 +208,7 @@ def quant(
         max_value = pypto.amax(input_fp32, -1, keepdim=True)
         min_value = pypto.amin(input_fp32, -1, keepdim=True)
         scale_de_quant = max(pypto.div(pypto.sub(max_value, min_value), 255.0), 1e-12)
-        offset = pypto.sub(127.0, pypto.div(max_value, scale_de_quant))
+        _offset = pypto.sub(127.0, pypto.div(max_value, scale_de_quant))
         scale_quant = scalar_div(max_value, 1.0, True)
         out_fp32 = pypto.mul(input_fp32, scale_quant)
         out_int32 = pypto.cast(out_fp32, pypto.DT_INT32, pypto.CastMode.CAST_RINT)
@@ -302,7 +302,7 @@ def rope_v2(
     """
     seq_size = x.shape[0]
     d_r = x.shape[1]
-    x_dtype = x.dtype
+    _x_dtype = x.dtype
 
     pypto.set_vec_tile_shapes(tile_config.two_dim[0], tile_config.two_dim[1])
     cast_x = pypto.cast(x, pypto.DT_FP32)
@@ -445,17 +445,14 @@ def pre_compute_2d(
                                    [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
                                    [tile_config.pre_quant_cube_tile[4], tile_config.pre_quant_cube_tile[5]])
         pypto.set_semantic_label("Matmul_qa")
-        if bs < 128:
-            x_view1 = pypto.view(token_x, [bs, k // 2], [0, 0])
-            x_view2 = pypto.view(token_x, [bs, k // 2], [0, k // 2])
-            w_dq1 = pypto.view(w_dq, [k // 2, q_lora_rank], [0, 0])
-            w_dq2 = pypto.view(w_dq, [k // 2, q_lora_rank], [k // 2, 0])
-            q_a_proj1 = pypto.matmul(x_view1, w_dq1, pypto.DT_FP32)
-            q_a_proj2 = pypto.matmul(x_view2, w_dq2, pypto.DT_FP32)
-            q_a_proj_tmp = q_a_proj1 + q_a_proj2
-            q_a_proj = pypto.cast(q_a_proj_tmp, pypto.DT_BF16)
-        else:
-            q_a_proj = pypto.matmul(token_x, w_dq, dtype)
+        x_view1 = pypto.view(token_x, [bs, k // 2], [0, 0])
+        x_view2 = pypto.view(token_x, [bs, k // 2], [0, k // 2])
+        w_dq1 = pypto.view(w_dq, [k // 2, q_lora_rank], [0, 0])
+        w_dq2 = pypto.view(w_dq, [k // 2, q_lora_rank], [k // 2, 0])
+        q_a_proj1 = pypto.matmul(x_view1, w_dq1, pypto.DT_FP32)
+        q_a_proj2 = pypto.matmul(x_view2, w_dq2, pypto.DT_FP32)
+        q_a_proj_tmp = q_a_proj1 + q_a_proj2
+        q_a_proj = pypto.cast(q_a_proj_tmp, pypto.DT_BF16)
 
     pypto.set_vec_tile_shapes(mv, q_lora_rank)
     pypto.set_semantic_label("RmsNorm_qa")

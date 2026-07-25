@@ -19,7 +19,7 @@ from numpy.testing import assert_allclose
 import pypto
 
 
-def compare(t: torch.Tensor, t_ref: torch.Tensor, name, *, atol, rtol, max_error_ratio=0.005, max_error_count=10):
+def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ratio=0.005, max_error_count=10):
     """
     比较两个张量的差异，超过阈值时打印错误点并抛出断言错误
     Args:

@@ -28,9 +28,8 @@ Main Functions:
     - rms_norm_bias: RMS normalization with bias
     - rope_data: Rotary position embedding computation
 """
-from dataclasses import dataclass
 import os
-from typing import Optional, Any
+from typing import Optional
 import torch
 import pypto
 from torch._subclasses.fake_tensor import FakeTensor
@@ -38,93 +37,86 @@ from torch._dynamo import allow_in_graph
 from .utils.get_format import get_format
 
 
-@dataclass
-class CheckArgsInputs:
-    hidden_states: Any
-    residual: Any
-    input_layernorm_weight: Any
-    input_layernorm_bias: Any
-    atten_qkv_input_scale_reciprocal: Any
-    atten_qkv_input_offset: Any
-    atten_qkv_weight: Any
-    atten_qkv_quant_bias: Any
-    atten_qkv_deq_scale: Any
-    atten_q_norm_weight: Any
-    atten_q_norm_bias: Any
-    atten_k_norm_weight: Any
-    atten_k_norm_bias: Any
-    cos: Any
-    sin: Any
-    query: Any
-    key: Any
-    value: Any
-    residual_res: Any
-
-
-
-def check_args(inputs: CheckArgsInputs):
-
-
-
-    assert inputs.hidden_states.dim() == 2
-    assert get_format(inputs.hidden_states) == 'ND'
-    assert inputs.hidden_states.dtype == torch.bfloat16
-    assert inputs.residual.dim() == 2
-    assert get_format(inputs.residual) == 'ND'
-    assert inputs.residual.dtype == torch.bfloat16
-    assert inputs.input_layernorm_weight.dim() == 1
-    assert get_format(inputs.input_layernorm_weight) == 'ND'
-    assert inputs.input_layernorm_weight.dtype == torch.bfloat16
-    assert inputs.input_layernorm_bias.dim() == 1
-    assert get_format(inputs.input_layernorm_bias) == 'ND'
-    assert inputs.input_layernorm_bias.dtype == torch.bfloat16
-    assert inputs.atten_qkv_input_scale_reciprocal.dim() == 1
-    assert get_format(inputs.atten_qkv_input_scale_reciprocal) == 'ND'
-    assert inputs.atten_qkv_input_scale_reciprocal.dtype == torch.bfloat16
-    assert inputs.atten_qkv_input_offset.dim() == 1
-    assert get_format(inputs.atten_qkv_input_offset) == 'ND'
-    assert inputs.atten_qkv_input_offset.dtype == torch.bfloat16
-    assert inputs.atten_qkv_weight.dim() == 2
-    assert get_format(inputs.atten_qkv_weight) == 'NZ'
-    assert inputs.atten_qkv_weight.dtype == torch.int8
-    assert inputs.atten_qkv_quant_bias.dim() == 1
-    assert get_format(inputs.atten_qkv_quant_bias) == 'ND'
-    assert inputs.atten_qkv_quant_bias.dtype == torch.int32
-    assert inputs.atten_qkv_deq_scale.dim() == 1
-    assert get_format(inputs.atten_qkv_deq_scale) == 'ND'
-    assert inputs.atten_qkv_deq_scale.dtype == torch.float32
-    assert inputs.atten_q_norm_weight.dim() == 1
-    assert get_format(inputs.atten_q_norm_weight) == 'ND'
-    assert inputs.atten_q_norm_weight.dtype == torch.bfloat16
-    assert inputs.atten_q_norm_bias.dim() == 1
-    assert get_format(inputs.atten_q_norm_bias) == 'ND'
-    assert inputs.atten_q_norm_bias.dtype == torch.bfloat16
-    assert inputs.atten_k_norm_weight.dim() == 1
-    assert get_format(inputs.atten_k_norm_weight) == 'ND'
-    assert inputs.atten_k_norm_weight.dtype == torch.bfloat16
-    assert inputs.atten_k_norm_bias.dim() == 1
-    assert get_format(inputs.atten_k_norm_bias) == 'ND'
-    assert inputs.atten_k_norm_bias.dtype == torch.bfloat16
-    assert inputs.cos.dim() == 3
-    assert inputs.cos.shape[1] == 1
-    assert get_format(inputs.cos) == 'ND'
-    assert inputs.cos.dtype == torch.bfloat16
-    assert inputs.sin.dim() == 3
-    assert inputs.sin.shape[1] == 1
-    assert get_format(inputs.sin) == 'ND'
-    assert inputs.sin.dtype == torch.bfloat16
-    assert inputs.query.dim() == 2
-    assert get_format(inputs.query) == 'ND'
-    assert inputs.query.dtype == torch.bfloat16
-    assert inputs.key.dim() == 2
-    assert get_format(inputs.key) == 'ND'
-    assert inputs.key.dtype == torch.bfloat16
-    assert inputs.value.dim() == 2
-    assert get_format(inputs.value) == 'ND'
-    assert inputs.value.dtype == torch.bfloat16
-    assert inputs.residual_res.dim() == 2
-    assert get_format(inputs.residual_res) == 'ND'
-    assert inputs.residual_res.dtype == torch.bfloat16
+def check_args(
+    hidden_states,
+    residual,
+    input_layernorm_weight,
+    input_layernorm_bias,
+    atten_qkv_input_scale_reciprocal,
+    atten_qkv_input_offset,
+    atten_qkv_weight,
+    atten_qkv_quant_bias,
+    atten_qkv_deq_scale,
+    atten_q_norm_weight,
+    atten_q_norm_bias,
+    atten_k_norm_weight,
+    atten_k_norm_bias,
+    cos,
+    sin,
+    query,
+    key,
+    value,
+    residual_res,
+):
+    assert hidden_states.dim() == 2
+    assert get_format(hidden_states) == 'ND'
+    assert hidden_states.dtype == torch.bfloat16
+    assert residual.dim() == 2
+    assert get_format(residual) == 'ND'
+    assert residual.dtype == torch.bfloat16
+    assert input_layernorm_weight.dim() == 1
+    assert get_format(input_layernorm_weight) == 'ND'
+    assert input_layernorm_weight.dtype == torch.bfloat16
+    assert input_layernorm_bias.dim() == 1
+    assert get_format(input_layernorm_bias) == 'ND'
+    assert input_layernorm_bias.dtype == torch.bfloat16
+    assert atten_qkv_input_scale_reciprocal.dim() == 1
+    assert get_format(atten_qkv_input_scale_reciprocal) == 'ND'
+    assert atten_qkv_input_scale_reciprocal.dtype == torch.bfloat16
+    assert atten_qkv_input_offset.dim() == 1
+    assert get_format(atten_qkv_input_offset) == 'ND'
+    assert atten_qkv_input_offset.dtype == torch.bfloat16
+    assert atten_qkv_weight.dim() == 2
+    assert get_format(atten_qkv_weight) == 'NZ'
+    assert atten_qkv_weight.dtype == torch.int8
+    assert atten_qkv_quant_bias.dim() == 1
+    assert get_format(atten_qkv_quant_bias) == 'ND'
+    assert atten_qkv_quant_bias.dtype == torch.int32
+    assert atten_qkv_deq_scale.dim() == 1
+    assert get_format(atten_qkv_deq_scale) == 'ND'
+    assert atten_qkv_deq_scale.dtype == torch.float32
+    assert atten_q_norm_weight.dim() == 1
+    assert get_format(atten_q_norm_weight) == 'ND'
+    assert atten_q_norm_weight.dtype == torch.bfloat16
+    assert atten_q_norm_bias.dim() == 1
+    assert get_format(atten_q_norm_bias) == 'ND'
+    assert atten_q_norm_bias.dtype == torch.bfloat16
+    assert atten_k_norm_weight.dim() == 1
+    assert get_format(atten_k_norm_weight) == 'ND'
+    assert atten_k_norm_weight.dtype == torch.bfloat16
+    assert atten_k_norm_bias.dim() == 1
+    assert get_format(atten_k_norm_bias) == 'ND'
+    assert atten_k_norm_bias.dtype == torch.bfloat16
+    assert cos.dim() == 3
+    assert cos.shape[1] == 1
+    assert get_format(cos) == 'ND'
+    assert cos.dtype == torch.bfloat16
+    assert sin.dim() == 3
+    assert sin.shape[1] == 1
+    assert get_format(sin) == 'ND'
+    assert sin.dtype == torch.bfloat16
+    assert query.dim() == 2
+    assert get_format(query) == 'ND'
+    assert query.dtype == torch.bfloat16
+    assert key.dim() == 2
+    assert get_format(key) == 'ND'
+    assert key.dtype == torch.bfloat16
+    assert value.dim() == 2
+    assert get_format(value) == 'ND'
+    assert value.dtype == torch.bfloat16
+    assert residual_res.dim() == 2
+    assert get_format(residual_res) == 'ND'
+    assert residual_res.dtype == torch.bfloat16
 
 
 def rms_norm_bias(tensor_value, gamma, bias, mean_coff, eps, tile_shape):
@@ -321,8 +313,7 @@ def quant_attention_pre_kernel(
         mm_bf16 = pypto.cast(mm_deq_scale, input_dtype)
 
         pypto.set_vec_tile_shapes(bs_tile, head_size)
-        mm_3d = pypto.reshape(mm_bf16, [bs_tile, total_head_size // head_size, head_size],
-            valid_shape=[act_bs_tile, total_head_size // head_size, head_size], inplace=True)
+        mm_3d = pypto.reshape(mm_bf16, [bs_tile, total_head_size // head_size, head_size], inplace=True)
         pypto.set_vec_tile_shapes(bs_tile, tiling_value, head_size)
 
         q_tile = pypto.view(mm_3d, [bs_tile, q_num_head, head_size], [0, 0, 0],
@@ -443,35 +434,35 @@ def attention_pre_quant(
     if isinstance(hidden_states, FakeTensor):
         return
 
-    check_args(CheckArgsInputs(
-        hidden_states=hidden_states,
-        residual=residual,
-        input_layernorm_weight=input_layernorm_weight,
-        input_layernorm_bias=input_layernorm_bias,
-        atten_qkv_input_scale_reciprocal=atten_qkv_input_scale_reciprocal,
-        atten_qkv_input_offset=atten_qkv_input_offset,
-        atten_qkv_weight=atten_qkv_weight,
-        atten_qkv_quant_bias=atten_qkv_quant_bias,
-        atten_qkv_deq_scale=atten_qkv_deq_scale,
-        atten_q_norm_weight=atten_q_norm_weight,
-        atten_q_norm_bias=atten_q_norm_bias,
-        atten_k_norm_weight=atten_k_norm_weight,
-        atten_k_norm_bias=atten_k_norm_bias,
-        cos=cos,
-        sin=sin,
-        query=query,
-        key=key,
-        value=value,
-        residual_res=residual_res
-    ))
+    check_args(
+        hidden_states,
+        residual,
+        input_layernorm_weight,
+        input_layernorm_bias,
+        atten_qkv_input_scale_reciprocal,
+        atten_qkv_input_offset,
+        atten_qkv_weight,
+        atten_qkv_quant_bias,
+        atten_qkv_deq_scale,
+        atten_q_norm_weight,
+        atten_q_norm_bias,
+        atten_k_norm_weight,
+        atten_k_norm_bias,
+        cos,
+        sin,
+        query,
+        key,
+        value,
+        residual_res,
+    )
 
-    bs = hidden_states.shape[0]
-    hidden_size = hidden_states.shape[1]
-    total_head_size = atten_qkv_weight.shape[1]
-    head_size = atten_q_norm_weight.shape[0]
-    q_size = query.shape[1]
-    kv_size = key.shape[1]
-    half_rotary_dim = cos.shape[2]
+    _bs = hidden_states.shape[0]
+    _hidden_size = hidden_states.shape[1]
+    _total_head_size = atten_qkv_weight.shape[1]
+    _head_size = atten_q_norm_weight.shape[0]
+    _q_size = query.shape[1]
+    _kv_size = key.shape[1]
+    _half_rotary_dim = cos.shape[2]
     inputs = [hidden_states, residual, input_layernorm_weight, input_layernorm_bias, atten_qkv_input_scale_reciprocal,
          atten_qkv_input_offset, atten_qkv_weight, atten_qkv_quant_bias, atten_qkv_deq_scale, atten_q_norm_weight,
          atten_q_norm_bias, atten_k_norm_weight, atten_k_norm_bias, cos, sin, query, key, value, residual_res]

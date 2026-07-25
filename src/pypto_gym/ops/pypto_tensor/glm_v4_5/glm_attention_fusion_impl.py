@@ -13,18 +13,10 @@
 import os
 from typing import Optional
 from dataclasses import dataclass
-import numpy as np
 import torch
-import torch_npu
 import pypto
-import pytest
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
-
-
-np.random.seed(0)
-torch.manual_seed(0)
-np.set_printoptions(formatter={'float': '{:.6f}'.format})
 
 
 @dataclass

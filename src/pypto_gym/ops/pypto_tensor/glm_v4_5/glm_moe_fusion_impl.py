@@ -10,9 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
-from dataclasses import dataclass
 import os
-from typing import Any
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch._dynamo import allow_in_graph
@@ -39,62 +37,56 @@ def powers_of_2(n: int) -> set[int]:
     return result
 
 
-@dataclass
-class CheckArgsInputs:
-    gate_weight: torch.Tensor
-    hidden_states: torch.Tensor
-    top_k: int
-    renormalize: bool
-    topk_group: int
-    num_expert_group: int
-    e_score_correction_bias: torch.Tensor
-    w13: Any
-    w13_scale: Any
-    w2: Any
-    w2_scale: Any
+def check_args(
+    gate_weight: torch.Tensor,
+    hidden_states: torch.Tensor,
+    top_k: int,
+    renormalize: bool,
+    topk_group: int,
+    num_expert_group: int,
+    e_score_correction_bias: torch.Tensor,
+    w13,
+    w13_scale,
+    w2,
+    w2_scale,
+) -> None:
+    check_cond(gate_weight.dim() == 2, "invalid gate weight dim.")
+    check_cond(gate_weight.shape[0] == 160, "invalid gate weight shape.")
+    check_cond(gate_weight.shape[1] == 5120, "invalid gate weight shape.")
+    check_cond(get_format(gate_weight) == 'ND', "invalid gate weight format.")
+    check_cond((gate_weight.dtype == torch.float32), "invalid gate weight dtype.")
+    check_cond(hidden_states.dim() == 2, "invalid hidden states dim.")
+    check_cond(hidden_states.shape[1] == 5120, "invalid hidden states shape.")
+    check_cond(get_format(hidden_states) == 'ND', "invalid hidden states format.")
+    check_cond(hidden_states.dtype == torch.bfloat16, "invalid hidden states dtype.")
 
+    check_cond(e_score_correction_bias.dim() == 1, "invalid bias dim.")
+    check_cond(e_score_correction_bias.shape[0] == 160, "invalid bias shape.")
+    check_cond(get_format(e_score_correction_bias) == 'ND', "invalid bias format.")
+    check_cond(e_score_correction_bias.dtype == torch.bfloat16, "invalid bias dtype.")
+    check_cond(isinstance(top_k, int), "invalid topk dtype.")
+    check_cond(isinstance(renormalize, bool), "invalid renormalize dtype.")
+    check_cond(isinstance(topk_group, int), "invalid topk_group dtype.")
+    check_cond(isinstance(num_expert_group, int), "invalid num_expert_group dtype.")
 
-
-def check_args(inputs: CheckArgsInputs):
-
-
-    check_cond(inputs.gate_weight.dim() == 2, "invalid gate weight dim.")
-    check_cond(inputs.gate_weight.shape[0] == 160, "invalid gate weight shape.")
-    check_cond(inputs.gate_weight.shape[1] == 5120, "invalid gate weight shape.")
-    check_cond(get_format(inputs.gate_weight) == 'ND', "invalid gate weight format.")
-    check_cond((inputs.gate_weight.dtype == torch.float32), "invalid gate weight dtype.")
-    check_cond(inputs.hidden_states.dim() == 2, "invalid hidden states dim.")
-    check_cond(inputs.hidden_states.shape[1] == 5120, "invalid hidden states shape.")
-    check_cond(get_format(inputs.hidden_states) == 'ND', "invalid hidden states format.")
-    check_cond(inputs.hidden_states.dtype == torch.bfloat16, "invalid hidden states dtype.")
-
-    check_cond(inputs.e_score_correction_bias.dim() == 1, "invalid bias dim.")
-    check_cond(inputs.e_score_correction_bias.shape[0] == 160, "invalid bias shape.")
-    check_cond(get_format(inputs.e_score_correction_bias) == 'ND', "invalid bias format.")
-    check_cond(inputs.e_score_correction_bias.dtype == torch.bfloat16, "invalid bias dtype.")
-    check_cond(isinstance(inputs.top_k, int), "invalid topk dtype.")
-    check_cond(isinstance(inputs.renormalize, bool), "invalid inputs.renormalize dtype.")
-    check_cond(isinstance(inputs.topk_group, int), "invalid inputs.topk_group dtype.")
-    check_cond(isinstance(inputs.num_expert_group, int), "invalid inputs.num_expert_group dtype.")
-
-    check_cond(inputs.w13.dim() == 2, "invalid inputs.w13 dim.")
-    check_cond(inputs.w13.shape[0] == 5120, "invalid inputs.w13 shape.")
-    check_cond(inputs.w13.shape[1] == 384, "invalid inputs.w13 shape.")
-    check_cond(get_format(inputs.w13) == 'NZ', "invalid inputs.w13 format.")
-    check_cond(inputs.w13.dtype == torch.int8, "invalid inputs.w13 dtype.")
-    check_cond(inputs.w13_scale.dim() == 1, "invalid inputs.w13_scale dim.")
-    check_cond(inputs.w13_scale.shape[0] == 384, "invalid inputs.w13_scale shape.")
-    check_cond(get_format(inputs.w13_scale) == 'ND', "invalid inputs.w13_scale format.")
-    check_cond(inputs.w13_scale.dtype == torch.bfloat16, "invalid inputs.w13_scale dtype.")
-    check_cond(inputs.w2.dim() == 2, "invalid inputs.w2 dim.")
-    check_cond(inputs.w2.shape[0] == 192, "invalid inputs.w2 shape.")
-    check_cond(inputs.w2.shape[1] == 5120, "invalid inputs.w2 shape.")
-    check_cond(get_format(inputs.w2) == 'NZ', "invalid inputs.w2 format.")
-    check_cond(inputs.w2.dtype == torch.int8, "invalid inputs.w2 dtype.")
-    check_cond(inputs.w2_scale.dim() == 1, "invalid inputs.w2_scale dim.")
-    check_cond(inputs.w2_scale.shape[0] == 5120, "invalid inputs.w2_scale shape.")
-    check_cond(get_format(inputs.w2_scale) == 'ND', "invalid inputs.w2_scale format.")
-    check_cond(inputs.w2_scale.dtype == torch.bfloat16, "invalid hidden states dtype.")
+    check_cond(w13.dim() == 2, "invalid w13 dim.")
+    check_cond(w13.shape[0] == 5120, "invalid w13 shape.")
+    check_cond(w13.shape[1] == 384, "invalid w13 shape.")
+    check_cond(get_format(w13) == 'NZ', "invalid w13 format.")
+    check_cond(w13.dtype == torch.int8, "invalid w13 dtype.")
+    check_cond(w13_scale.dim() == 1, "invalid w13_scale dim.")
+    check_cond(w13_scale.shape[0] == 384, "invalid w13_scale shape.")
+    check_cond(get_format(w13_scale) == 'ND', "invalid w13_scale format.")
+    check_cond(w13_scale.dtype == torch.bfloat16, "invalid w13_scale dtype.")
+    check_cond(w2.dim() == 2, "invalid w2 dim.")
+    check_cond(w2.shape[0] == 192, "invalid w2 shape.")
+    check_cond(w2.shape[1] == 5120, "invalid w2 shape.")
+    check_cond(get_format(w2) == 'NZ', "invalid w2 format.")
+    check_cond(w2.dtype == torch.int8, "invalid w2 dtype.")
+    check_cond(w2_scale.dim() == 1, "invalid w2_scale dim.")
+    check_cond(w2_scale.shape[0] == 5120, "invalid w2_scale shape.")
+    check_cond(get_format(w2_scale) == 'ND', "invalid w2_scale format.")
+    check_cond(w2_scale.dtype == torch.bfloat16, "invalid hidden states dtype.")
 
 
 ND = pypto.TileOpFormat.TILEOP_ND
@@ -227,48 +219,58 @@ def moe_fusion_kernel(
         pypto.assemble(out, hidden_states_offset, ffn_res)
 
 
-@dataclass
-class MoeFusionInputs:
-    gate_weight: torch.Tensor
-    hidden_states: torch.Tensor
-    top_k: int
-    renormalize: bool
-    topk_group: int
-    num_expert_group: int
-    e_score_bias: torch.Tensor
-    w13: torch.Tensor
-    w13_scale: torch.Tensor
-    w2: torch.Tensor
-    w2_scale: torch.Tensor
-    topk_weights: torch.Tensor
-    topk_ids: torch.Tensor
-    ffn_res: torch.Tensor
-
-
-
-
-def moe_fusion(inputs: MoeFusionInputs):
-
-
-    if isinstance(inputs.hidden_states, FakeTensor):
+@allow_in_graph
+def moe_fusion(
+    gate_weight: torch.Tensor,  # gate matmul weights
+    hidden_states: torch.Tensor,  # Hidden states of shape (num_tokens, hidden_size).
+    top_k: int,  # number of top k experts.
+    renormalize: bool,
+    topk_group: int,
+    num_expert_group: int,
+    e_score_bias: torch.Tensor,
+    w13: torch.Tensor,
+    w13_scale: torch.Tensor,
+    w2: torch.Tensor,
+    w2_scale: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    ffn_res: torch.Tensor,
+):
+    if isinstance(hidden_states, FakeTensor):
         return
-    check_args(CheckArgsInputs(
-        inputs.gate_weight, inputs.hidden_states, inputs.top_k,
-        inputs.renormalize, inputs.topk_group, inputs.num_expert_group,
-        inputs.e_score_bias, inputs.w13, inputs.w13_scale, inputs.w2, inputs.w2_scale))
+    check_args(
+        gate_weight,
+        hidden_states,
+        top_k,
+        renormalize,
+        topk_group,
+        num_expert_group,
+        e_score_bias,
+        w13,
+        w13_scale,
+        w2,
+        w2_scale,
+    )
 
-    bs = inputs.hidden_states.shape[0]
-    hidden_size = inputs.hidden_states.shape[1]
-    kernel_inputs = [inputs.hidden_states, inputs.gate_weight, inputs.e_score_bias, inputs.w13, inputs.w13_scale,
-                inputs.w2, inputs.w2_scale, inputs.topk_weights, inputs.topk_ids, inputs.ffn_res]
+    _bs = hidden_states.shape[0]
+    _hidden_size = hidden_states.shape[1]
+    inputs = [hidden_states, gate_weight, e_score_bias, w13, w13_scale, w2, w2_scale, topk_weights, topk_ids, ffn_res]
 
-    moe_fusion_kernel(*kernel_inputs, inputs.topk_group, inputs.num_expert_group)
+    moe_fusion_kernel(*inputs, topk_group, num_expert_group)
 
 
-def moe_fusion_pto(gate_layer, hidden_states, share_layer, top_k, renormalize, topk_group=None, num_expert_group=None,
-                   e_score_correction_bias=None):
+def moe_fusion_pto(
+    gate_layer,
+    hidden_states,
+    share_layer,
+    top_k,
+    renormalize,
+    topk_group=None,
+    num_expert_group=None,
+    e_score_correction_bias=None,
+):
     bs = hidden_states.shape[0]
-    ne = gate_layer.weight.shape[0]
+    _ne = gate_layer.weight.shape[0]
     device_info = hidden_states.device
     topk_weights = torch.empty((bs, top_k), dtype=torch.float32, device=device_info)
     topk_ids = torch.empty((bs, top_k), dtype=torch.int32, device=device_info)
@@ -279,7 +281,7 @@ def moe_fusion_pto(gate_layer, hidden_states, share_layer, top_k, renormalize, t
     w2_int8 = share_layer.down_proj.weight
     w2_scale = share_layer.down_proj.weight_scale
 
-    moe_fusion(MoeFusionInputs(
+    moe_fusion(
         gate_layer.weight,
         hidden_states,
         top_k,
@@ -293,6 +295,6 @@ def moe_fusion_pto(gate_layer, hidden_states, share_layer, top_k, renormalize, t
         w2_scale,
         topk_weights,
         topk_ids,
-        ffn_res
-    ))
+        ffn_res,
+    )
     return topk_weights, topk_ids, ffn_res

@@ -24,10 +24,7 @@ Main Functions:
 Example:
     See tests/ops/deepseek_v32_exp/test_sparse_attention_antiquant.py for usage examples.
 """
-import os
-import math
 from dataclasses import dataclass
-import numpy as np
 import pypto
 from pypto.experimental import gather_in_ub
 

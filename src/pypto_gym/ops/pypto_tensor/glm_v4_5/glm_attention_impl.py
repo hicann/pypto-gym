@@ -237,7 +237,7 @@ def ifa_func_kernel(
 @pypto.frontend.jit(
     runtime_options={
         "stitch_function_max_num": 900,
-        "device_sched_mode": 1,
+        "device_sched_mode": 2,
         "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
         "max_workspace_kb": 2000000
     },

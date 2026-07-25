@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
 import numpy as np
 from numpy.testing import assert_allclose
 import pypto
-from glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond, MoeFusionInputs
+from glm_v4_5.glm_moe_fusion_impl import moe_fusion, check_cond
 
 
 def gen_quan_per_channel_weight_nz(x):
@@ -150,10 +150,10 @@ def _run_single_moe_iter(cfg: _RunSingleMoeIterInputs):
     if cfg.enable_graph:
         g = torch.npu.NPUGraph()
         with torch.npu.graph(g):
-            moe_fusion(MoeFusionInputs(*inputs, *outputs))
+            moe_fusion(*inputs, *outputs)
         g.replay()
     else:
-        moe_fusion(MoeFusionInputs(*inputs, *outputs))
+        moe_fusion(*inputs, *outputs)
 
     topk_weight_list, topk_ids_list = _compute_router_golden(
         hidden_states, mm_weight, e_score_bias, cfg.bs, cfg.ne,

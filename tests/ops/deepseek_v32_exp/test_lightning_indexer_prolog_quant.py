@@ -480,7 +480,7 @@ def test_b4_s1_2_s2_64k():
         unroll_list=[32, 16, 8, 4, 2, 1],
         cube_l1_reuse_setting={1: 4},
         block_size=128,
-        t_sub_tile=2,
+        t_sub_tile=1,
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )
@@ -497,7 +497,7 @@ def test_b8_s1_2_s2_64k():
         unroll_list=[32, 16, 8, 4, 2, 1],
         cube_l1_reuse_setting={1: 4},
         block_size=128,
-        t_sub_tile=2,
+        t_sub_tile=1,
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )
@@ -514,7 +514,7 @@ def test_b1_s1_4k_s2_64k():
         unroll_list=[32, 16, 8, 4, 2, 1],
         cube_l1_reuse_setting={1: 4},
         block_size=128,
-        t_sub_tile=2,
+        t_sub_tile=1,
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )
@@ -531,7 +531,7 @@ def test_b2_s1_4k_s2_64k():
         unroll_list=[32, 16, 8, 4, 2, 1],
         cube_l1_reuse_setting={1: 4},
         block_size=128,
-        t_sub_tile=2,
+        t_sub_tile=1,
         chunk_size=2,
         vec_nbuffer_setting={-1: 1},
     )

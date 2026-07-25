@@ -75,7 +75,7 @@ def select_experts_mm_kernel(
         The computation uses cube tiling for efficient matrix multiplication on NPU.
     """
     bs = hidden_states.shape[0]
-    ne = mm_weight.shape[0]
+    _ne = mm_weight.shape[0]
     h_num = hidden_states.shape[1]
 
     view_shape = (32, h_num)
@@ -130,4 +130,3 @@ def gate(
 
     inputs = [hidden_states, gate_weight, router_logits_out]
     select_experts_mm_kernel(*inputs)
-    return router_logits_out
