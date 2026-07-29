@@ -1044,7 +1044,19 @@ class BuildCtrl():
         return self.install_root
 
     def _get_setuptools_build_ext_config_setting(self) -> Tuple[str, str]:
+        cmake_args = ""
+        ascend_cann_package_path = (
+            os.environ.get("ASCEND_CANN_PACKAGE_PATH")
+            or os.environ.get("ASCEND_HOME_PATH")
+            or (os.path.dirname(os.environ["ASCEND_OPP_PATH"]) if os.environ.get("ASCEND_OPP_PATH") else None)
+        )
+        if ascend_cann_package_path:
+            cmake_args += f' -DASCEND_CANN_PACKAGE_PATH="{ascend_cann_package_path}"'
+        
         env_setting = ""
+        env_setting += f" --cmake-options=\"{cmake_args}\"" if cmake_args else ""
+        env_setting += f" --backend-type={self.feature.backend_type}"
+        
         multi_py3_exe_cfg = self.feature.multi_py3_exe_cfg
         if multi_py3_exe_cfg:
             env_setting += f" --multi-py3-exe={multi_py3_exe_cfg}"

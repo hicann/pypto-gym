@@ -73,7 +73,12 @@ if [ -d "/usr/local/Ascend/ascend-toolkit/latest/" ]; then
     echo "ascend-toolkit 目录存在"
 fi
 source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
-source /usr/local/Ascend/cann-9.1.0/bin/setenv.bash
+
+if [ -n "${ASCEND_HOME_PATH:+set}" ]; then
+    source "${ASCEND_HOME_PATH}/bin/setenv.bash"
+elif [ -f "/usr/local/Ascend/cann/bin/setenv.bash" ]; then
+    source "/usr/local/Ascend/cann/bin/setenv.bash"
+fi
 
 # 检查升级锁文件，升级锁检查已在外部设置，此处注掉
 # ENV_UPGRADE_LOCK_FILE="$DATA_DIR/env_upgrade_flag_v1"
