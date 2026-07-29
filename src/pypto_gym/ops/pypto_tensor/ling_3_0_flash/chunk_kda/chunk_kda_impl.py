@@ -25,6 +25,26 @@ _BC = 64                # intra-chunk decay sub-block (one local pivot per block
 _NC = _BT // _BC        # sub-blocks per 128-row chunk
 _DECAY_CAP = 80.0       # clamp col-factor exponent below fp32 exp overflow (~88.7)
 
+_MASK_CACHE = {}   # (device) -> (tril, trils, eyestk); constants independent of input data
+_CU_CACHE = {}     # (B, T, device) -> cu int32 segment table for non-varlen path
+
+
+def _build_masks(dev):
+    """Build the three kernel constants (tril, trils, eyestk). Cached by device: these
+    depend only on _BT/_MIN and the device, not on input data, so rebuilding per call
+    wastes a kernel launch each."""
+    key = str(dev)
+    hit = _MASK_CACHE.get(key)
+    if hit is not None:
+        return hit
+    idx = torch.arange(_BT, device=dev)
+    tril = (idx.reshape(_BT, 1) >= idx.reshape(1, _BT)).float()
+    trils = -(idx.reshape(_BT, 1) > idx.reshape(1, _BT)).float()       # -1 folded (saves in-kernel neg)
+    eyestk = torch.eye(_MIN, device=dev, dtype=torch.float32).repeat(1, 8)
+    out = (tril, trils, eyestk)
+    _MASK_CACHE[key] = out
+    return out
+
 
 # =============================================================================
 # 8x16 block matrix inverse. Inverts (I + A) where A is strict-lower: feed neg-A so
@@ -125,8 +145,7 @@ def _chunk_compute(qc, kc, vc, gc, bc, s_carry, tril_incl, tril_strict, eye_stac
     a_full, a2_raw = _intra_chunk_a(q_s, k_s, gcum)       # [128,128], [128,128] (stable, unmasked)
     pypto.set_vec_tile_shapes(128, 128)                  # restore caller vec tile (_intra_chunk_a set its own)
     b_row = bc.transpose(0, 1)                            # [128,1] (bc already fp32)
-    a = a_full * b_row * tril_strict                      # [128,128]
-    neg_a = pypto.neg(a)
+    neg_a = a_full * b_row * tril_strict                  # tril_strict carries -1 -> -A directly (saves neg op)
     a_inv = _inverse8(neg_a, eye_stack, z8, z16, z32)     # [128,128]
     a_inv = a_inv * bc
     pypto.set_vec_tile_shapes(128, 128)
@@ -134,13 +153,12 @@ def _chunk_compute(qc, kc, vc, gc, bc, s_carry, tril_incl, tril_strict, eye_stac
     # --- bf16 matmul inputs (Cube fast path), fp32 accumulation ---
     a_inv_bf = pypto.cast(a_inv, pypto.DT_BF16)          # [128,128] feeds w & u matmuls
     kg_bf = pypto.cast(kg, pypto.DT_BF16)                # [128,K] kg=k_s*exp(gcum): fp32 then bf16
-    w = pypto.matmul(a_inv_bf, kg_bf, pypto.DT_FP32)     # [128,K] bf16 in, fp32 accum
+    w_bf = pypto.matmul(a_inv_bf, kg_bf, pypto.DT_BF16)  # [128,K] bf16 out via cube epilogue (saves separate cast + C->V->C hop)
     u = pypto.matmul(a_inv_bf, vc, pypto.DT_FP32)        # [128,V] bf16 in (vc already bf16), fp32 accum
     # M3: cross-chunk recurrence (state S carried over the chunk loop)
     qg = q_s * eg                                         # [128,K] reuse exp(gcum) from M1 (fp32; cast bf16 below)
     a2 = a2_raw * tril_incl                               # [128,128] (stable q-side A, inclusive-lower)
     s_carry_bf = pypto.cast(s_carry, pypto.DT_BF16)      # [K,V] feeds w@s_carry & qg@s_carry; fp32 s_carry kept for s_new
-    w_bf = pypto.cast(w, pypto.DT_BF16)                  # [128,K] w=a_inv@kg: fp32 then bf16
     vi = u - pypto.matmul(w_bf, s_carry_bf, pypto.DT_FP32)   # [128,V] fp32 (u & matmul both fp32)
     qg_bf = pypto.cast(qg, pypto.DT_BF16)                # [128,K] qg=q_s*exp(gcum): fp32 then bf16
     a2_bf = pypto.cast(a2, pypto.DT_BF16)                # [128,128] fp32 -> bf16
@@ -160,15 +178,21 @@ def _chunk_compute(qc, kc, vc, gc, bc, s_carry, tril_incl, tril_strict, eye_stac
 # directly in the @jit body.
 # =============================================================================
 @pypto.frontend.jit(
-        runtime_options={"run_mode": pypto.RunMode.NPU, "launch_sched_aicpu_num": 3},
+        runtime_options={
+            "run_mode": pypto.RunMode.NPU,
+            "stitch_function_max_num": 256,
+            "device_sched_mode": 1,
+            "launch_sched_aicpu_num": 3,
+        },
         pass_options={
-            "vec_nbuffer_setting": {-2: 1, -1: 64},
-            "cube_l1_reuse_setting": {-1: 4},
-            "cube_nbuffer_setting": {-1: 4}
-            },
+            "vec_nbuffer_setting": {-2: 1, -1: 32},
+            "cube_l1_reuse_setting": {-1: 32},
+            "cube_nbuffer_setting": {-1: 8},
+        },
         debug_options={
             "runtime_debug_mode": 0
-        })
+        }
+        )
 def chunk_kda_varlen_kernel(
     q:      pypto.Tensor([1, pypto.DYNAMIC, pypto.DYNAMIC, 128], pypto.DT_BF16),  # [1,T,H,K] packed  # SNAP:SIG_JIT
     k:      pypto.Tensor([1, pypto.DYNAMIC, pypto.DYNAMIC, 128], pypto.DT_BF16),  # [1,T,H,K]
@@ -340,7 +364,11 @@ def chunk_kda_wrapper(q, k, v, g, beta, scale=None, initial_state=None,
     if cu_seqlens is None:
         assert T % _BT == 0, "T must be a multiple of chunk_size when cu_seqlens=None"
         N = B
-        cu = torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=dev)   # [0,T,2T,...,B*T]
+        _ck = (B, T, str(dev))
+        cu = _CU_CACHE.get(_ck)
+        if cu is None:
+            cu = torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=dev)   # [0,T,2T,...,B*T]
+            _CU_CACHE[_ck] = cu
     else:
         assert B == 1, "varlen (cu_seqlens) requires packed batch size 1"
         cu = cu_seqlens                                                       # PASS-THROUGH device int32 tensor (validated, no cast)
@@ -352,10 +380,7 @@ def chunk_kda_wrapper(q, k, v, g, beta, scale=None, initial_state=None,
     gk = g.reshape(1, Ttot, H, K)                                      # [1,Ttot,H,K] fp32
     bk = beta.reshape(1, Ttot, H)                                      # [1,Ttot,H] fp32
     # in-kernel constants (arange masks + [16,128] block-diag I)
-    idx = torch.arange(_BT, device=dev)
-    tril = (idx.reshape(_BT, 1) >= idx.reshape(1, _BT)).float()        # inclusive lower-tri (cumsum)
-    trils = (idx.reshape(_BT, 1) > idx.reshape(1, _BT)).float()        # strict lower-tri (A mask)
-    eyestk = torch.eye(_MIN, device=dev, dtype=torch.float32).repeat(1, 8)  # [16,128] block-diag I
+    tril, trils, eyestk = _build_masks(dev)       # cached constants (-1 folded into trils)
     # pass initial_state directly in upstream ABI [N,H,V,K] (the [V,K]->[K,V] transpose
     # is done in-kernel); None -> a zeros seed in [N,H,V,K].
     if initial_state is not None:

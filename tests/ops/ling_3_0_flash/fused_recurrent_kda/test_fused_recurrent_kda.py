@@ -43,7 +43,7 @@ import pytest
 import pypto
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Path bootstrap: add src/pypto_gym/ops/pypto_tensor so kda_flash package
+# Path bootstrap: add src/pypto_gym/ops/pypto_tensor so ling_3_0_flash package
 # resolves, and this test dir so the golden module resolves.
 # ═══════════════════════════════════════════════════════════════════════════════
 _HERE = Path(__file__).parent
@@ -60,7 +60,7 @@ import torch.nn.functional as F
 import torch_npu  # noqa: F401  required for NPU device init
 
 # Impl: public entry fused_recurrent_kda_impl (alias for fused_recurrent_kda_wrapper)
-from kda_flash.fused_recurrent_kda.fused_recurrent_kda_impl import (
+from ling_3_0_flash.fused_recurrent_kda.fused_recurrent_kda_impl import (
     fused_recurrent_kda_impl,
     fused_recurrent_kda,
 )

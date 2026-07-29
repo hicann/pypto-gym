@@ -17,7 +17,7 @@
 # g=logsigmoid<=0, beta=sigmoid) per SPEC.md §9 / MEMORY composition.
 #
 # Tolerances: o bf16 atol/rtol 1e-2; S fp32 atol/rtol 1e-3.
-# Run:  pytest tests/ops/kda_flash/chunk_kda/test_chunk_kda.py   (NPU)
+# Run:  pytest tests/ops/ling_3_0_flash/chunk_kda/test_chunk_kda.py   (NPU)
 # =============================================================================
 
 import os
@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Path bootstrap: add src/pypto_gym/ops/pypto_tensor so kda_flash package
+# Path bootstrap: add src/pypto_gym/ops/pypto_tensor so ling_3_0_flash package
 # resolves, and this test dir so golden, detailed_tensor_compare, test_inputs
 # resolve.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,7 +43,7 @@ if _this_dir not in sys.path:
 import torch
 import torch_npu  # noqa: F401  required for NPU device init
 
-from kda_flash.chunk_kda.chunk_kda_impl import chunk_kda_wrapper
+from ling_3_0_flash.chunk_kda.chunk_kda_impl import chunk_kda_wrapper
 from chunk_kda_golden import chunk_kda_golden
 from detailed_tensor_compare import detailed_tensor_compare
 from test_inputs import make_inputs, make_call_kwargs
