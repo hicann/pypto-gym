@@ -43,9 +43,10 @@ class FlashAttentionGradTileShapeConfig:
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 256,
+        "stitch_function_max_num": 512,
         "device_sched_mode": 3,
         "ready_on_host_tensors": ["actual_q", "actual_kv"],
+        "max_workspace_kb": 25170624,
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 1, 0: 4},
