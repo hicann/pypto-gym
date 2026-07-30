@@ -238,7 +238,7 @@ def _compute_q_path(inputs, t, h, q_lora_rank, q_head_dim, qk_nope_head_dim, kv_
         # no smooth
         x_scale = inputs.get("x_scale")
         w_dq_scale = inputs.get("w_dq_scale")
-        q_a_proj = torch_npu.npu_quant_matmul(x.view(1, t, h).npu(), w_dq.view(1, h, q_lora_rank).npu(), \
+        q_a_proj = torch_npu.npu_quant_matmul(x.view(t, h).npu(), w_dq.view(h, q_lora_rank).npu(), \
             w_dq_scale.npu(), pertoken_scale=x_scale.view(t, h // 64, 2).npu(), \
             x1_dtype=torch.float8_e4m3fn, x2_dtype=torch.float8_e4m3fn, output_dtype=torch.float32, \
         pertoken_scale_dtype=torch.float8_e8m0fnu, scale_dtype=torch.float8_e8m0fnu, group_sizes=[1, 1, 32])
@@ -253,8 +253,8 @@ def _compute_q_path(inputs, t, h, q_lora_rank, q_head_dim, qk_nope_head_dim, kv_
     if is_quant_b:
         q_a_layernorm, q_a_layernorm_scale_dequant = quant_mx_golden_bytes(q_a_layernorm)  # scale: [t,1]
         w_uqqr_scale = inputs.get("w_uqqr_scale")
-        q_b_proj = torch_npu.npu_quant_matmul(q_a_layernorm.view(1, t, q_lora_rank).npu(), \
-            w_uqqr.view(1, q_lora_rank, n * q_head_dim).npu(), w_uqqr_scale.npu(), \
+        q_b_proj = torch_npu.npu_quant_matmul(q_a_layernorm.view(t, q_lora_rank).npu(), \
+            w_uqqr.view(q_lora_rank, n * q_head_dim).npu(), w_uqqr_scale.npu(), \
             pertoken_scale=q_a_layernorm_scale_dequant.view(t, q_lora_rank // 64, 2).npu(), \
             x1_dtype=torch.float8_e4m3fn, x2_dtype=torch.float8_e4m3fn, output_dtype=torch.float32, \
         pertoken_scale_dtype=torch.float8_e8m0fnu, scale_dtype=torch.float8_e8m0fnu, group_sizes=[1, 1, 32])
@@ -292,8 +292,8 @@ def _compute_kv_rope_cache_path(inputs, t, h, kv_lora_rank, qk_rope_head_dim, qk
     if is_quant_a:
         x_scale = inputs.get("x_scale")
         w_dkvkr_scale = inputs.get("w_dkvkr_scale")
-        kv_a_proj = torch_npu.npu_quant_matmul(x.view(1, t, h).npu(), \
-            w_dkvkr.view(1, h, kv_lora_rank + qk_rope_head_dim).npu(), w_dkvkr_scale.npu(), \
+        kv_a_proj = torch_npu.npu_quant_matmul(x.view(t, h).npu(), \
+            w_dkvkr.view(h, kv_lora_rank + qk_rope_head_dim).npu(), w_dkvkr_scale.npu(), \
             pertoken_scale=x_scale.view(t, h // 64, 2).npu(), x1_dtype=torch.float8_e4m3fn, \
             x2_dtype=torch.float8_e4m3fn, output_dtype=torch.float32, \
         pertoken_scale_dtype=torch.float8_e8m0fnu, scale_dtype=torch.float8_e8m0fnu, group_sizes=[1, 1, 32])
