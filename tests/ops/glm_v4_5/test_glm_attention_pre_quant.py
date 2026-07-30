@@ -478,7 +478,6 @@ def _generate_test_data(device_id, bs, hidden_size, total_head_size, head_size,
     x_offset = torch.rand(hidden_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
     weight = torch.randint(-128, 128, size=(hidden_size, total_head_size), dtype=torch.int8,
         device=f'npu:{device_id}')
-    weight = torch_npu.npu_format_cast(weight, 29)
     quant_bias = torch.randint(-128, 128, size=(total_head_size,), dtype=torch.int32, device=f'npu:{device_id}')
     deq_scale = torch.rand(total_head_size, dtype=torch.float32, device=f'npu:{device_id}')
     q_gamma = torch.rand(head_size, dtype=torch.bfloat16, device=f'npu:{device_id}')
@@ -551,7 +550,8 @@ def test_quant_attention_pre():
             _generate_test_data(device_id, bs, hidden_size, total_head_size, head_size,
                                 q_size, kv_size, half_rotary_dim)
 
-        inputs = [x, residual_input, x_gamma, x_bias, x_scale, x_offset, weight,
+        inputs = [x, residual_input, x_gamma, x_bias, x_scale, x_offset,
+                  torch_npu.npu_format_cast(weight, 29),
                   quant_bias, deq_scale, q_gamma, q_bias, k_gamma, k_bias,
                   cos, sin, query, key, value, residual_res]
         attention_pre_quant(*inputs)
