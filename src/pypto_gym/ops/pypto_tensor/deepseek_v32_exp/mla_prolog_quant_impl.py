@@ -444,15 +444,8 @@ def pre_compute_2d(
         pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
                                    [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
                                    [tile_config.pre_quant_cube_tile[4], tile_config.pre_quant_cube_tile[5]])
-        pypto.set_semantic_label("Matmul_qa")
-        x_view1 = pypto.view(token_x, [bs, k // 2], [0, 0])
-        x_view2 = pypto.view(token_x, [bs, k // 2], [0, k // 2])
-        w_dq1 = pypto.view(w_dq, [k // 2, q_lora_rank], [0, 0])
-        w_dq2 = pypto.view(w_dq, [k // 2, q_lora_rank], [k // 2, 0])
-        q_a_proj1 = pypto.matmul(x_view1, w_dq1, pypto.DT_FP32)
-        q_a_proj2 = pypto.matmul(x_view2, w_dq2, pypto.DT_FP32)
-        q_a_proj_tmp = q_a_proj1 + q_a_proj2
-        q_a_proj = pypto.cast(q_a_proj_tmp, pypto.DT_BF16)
+        pypto.set_semantic_label("Matmul_qa") 
+        q_a_proj = pypto.matmul(token_x, w_dq, pypto.DT_FP32)
 
     pypto.set_vec_tile_shapes(mv, q_lora_rank)
     pypto.set_semantic_label("RmsNorm_qa")
