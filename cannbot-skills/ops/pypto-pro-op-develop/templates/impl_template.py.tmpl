@@ -84,7 +84,7 @@ def {op}_kernel(
     num_cores = pl.get_block_num()
     core_id = pl.get_block_idx()
 
-    # ---- Section 声明 (来自 DESIGN.md §0 Phase 划分) ----
+    # ---- Section 声明 (来自 DESIGN.md §0 Module 划分) ----
     with {SECTION_TYPE}():
         # ⚠️ 性能强制：Vector 数值计算用 @pl.vector_function + vf.* 手写（pl.* 计算API不得用于Vector数值计算）。
         # ---- 循环结构 (来自 DESIGN.md §4) ----
@@ -92,7 +92,7 @@ def {op}_kernel(
         # 例如:
         # for work_id in pl.range(core_id, {TOTAL_WORK}, num_cores):  # 分核方式来自 §5
         #     # sync: {同步点占位} — 按 §4-6 标注，步骤 5 填入具体 pl.system.* API
-        #     # Phase 实现 — 步骤 5 逐行翻译（含 §7 尾块处理、§1 API 调用）
+        #     # Module 实现 — 步骤 5 逐行翻译（含 §7 尾块处理、§1 API 调用）
 
     return {OUTPUT_VAR}
 

@@ -494,6 +494,18 @@ if [ "$TOOL" = "opencode" ]; then
         agent_count=$((agent_count + 1))
     done
     step1_summary="${step1_summary}agents(${agent_count})"
+    # OpenCode: symlink plugin-level references/ (shared by multiple skills)
+    if [ -d "$PLUGIN_ROOT/references" ]; then
+        mkdir -p "$CANNBOT_DIR/references"
+        for ref_entry in "$PLUGIN_ROOT/references"/*; do
+            [ -e "$ref_entry" ] || continue
+            ref_name=$(basename "$ref_entry")
+            ref_target="$CANNBOT_DIR/references/$ref_name"
+            [ -e "$ref_target" ] || [ -L "$ref_target" ] && rm -rf "$ref_target"
+            ln -sfn "$ref_entry" "$ref_target"
+        done
+        step1_summary="${step1_summary} references"
+    fi
     if [ "$INSTALL_OPENCODE_HOOKS" = true ]; then
         mkdir -p "$CANNBOT_DIR/plugins"
         cp -a "$PLUGIN_ROOT/hooks/opencode/." "$CANNBOT_DIR/plugins/"
@@ -668,6 +680,26 @@ else
     done
 
     ok "Agents: $agent_link_count discovery symlinks"
+
+    # Claude/Trae/Cursor: also create references discovery symlinks (plugin-level shared refs)
+    if [ -d "$PLUGIN_ROOT/references" ]; then
+        REF_DISCOVERY="$CONFIG_ROOT/references"
+        mkdir -p "$REF_DISCOVERY"
+        ref_link_count=0
+        for ref_entry in "$PLUGIN_ROOT/references"/*; do
+            [ -e "$ref_entry" ] || continue
+            ref_name=$(basename "$ref_entry")
+            ref_target="$REF_DISCOVERY/$ref_name"
+            [ -e "$ref_target" ] || [ -L "$ref_target" ] && rm -rf "$ref_target"
+            ln -sfn "$ref_entry" "$ref_target"
+            ref_link_count=$((ref_link_count + 1))
+        done
+        # Clean broken symlinks
+        for link in "$REF_DISCOVERY"/*; do
+            [ -L "$link" ] && [ ! -e "$link" ] && rm "$link"
+        done
+        ok "References: $ref_link_count discovery symlinks"
+    fi
 fi
 echo ""
 

@@ -16,6 +16,11 @@ const ALLOWED_ACTIONS = new Set<TransitionAction>([
   "fail_stage",
   "record_artifact_hash",
   "rollback_to_stage",
+  "plan_stage4",
+  "start_module",
+  "submit_for_verify",
+  "complete_module",
+  "fail_module",
 ]);
 
 /** The AGENTS.md primary runs as "build"; the legacy named primary remains compatible. */
@@ -105,6 +110,26 @@ function buildTransitionInput(action: TransitionAction, args: Record<string, unk
         reason: String(args.reason ?? ""),
         failure_category: args.failure_category as string | undefined,
       };
+    case "plan_stage4":
+      return {
+        action,
+        module_count: Number(args.module_count ?? 0),
+        is_fusion: Boolean(args.is_fusion),
+      };
+    case "start_module":
+      return { action, module: String(args.module ?? "") };
+    case "submit_for_verify":
+      return { action, module: String(args.module ?? "") };
+    case "complete_module":
+      return { action, module: String(args.module ?? "") };
+    case "fail_module":
+      return {
+        action,
+        module: String(args.module ?? ""),
+        failure_category: String(args.failure_category ?? ""),
+        failing_module_boundary: args.failing_module_boundary as string | undefined,
+        last_error: args.last_error as string | undefined,
+      };
     default: {
       throw new Error(`unsupported action: ${action}`);
     }
@@ -119,11 +144,13 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
     tool: {
       state_transition: tool({
         description:
-          "Safely transition .orchestrator_state.json for the PyPTO-Pro workflow (schema v2.0, 4 stages). " +
+          "Safely transition .orchestrator_state.json for the PyPTO-Pro workflow (schema v2.1, 4 stages). " +
           "Stage actions: init (stage=1 only, first call), start_stage (set stage to in_progress for retry), " +
           "complete_stage (mark done + auto-advance to next stage), fail_stage (mark failed + increment retry). " +
           "Other actions: record_artifact_hash (snapshot SPEC.md/golden/DESIGN.md hashes), " +
           "rollback_to_stage (return to an earlier stage with reason and optional failure_category — wipes downstream stages). " +
+          "Stage 4 path actions: plan_stage4 (set stage4_path L0/L1 based on is_fusion, init stage4_modules for L1), " +
+          "start_module / submit_for_verify / complete_module / fail_module (L1 per-Module loop). " +
           "Pro has no lint gate; the verifier agent is the gate. SPEC.md freeze is enforced: " +
           "complete_stage(1) records the SPEC.md hash, and complete_stage(>=3) rejects if SPEC.md changed.",
         args: {
@@ -139,6 +166,13 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           // Rollback
           target_stage: tool.schema.number().optional(),
           failure_category: tool.schema.string().optional(),
+          // Stage 4 path
+          module_count: tool.schema.number().optional(),
+          is_fusion: tool.schema.boolean().optional(),
+          // Module actions
+          module: tool.schema.string().optional(),
+          failing_module_boundary: tool.schema.string().optional(),
+          last_error: tool.schema.string().optional(),
         },
         execute: async (args, context) => {
           // ── Permission check: AGENTS.md primary only ──
@@ -225,6 +259,9 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
                   stage: args.stage,
                   target_stage: args.target_stage,
                   reason: args.reason ?? "",
+                  module: args.module ?? "",
+                  module_count: args.module_count,
+                  is_fusion: args.is_fusion,
                 },
               },
             });
@@ -238,6 +275,8 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
             stage: args.stage,
             target_stage: args.target_stage,
             current_stage: nextState.current_stage,
+            stage4_path: nextState.stage4_path,
+            module: args.module,
             statePath,
           });
         },

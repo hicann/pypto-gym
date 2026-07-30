@@ -24,7 +24,7 @@
 | **到处都错**（输出 shape 对但值大面积错） | 数学公式实现 / cast 顺序 / layout / 输入输出维度是否与 golden 一致 | `{op}_golden.py` 公式、DESIGN.md §0 维度契约 / §1 API 映射 |
 | **只有大 shape 失败** | 片上容量（UB/L1/L0）是否超限 / tile 切分 / 归约轴是否可能超单 tile 却用了单 tile 假设 | DESIGN.md §2 Tile 规划 / §3 片上布局、`multi_core_partitioning_and_Tiling.md` §5.2 UB 预算 |
 | **只有尾块失败**（整除通过、非整除失败） | 持久化 tile 的有效形状是否跨迭代残留未重置 / 边界切片 / 归约·matmul 尾块是否漏做填充 | `tail_block_handling.md` §3.1（有效形状裁剪搬运）、§4.2（归约/matmul 必须填充）、§8 常见坑 |
-| **同步告警 / 流水结果异常** | 同侧计算排序与跨 section 数据交接是否混淆 / 多组流水事件是否隔离 / buffer 生命周期 | DESIGN.md §6 同步与核间流水、官方指定算子（FA/lightning）的跨核同步用法 |
+| **同步告警 / 流水结果异常** | 同侧计算排序与跨 section 数据交接是否混淆 / 多组流水事件是否隔离 / buffer 生命周期 | DESIGN.md §6 核间同步、官方指定算子（FA/lightning）的跨核同步用法 |
 | **整体精度对，个别位置 NaN/Inf** | 超越函数（exp/log/sqrt 等）在目标 dtype 下是否溢出 | DESIGN.md §1 超越函数数值安全边界 |
 | **多核结果错 / 累加异常** | 分核是否重叠或遗漏 / 累加语义（覆盖写 vs 原子累加）/ 累加前输出是否需预清零 | `multi_core_partitioning_and_Tiling.md` §2 跨步循环、`原子操作/store_atomic.md` |
 
@@ -68,15 +68,15 @@
 
 当完整 kernel 干扰因素太多、难以定位时，把单一机制单独拎出来复现，通常比盯着整个融合 kernel 推敲更快。
 
-- **隔离对象**：单个 Phase / 单条关键 API / 单块 tile / 一次 cube→vec 交接 / 一个尾块场景。
+- **隔离对象**：单个 Module / 单条关键 API / 单块 tile / 一次 cube→vec 交接 / 一个尾块场景。
 - **收缩顺序**：
   1. 保留触发失败的原始 shape；
-  2. 删掉后续 Phase，只留到第一个出错的 Phase；
-  3. 在该 Phase 内只保留一个子公式（如一次归约、一次 matmul、一个 GM 搬运）；
+  2. 删掉后续 Module，只留到第一个出错的 Module；
+  3. 在该 Module 内只保留一个子公式（如一次归约、一次 matmul、一个 GM 搬运）；
   4. 必要时再缩到一条 API + 一个 tile 视图。
 - 隔离出错误后，先在最小复现上修正，再回到完整 kernel 重跑。
 
-> 最小复现与「增量验证」思路一致：先跑通一个最小的可验证片段，再逐步加回后续 Phase 和尾块 case，避免写完整个融合 kernel 才第一次运行。
+> 最小复现与「增量验证」思路一致：先跑通一个最小的可验证片段，再逐步加回后续 Module 和尾块 case，避免写完整个融合 kernel 才第一次运行。
 
 ---
 

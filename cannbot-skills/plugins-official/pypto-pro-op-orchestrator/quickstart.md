@@ -12,7 +12,7 @@ CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 
 | 编程语言 | Python（PyPTO-Pro API） | Python（PyPTO API） |
 | 开发内容 | PyPTO-Pro kernel + golden + test | PyPTO kernel + golden + test |
 | 阶段数 | 4 阶段工作流 | 7 阶段状态机驱动 |
-| 状态管理 | 调度顺序隐式管理 | `.orchestrator_state.json` 状态文件 |
+| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具，verifier 即门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
 | 性能调优 | 按需参考 | Stage 7 独立调优阶段 |
 
 ## 一、环境搭建
@@ -172,7 +172,7 @@ Stage 1: 需求规划与资料索引 → Stage 2: Golden 与基准性能
     → Stage 3: Tile 数据流设计 → Stage 4: Kernel 实现与精度验证
 ```
 
-每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Pro 流程不使用 `.orchestrator_state.json` 状态机，Stage 推进由调度顺序隐式管理。详见 AGENTS.md。
+每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Stage 推进通过 `state_transition` 工具管理 `custom/<op>/.orchestrator_state.json` 状态机。详见 AGENTS.md。
 
 ### 产出物示例
 

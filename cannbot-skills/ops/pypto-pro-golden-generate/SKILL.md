@@ -402,7 +402,7 @@ attention_golden 验证报告
 
 ## 13. 既有参考的规范化（用户提供参考实现时适用）
 
-> 当用户提供了已有的 PyTorch / NumPy 参考实现时，需将其规范化为 PyPTO-Pro 友好的 golden。完整流程见 [references/reference-normalization.md](references/reference-normalization.md)，包括：选择最强参考、审计不友好模式、按 Phase 划分规范化、Full vs Tiled 策略、Golden function inventory、验证与 Freeze。
+> 当用户提供了已有的 PyTorch / NumPy 参考实现时，需将其规范化为 PyPTO-Pro 友好的 golden。完整流程见 [references/reference-normalization.md](references/reference-normalization.md)，包括：选择最强参考、审计不友好模式、按 Module 划分规范化、Full vs Tiled 策略、Golden function inventory、验证与 Freeze。
 >
 > 当用户没有提供参考实现而是直接通过规格信息生成 golden 时，走 §1-§12 的从规格生成路径即可，本节不适用。
 

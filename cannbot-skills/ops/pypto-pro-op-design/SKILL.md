@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-design
-description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 Stage 1 产物（SPEC.md、EXPLORE_REPORT.md），产出 DESIGN.md。核心输出为 tile 级别数据流图——决定 Phase 划分、API 映射、Tile 规划、片上空间布局（UB/L1/L0）、循环与 Section 结构、分核策略、核间流水、尾块处理。每一步决策必须有 API 文档、教学文档或官方指定算子做证据，严禁猜测。触发词：生成设计方案、tile 数据流、DESIGN.md、tile 级别设计、片上空间规划、UB 空间规划。
+description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 Stage 1 产物（SPEC.md、EXPLORE_REPORT.md），产出 DESIGN.md。核心输出为 tile 级别数据流图——决定 Module 划分、API 映射、Tile 规划、片上空间布局（UB/L1/L0）、循环与 Section 结构、分核策略、核间同步、尾块处理。每一步决策必须有 API 文档、教学文档或官方指定算子做证据，严禁猜测。触发词：生成设计方案、tile 数据流、DESIGN.md、tile 级别设计、片上空间规划、UB 空间规划。
 ---
 
 # PyPTO-Pro Stage 3 — 迭代式方案设计
@@ -15,9 +15,9 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 ## 两条性能强制（设计阶段须落实）
 
-> 完整定义见 `pypto-pro-material-explore` SKILL「两条性能强制」节。设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
-> 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限（auto_mutex 管辖范围、跨核同步用 `set_cross_core`/`wait_cross_core`、mutex_id 与 event_id 独立命名空间）见 `pypto-pro-material-explore` SKILL「两条性能强制」节。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
-> 2. Vector 数值计算用 `vf.*` 手写（完整理由见 `pypto-pro-material-explore` SKILL「两条性能强制」节）。
+> 完整定义见 `.opencode/references/performance-constraints.md`。设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
+> 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限（auto_mutex 管辖范围、跨核同步用 `set_cross_core`/`wait_cross_core`、mutex_id 与 event_id 独立命名空间）见该文件。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
+> 2. Vector 数值计算用 `vf.*` 手写（完整理由见该文件）。
 
 ## 输入
 
@@ -36,7 +36,7 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 ## 前置：维度契约
 
-在切 Phase 之前先确认 kernel 的输入/输出维度契约——这是后续所有轮（Tile 规划、循环结构）的前提，不属于 Phase 划分本身。
+在切 Module 之前先确认 kernel 的输入/输出维度契约——这是后续所有轮（Tile 规划、循环结构）的前提，不属于 Module 划分本身。
 
 明确 kernel 固定处理的维度（如"kernel 只处理 2D `[M,N]`"）。若 SPEC.md 要求支持 1D 或任意多维，必须在此定义 host 端适配方案（如 1D `[L]` → host reshape `[L,1]` → kernel `[M,N]` → 输出 reshape 回 `[L]`），不能默默只实现 2D 而遗漏 SPEC 要求的其他维度。产出填入 DESIGN.md §0 的维度契约栏（kernel 固定维度 + host 适配规则表）。
 
@@ -46,45 +46,49 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 设计是**问题驱动**的迭代，不是线性填表。每一轮聚焦一个核心问题（回溯原则见核心原则第 3 条）。
 
-### R0：Phase 划分
+### R0：Module 划分
 
-**核心问题**：整体计算流可以分解为几个 Phase？每个 Phase 做什么？
+**核心问题**：整体计算流可以分解为几个 Module？每个 Module 做什么？
 
 **流程**（按优先级）：
 
-1. **数据依赖**：需要前面 Phase 的完整结果才能开始计算的，必须划分为不同 Phase。例如跨 N-tile 的 softmax：必须先遍历所有 tile 算全局 max（Pass1），才能算 exp(x-max) 并累加全局 sum（Pass2），最后做除法（Pass3）。⚠️ **归约轴可能超单 tile 时，须采用多 Phase/多 tile 归约（online/两遍法）以保证泛化性——归约轴超出单 tile 时仍须正确工作**。多 tile 归约的具体状态更新方式随算子而异（softmax 的 running max/sum、layernorm 的 running mean/var 等），以对应 golden 与官方指定算子为准；归约实现须用 vf 手写（见上方「两条性能强制」）
-2. **Section 分隔**：Cube 和 Vector 使用不同引擎，必须划分到不同 Phase。Section 间需明确数据传递方式（via GM workspace）
+1. **数据依赖**：需要前面 Module 的完整结果才能开始计算的，必须划分为不同 Module。例如跨 N-tile 的 softmax：必须先遍历所有 tile 算全局 max（Pass1），才能算 exp(x-max) 并累加全局 sum（Pass2），最后做除法（Pass3）。
+2. **Section 分隔**：Cube 和 Vector 使用不同引擎，必须划分到不同 Module。Section 间需明确数据传递方式（via GM workspace）
 
 **输出**：
 
-- Phase 列表（Phase1/2/3...），每个标注：目的、输入依赖、输出、涉及的 Section
-- 如果只有一个 Phase（如 N ≤ TILE_N 的 softmax），标注"单 Phase"并说明为什么不需要拆分
-- 归约轴容量结论：归约轴是否可能超单 tile + 是否采用多 tile 归约（含归约算子时必填）
+- Module 列表（Phase1/2/3...），每个标注：目的、输入依赖、输出、涉及的 Section
+- 如果只有一个 Module，标注"单 Module"并说明为什么不需要拆分
+- **`module_interfaces.yaml` 契约**（机器可读，single source of truth）——产出到 `custom/<op>/module_interfaces.yaml`，包含以下字段：
+  - `module_count`：Module 总数
+  - `is_fusion`：是否为融合算子（同时含 cube 和 vec section → `true`）。按 R0 定义，`is_fusion=true` 隐含 `module_count >= 2`（Cube 和 Vector 必须划分到不同 Module）。此字段决定 Stage 4 走 L0（`false`，一口气开发）还是 L1（`true`，逐 Module 循环）
+  - `has_cross_core`：是否涉及 cross_core 跨核流水（来自 §6，信息记录用，不影响分流判据）
+  - `modules[]`：每个 Module 的 `id` / `name` / `description` / `section`（`cube` 或 `vector`）/ `golden_steps`（该 Module 对应的数学步骤列表，供 mathematician 切分 golden 用）/ `inputs`（source 为 `primary` 或 `module_<j>`，`j < 当前 id`）/ `outputs` / `golden_stage_fn`
+  - `final_outputs`：每个 golden 返回值对应到产出 Module
+  - `composition_verification`：atol / rtol / seeds / shapes
+  - 骨架由脚本生成：`python .opencode/skills/pypto-pro-op-design/scripts/gen_module_interfaces.py custom/<op>/<op>_golden_cpu.py --spec custom/<op>/SPEC.md --op <op> --design custom/<op>/DESIGN.md > custom/<op>/module_interfaces.yaml`，自动填 `schema_version` / `op` / `primary_inputs` / `composition_verification`，architect 填标 `TODO` 的判断部分
+  - 产出后须自验：`python .opencode/skills/pypto-pro-op-design/scripts/validate_module_yaml.py custom/<op>/module_interfaces.yaml --json`，返回 `"status": "PASS"` 才算完成
 
 ---
 
 ### R1：API 映射
 
-**核心问题**：每个数学步骤具体用哪些 API？需要在 R0 的 Phase 划分基础上，将 API 调用链进一步细化到 Phase 内部的每一步操作。
-
-**⚠️ 性能强制（影响本轮映射）**：Vector 数值计算步骤须映射到 `vf.*` 指令序列。Cube 步骤照常映射 `pl.*` Cube API（`pl.matmul`/`pl.matmul_acc` 等）。具体 vf 指令的选用以 vf API 文档与官方指定算子中的 vf 写法为准。
+**核心问题**：每个数学步骤具体用哪些 API？在 R0 的 Module 划分基础上，将 API 调用链细化到 Module 内部每一步操作。
 
 **流程**：
 
-1. 从 EXPLORE_REPORT.md §3 提取已确认的 API 映射（vec 步骤应为 `vf.*` 序列）
-2. **逐一查阅每个 API 的文档原文**（通过 `PRO_MATERIAL_INDEX.md` §A 定位路径），确认并记录：
+1. **提取初步映射**：从 EXPLORE_REPORT.md §3 获取已确认的 API 映射（vec 步骤为 `vf.*` 序列，cube 步骤为 `pl.*` Cube API）。
+2. **逐个核实 API 文档**（通过 `PRO_MATERIAL_INDEX.md` §A 定位路径），确认并记录：
    - **功能**：API 做什么、语义是否与数学步骤完全匹配
    - **签名**：参数顺序、位置参数 vs 关键字参数（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
    - **使用约束**：dtype 限制、shape 要求、layout 要求、MemorySpace 要求、tmp tile 是否可与输入重叠等（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
    - **特性特点**：in-place 支持、尾块行为、与 `set_validshape` 的交互等
-   - **数值安全边界**（API 链含 exp/log/sqrt/reciprocal/tanh 等超越/非线性函数时强制）：分析该 API 在目标 dtype 下的溢出边界。例如 fp16 max≈65504，exp(11.09)≈65504，输入 >11 即溢出为 +inf，后续 inf/inf → NaN 传播。须在 §1 数值安全边界栏记录"输入范围→是否溢出→防护措施"（如 exp(x) 可以写作 (exp(x - max))/exp(max)）。**注**：Vector 数值计算中的非线性须用 vf 指令实现（如 `vf.exp_sub`），其溢出行为以 vf API 文档为准
-3. 在每个 Phase 内部，将计算步骤展开为具体的 API 序列（vec 步骤为 `vf.*` 序列，cube 步骤为 `pl.*` 序列）
-4. 标注每个 API 的输入 tile、输出 tile
-  5. **Vector 数值计算必须映射到 `vf.*` 指令序列，无例外。** 若某步骤找不到直接对应的 vf API，优先尝试用其他 vf API 组合 + 循环结构手动实现（参考 EXPLORE_REPORT §3 中的组合方案）。"复杂"不是放弃 VF 的理由。仅当穷尽 vf 组合方案仍不可行时，标注 unsupported——此时算子开发失败，**不得以 `pl.*` 计算替代 `vf.*` 完成 Vector 数值计算**
+3. **标注输入/输出 tile**：为每个 API 标注输入 tile 与输出 tile（供 R2 tile 规划消费）
+4. **数值安全边界**（条件性，API 链含 exp/log/sqrt/reciprocal/tanh 等超越/非线性函数时强制）：分析该 API 在目标 dtype 下的溢出边界，在 §1 数值安全边界栏记录"输入范围→是否溢出→防护措施"。例如 fp16 max≈65504，exp(11.09)≈65504，输入 >11 即溢出为 +inf，后续 inf/inf → NaN 传播；防护如 exp(x) 写作 exp(x-max)。注：Vector 数值计算中的非线性须用 vf 指令实现（如 `vf.exp_sub`），其溢出行为以 vf API 文档为准
 
-**注意**：本轮只确定计算 API ，不涉及同步 API。
+**注意**：本轮只确定计算 API，不涉及同步 API。
 
-**输出**：Phase 级 API 调用序列（伪代码形式）
+**输出**：Module 级 API 调用序列（伪代码形式）
 
 ---
 
@@ -99,10 +103,9 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 2. 对每个 tile，确定：
    - **shape**：由 API 操作数要求决定
    - **dtype**：由用户需求决定
-   - **内存空间（`target_memory`）**：由该 tile 所参与的 API 决定——vector 计算 tile 用 `Vec`(UB)；含 cube/matmul 时，`load_tile` 的 GM 落点用 `Mat`(L1)，matmul 左/右操作数用 `Left`(L0A)/`Right`(L0B)，累加输出用 `Acc`(L0C)。此列直接决定 R3 的分节归属
-   - **layout**：默认按内存空间取（`Vec` 无约束，`Mat`/`Left`/`Right`/`Acc` 见 `TileType.md` 默认布局表），具体约束以 EXPLORE_REPORT §3.3 / API 文档为准。
+   - **内存空间（`target_memory`）**：由该 tile 所参与的 API 决定，此列直接决定 R3 的分节归属
+   - **layout**：默认按内存空间取，具体约束以 EXPLORE_REPORT §3.3 / API 文档为准。
    - **大小**：`prod(shape) × dtype_bytes`
-   - **Acc fractal 约束**：必须保证 Acc tile 的**物理 M×N** 满足一个 fractal（FP32 ≥ 256 元素 = 1024 bytes）。当某维度逻辑值极小、可能使物理 tile 退化到 <fractal 时，tile shape 须 pad 到最小合规尺寸，运行时用 `set_validshape` 限制有效区。
 
 **输出**：Tile 属性表：
 
@@ -127,11 +130,11 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 **流程**：
 
-1. 按 `target_memory` 把 R2 的 tile 分组，**每个内存空间各自从 `0x00000` 开始**连续排列地址，不重叠。UB/L1 首地址须 32 字节对齐（证据：`load_tile.md` 参数范围表 "L1、UB buffer 首地址必须 32 字节对齐"）；L0A/L0B/L0C 的对齐以对应 API 文档 / 官方指定算子为准，不套用 32 字节
+1. 按 `target_memory` 把 R2 的 tile 分组，**每个内存空间各自从 `0x00000` 开始**连续排列地址，不重叠。UB/L1 首地址须 32 字节对齐；L0A/L0B/L0C 的对齐以对应 API 文档 / 官方指定算子为准。
 2. 标注同地址不同 layout 的 tile 对（如有）
 3. 分配方式应使用 `make_tile_group` + `auto_mutex`，由框架自动管理 buffer 切换与同步（见上方「两条性能强制」）。
 4. **逐空间**验证该空间上的 tile 总大小不超过其容量上限。容量值以 EXPLORE_REPORT §7 探测记录为准——§7 必含 UB 容量；含 cube 时须补探 L1/L0 各空间容量（§7 未记录则回退 material-explore 补测，不得在此臆测数值）
-5. **R3↔R6 联合决策**：涉及核间流水时，double buffer 会让地址占用翻倍，因此地址表按 buffer 数参数化；是否需要 PONG 地址、buffer 数取值、以及哪些 tile 受其影响，均在 R3 先显式标出，待 R6 确定 pipeline 深度后回填确认
+5. **double buffer 地址规划**：`make_tile_group` 的 buffer 数 > 1 时地址占用按倍数放大，须在地址表中显式反映（buffer 数、受影响 tile、是否需 PONG 地址）。buffer 数取值参照官方指定算子中相似算子的实际配置
 
 **输出**：片上地址映射表（**按内存空间分节**，纯 vector 算子只有 UB 一节）：
 
@@ -152,24 +155,20 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 ### R4：循环与 Section 结构
 
-**核心问题**：怎么把 Phase、tile 申请、计算操作组织成完整的循环结构？
+**核心问题**：本算子的循环嵌套、section 划分、SPMD 原语获取应如何组织？
+
+> 各算子在循环与 Section 结构上差异极大（单/多 section、单/多 Module、是否含 cross_core 流水、SPMD 原语位置等），不存在通用设计方法。**必须**以官方指定算子的实际写法为主要参考，不自行臆造。
 
 **流程**：
 
-1. 设计 M-tile 循环（外层 SPMD 跨核）和 N-tile 循环（内层）的嵌套关系
-2. 根据 R0 的 Phase 划分，决定循环嵌套层级与 section 位置，具体写法参考 EXPLORE_REPORT.md 中指定的官方算子样例
-3. 将 R3 的空间规划（tile 声明）和 R1 的 API 序列嵌入到循环结构中
-4. `pl.get_block_idx()` 和 `pl.get_block_num()` 是全局 SPMD 原语，具体获取位置请见官方指定算子（PRO_MATERIAL_INDEX §B）。
-5. 伪代码骨架须把编译期常量块（TS、TD、SCALE 等）画在 `@pl.jit` 装饰器之前（模块级）；具体声明位置的编码规范由 develop skill 负责
+1. **首选参考 EXPLORE_REPORT.md §4 定位的有参考价值的样例推荐**：研读该样例的循环嵌套、section 声明、SPMD 原语获取位置等写法，作为本算子结构的主要参考
+2. **参考范围扩展**：若 §4 定位的样例与本算子结构差异较大或细节不足，可在 `../pypto-pro-material-explore/references/official_samples.md` 清单中的其他官方指定算子中寻找结构更相似的样例参考
+3. **基于样例确定本算子结构**：综合 R0 Module 划分、R1 API 序列、R3 空间规划，参照样例写法确定本算子的 section 划分、循环嵌套、SPMD 原语位置
+4. 编译期常量块（TS、TD、SCALE 等）须置于 `@pl.jit` 装饰器之前（模块级）；具体声明位置的编码规范由 develop skill 负责
 
-**输出**：完整的 kernel 伪代码骨架：
-- 动态维度声明（具体声明 API 以 `docs/` API 文档和官方指定算子样例为准，不臆测）
-- tile 声明（make_tile_group）
-- section 声明
-- SPMD 参数获取（含位置说明）
-- 完整的循环嵌套结构
-
-> **完整性要求**：伪代码中核心计算步骤必须写完整（具体 API 调用或明确的算法步骤），不得用 `...` 留空或标注"需 coder 实现"。`...` 仅允许用于 sync 占位（R6 填入）和 R7 尾块占位（已标注"R7 填入"）。若某步骤的 API 或实现方式未知，说明 R1 API 映射不完整，应回到 R1 补充或标注为 unsupported 触发回退。
+**输出**：填入模板 §4：
+- 参考样例路径与可复用结构点
+- 本算子的 section 划分、循环嵌套、SPMD 原语位置
 
 ---
 
@@ -187,37 +186,33 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 ---
 
-### R6：同步与核间流水
+### R6：核间同步（cross_core）
 
-**条件性**：同步规划始终需要；其中 cross_core 流水仅当算子涉及跨 section/sub-block 数据传递时需要（R0 Phase 划分含多 section 且 section 间有数据流）。
+**核心问题**：若算子含 Cube↔Vector 跨核数据传递，需手动插入哪些 `set_cross_core`/`wait_cross_core` 同步点？
 
-**核心问题**：Phase 内/Phase 间需要哪些同步？若存在 cross_core 流水，Cube 和 Vector 之间如何传递数据、event_id 如何隔离？
+> 当前 PyPTO-Pro 框架下，核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，**无需设计阶段关心**。**唯一需要手动插入同步的是 cross_core**——即同物理核的 Cube↔Vector sub-block 间通过片上共享 buffer（L1/Mat 或 UB/Vec）传递数据时的 `set_cross_core`/`wait_cross_core`。同步分工与命名空间（`mutex_id` vs `event_id` 独立）见 `.opencode/references/performance-constraints.md`「强制 1」的同步分工表。
+>
+> **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时才需要 cross_core 同步。单 section 算子（纯 vec / 纯 cube）无跨核数据传递，本节填"不涉及 cross_core"即可。
 
-**注意**：在当前官方指定算子中，cross_core 通信体现为同物理核的 Cube↔Vector sub-block 间通过片上共享 buffer（L1/Mat 或 UB/Vec）的 N-buffer 轮转传递数据，配合 `set_cross_core`/`wait_cross_core` 做同步，而非不同物理核间通信。若后续文档或样例出现不同语义，以最新证据为准。
+**⚠️ cross_core 同步关键规则（必读，违反将导致编译失败或运行错误）**：
+
+> **必读参考样例**：`$PYPTO_DEVKIT_DIR/pro_ops/` 中的 `lightning_indexer` 系列（如 `test_quant_lightning_indexer_vf.py`）是 cube↔vec 双向跨核同步的官方验证样例，包含完整的 `set_cross_core`/`wait_cross_core` 用法。设计 cross_core 同步时**必须**参照该样例。
+
+1. **pipe 类型规则**：cube section 使用 `pipe=pl.PipeType.FIX`，vector section 使用 `pipe=pl.PipeType.V`。
+2. **`set_cross_core`/`wait_cross_core` 与 `set_intra_block`/`wait_intra_block` 的关系**：`set_cross_core`/`wait_cross_core` 是用户编写的 API；在 a5 平台上，编译器会自动将 cube↔vector 的 `set_cross_core`/`wait_cross_core` 编译为底层的 `set_intra_block`/`wait_intra_block`（因为 cube↔vector 在同一 AI core block 内）。**用户不需要也不应该直接调用 `set_intra_block`/`wait_intra_block`**——始终使用 `set_cross_core`/`wait_cross_core`
+3. **event_id 管理**：`auto_mutex` 的 `mutex_id` 与 `cross_core` 的 `event_id` 是**独立的命名空间**，可以共存（部分数值重叠不影响正确性——框架会正确区分）。`event_id` 取值范围 `[0, 16)`，多组流水各占不重叠区段
 
 **流程**：
 
-1. **标注并汇总同步点**：基于 R4 的伪代码骨架，先标注每个需要同步的位置（如"load_tile 后需等 MTE2 完成"）及其目的（pipe 间依赖、核间依赖、sub-block 间依赖），再统一决定每个位置使用哪类同步：
-   - `bar_v`：V pipe 内前后依赖的计算之间
-   - `sync_src/sync_dst`：`load_tile`/`move`/`matmul` 等 pipe 级依赖
-   - `set_cross_core`/`wait_cross_core`：仅用于 cross_core 流水
-   - `auto_mutex` 的同步语义也在本轮说明：若 R3 选择 `make_tile_group` + `auto_mutex`，则说明其覆盖的 buffer 切换/互斥边界，以及哪些依赖仍需额外同步
-2. **确认流水方向**：若存在 cross_core 流水，由 R0 Phase 划分确定方向（如 FA 中 Cube→Vector 通过片上 buffer 传递 qk/pv，Vector→Cube 传递 p）
-3. **决定 pipeline 深度**：pipeline 预取深度（以实际算子为准，如 FA 的 QK_PRELOAD）和 FIFO_SIZE（= pipeline 预取深度 + 1）。此决策影响 R3 地址规划（需预留 double buffer / PONG 地址），据此回填 R3 的 buffer 数与地址占用
-4. **event_id 隔离**：多组流水各占一段不重叠的 event_id 范围（流水组以实际算子为准，如 FA 的 QK/P/PV），具体隔离方案以官方指定算例的实际用法为准（参考 EXPLORE_REPORT §4 定位的样例）。event_id 取值范围为 `[0, 16)`（API 文档 `set_cross_core_wait_cross_core.md` 参数范围表）。
-5. **多 work-item-per-core 场景**：算子 shape 放大后通常会出现多 work-item-per-core。若涉及 cross_core 流水，应在设计阶段给出 event_id 隔离方案，并在 DESIGN.md 中记录 FIFO 深度和 event_id 分配表
-6. **标注 cross_core 同步点**：
-    - `pl.system.set_cross_core`（produce 端）：在数据产生之后
-    - `pl.system.wait_cross_core`（consume 端）：在数据使用之前
-    （set/wait 位置参考 EXPLORE_REPORT §4 定位的官方指定算子）
+1. **确认是否涉及 cross_core**：由 R0 Module 划分判断。无跨 section 数据流 → 填"不涉及"，结束本轮
+2. **参照官方指定算子确定同步方案**：涉及 cross_core 时，研读 EXPLORE_REPORT §4 定位的官方指定算子（如 FA、lightning_indexer 类）中 `set_cross_core`/`wait_cross_core` 的实际插入位置、pipe 类型、event_id 分配，参照其写法确定本算子的同步方案。
+3. **event_id 隔离**：多组流水各占一段不重叠的 event_id 范围（`[0, 16)`），具体隔离方案以官方指定算子的实际用法为准
 
-**输出**：
-- 在 R4 的伪代码骨架中填入 `bar_v` / `sync_src` / `sync_dst` / `set_cross_core` / `wait_cross_core`
-- `auto_mutex` 覆盖范围与剩余同步责任说明
-- pipeline 深度和 FIFO_SIZE
-- event_id 分配表（各组流水占用的 event_id 范围）
+**输出**：填入模板 §6：
+- 是否涉及 cross_core（不涉及则填"不涉及"并结束）
+- 涉及时：cross_core 同步点表（位置 / set 或 wait / event_id）+ event_id 分配表
 
-**特殊证据要求**：event_id 分配方案需有官方指定算子引用。回填后的 R3 地址规划需能覆盖 pipeline 深度对应的 buffer 数。
+> 同步点的具体插入位置与参数以官方指定算子原文为准，不臆造。
 
 ---
 
@@ -225,9 +220,9 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。
 
-**本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的伪代码骨架。
+**本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的循环与 Section 结构（填入 §7 尾块处理方案）。
 
 **输出**：DESIGN.md §7（引用 tail_block_handling.md 落地尾块代码）
 
@@ -269,21 +264,20 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 | 维度 | 检查项 | 结果 | 不通过时的处理 |
 |------|--------|------|----------------|
 | **准确性** | API 调用链是否完整实现了数学公式的每一步 | 回到 R1 补充 |
-| | §4 伪代码核心计算步骤无 `...` 留空（`=` 赋值处的 `...`、标注"需 coder 实现"等均为不通过；sync 占位 `// sync: {目的}` 和 R7 尾块占位除外） | 回到 R1 补充 API 或标注 unsupported 触发回退 |
-| | 数据依赖是否正确（Phase 顺序、sync 位置） | 回到 R0 或 R4 调整 |
+| | §4 已参照官方样例确定循环与 Section 结构（含参考样例路径与结构说明） | 回到 R4 补充 |
+| | 数据依赖是否正确（Module 顺序、sync 位置） | 回到 R0 或 R4 调整 |
 | | dtype 选择是否能保证精度（如 matmul 累加用 FP32） | 回到 R2 调整 |
-| | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设 `layout` | 回到 R2 补 layout |
-| | Acc tile 物理 M×N×dtype_bytes ≥ fractal（FP32 ≥ 1024 bytes；动态轴含极小维度时尤需检查） | 回到 R2 pad tile shape |
+| | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设合适的 `layout` | 回到 R2 补 layout |
 | **泛化性** | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（R7.5 已完成） | 回到 R7.5 补充 / 回溯适配不了的轮次 |
 | | 是否正确处理了尾块 | 回到 R7 补充 |
 | | 循环边界是否正确（ceiling division、valid_m/valid_n 计算） | 回到 R4 修正 |
 | | 超越函数（exp/log/sqrt 等）在目标 dtype 范围内无溢出（§1 数值安全边界已分析） | 回到 R1 补溢出防护 |
 | | 跨 tile 状态是否正确初始化和持久化 | 回到 R0 或 R1 修正 |
-| | 同步策略在 SPEC §8 动态轴全范围下是否正确（num_cores、pipeline defer、event 分配是否随 total_work 变化而保持隔离） | 回到 R5/R6 修正 |
+| | cross_core 同步方案是否正确（涉及跨 section 时）：同步点位置与 event_id 隔离是否参照官方指定算子 | 回到 R6 修正 |
 | **一致性** | R0-R7 各轮输出是否存在矛盾（如 API 需要的 tile 在 R2 中缺失） | 回溯到矛盾产生的轮次修正 |
 | | 证据链是否完整（每个决策都有来源） | 补充缺失的文档引用或官方指定算子路径 |
 | | 每个内存空间（UB/L1/L0A/L0B/L0C）的 tile 总用量分别不超过各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | 回到 R3 重排地址 / R2 缩 tile |
-| **条件性检查** | 如跳过 R6，确认该算子确实无跨核数据传递 | 回到 R0 重新评估 |
+| **条件性检查** | 若 §6 填"不涉及 cross_core"，确认该算子确实无跨 section 数据传递 | 回到 R0 重新评估 |
 
 **迭代规则**：
 - 发现问题数 ≤ 3，修复后重新走 R8
@@ -303,7 +297,7 @@ R8 评估通过后，将 R0-R7 各轮的分散产出串成一张全景图（填�
 1. **起点**：输入张量
 2. **数据搬运**：标注 `load_tile` 、 `store_tile` 与流水线（MTE2 / MTE3）
 3. **数据流向**：用箭头 `→` 连接每个操作，箭头标注 API 名。同一块 tile 被多个操作串联使用时用 `├─` 表示分支
-4. **跨 Phase 持久化**：tile 在某个 Phase 中写入、在后续 Phase 中读取的，用 `---` 虚线表示数据跨越 Phase 边界。标注 tile 变量名和地址
+4. **跨 Module 持久化**：tile 在某个 Module 中写入、在后续 Module 中读取的，用 `---` 虚线表示数据跨越 Module 边界。标注 tile 变量名和地址
 5. **输出**：输出张量
 
 **验证**：全景图中每一块 tile 和每一个操作都必须能在 R3 的地址映射表、R1 的 API 序列中找到对应条目。缺失或矛盾则回溯修正。

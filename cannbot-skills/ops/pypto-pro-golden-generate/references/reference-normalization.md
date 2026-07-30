@@ -35,15 +35,15 @@ grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypt
 ## 规范化 golden
 
 将参考改写为 PyPTO-Pro 友好的 golden。规范化强度取决于 Stage 3（DESIGN.md §0）
-的 Phase 划分：
+的 Module 划分：
 
-> Phase 划分在该步骤之后由 architect 在 DESIGN.md §0 R0 中决定。但可以基于算法类型预判：
-> - 纯逐元素 / 单 Phase 简单归约 → 可能**少量 Phase**（轻量规范化）
-> - 多状态递归（gated_delta_rule / mamba）/ 跨 tile 归约（softmax / layernorm）/ Cube+Vector 混合 → 可能**多 Phase**（完整规范化）
+> Module 划分在该步骤之后由 architect 在 DESIGN.md §0 R0 中决定。但可以基于算法类型预判：
+> - 纯逐元素 / 单 Module 简单归约 → 可能**少量 Module**（轻量规范化）
+> - 多状态递归（gated_delta_rule / mamba）/ 跨 tile 归约（softmax / layernorm）/ Cube+Vector 混合 → 可能**多 Module**（完整规范化）
 >
-> 不确定时，默认**完整规范化**——它是严格超集，在 Stage 3 落到少量 Phase 时可以忽略边界标记。
+> 不确定时，默认**完整规范化**——它是严格超集，在 Stage 3 落到少量 Module 时可以忽略边界标记。
 
-**通用规则（所有 Phase 数均适用）**：
+**通用规则（所有 Module 数均适用）**：
 
 - 保留语义，不保留源码语法
 - 显式化所有 shape
@@ -54,14 +54,14 @@ grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypt
   写为 `torch.matmul(a, b.transpose(-2, -1))` 并注释 `# a @ b^T → pl: b_trans=True`
 - 在每个中间 tensor 上加 shape 注释 `# [B, H, T, K]`
 
-**多 Phase 算子专用（Phase 数 ≥ 2）**：
+**多 Module 算子专用（Module 数 ≥ 2）**：
 
-- 在每个未来 Phase 边界处给中间 tensor 起有意义的命名
-- 标记 Phase 边界（用 `# --- Phase 1: <role> ---` 注释）——这些对应 DESIGN.md §0 R0 中的 Phase 划分，便于 Stage 4 增量模式下逐 Phase 比对中间量
+- 在每个未来 Module 边界处给中间 tensor 起有意义的命名
+- 标记 Module 边界（用 `# --- Module 1: <role> ---` 注释）——这些对应 DESIGN.md §0 R0 中的 Module 划分，便于 Stage 4 增量模式下逐 Module 比对中间量
 
-**单 Phase 算子专用（Phase 数 == 1）**：
+**单 Module 算子专用（Module 数 == 1）**：
 
-- Phase 边界标记**不要求**（kernel 是一个块）
+- Module 边界标记**不要求**（kernel 是一个块）
 - golden 可以保留单个高层调用（例：`out = torch.softmax(x, dim=-1)`），**除非** Golden function inventory 因 shape 变换追踪需要而要求展开
 
 ## Full vs Tiled 实现策略

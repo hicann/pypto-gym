@@ -26,7 +26,7 @@ feasibility: {feasibility}
 ### 1.3 可能会涉及的 API 类别
 
 > 以下为常见类别提示，实际 API 以本次 PRO_MATERIAL_INDEX §A 扫描结果为准。
-> **性能强制**：Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
+> **性能强制**：见 `.opencode/references/performance-constraints.md`——Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
 
 | 类别 | 是否涉及 | 关键 API | 指定算子是否覆盖 |
 |------|---------|----------|------------------|
@@ -64,9 +64,9 @@ feasibility: {feasibility}
 
 ### 3.3 API 约束
 
-| API | 约束项 | 要求 | 结果 | 参数语义/寄存器级行为 |
+| API | 约束项 | 要求 | 结果 | 参数语义/寄存器级行为/同名差异 |
 |-----|--------|------|------|----------------------|
-| {api} | {constraint} | {requirement} | {✓/⚠/✗} | {参数语义说明，如 offset 单位、layout 取值、寄存器映射关系等} |
+| {api} | {constraint} | {requirement} | {✓/⚠/✗} | {参数语义（如 offset 单位、layout 取值、matmul module 累加语义）、寄存器级行为（如 vf.astype BF16/FP32 映射）、与同名/相似 API 差异（如 vf.gather vs pl.gather）} |
 
 ### 3.4 MemorySpace 约束
 
@@ -90,7 +90,7 @@ feasibility: {feasibility}
 
 | # | 示例路径 | 可复用点 |
 |---|----------|----------|
-| {n} | `{path}` | {cube tile 管理 / K 累加链 / matmul_acc phase / L1/L0 布局 / set_mm_layout_transform} |
+| {n} | `{path}` | {cube tile 管理 / K 累加链 / matmul_acc module / L1/L0 布局 / set_mm_layout_transform} |
 
 **纯 Vec 样例**（elementwise 类、vf_api 类）：
 
@@ -102,17 +102,17 @@ feasibility: {feasibility}
 
 | # | 示例路径 | 可复用点 |
 |---|----------|----------|
-| {n} | `{path}` | {section_cube→acc_to_vec→section_vector 衔接 / cross_core 流水 / 多 Phase 分块} |
+| {n} | `{path}` | {section_cube→acc_to_vec→section_vector 衔接 / cross_core 流水 / 多 Module 分块} |
 
 > **选参考原则**：优先从当前算子对应分类中提取直接可复用模式；同时从所有样例中提取通用写法参考（API 用法、分核策略、同步事件管理、尾块处理等）。
 
 ### 4.2 可复用模式
 
-**直接可复用**（来自当前算子对应分类的样例）：
-- **pl.* 调用链**：{api_usage}
-- **Tile 配置**：{tile_config}
-- **同步策略**：{sync_pattern}
-- **循环结构**：{loop_pattern}
+**直接可复用**（来自当前算子对应分类的样例，标注来源）：
+- API 调用链**：{api_usage}（来源：`{sample_path}`）
+- **Tile 配置**：{tile_config}（来源：`{sample_path}`）
+- **同步策略**：{sync_pattern}（来源：`{sample_path}`）
+- **循环结构**：{loop_pattern}（来源：`{sample_path}`）
 
 **通用写法参考**（来自所有样例）：
 - **API 用法**：{如 vf.gather/vf.astype/vf.reduce_* 的参数语义与调用方式}
@@ -125,6 +125,14 @@ feasibility: {feasibility}
 | 差异点 | 示例做法 | 本算子需求 | 调整建议 |
 |--------|----------|------------|----------|
 | {diff} | {example} | {need} | {suggestion} |
+
+### 4.4 高参考价值样例推荐
+
+> 分析后对当前算子更具参考价值的样例清单，仅作推荐不否定其余样例。
+
+| 样例路径 | 推荐理由 |
+|----------|----------|
+| `{path}` | {为何对当前算子参考价值高} |
 
 ---
 
@@ -159,11 +167,6 @@ feasibility: {feasibility}
 | 维度 | 建议值 | 依据 |
 |------|--------|------|
 | {dim} | {value} | {来源章节} |
-
-### 6.2 同步策略建议
-
-- **推荐方案**: `make_tile_group` + `auto_mutex`（所有需要 buffer 切换/轮转的场景）；`make_tile` 仅限单次 scratch tile，其 pipe 级依赖用手动 `sync_src`/`sync_dst`；`cross_core` 跨核同步另用 `sync_cross_core` 类
-- **理由**: {来源}
 
 ---
 

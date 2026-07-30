@@ -7,7 +7,7 @@
 
 ---
 
-## §0 Phase 划分（R0 输出）
+## §0 Module 划分（R0 输出）
 
 ### 维度契约
 
@@ -23,14 +23,14 @@
 
 {数据依赖分析 + Section 分隔判断}
 
-### Phase 列表
+### Module 列表
 
-| Phase | 目的 | 输入依赖 | 输出 | Section |
+| Module | 目的 | 输入依赖 | 输出 | Section |
 |-------|------|---------|------|---------|
 | Phase1 | {purpose} | {dependency} | {output} | {section_vector / section_cube} |
 | Phase2 | ... | ... | ... | ... |
 
-> 若只有一个 Phase，标注"单 Phase"并说明为什么不需要拆分。
+> 若只有一个 Module，标注"单 Module"并说明为什么不需要拆分。
 
 ### 归约轴容量结论
 
@@ -39,10 +39,10 @@
 - **归约轴是否可能超单 tile**：{是 / 否，依据 SPEC 动态轴范围}
 - **是否采用多 tile 归约（online / 两遍法）**：{是，方案=... / 否，单 tile 装得下，依据=...}
 
-### Phase 级数据流
+### Module 级数据流
 
 ```
-{Phase 间的数据流向示意，标注 via GM workspace}
+{Module 间的数据流向示意，标注 via GM workspace}
 ```
 
 ---
@@ -56,9 +56,9 @@
 ### Phase1 API 调用序列
 
 ```
-Phase 1 — {名称}:
+Module 1 — {名称}:
   for j in range(n_tile_num):
-    {API 调用}          // sync: {目的}
+    {API 调用}
     ...
 ```
 
@@ -139,64 +139,37 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 - **方案**: make_tile_group + auto_mutex（由框架自动管理 buffer 切换与 core 内互斥）；若有单次使用 scratch tile 用 make_tile
 - **依据算子**: {EXPLORE_REPORT §4 定位的最相似官方指定算子路径}
-- **理由**: {基于 R0 Phase 划分，说明 auto_mutex 如何覆盖本算子的 buffer 切换/互斥边界}
+- **理由**: {基于 R0 Module 划分，说明 auto_mutex 如何覆盖本算子的 buffer 切换/互斥边界}
 
-### R3↔R6 联合决策 / 待回填项
+### double buffer 地址规划
 
-| 项目 | 当前结论 | 受 buffer 数影响的 tile/地址 | R6 回填结果 |
-|------|---------|-----------------------------|------------|
-| buffer 数 | {1 / 2 / 待定} | {tile 名单} | {R6 pipeline 深度确认后填写} |
-| PONG 地址 | {无 / 预留} | {地址范围} | {是否启用、是否调整} |
+> `make_tile_group` 的 buffer 数 > 1 时地址占用按倍数放大，须在此显式记录。buffer 数取值参照官方指定算子中相似算子的实际配置。
+
+| 项目 | 结论 | 受影响 tile/地址 |
+|------|------|-----------------|
+| buffer 数 | {1 / 2 / ...} | {tile 名单} |
+| PONG 地址 | {无 / 预留} | {地址范围} |
 
 ---
 
 ## §4 循环与 Section 结构（R4 输出）
 
-### 完整伪代码骨架
+> 各算子在循环与 Section 结构上差异极大（单/多 section、单/多 Module、是否含 cross_core 流水、SPMD 原语位置等），不存在通用设计方法。**必须**参照官方指定算子的实际写法确定本算子结构，不自行臆造。
 
-> R4 只搭循环骨架（含 `// sync: {目的}` 占位注释，沿用 R1 约定）。同步点的位置标注、目的归类与具体 API 统一由 R6 在 §6 完成。尾块处理代码（ceiling division、pl.min、set_validshape）由 R7 填入。
+### 参考样例
 
-```python
-# ⚠️ 编译期常量必须声明在 kernel 函数外（模块级）——
-#    写进函数体内会触发编译错误
-TS = {S_tile}
-TD = {D_tile}
-SCALE = 1.0 / sqrt({D_logical})
+- **主要参考样例**: {EXPLORE_REPORT.md §4 定位的官方指定算子路径}
+- **可复用结构点**: {该样例中可复用的循环 / section / SPMD 写法}
+- **补充参考**（如有）: {`../pypto-pro-material-explore/references/official_samples.md` 清单中其他参考样例路径及参考点}
 
-# 动态维度声明（具体 API 以 docs/ 和官方指定算子样例为准）
-# 例：M = <动态维度声明>, N = <动态维度声明>
+### 本算子结构说明
 
-# jit 装饰器：@pl.jit() 或 @pl.jit(auto_mutex=True)
-@pl.jit(auto_mutex=True)
-def {op}_kernel(
-    # 输入输出参数
-):
-    # ---- Tile 声明 ----
-    ...
+- **section 划分**: {section_vector / section_cube / 多 section 及位置关系}
+- **循环嵌套**: {参照样例说明 M-tile / N-tile 等循环嵌套关系}
+- **SPMD 原语位置**: {pl.get_block_idx() / pl.get_block_num() 获取位置}
+- **编译期常量位置**: {TS、TD、SCALE 等置于 @pl.jit 装饰器前模块级}
 
-    # ---- SPMD 原语获取（位置：{section 内 / section 外，取决于 Phase 数}） ----
-    num_cores = pl.get_block_num()   # 多 section 算子放 section 外；单 section 可放 section 内
-    core_id = pl.get_block_idx()
-
-    # ---- Section 声明 ----
-    with pl.section_{vector/cube}():
-
-        # ---- 尾块处理（R7 填入：ceiling division + pl.min + set_validshape） ----
-        m_tile_num = ...
-        n_tile_num = ...
-
-        # SPMD M-tile 循环
-        for i in pl.range(core_id, m_tile_num, num_cores):
-            m_off = i * {M_tile_dim}
-
-            for j in pl.range(0, n_tile_num, 1):
-                n_off = j * {N_tile_dim}
-
-                load_tile(tile_a, x, [i, j])       // sync: {目的}
-                # ... 后续 compute/store ...
-```
-
-> 骨架中的 `// sync: {目的}` 仅为占位；同步点的完整标注与 API 选择见 §6（R6 输出）。
+> 同步点见 §6（R6），尾块处理见 §7（R7）。
 
 ---
 
@@ -211,44 +184,36 @@ def {op}_kernel(
 
 ---
 
-## §6 同步与核间流水（R6 输出）
+## §6 核间同步（R6 输出）
 
-> 同步规划始终填写；cross_core 流水部分仅当算子涉及跨 section/sub-block 数据传递时填写。单 section + 无跨 Phase 数据依赖的算子仅填写 pipe 内/pipe 间同步，不填写 cross_core。
+> 核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，无需在此记录。**仅 cross_core**（Cube↔Vector sub-block 间跨核数据传递）需手动插入 `set_cross_core`/`wait_cross_core`。同步分工见 `.opencode/references/performance-constraints.md`「强制 1」同步分工表。
+>
+> **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时填写。单 section 算子（纯 vec / 纯 cube）填"不涉及 cross_core"即可。
 
-### 同步 API 填充
+### cross_core 涉及判定
 
-在 §4 伪代码骨架的同步点占位处填入具体 API：
+- **是否涉及 cross_core**: {是 / 不涉及（单 section 算子）}
+- **依据**: {R0 Module 划分中是否含跨 section 数据流}
 
-| 同步点位置 | 同步 API | 参数 | 目的 | 参考来源 |
-|-----------|---------|------|------|---------|
-| tile_group buffer 轮转 | `auto_mutex`（无额外手动 sync） | {mutex_ids 覆盖范围} | buffer 切换与互斥（框架自动管理） | {EXPLORE_REPORT §4 定位的官方指定算子} |
-| make_tile scratch tile 的 pipe 级依赖 | `pl.system.sync_src`/`sync_dst(...)` | `set_pipe=..., wait_pipe=..., event_id=...` | 等 MTE2/V 等完成（仅限未由 auto_mutex 管理的 tile） | {EXPLORE_REPORT §4 定位的官方指定算子} |
-| cross_core 跨核数据传递 | `pl.system.set_cross_core(...)` / `wait_cross_core(...)` | `pipe=..., event_id=...` | 跨核同步 | {EXPLORE_REPORT §4 定位的官方指定算子} |
-
-### Pipeline 深度
-
-- **pipeline 预取深度**（以实际算子为准，如 FA 的 QK_PRELOAD）: {深度}
-- **FIFO_SIZE**: {= pipeline 预取深度 + 1}
-- **回填 R3 结果**: {地址规划是否满足 double buffer / PONG 需求，哪些地址已按 buffer 数更新}
-
-### event_id 分配表
-
-> event_id 取值范围为 `[0, 16)`（API 文档 `set_cross_core_wait_cross_core.md` 参数范围表）。各流水组占不重叠区段。
-
-| 流水组 | event_id 范围 | 用途 | 参考来源 |
-|--------|--------------|------|---------|
-| {流水组1} | `{如 [0, FIFO_SIZE)}` | {说明} | {EXPLORE_REPORT §4 定位的官方指定算子} |
-| {流水组2} | `{如 [FIFO_SIZE, 2*FIFO_SIZE)}` | ... | ... |
-| {流水组3} | `{如 [2*FIFO_SIZE, 3*FIFO_SIZE)}` | ... | ... |
-
-> event_id 总用量须不超过 API 文档标注的上限 16。
+> 若"不涉及"，以下各表填"不涉及"或省略。
 
 ### cross_core 同步点
+
+> 同步点的插入位置与参数以官方指定算子（EXPLORE_REPORT §4 定位）的实际写法为准，不臆造。
 
 | 位置 | 同步 API | 参数 | produce/consume | 参考来源 |
 |------|---------|------|----------------|---------|
 | {数据产生后} | `pl.system.set_cross_core(...)` | `pipe=..., event_id=...` | produce | {EXPLORE_REPORT §4 定位的官方指定算子} |
 | {数据使用前} | `pl.system.wait_cross_core(...)` | `pipe=..., event_id=...` | consume | {EXPLORE_REPORT §4 定位的官方指定算子} |
+
+### event_id 分配表
+
+> event_id 取值范围为 `[0, 16)`。各流水组占不重叠区段，隔离方案以官方指定算子实际用法为准。
+
+| 流水组 | event_id 范围 | 用途 | 参考来源 |
+|--------|--------------|------|---------|
+| {流水组1} | {如 [0, 4)} | {说明} | {EXPLORE_REPORT §4 定位的官方指定算子} |
+| {流水组2} | {如 [4, 8)} | ... | ... |
 
 ---
 
@@ -258,7 +223,7 @@ def {op}_kernel(
 
 ### 尾块处理方案
 
-> 在 §4 伪代码骨架的"尾块处理"占位处填入以下代码：
+> 在 §7 填入以下尾块处理代码：
 
 ```python
 # ceiling division 计算 tile 数（必须向上取整，用 N//TILE 直接整除会漏掉尾块）
@@ -298,8 +263,8 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 | 检查项 | 结果 | 证据 |
 |--------|------|------|
 | API 调用链完整覆盖数学公式 | ✅ / ❌ | {映射验证} |
-| §4 伪代码核心计算步骤无留空（`=` 赋值处不得为 `...`，不得标注"需 coder 实现"等；sync 占位 `// sync: {目的}` 和 R7 尾块占位除外） | ✅ / ❌ | {若有留空，回 R1 补充 API 或标注 unsupported 触发回退} |
-| 数据依赖正确（Phase 顺序 + sync 点） | ✅ / ❌ | {依赖分析} |
+| §4 已参照官方样例确定循环与 Section 结构（含参考样例路径与结构说明） | ✅ / ❌ | {回 R4 补充} |
+| 数据依赖正确（Module 顺序 + sync 点） | ✅ / ❌ | {依赖分析} |
 | dtype 精度满足要求 | ✅ / ❌ | {FP32 matmul 累加 / ...} |
 | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设 `layout` | ✅ / ❌ | {回 R2 补 layout} |
 | Acc tile 物理 M×N×dtype_bytes ≥ fractal（FP32 ≥ 1024 bytes；动态轴含极小维度时尤需检查） | ✅ / ❌ | {回 R2 pad tile shape} |
@@ -309,13 +274,12 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
 | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（见 §8「目标测试 case」表） | ✅ / ❌ | {回 R7.5 补充 / 回溯适配不了的轮次} |
-| 支持非对齐 M（M 尾块） | ✅ / ❌ | {ceiling division + set_validshape 设计} |
-| 支持非对齐 N（N 尾块） | ✅ / ❌ | {同上} |
+| 是否正确处理了尾块（M/N 尾块） | ✅ / ❌ | {ceiling division + set_validshape 设计} |
 | 归约轴可能超单 tile 时已采用 online/两遍法（保证泛化性，R0 已判断） | ✅ / ❌ | {回 R0 重设归约方案} |
 | 循环边界正确 | ✅ / ❌ | {valid_m/valid_n 计算验证} |
 | 超越函数在 dtype 范围内无溢出 | ✅ / ❌ | {引用 §1 数值安全边界} |
 | 跨 tile 状态初始化/持久化正确 | ✅ / ❌ | {expands 恒等值 / muls 拷贝；回 R0 或 R1 修正} |
-| 同步策略在动态轴全范围下正确 | ✅ / ❌ | {num_cores / pipeline defer / event 隔离} |
+| cross_core 同步方案正确（涉及跨 section 时：同步点位置与 event_id 隔离参照官方指定算子） | ✅ / ❌ | {回 R6 修正} |
 
 ### 一致性检查
 
@@ -325,7 +289,7 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 | 所有决策有证据支撑 | ✅ / ❌ | {证据链检查} |
 | 各内存空间（UB/L1/L0A/L0B/L0C）tile 总用量分别不超各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | ✅ / ❌ | {回 R3 重排地址 / R2 缩 tile} |
 | `tile_dims` 使用时已关注大 stride 对性能的影响 | ✅ / ❌ | {回 R2 调整布局} |
-| 条件性检查（如跳过 R6，确认无跨核数据传递） | ✅ / ❌ | {R0 重新评估} |
+| 条件性检查（若 §6 填"不涉及 cross_core"，确认该算子确实无跨 section 数据传递） | ✅ / ❌ | {R0 重新评估} |
 
 ### 评估结论
 
@@ -358,5 +322,5 @@ GM ←[store_tile]─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ �
 | `[load_tile]` | MTE2 搬运：GM → UB |
 | `[store_tile]` | MTE3 搬运：UB → GM |
 | `→` | V 流水线操作，标注 API 名 |
-| `---` | 数据跨 Phase 持久化（tile 在不同 Phase 间不被覆盖） |
-| `├─` | 同一 Phase 内分支（同一数据被多次使用） |
+| `---` | 数据跨 Module 持久化（tile 在不同 Module 间不被覆盖） |
+| `├─` | 同一 Module 内分支（同一数据被多次使用） |

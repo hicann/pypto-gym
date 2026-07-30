@@ -46,9 +46,31 @@ find $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ -name "*.md" | sort
 ### 扫描命令
 
 ```bash
-# 直接读取统一清单文件（orchestrator 资源缓存准备时已按此清单清理 pro_ops/）
+# 1. 核对缓存与清单一致性（生成 §B 前必做）
+python3 -c "
+import re, os
+from pathlib import Path
+cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
+manifest = Path('.opencode/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
+expected = {m.group(0).strip('\`') for m in re.finditer(r'\`pro_ops/[^\`]+\.py\`', manifest)}
+pro_ops = cache / 'pro_ops'
+actual = {'pro_ops/' + str(f.relative_to(pro_ops)) for f in pro_ops.rglob('*.py')} if pro_ops.is_dir() else set()
+missing = expected - actual
+extra = actual - expected
+print(f'清单期望 {len(expected)} 个，缓存实际 {len(actual)} 个')
+if missing: print('缺失(清单有缓存无):', sorted(missing))
+if extra: print('多余(缓存有清单无):', sorted(extra))
+if not missing and not extra: print('一致')
+"
+
+# 2. 读取统一清单文件（orchestrator 资源缓存准备时已按此清单清理 pro_ops/）
 cat .opencode/skills/pypto-pro-material-explore/references/official_samples.md
 ```
+
+**差异处理**：
+- **缺失**（清单有、缓存无）：阻断——§B 将指向无效路径，下游 design/develop 无法参考。在 EXPLORE_REPORT §8 风险评估记录，并提示需重新装配资源缓存（orchestrator 职责）。
+- **多余**（缓存有、清单无）：非阻断——§B 不受影响，但在 EXPLORE_REPORT §8 风险评估记录"缓存存在清单外文件，已忽略，不得作为样例参考"。
+- **一致**：正常生成 §B。
 
 ### 按清单填充
 

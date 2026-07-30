@@ -50,3 +50,46 @@ tools:
 ## Handoff
 
 golden 门禁通过后，返回 pypto-pro-op-orchestrator。**不**推进到架构设计或 kernel 实现。
+
+---
+
+## Stage 3 后的 staging dispatch 模式（仅 L1 路径）
+
+当编排器在 Stage 3 完成后判定 `is_fusion=true`（L1 路径）时，会额外 dispatch 你一次（staging 模式），要求你产出 per-Module 累积 golden。
+
+### 交付物
+
+| 文件 | 用途 |
+|------|------|
+| `custom/<op>/modules/{op}_golden_stage<suffix>.py` × N 个 | 每个 Module 的累积 golden（纯 torch，源为 `{op}_golden_cpu.py`） |
+
+### 工作流程
+
+1. 读 `custom/<op>/module_interfaces.yaml` 的 `modules[k].golden_steps` 字段——每个 Module 对应的数学步骤列表
+2. 读 `custom/<op>/{op}_golden_cpu.py` 源码——按 `golden_steps` 描述定位代码行，切分出各 Module 的累积 golden
+3. 产 `custom/<op>/modules/{op}_golden_stage<suffix_k>.py`（k = 1..N，共 N 个文件），每个自包含、纯 torch
+4. 逐个自验：`python custom/<op>/modules/{op}_golden_stage<suffix_k>.py` exit code 0
+5. 全部自验通过后返回编排器
+
+### 设计要点
+
+1. **自包含**：每个 `{op}_golden_stage<suffix_k>.py` 不 import 上一个 golden 文件，独立实现 Module 1..k 的数学（纯 torch）。避免单 Module 重写时级联崩溃，每个文件独立可审计
+2. **信息屏障**：写 per-Module golden 时不看 coder 的 impl，只读 `{op}_golden_cpu.py` + `module_interfaces.yaml`
+3. **以 `golden_cpu.py` 为源**：Pro 侧精度对比标准是 CPU FP32（`{op}_golden_cpu.py`），per-Module 累积 golden 必须从 `{op}_golden_cpu.py` 切分，保证与 Stage 4 精度门禁的对比源一致
+4. **纯 torch**：数学参考，不涉及 PyPTO-Pro API
+5. **suffix 命名**：`{op}_golden_stage<suffix_k>.py`，suffix = 累积 Module 序号拼接（`1`, `12`, `123`, …），与 staged impl 文件一一对应
+
+### 函数签名
+
+```python
+# modules/{op}_golden_stage<suffix_k>.py
+def {op}_golden_stage<suffix_k>(*primary_inputs):
+    """Pure-torch reference covering modules 1..k composed end-to-end.
+    Returns the module 1..k composed output as a tuple.
+    Derived from {op}_golden_cpu.py — CPU FP32 reference."""
+    ...
+```
+
+### FAIL 路径
+
+如果 `{op}_golden_cpu.py` 的数学无法按 `module_interfaces.yaml` 的 Module 边界切分（如边界选在数学不可分的中间步骤）、或切分后自验不通过（数学错误），报 FAIL + 失败证据（哪个 Module 边界切分失败、为什么）。编排器收到后调 `rollback_to_stage(3)` 回退 architect 重新设计 Module 边界。此场景概率极低——golden_cpu.py 已在 Stage 2 验证通过，切分只是按边界拆分数学代码。

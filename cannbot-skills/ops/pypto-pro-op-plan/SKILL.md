@@ -34,7 +34,7 @@ description: Stage 1 算子规划。首先加载 pypto-pro-intent-understand 产
 逐字段归属：
 
 - **ASK**（Step 1 应已确认）：目标公式、输入/输出 dtype。
-- **MAY-DESIGN**（标注留待 design，不问用户）：输入张量 **shape**、**拓扑**（纯 vector / cube→vec / …，由 design R0 Phase/Section 决定）、**尾块行为**（design R7/R7.5）、**tile 族 / 切分 / 片上地址**（design R2/R3）。
+- **MAY-DESIGN**（标注留待 design，不问用户）：输入张量 **shape**、**拓扑**（纯 vector / cube→vec / …，由 design R0 Module/Section 决定）、**尾块行为**（design R7/R7.5）、**tile 族 / 切分 / 片上地址**（design R2/R3）。
 - **MAY-ASSUME**（取默认并注明）：**设备**默认 a5；**matmul 累加 dtype** 默认 float（与 golden 的 `.float()` 累加对齐）。
 
 #### 2. 三个 kernel 契约字段（SPEC 通用模板未覆盖，此处必补）

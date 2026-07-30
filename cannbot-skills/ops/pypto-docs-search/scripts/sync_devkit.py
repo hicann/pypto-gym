@@ -179,7 +179,7 @@ def _provision_requests(devkit, pin):
     src_url = os.environ.get("PYPTO_SRC_URL", "https://gitcode.com/cann/pypto.git")
     gym_url = os.environ.get("PYPTO_GYM_URL", "https://gitcode.com/cann/pypto-gym.git")
     pro_ops_url = os.environ.get("PYPTO_PRO_OPS_URL", src_url)
-    pro_ops_pair = ("pro_ops", "python/tests/ut/block/frontend/a5")
+    pro_ops_pair = ("pro_ops", "python/tests/st/pypto_pro/frontend")
     docs_pairs = [("docs", "docs/zh")]
     if pro_ops_url == src_url:
         docs_pairs.append(pro_ops_pair)
@@ -196,7 +196,7 @@ def _provision_requests(devkit, pin):
     ]
     if pro_ops_url != src_url:
         requests.append(ProvisionRequest(
-            devkit, "pro_ops", "python/tests/ut/block/frontend/a5", pro_ops_url,
+            devkit, "pro_ops", "python/tests/st/pypto_pro/frontend", pro_ops_url,
             os.environ.get("PYPTO_PRO_OPS_SRC", ""), [pro_ops_pair], pin,
         ))
     return requests
