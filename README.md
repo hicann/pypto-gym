@@ -7,7 +7,6 @@
 
 PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾（Ascend）AI 处理器，使用 PyPTO 的 Tile 编程模型，提供融合算子开发样例和大模型适配样例。这些样例均基于CANNBot完成设计、开发与调优工作。本仓作为 PyPTO 的"算子训练场"，方便开发者学习、复用与对比。
 
-- **硬件目标**：华为昇腾（Ascend）AI 处理器
 - **编程框架**：PyPTO，基于 Tile 的编程模型
 - **内容**：融合算子样例 + 大模型适配样例
 
@@ -18,7 +17,7 @@ PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾
 - **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
 - **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
 
-### 目标用户
+## 目标用户
 
 - **算法开发者**：主要使用Tensor层次编程，快速实现和验证算法，专注于算法逻辑
 - **系统开发者**：可在Tensor和PTO虚拟指令集层次上进行三方框架对接或集成，以及工具链开发
@@ -44,9 +43,6 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
 # 指定运行的 NPU 设备 ID（根据实际可用 chip 设置）
 export TILE_FWK_DEVICE_ID=0
-
-# 指定 pto-isa 代码路径（当pypto使用源码编译安装时需要关注）
-export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 ```
 
 推荐将上述内容保存为 `env_setup.sh`，每次执行 `source env_setup.sh` 即可。
