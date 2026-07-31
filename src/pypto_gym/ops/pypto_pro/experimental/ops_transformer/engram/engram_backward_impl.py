@@ -1,35 +1,23 @@
 #!/usr/bin/env python3
 # coding: utf-8
-# Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
-
-"""PyPTO-Pro engram_backward kernel implementation (Stage 4) — MINIMAL rewrite.
+# Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+"""PyPTO-Pro engram_backward kernel implementation.
 
 Backward of the Engram Gated Memory operator (forward = engram_v4).
 
-Design goal: COMPILE + RUN FIRST. No optimization. Mirror the forward
-(engram_v4_impl.py) structure as closely as possible.
-
-Hard rules respected (see task brief):
-  (2) NO `vf.astype` inside @pl.vector_function. BF16->FP32 is done in the main
-      flow via `pl.cast(..., target_type=pl.DT_FP32, ...)`; every VF helper eats
-      FP32 tiles only (exactly like forward).
-  (3) NO `is_transpose`, NO `layout=pl.ZN`. W_v / W_k / E are host-pre-transposed
-      in the wrapper; the kernel loads them as plain NZ.
-  (4) The bs_start loop is truncated via a stored variable:
-        bs_tile_rows = pl.min(TILE_M, bs - row_off)
-        for bs_start in pl.range(0, m_tile_rows, TILE_BS_VEC): ...
-  (5) Tile-group count kept lean (cube=5, vec=17 single-id groups; comparable
-      to forward which uses ~22 vec groups).
-  (6) Reduction outputs use the STABLE options only:
-        - grad_W_v / grad_W_k / grad_emb : cube output-tile-distributed,
-          FULL K-reduction per output tile, cover-write (same as forward value
-          projection). NO atomicAdd from L0C anywhere.
-        - grad_γ_q / grad_γ_k            : FP32 tile RMW into a host
-          pre-zeroed FP32 GM workspace; only vector subblock 0 performs
-          the RMW.
-
-Math truth:  custom/engram_backward/engram_backward_golden.py
-Struct tmpl: engram/engram_v4_impl.py (forward)
+Single-kernel design: a vector section (produces grad_value_ws / grad_key_ws
+plus grad_hidden_states and the per-subblock grad_γ FP32 workspace) feeds a
+cube section (Nest1 grad_emb + Nest2 grad_W_v + Nest3 grad_W_k). BF16
+activation inputs are cast to FP32 once at the computation boundary; all RMS /
+gate / scaled-dot math runs in FP32 inside VF helpers. Final output stores
+are low precision (BF16).
 
 7-step backward (per head m, reversed Step7->Step1):
   Step7  grad_gates[m]=Σ_h(go·value); grad_value=Σ_m(go·gates)
@@ -40,86 +28,120 @@ Struct tmpl: engram/engram_v4_impl.py (forward)
   Step2  (grad_key_m,  grad_γ_k) = rms_norm_bw(grad_nKey, key, γ_k)
   Step1  linear_bw(grad_key_m, E, W_k[m]) -> grad_emb_k, grad_W_k[m]
   Sum:   grad_emb = grad_emb_v + Σ_m grad_emb_k
-
-Kernel layout (single kernel, vector section FIRST then cube):
-  VECTOR section:
-  Pass A  Step7a : grad_value_ws  (cover-write per row and full h; Σ over m_h)
-    Pass b  per-head Step7b -> Step5 -> Step4 -> Step3(rms_q) -> Step2(rms_k):
-            grad_hidden_states (cover-write), grad_key_ws (cover-write),
-            grad_γ_q / grad_γ_k (FP32 tile RMW into low-precision GM).
-  handoff: vector set_cross_core(MTE3, event=0) -> cube wait_cross_core(MTE1, event=0)
-           (V->Cube proven pattern, see custom/lhz_design/test_lhz_design.py:644/656
-            and 接口手册-05 §set/wait_cross_core: "V->Cube: set(MTE3) + wait(MTE1)")
-  CUBE section:
-    Nest 1 grad_emb : per (M_tile, De_tile) long L0C Partial chain
-                      (1 value + m_h keys) -> single Final cover-write.
-  Nest 2 grad_W_v : output-tile distributed, full K=bs, cover-write.
-  Nest 3 grad_W_k : loop m_h, output-tile distributed, full K=bs, cover-write.
-
-PRECISION STATUS: [PRECISION_UNKNOWN] (no Python/NPU on this host).
-NPU repro:  python custom/engram_backward/test_engram_backward.py
 """
 
 import logging
-import os
 
 import torch
-import torch_npu  # noqa: F401  (registers NPU backend)
 
 import pypto_pro.language as pl
 from pypto_pro.runtime.platform import get_platform_info
+from pypto_pro.runtime.tilingkey import TilingKeyField
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-# ═══════════════════════════════════════════════════════════════════
-# Layer b: Compile-time constants  (mirror forward engram_v4 exactly)
-# ═══════════════════════════════════════════════════════════════════
 
-# m_h (head count) is DYNAMIC (1-16), derived in kernel body from grad_output.shape[1].
-TILE_M = 128  # cube M tile
-TILE_K = 128  # cube K tile
-TILE_N = 128  # cube N tile
-TILE_BS_VEC = 4  # vec sub-row tile (conservative, < 248KB UB)
-# m_h is now DYNAMIC (1-16), derived from grad_output.shape[1] in kernel body.
-H_CHUNK = 2560  # one full-h vector tile (h=1280 uses valid_shape tail)
-LANES_FP32 = 64  # VF FP32 register width
-VPW_K_CHUNK = 1024  # split the long BS reduction before the final vector sum
+# TilingKey: two specialization fields (2x4 = 8 compiled variants).
+#   HMode (bits=1): vector sub-tile row count on H.
+#     0 -> H=1280 (rows: B=8, A=16; H_CHUNK=1280)   1 -> H=2560 (rows: B=4, A=8; H_CHUNK=2560)
+#     rows*H is byte-constant -> [rows,H_CHUNK] UB layout is identical for both keys;
+#     only [rows,64]/[1,H_CHUNK] tiles need HMode-specialized addresses.
+#   BSMode (bits=2): vector worker tile V_TILE (largest with ceil(BS/V_TILE) >= 64):
+#     0 -> 128 (BS>=8192)  1 -> 64 (BS>=4096)  2 -> 32 (BS>=2048)  3 -> 16 (small BS)
+#     V_TILE only enters scalar arithmetic, never TileType.shape/addrs -> no addr specialization.
 
-CLAMP_VALUE = 1.0e-6  # signed_sqrt_gate |s| floor
-RMS_EPS = 1.0e-6  # RMSNorm zero-division guard
-GATE_EPS = 1.0e-12  # signed_sqrt_gate denominator guard (aligns golden)
 
-# ═══════════════════════════════════════════════════════════════════
-# UB addresses (vector section). All non-overlapping; each [4,64]/[1,2560]
-# scratch tile has its OWN address so simultaneous-live tiles never collide.
-# BF16 [4,2560]=0x5000  FP32 [4,2560]=0xA000; h is processed as one tile.
-# Peak allocated footprint ≈ 288 KB; the A5 Vector UB supports this layout.
-# VA_OUT16 aliases VA_GV32: Pass-A grad_value is fully stored before Pass-b.
-# VA_GKACC32 reuses the query partial buffer: query partials are dead before
-# key gamma RMW begins.
-# ═══════════════════════════════════════════════════════════════════
+class EngramTilingKey:
+    HMode = TilingKeyField(bits=1, values=[0, 1])        # 0 -> H=1280, 1 -> H=2560
+    BSMode = TilingKeyField(bits=2, values=[0, 1, 2, 3]) # V_TILE = 128/64/32/16
 
-VA_GO16 = 0x00000  # [4,2560] BF16 grad_output load (Pass A & b)
-VA_GO32 = 0x05000  # [4,2560] FP32 grad_output FP32 (Pass A & b)
-VA_PT16 = 0x0F000  # [4,2560] BF16 partner BF16 (value/nKey/nQuery/hidden/key)
-VA_PT32 = 0x14000  # [4,2560] FP32 partner FP32
-VA_GV32 = 0x1E000  # [4,2560] FP32 Pass-A grad_value accumulator
-VA_OUT32 = 0x28000  # [4,2560] FP32 Pass-b grad_nQuery/grad_nKey
-VA_OUT16 = 0x1E000  # [4,2560] BF16 final vector output (aliases VA_GV32)
-VA_SC32 = 0x32000  # [4,64] FP32 score
-VA_GT32 = 0x32400  # [4,64] FP32 gate
-VA_GG32 = 0x32800  # [4,64] FP32 grad_gate (Step7b accumulator)
-VA_GS32 = 0x32C00  # [4,64] FP32 grad_score (Step5 output)
-VA_SQ32 = 0x33000  # [4,64] FP32 rms sq_sum accumulator
-VA_RMS32 = 0x33400  # [4,64] FP32 rms inv_rms
-VA_INNER32 = 0x33800  # [4,64] FP32 rms inner (mean)
-VA_GAM16 = 0x33C00  # [1,2560] BF16 gamma
-VA_GAM32 = 0x35000  # [1,2560] FP32 gamma FP32
-VA_GGP32 = 0x37800  # [1,2560] FP32 grad_gamma partial -- query path
-VA_GGP32_K = 0x3A000  # [1,2560] FP32 grad_gamma partial -- key path
-VA_GQACC32 = 0x3C800  # [1,2560] FP32 RMW accumulator load buf -- query gamma
-VA_GKACC32 = 0x37800  # [1,2560] FP32 RMW accumulator load buf -- key gamma (aliases query partial)
+
+# Compile-time constants (mirror forward engram_v4).
+# M_H (head count) is DYNAMIC (1-16), derived in kernel body from grad_output.shape[1].
+TILE_M = 128             # CUBE BS-row tile (== cube_mn); vector uses V_TILE
+TILE_N = 128             # De/col tile (== cube_mn)
+# Vector worker BS-row tile candidates, selected per launch by BSMode so the
+# 64 AIV workers (32 cores x 2) stay filled. V_TILE is a multiple of
+# TILE_BS_VEC_A (8/16) so a worker's row window never straddles VF sub-tiles.
+V_TILE_BS0 = 128           # BSMode 0: BS >= 8192
+V_TILE_BS1 = 64            # BSMode 1: BS >= 4096
+V_TILE_BS2 = 32            # BSMode 2: BS >= 2048
+V_TILE_BS3 = 16            # BSMode 3: small BS
+LANES_FP32 = 64          # VF FP32 register width
+
+# Per-HMode vector-tile split sizes. `if pl.constexpr(HMode==1)` binds
+# TILE_BS_VEC / TILE_BS_VEC_A / H_CHUNK to one pair so TileType.shape stays
+# compile-time constant. H=1280 doubles rows vs H=2560 (byte-identical UB).
+TILE_BS_VEC_2560 = 4           # H=2560: vec sub-row tile (B-key/B-query)
+TILE_BS_VEC_1280 = 8           # H=1280: 2x rows
+TILE_BS_VEC_A_2560 = 8         # H=2560: Pass A dedicated tile
+TILE_BS_VEC_A_1280 = 16        # H=1280: 2x rows
+H_CHUNK_2560 = 2560           # H=2560: one full-H vector tile
+H_CHUNK_1280 = 1280           # H=1280: one full-H vector tile
+
+CLAMP_VALUE = 1.0e-6     # signed_sqrt_gate |s| floor
+RMS_EPS = 1.0e-6         # RMSNorm zero-division guard
+GATE_EPS = 1.0e-12       # signed_sqrt_gate denominator guard (aligns golden)
+
+# UB addresses (vector section), two groups:
+#  (A) [rows,H_CHUNK] tiles: bytes = rows*H is CONSTANT across HMode
+#      (4*2560==8*1280), so the same addresses serve both keys.
+#  (B) [rows,64]/[1,H_CHUNK] tiles: column count does NOT scale with H, so
+#      doubling rows doubles bytes -> addresses MUST be specialized per HMode
+#      (a shared 0x400 stride would overlap at H=1280 -> RMS-bw reads garbage).
+#  HMode-dependent addrs use a parser-foldable select `HMode*A_2560 + (1-HMode)*A_1280`
+#  (HMode is a ConstInt) — parser can't see names bound in `if pl.constexpr` blocks.
+
+# (A) H-invariant addresses (byte-constant [rows,H_CHUNK] tiles).
+VA_GOUT16 = 0x00000  # [rows,H_CHUNK] BF16 grad_output load (Pass A & B)
+VA_GOUT32 = 0x05000  # [rows,H_CHUNK] FP32 grad_output FP32 (Pass A & B)
+VA_PTNR16 = 0x0F000  # [rows,H_CHUNK] BF16 partner BF16 (value/nKey/nQuery/hidden/key)
+VA_PTNR32 = 0x14000  # [rows,H_CHUNK] FP32 partner FP32
+VA_GVAL32 = 0x1E000  # [rows,H_CHUNK] FP32 Pass-A grad_value accumulator
+VA_GN32 = 0x28000  # [rows,H_CHUNK] FP32 Pass-B grad_nQuery/grad_nKey
+VA_GBUF16 = 0x1E000  # [rows,H_CHUNK] BF16 final vector output (aliases VA_GVAL32)
+# RMS-x cache ([rows,H_CHUNK] FP32): holds keys (Phase B-key) / hidden (Phase B-query)
+# so the 3-pass RMS backward loads each tile from GM ONCE instead of 3x.  Aliases
+# grad_value (VA_GVAL32), which is dead after GV_DONE -- Phase-B only, same pattern
+# as VA_GBUF16 aliasing VA_GVAL32.  Reuses existing UB, no extra footprint.
+VA_XCACHE32 = VA_GVAL32
+
+# (B) HMode-specialized addresses (module-level int pairs).
+#     [rows,64] FP32 stride: 0x400 (H=2560, rows=4) / 0x800 (H=1280, rows=8).
+#     Listed grouped by HMode (all _2560 first, then all _1280) for readability.
+
+# ---- HMode = 1 (H = 2560) ----
+VA_SCORE32_2560 = 0x32000  # [rows,64] FP32 score
+VA_GATE32_2560 = 0x32400
+VA_GGATE32_2560 = 0x32800
+VA_GSCORE32_2560 = 0x32C00
+VA_RSQ32_2560 = 0x33000
+VA_RINV32_2560 = 0x33400
+VA_RMEAN32_2560 = 0x33800
+VA_GAMMA16_2560 = 0x33C00  # [1,H_CHUNK] BF16 gamma
+VA_GAMMA32_2560 = 0x35000  # [1,H_CHUNK] FP32 gamma
+VA_GGAMQ32_2560 = 0x37800  # [1,H_CHUNK] FP32 grad_gamma -- query
+VA_GGAMK32_2560 = 0x3A000  # [1,H_CHUNK] FP32 grad_gamma -- key
+VA_GGAMQ_ACC32_2560 = 0x3C800  # [1,H_CHUNK] FP32 RMW acc -- query
+# GGAMK_ACC aliases GGAMQ32 (query partial dead before key RMW):
+VA_GGAMK_ACC32_2560 = 0x37800
+
+# ---- HMode = 0 (H = 1280) ----
+VA_SCORE32_1280 = 0x32000  # [rows,64] FP32 score
+VA_GATE32_1280 = 0x32800
+VA_GGATE32_1280 = 0x33000
+VA_GSCORE32_1280 = 0x33800
+VA_RSQ32_1280 = 0x34000
+VA_RINV32_1280 = 0x34800
+VA_RMEAN32_1280 = 0x35000
+VA_GAMMA16_1280 = 0x35800  # [1,H_CHUNK] BF16 gamma
+VA_GAMMA32_1280 = 0x36200  # [1,H_CHUNK] FP32 gamma
+VA_GGAMQ32_1280 = 0x37600  # [1,H_CHUNK] FP32 grad_gamma -- query
+VA_GGAMK32_1280 = 0x38A00  # [1,H_CHUNK] FP32 grad_gamma -- key
+VA_GGAMQ_ACC32_1280 = 0x39E00  # [1,H_CHUNK] FP32 RMW acc -- query
+# GGAMK_ACC aliases GGAMQ32 (query partial dead before key RMW):
+VA_GGAMK_ACC32_1280 = 0x37600
 
 # L1 addresses (cube section) — two generic L1 buffers, time-shared
 LA_LEFT = 0x00000
@@ -128,6 +150,12 @@ LA_RIGHT = 0x10000
 L0A_BASE = 0x0000
 L0B_BASE = 0x0000
 L0C_BASE = 0x0000
+
+# Cross-core handoff event IDs. Two producer phases let Cube overlap with Vector:
+#   Phase A: grad_value_ws -> GV_DONE (Cube Nest1-val + Nest2 may start)
+#   Phase B: grad_key_ws   -> GK_DONE (Cube Nest1-key + Nest3 may start)
+EVENT_GV_DONE = 0   # grad_value_ws ready (Phase A / Pass A)
+EVENT_GK_DONE = 2   # grad_key_ws ready   (Phase B / Pass B)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -157,9 +185,9 @@ def vf_zero_1d(tile, n_cols):
 
 @pl.vector_function
 def vf_grad_value_accum(
-    go_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 grad_output for one head
-    gate_f32,  # [TILE_BS_VEC, 64] FP32 gate (scalar per row, lane 0)
-    gv_acc,  # [TILE_BS_VEC, H_CHUNK] FP32 in/out grad_value accumulator
+    go_f32,            # [TILE_BS_VEC, H_CHUNK] FP32  grad_output for one head
+    gate_f32,          # [TILE_BS_VEC, 64]      FP32  gate (scalar per row, lane 0)
+    gv_acc,            # [TILE_BS_VEC, H_CHUNK] FP32 in/out  grad_value accumulator
     n_rows, n_cols, row_stride,
 ):
     """Step7a^{-1}: gv_acc[r,h] += go[r,h] * gate[r]   (gate broadcast over h)."""
@@ -179,12 +207,12 @@ def vf_grad_value_accum(
 
 @pl.vector_function
 def vf_grad_gate_accum(
-    go_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 grad_output for this head
-    val_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 value (shared)
-    gg_acc,  # [TILE_BS_VEC, 64] FP32 in/out grad_gate accumulator
+    go_f32,            # [TILE_BS_VEC, H_CHUNK] FP32  grad_output for this head
+    val_f32,           # [TILE_BS_VEC, H_CHUNK] FP32  value (shared)
+    gg_acc,            # [TILE_BS_VEC, 64] FP32 in/out  grad_gate accumulator
     n_rows, n_cols, row_stride,
 ):
-    """Step7b^{-1}: gg_acc[r] += Σ_h(go[r,h] * val[r,h]) for this h-chunk."""
+    """Step7b^{-1}: gg_acc[r] += Σ_h(go[r,h] * val[r,h]) for this H-chunk."""
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
     for m in pl.range(0, n_rows):
@@ -201,14 +229,14 @@ def vf_grad_gate_accum(
 
 @pl.vector_function
 def vf_gate_bw(
-    gg_f32,  # [TILE_BS_VEC, 64] FP32 grad_gate (scalar per row)
-    score_f32,  # [TILE_BS_VEC, 64] FP32 score (scalar per row)
-    gate_f32,  # [TILE_BS_VEC, 64] FP32 gate g (scalar per row)
-    gs_out,  # [TILE_BS_VEC, 64] FP32 write grad_score
+    gg_f32,            # [TILE_BS_VEC, 64] FP32  grad_gate (scalar per row)
+    score_f32,         # [TILE_BS_VEC, 64] FP32  score (scalar per row)
+    gate_f32,          # [TILE_BS_VEC, 64] FP32  gate g (scalar per row)
+    gs_out,            # [TILE_BS_VEC, 64] FP32 write  grad_score
     n_rows,
 ):
     """Step5^{-1}: signed_sqrt_gate backward.
-       公式：grad_score = grad_gate · g(1−g) · mask / (2·√max(|s|,c) + 1e-12)
+       grad_score = grad_gate · g(1−g) · mask / (2·√max(|s|,c) + 1e-12)
        mask = (|s| > c)
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
@@ -226,21 +254,21 @@ def vf_gate_bw(
         gt = vf.load_align(gate_f32, m * 64)
         gt_b = vf.full(gt, preg)
 
-        # 公式：sigmoid_grad = g - g*g = g(1-g)
+        # sigmoid_grad = g - g*g = g(1-g)
         g_sq = vf.mul(gt_b, gt_b, preg)
         sig_grad = vf.sub(gt_b, g_sq, preg)
-        # 公式：mask = (|s| > clamp) ? 1 : 0
+        # mask = (|s| > clamp) ? 1 : 0
         abs_s = vf.abs(sc_b, preg)
         mask_gt = vf.gt(abs_s, clamp_reg, preg)
         mask = vf.select(one_reg, zero_reg, mask_gt)
-        # 公式：sqrt_abs = sqrt(max(|s|, clamp))
+        # sqrt_abs = sqrt(max(|s|, clamp))
         clamped = vf.max(abs_s, clamp_reg, preg)
         sqrt_abs = vf.sqrt(clamped, preg)
-        # 公式：logits_grad = mask / (2*sqrt_abs + 1e-12)
+        # logits_grad = mask / (2*sqrt_abs + 1e-12)
         denom = vf.mul(two_reg, sqrt_abs, preg)
         denom = vf.add(denom, eps_reg, preg)
         logits_grad = vf.div(mask, denom, preg)
-        # 公式：grad_score = grad_gate · sigmoid_grad · logits_grad
+        # grad_score = grad_gate · sigmoid_grad · logits_grad
         result = vf.mul(gg_b, sig_grad, preg)
         result = vf.mul(result, logits_grad, preg)
         vf.store_align(gs_out + m * 64, result, preg)
@@ -248,18 +276,18 @@ def vf_gate_bw(
 
 @pl.vector_function
 def vf_scaled_dot(
-    gs_f32,  # [TILE_BS_VEC, 64] FP32 grad_score (scalar per row)
-    partner_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 the "other" normed vector
-    out_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 write result
+    gs_f32,            # [TILE_BS_VEC, 64]      FP32  grad_score (scalar per row)
+    partner_f32,       # [TILE_BS_VEC, H_CHUNK] FP32  the "other" normed vector
+    out_f32,           # [TILE_BS_VEC, H_CHUNK] FP32 write  result
     n_rows, n_cols, row_stride, h_value,
 ):
-    """Step4^{-1}: 公式：out[r,h] = grad_score[r] · (1/√H) · partner[r,h].
+    """Step4^{-1}: out[r,h] = grad_score[r] · (1/√H) · partner[r,h].
        Used as: partner=normed_key -> grad_nQuery; partner=normed_query -> grad_nKey.
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
-    # Do not pass 1/sqrt(h) as a VF scalar: scalar constants are lowered
-    # through the BF16 scalar path on this target.  h itself is exact, so
+    # Do not pass 1/sqrt(H) as a VF scalar: scalar constants are lowered
+    # through the BF16 scalar path on this target.  H itself is exact, so
     # construct the FP32 scale in vector registers.
     h_reg = vf.full(h_value, preg, dtype=pl.DT_FP32)
     one_reg = vf.full(1.0, preg, dtype=pl.DT_FP32)
@@ -276,11 +304,11 @@ def vf_scaled_dot(
             vf.store_align(out_f32 + off, res, preg)
 
 
-# ── rms_norm_backward (3-pass; h-split cross-chunk accumulation) ──
+# ── rms_norm_backward (3-pass; H-split cross-chunk accumulation) ──
 
 @pl.vector_function
 def vf_rmsbw_sq(x_f32, sq_acc, n_rows, n_cols, row_stride):
-    """rms_bw Pass 1: sq_acc[r] += Σ_h(x[r,h]^2) for this h-chunk."""
+    """rms_bw Pass 1: sq_acc[r] += Σ_h(x[r,h]^2) for this H-chunk."""
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
     for m in pl.range(0, n_rows):
@@ -296,7 +324,7 @@ def vf_rmsbw_sq(x_f32, sq_acc, n_rows, n_cols, row_stride):
 
 @pl.vector_function
 def vf_rmsbw_invrms(sq_acc, rms_out, n_rows, h_value):
-    """rms_bw: compute inv_rms in FP32 using an exact integer h divisor."""
+    """rms_bw: compute inv_rms in FP32 using an exact integer H divisor."""
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     eps_reg = vf.full(RMS_EPS, preg, dtype=pl.DT_FP32)
     h_reg = vf.full(h_value, preg, dtype=pl.DT_FP32)
@@ -328,16 +356,16 @@ def vf_rmsnorm_fwd(x_f32, gam_f32, inv_rms_f32, out_f32, n_rows, n_cols, row_str
 
 
 @pl.vector_function
-def vf_rmsbw_inner(
-    gx_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 grad_xhat (= grad_n)
-    x_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 x
-    gam_f32,  # [1, H_CHUNK] FP32 gamma
-    rms_f32,  # [TILE_BS_VEC, 64] FP32 inv_rms per row
-    inner_acc,  # [TILE_BS_VEC, 64] FP32 in/out
-    gg_acc,  # [1, H_CHUNK] FP32 in/out grad_gamma partial
+def vf_rmsbw_rmean(
+    gx_f32,            # [TILE_BS_VEC, H_CHUNK] FP32  grad_xhat (= grad_n)
+    x_f32,             # [TILE_BS_VEC, H_CHUNK] FP32  x
+    gam_f32,           # [1, H_CHUNK] FP32  gamma
+    rms_f32,           # [TILE_BS_VEC, 64] FP32  inv_rms per row
+    rmean_acc,         # [TILE_BS_VEC, 64] FP32 in/out
+    gg_acc,            # [1, H_CHUNK] FP32 in/out  grad_gamma partial
     n_rows, n_cols, row_stride,
 ):
-    """rms_bw Pass 2: 公式：inner[r] += Σ(grad_n·n); gg_acc[h] += Σ grad_xhat·n.
+    """rms_bw Pass 2: rmean[r] += Σ(grad_n·n); gg_acc[h] += Σ grad_xhat·n.
        n = x · inv_rms ; grad_n = grad_xhat · gamma.
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
@@ -345,7 +373,7 @@ def vf_rmsbw_inner(
     for m in pl.range(0, n_rows):
         inv_rms = vf.load_align(rms_f32, m * 64)
         inv_rms_b = vf.full(inv_rms, preg)
-        inner = vf.load_align(inner_acc, m * 64)
+        rmean = vf.load_align(rmean_acc, m * 64)
         for r in pl.range(0, n_regs):
             off = m * row_stride + r * LANES_FP32
             x = vf.load_align(x_f32, off)
@@ -355,36 +383,36 @@ def vf_rmsbw_inner(
             grad_n = vf.mul(gx, gam, preg)
             dn = vf.mul(grad_n, n_reg, preg)
             part = vf.reduce_sum(dn, preg, merge_mode=pl.MergeMode.ZEROING)
-            inner = vf.add(inner, part, preg)
+            rmean = vf.add(rmean, part, preg)
             dg = vf.mul(gx, n_reg, preg)
             prev_gg = vf.load_align(gg_acc, r * LANES_FP32)
             new_gg = vf.add(prev_gg, dg, preg)
             vf.store_align(gg_acc + r * LANES_FP32, new_gg, preg)
-        vf.store_align(inner_acc + m * 64, inner, preg)
+        vf.store_align(rmean_acc + m * 64, rmean, preg)
 
 
 @pl.vector_function
-def vf_rmsbw_inner_finalize(inner_acc, n_rows, h_value):
-    """Finalize inner by dividing the FP32 sum by the exact integer h."""
+def vf_rmsbw_rmean_finalize(rmean_acc, n_rows, h_value):
+    """Finalize rmean by dividing the FP32 sum by the exact integer H."""
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     h_reg = vf.full(h_value, preg, dtype=pl.DT_FP32)
     for m in pl.range(0, n_rows):
-        val = vf.load_align(inner_acc, m * 64)
+        val = vf.load_align(rmean_acc, m * 64)
         val = vf.div(val, h_reg, preg)
-        vf.store_align(inner_acc + m * 64, val, preg)
+        vf.store_align(rmean_acc + m * 64, val, preg)
 
 
 @pl.vector_function
 def vf_rmsbw_gradx(
-    gx_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 grad_xhat
-    x_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 x
-    gam_f32,  # [1, H_CHUNK] FP32 gamma
-    rms_f32,  # [TILE_BS_VEC, 64] FP32 inv_rms
-    inner_f32,  # [TILE_BS_VEC, 64] FP32 inner (mean)
-    gx_out_f32,  # [TILE_BS_VEC, H_CHUNK] FP32 write grad_x
+    gx_f32,            # [TILE_BS_VEC, H_CHUNK] FP32  grad_xhat
+    x_f32,             # [TILE_BS_VEC, H_CHUNK] FP32  x
+    gam_f32,           # [1, H_CHUNK] FP32  gamma
+    rms_f32,           # [TILE_BS_VEC, 64] FP32  inv_rms
+    rmean_f32,         # [TILE_BS_VEC, 64] FP32  rmean (mean)
+    gx_out_f32,        # [TILE_BS_VEC, H_CHUNK] FP32 write  grad_x
     n_rows, n_cols, row_stride,
 ):
-    """rms_bw Pass 3: grad_x = (grad_n − n·inner) · inv_rms.
+    """rms_bw Pass 3: grad_x = (grad_n − n·rmean) · inv_rms.
        Recomputes n and grad_n from x and gamma.
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
@@ -392,8 +420,8 @@ def vf_rmsbw_gradx(
     for m in pl.range(0, n_rows):
         inv_rms = vf.load_align(rms_f32, m * 64)
         inv_rms_b = vf.full(inv_rms, preg)
-        inner = vf.load_align(inner_f32, m * 64)
-        inner_b = vf.full(inner, preg)
+        rmean = vf.load_align(rmean_f32, m * 64)
+        rmean_b = vf.full(rmean, preg)
         for r in pl.range(0, n_regs):
             off = m * row_stride + r * LANES_FP32
             x = vf.load_align(x_f32, off)
@@ -401,8 +429,8 @@ def vf_rmsbw_gradx(
             gx = vf.load_align(gx_f32, off)
             gam = vf.load_align(gam_f32, r * LANES_FP32)
             grad_n = vf.mul(gx, gam, preg)
-            n_inner = vf.mul(n_reg, inner_b, preg)
-            diff = vf.sub(grad_n, n_inner, preg)
+            n_rmean = vf.mul(n_reg, rmean_b, preg)
+            diff = vf.sub(grad_n, n_rmean, preg)
             grad_x = vf.mul(diff, inv_rms_b, preg)
             vf.store_align(gx_out_f32 + off, grad_x, preg)
 
@@ -411,9 +439,9 @@ def vf_rmsbw_gradx(
 # Layer D: engram_backward_kernel
 # ═══════════════════════════════════════════════════════════════════
 
-@pl.jit(auto_mutex=True)
+@pl.jit(auto_mutex=True, tiling_key=EngramTilingKey)
 def engram_backward_kernel(
-    # ── Inputs (scores/gates are FP32; other activation inputs are BF16) ──
+    # Inputs (scores/gates are FP32; other activation inputs are BF16)
     grad_output: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     hidden_states: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     embeddings: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
@@ -423,782 +451,628 @@ def engram_backward_kernel(
     gates: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
     keys: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     value: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
-    # ── host-pre-transposed inputs (plain NZ loads, NO is_transpose / layout=ZN) ──
-    emb_t_f32: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [de, bs]
-    wv_t_f32: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [h, de]
-    wk_t_f32: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [m_h, h, de]
-    # ── Mixed-precision intermediate workspaces ──
-    grad_value_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [M, h]
-    grad_key_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [M, m_h, h] (m_h dynamic)
-    grad_vpw_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [K-split, De, h]
-    # ── FP32 per-core gamma workspace [num_cores, m_h, h] ──
+    # host-pre-transposed inputs (plain NZ loads, NO is_transpose / layout=ZN)
+    emb_t: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [De, BS] BF16
+    wv_t: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [H, De] BF16
+    wk_t: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [M_H, H, De] BF16
+    # BF16 cube operand workspaces (vector produces FP32, casts to BF16 on store)
+    grad_value_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [M, H]
+    grad_key_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [M, M_H, H]
+    gscore_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],  # [M, M_H, 64] grad_score cache
+    # FP32 per-subblock gamma workspace [num_cores*2, M_H, H]
     grad_qgamma_acc: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     grad_kgamma_acc: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    # ── FP32 workspace (cube cover-write slots, vector sums to grad_embeddings) ──
-    grad_emb_ws: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [m_h+1, M, de] (m_h dynamic)
-    # ── BF16 outputs ──
+    # FP32 grad_emb accumulator [M, De]: Nest1 value + per-head key all atomic-add
+    # here in FP32; host casts to BF16 grad_embeddings. MUST be pre-zeroed.
+    grad_emb_acc: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],  # [M, De]
+    # BF16 outputs (grad_embeddings produced by host from grad_emb_acc)
     grad_hidden_states: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
-    grad_embeddings: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     grad_key_proj_weights: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     grad_value_proj_weights: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
 ):
     """Single kernel: vector section (produces grad_value_ws/grad_key_ws +
     grad_hidden + grad_γ) then cube section (consumes ws, produces grad_emb +
     grad_W). BF16 activation inputs are cast once at the computation boundary;
-    grad_value_ws and grad_key_ws feed legal FP32 64x64 Cube paths directly.
+    grad_value_ws and grad_key_ws feed legal FP32 Cube paths directly.
     Final output stores are low precision.
-    No VF performs vf.astype.
     """
     bs = grad_output.shape[0]
     m_h = grad_output.shape[1]  # head count, dynamic (1-16)
     h = grad_output.shape[2]
     de = embeddings.shape[1]
-    # Padded bs for cube Nest1 row-tiling: the wrapper zero-pads grad_value_ws /
-    # grad_key_ws / grad_emb_ws to a multiple of f32_tile so Nest1 stores FULL
-    # FP32 tiles (avoids the undersized-tail FIX-store scramble on grad_emb_ws).
-    # The real bs is still used by the vector section, V2, and Nest2/3 K-reduce.
-    bs_f32 = grad_value_ws.shape[0]
-    n_h_chunks = (h + H_CHUNK - 1) // H_CHUNK  # exactly one full-h tile
-    n_k_h = (h + TILE_K - 1) // TILE_K  # K=h tile count
-    n_n_de = (de + TILE_N - 1) // TILE_N  # N=de tile count
-    n_de_tiles = (de + TILE_M - 1) // TILE_M  # de tile count (TILE_M stride)
-    n_h_tiles = (h + TILE_N - 1) // TILE_N  # h tile count (TILE_N stride)
-    n_k_bs = (bs + TILE_K - 1) // TILE_K  # K=bs tile count (grad_W reduction)
-    f32_tile = 64
-    n_k_h_f32 = (h + f32_tile - 1) // f32_tile
-    n_n_de_f32 = (de + f32_tile - 1) // f32_tile
-    n_k_bs_f32 = (bs + f32_tile - 1) // f32_tile
-    n_vpw_parts = (bs + VPW_K_CHUNK - 1) // VPW_K_CHUNK
-    n_de_tiles_f32 = n_n_de_f32
-    n_h_tiles_f32 = (h + f32_tile - 1) // f32_tile
+
+    # Bind vector tile sizes to compile-time constants via TilingKey. HMode/BSMode
+    # are ConstInt -> `if pl.constexpr` parses only the taken branch, so these names
+    # are usable in TileType.shape and pl.range steps.
+    if pl.constexpr(HMode == 1):  # H = 2560
+        tile_bs_vec = TILE_BS_VEC_2560  # 4
+        tile_bs_vec_a = TILE_BS_VEC_A_2560  # 8
+        h_chunk_size = H_CHUNK_2560  # 2560
+    else:  # H = 1280
+        tile_bs_vec = TILE_BS_VEC_1280  # 8
+        tile_bs_vec_a = TILE_BS_VEC_A_1280  # 16
+        h_chunk_size = H_CHUNK_1280  # 1280
+
+    if pl.constexpr(BSMode == 0):  # BS >= 8192
+        v_tile = V_TILE_BS0  # 128
+    elif pl.constexpr(BSMode == 1):  # BS >= 4096
+        v_tile = V_TILE_BS1  # 64
+    elif pl.constexpr(BSMode == 2):  # BS >= 2048
+        v_tile = V_TILE_BS2  # 32
+    else:  # BSMode == 3: small BS
+        v_tile = V_TILE_BS3  # 16
+    # NOTE: UB addresses for [rows,64]/[1,H_CHUNK] tiles are NOT bound here (parser
+    # can't see names from this `if` block); they use the HMode arithmetic-select in
+    # make_tile_group below. TileType.shape DOES see these names (parser const_env).
+    n_h_chunks = (h + h_chunk_size - 1) // h_chunk_size  # exactly one full-H tile
+    cube_k = 128  # cube K tile: BF16 [128,128]=32KB fits L0A/L0B double-buffer
+    cube_mn = 128  # cube M/N output tile
+    n_kh = (h + cube_k - 1) // cube_k  # K=H slice count (Nest1 reduces over H)
+    n_kbs = (bs + cube_k - 1) // cube_k  # K=BS slice count (Nest2/3 reduce over BS)
+    n_de = (de + cube_mn - 1) // cube_mn  # De output tile count
+    n_h = (h + cube_mn - 1) // cube_mn  # H output tile count (Nest2/3 N=H)
+    n_bs = (bs + cube_mn - 1) // cube_mn  # cube BS output tile count (Nest1 M=BS)
+    n_bs_v = (bs + v_tile - 1) // v_tile  # vector worker tile count (>=64 fills workers)
     num_cores = pl.get_block_num()
-    # Baseline c3c9e0e4: get_block_idx() already returns the physical AI Core
-    # index directly. The //get_subblock_num() split was introduced later on
-    # master (commit 272b1fa3c) and is absent from this baseline.
-    core_id = pl.get_block_idx()
-    # A5 executes section_vector on both vector subblocks. The gamma
-    # workspace is private per AI core, not per subblock.
-    sub_id = pl.get_subblock_idx()
-    n_bs_tiles = (bs + TILE_M - 1) // TILE_M
-    iters_per_core = (n_bs_tiles + num_cores - 1) // num_cores
-    n_bs_tiles_f32 = bs_f32 // f32_tile  # Nest1 tiles over padded bs (all full tiles)
-    iters_f32_per_core = (n_bs_tiles_f32 + num_cores - 1) // num_cores
+    # In section_vector, get_block_idx() is the AI Core index (0..num_cores-1),
+    # shared by that core's 2 AIV subblocks. Combine into a global worker id so
+    # the 64 workers split BS-tiles and write disjoint gamma-workspace slots.
+    # NOTE: get_subblock_num() was removed from pypto; an AIV block has a fixed
+    # 2 subblocks, so num_subcores is a compile-time constant (no API call needed).
+    core_id = pl.get_block_idx() // pl.get_subblock_num()
+    num_subcores = 2                       # AIV block has 2 subblocks (sub_idx 0/1)
+    sub_id = pl.get_subblock_idx()         # 0 or 1 within this AI Core
+    total_subblocks = num_cores * num_subcores
+    worker_id = core_id * num_subcores + sub_id   # global vector-subblock index
+    iters_per_core = (n_bs + num_cores - 1) // num_cores      # per-core BS-tile iterations (cube)
+    iters_per_subblock = (n_bs_v + total_subblocks - 1) // total_subblocks  # per-worker
 
     # ═══════════════════════════════════════════════════════════════
     # VECTOR SECTION (runs first; produces grad_value_ws / grad_key_ws)
     # ═══════════════════════════════════════════════════════════════
-    tt_mv16 = pl.TileType(shape=[TILE_BS_VEC, H_CHUNK], dtype=pl.DT_BF16,
-                          target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-    tt_mv32 = pl.TileType(shape=[TILE_BS_VEC, H_CHUNK], dtype=pl.DT_FP32,
-                          target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-    tt_sc32 = pl.TileType(shape=[TILE_BS_VEC, 64], dtype=pl.DT_FP32,
-                          target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-    tt_gam16 = pl.TileType(shape=[1, H_CHUNK], dtype=pl.DT_BF16,
+    tt_mv16 = pl.TileType(shape=[tile_bs_vec, h_chunk_size], dtype=pl.DT_BF16,
                            target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-    tt_gam32 = pl.TileType(shape=[1, H_CHUNK], dtype=pl.DT_FP32,
+    tt_mv32 = pl.TileType(shape=[tile_bs_vec, h_chunk_size], dtype=pl.DT_FP32,
+                           target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    tt_score32 = pl.TileType(shape=[tile_bs_vec, 64], dtype=pl.DT_FP32,
+                           target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    tt_gamma16 = pl.TileType(shape=[1, h_chunk_size], dtype=pl.DT_BF16,
+                           target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    tt_gamma32 = pl.TileType(shape=[1, h_chunk_size], dtype=pl.DT_FP32,
                            target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
 
-    # The tile capacity is fixed at 2560, but every vector operation uses the
-    # actual h as its valid width.  Thus h=1280 is a tail of the same tile and
-    # h is never split into multiple vector chunks.
-    h_dim = h
+    # Tile capacity is H_CHUNK (1280/2560), but every vector op uses the actual H
+    # as its valid width (set_validshape). H <= H_CHUNK, so H is never split.
 
-    go16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_GO16, mutex_ids=[0])
-    go32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_GO32, mutex_ids=[1])
-    pt16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_PT16, mutex_ids=[2])
-    pt32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_PT32, mutex_ids=[3])
-    gv32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_GV32, mutex_ids=[4])
-    out32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_OUT32, mutex_ids=[17])
-    out16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_OUT16, mutex_ids=[4])
-    sc32_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_SC32, mutex_ids=[7])
-    gt32_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_GT32, mutex_ids=[8])
-    gg_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_GG32, mutex_ids=[9])
-    gs_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_GS32, mutex_ids=[10])
-    sq_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_SQ32, mutex_ids=[11])
-    rms_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_RMS32, mutex_ids=[12])
-    inner_grp = pl.make_tile_group(type=tt_sc32, addrs=VA_INNER32, mutex_ids=[13])
-    gam16_grp = pl.make_tile_group(type=tt_gam16, addrs=VA_GAM16, mutex_ids=[14])
-    gam32_grp = pl.make_tile_group(type=tt_gam32, addrs=VA_GAM32, mutex_ids=[15])
-    ggp_grp = pl.make_tile_group(type=tt_gam32, addrs=VA_GGP32, mutex_ids=[16])
-    ggp_k_grp = pl.make_tile_group(type=tt_gam32, addrs=VA_GGP32_K, mutex_ids=[18])
-    gqacc_grp = pl.make_tile_group(type=tt_gam32, addrs=VA_GQACC32, mutex_ids=[19])
-    gkacc_grp = pl.make_tile_group(type=tt_gam32, addrs=VA_GKACC32, mutex_ids=[20])
+    gout16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_GOUT16, mutex_ids=[0])
+    gout32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_GOUT32, mutex_ids=[1])
+    ptnr16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_PTNR16, mutex_ids=[2])
+    ptnr32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_PTNR32, mutex_ids=[3])
+    gval32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_GVAL32, mutex_ids=[4])
+    gn32_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_GN32, mutex_ids=[17])
+    gbuf16_grp = pl.make_tile_group(type=tt_mv16, addrs=VA_GBUF16, mutex_ids=[4])
+    # HMode-dependent addresses via arithmetic select (folds to _2560/_1280 per key).
+    score32_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_SCORE32_2560 + (1 - HMode) * VA_SCORE32_1280, mutex_ids=[7])
+    gate32_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_GATE32_2560 + (1 - HMode) * VA_GATE32_1280, mutex_ids=[8])
+    ggate_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_GGATE32_2560 + (1 - HMode) * VA_GGATE32_1280, mutex_ids=[9])
+    gscore_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_GSCORE32_2560 + (1 - HMode) * VA_GSCORE32_1280, mutex_ids=[10])
+    rsq_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_RSQ32_2560 + (1 - HMode) * VA_RSQ32_1280, mutex_ids=[11])
+    rinv_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_RINV32_2560 + (1 - HMode) * VA_RINV32_1280, mutex_ids=[12])
+    rmean_grp = pl.make_tile_group(type=tt_score32, addrs=HMode * VA_RMEAN32_2560 + (1 - HMode) * VA_RMEAN32_1280, mutex_ids=[13])
+    gamma16_grp = pl.make_tile_group(type=tt_gamma16, addrs=HMode * VA_GAMMA16_2560 + (1 - HMode) * VA_GAMMA16_1280, mutex_ids=[14])
+    gamma32_grp = pl.make_tile_group(type=tt_gamma32, addrs=HMode * VA_GAMMA32_2560 + (1 - HMode) * VA_GAMMA32_1280, mutex_ids=[15])
+    ggamq_grp = pl.make_tile_group(type=tt_gamma32, addrs=HMode * VA_GGAMQ32_2560 + (1 - HMode) * VA_GGAMQ32_1280, mutex_ids=[16])
+    ggamk_grp = pl.make_tile_group(type=tt_gamma32, addrs=HMode * VA_GGAMK32_2560 + (1 - HMode) * VA_GGAMK32_1280, mutex_ids=[18])
+    ggamq_acc_grp = pl.make_tile_group(type=tt_gamma32, addrs=HMode * VA_GGAMQ_ACC32_2560 + (1 - HMode) * VA_GGAMQ_ACC32_1280, mutex_ids=[19])
+    ggamk_acc_grp = pl.make_tile_group(type=tt_gamma32, addrs=HMode * VA_GGAMK_ACC32_2560 + (1 - HMode) * VA_GGAMK_ACC32_1280, mutex_ids=[20])
+    # RMS-x cache: keys (B-key) / hidden (B-query), loaded once in RMS Pass1,
+    # reused in Pass2/Pass3. Aliases grad_value (dead after GV_DONE).
+    xcache_grp = pl.make_tile_group(type=tt_mv32, addrs=VA_XCACHE32, mutex_ids=[21])
+
+    # Pass A dedicated large tiles ([tile_bs_vec_a, h_chunk_size], 2x B-phase rows).
+    # Pass A reuses B-phase UB space (all B tiles dead), isolated by GV_DONE.
+    tt_pa16 = pl.TileType(shape=[tile_bs_vec_a, h_chunk_size], dtype=pl.DT_BF16,
+                          target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    tt_pa32 = pl.TileType(shape=[tile_bs_vec_a, h_chunk_size], dtype=pl.DT_FP32,
+                          target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    tt_pa_sc = pl.TileType(shape=[tile_bs_vec_a, 64], dtype=pl.DT_FP32,
+                           target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
+    pa_go16_grp = pl.make_tile_group(type=tt_pa16, addrs=0x00000, mutex_ids=[22])
+    pa_go32_grp = pl.make_tile_group(type=tt_pa32, addrs=0x0A000, mutex_ids=[23])
+    pa_gv32_grp = pl.make_tile_group(type=tt_pa32, addrs=0x1E000, mutex_ids=[24])
+    pa_gv16_grp = pl.make_tile_group(type=tt_pa16, addrs=0x32000, mutex_ids=[25])
+    pa_gate32_grp = pl.make_tile_group(type=tt_pa_sc, addrs=0x3C000, mutex_ids=[26])
 
     with pl.section_vector():
-        for tile_idx in pl.range(0, iters_per_core):
-            bsi = core_id + tile_idx * num_cores
-            if bsi < n_bs_tiles:
-                row_off = bsi * TILE_M
-                bs_tile_rows = pl.min(TILE_M, bs - row_off)  # (rule 4) stored variable
-                for bs_start in pl.range(0, bs_tile_rows, TILE_BS_VEC):
-                    valid_bsv = pl.min(TILE_BS_VEC, bs_tile_rows - bs_start)
+        for tile_idx in pl.range(0, iters_per_subblock):
+            bsi = worker_id + tile_idx * total_subblocks
+            if bsi < n_bs_v:
+                row_off = bsi * v_tile
+                bs_tile_rows = pl.min(v_tile, bs - row_off)
+                for bs_start in pl.range(0, bs_tile_rows, tile_bs_vec_a):
+                    valid_bsv = pl.min(tile_bs_vec_a, bs_tile_rows - bs_start)
                     bs_off = row_off + bs_start
-
-                    # 公式：══ Pass A: Step7a -> grad_value_ws = Σ_m(go·gate) ══
+                    # Pass A: Step7a -> grad_value_ws = Σ_m(go·gate)
                     for h_chunk in pl.range(0, n_h_chunks):
-                        h_off = h_chunk * h_dim
-                        gv = gv32_grp.current()
-                        pl.set_validshape(gv, [valid_bsv, h_dim])
-                        vf_zero_2d(gv, valid_bsv, h_dim, H_CHUNK)
+                        h_off = h_chunk * h
+                        gv = pa_gv32_grp.current()
+                        pl.set_validshape(gv, [valid_bsv, h])
+                        vf_zero_2d(gv, valid_bsv, h, h_chunk_size)
                         for m_head in pl.range(0, m_h):
-                            go16 = go16_grp.current()
-                            pl.set_validshape(go16, [valid_bsv, h_dim])
-                            pl.load(go16, grad_output,
+                            pa_go16 = pa_go16_grp.current()
+                            pl.set_validshape(pa_go16, [valid_bsv, h])
+                            pl.load(pa_go16, grad_output,
                                     [bs_off, m_head, h_off], order=[0, 2])
-                            go32 = go32_grp.current()
-                            pl.set_validshape(go32, [valid_bsv, h_dim])
-                            pl.cast(go32, go16, mode=pl.RoundMode.CAST_NONE)
-                            sc32 = sc32_grp.current()
-                            pl.set_validshape(sc32, [valid_bsv, 64])
-                            pl.load(sc32, gates, [bs_off, m_head, 0], order=[0, 2])
-                            vf_grad_value_accum(go32, sc32, gv, valid_bsv, h_dim, H_CHUNK)
-                        pl.store(grad_value_ws, gv, [bs_off, h_off])
+                            pa_go32 = pa_go32_grp.current()
+                            pl.set_validshape(pa_go32, [valid_bsv, h])
+                            pl.cast(pa_go32, pa_go16, mode=pl.RoundMode.CAST_NONE)
+                            pa_gate32 = pa_gate32_grp.current()
+                            pl.set_validshape(pa_gate32, [valid_bsv, 64])
+                            pl.load(pa_gate32, gates, [bs_off, m_head, 0], order=[0, 2])
+                            vf_grad_value_accum(pa_go32, pa_gate32, gv, valid_bsv, h, h_chunk_size)
+                        pa_gv16 = pa_gv16_grp.current()
+                        pl.set_validshape(pa_gv16, [valid_bsv, h])
+                        pl.cast(pa_gv16, gv, mode=pl.RoundMode.CAST_ROUND)  # FP32 -> BF16
+                        pl.store(grad_value_ws, pa_gv16, [bs_off, h_off])
+                    # Drain Pass-A stores before Pass-B reuses the GV32 address.
 
-                    # OUT16 reuses the Pass-A GV32 address.  Complete the
-                    # Pass-A store before Pass-b starts using that address.
+        # ===== GV_DONE: grad_value_ws ready (Phase A). Cube Nest1-val + Nest2 may
+        # start and overlap with Vector Phase B below. =====
+        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=EVENT_GV_DONE,
+                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+
+        # ===== Phase B-key: grad_key_ws / grad_γ_k (key path first so GK_DONE
+        # fires early and Nest1-key/Nest3 overlap with Phase B-query). =====
+        for tile_idx in pl.range(0, iters_per_subblock):
+            bsi = worker_id + tile_idx * total_subblocks
+            if bsi < n_bs_v:
+                row_off = bsi * v_tile
+                bs_tile_rows = pl.min(v_tile, bs - row_off)
+                for bs_start in pl.range(0, bs_tile_rows, tile_bs_vec):
+                    valid_bsv = pl.min(tile_bs_vec, bs_tile_rows - bs_start)
+                    bs_off = row_off + bs_start
                     pl.system.bar_all()
-
-                    # ══ Pass b: per-head Step7b -> Step5 -> Step4 -> Step3 -> Step2 ══
                     for m_head in pl.range(0, m_h):
-                        # ── Step7b: grad_gate = Σ_h(go·val) over the full-h tile ──
-                        gg = gg_grp.current()
+                        # ── Step7b: grad_gate = Σ_h(go·val) over the full-H tile ──
+                        gg = ggate_grp.current()
                         pl.set_validshape(gg, [valid_bsv, 64])
                         vf_zero_2d(gg, valid_bsv, 64, 64)
                         for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            go16 = go16_grp.current()
-                            pl.set_validshape(go16, [valid_bsv, h_dim])
-                            pl.load(go16, grad_output,
+                            h_off = h_chunk * h
+                            gout16 = gout16_grp.current()
+                            pl.set_validshape(gout16, [valid_bsv, h])
+                            pl.load(gout16, grad_output,
                                     [bs_off, m_head, h_off], order=[0, 2])
-                            go32 = go32_grp.current()
-                            pl.set_validshape(go32, [valid_bsv, h_dim])
-                            pl.cast(go32, go16, mode=pl.RoundMode.CAST_NONE)
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, value, [bs_off, h_off])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            vf_grad_gate_accum(go32, pt32, gg, valid_bsv, h_dim, H_CHUNK)
+                            gout32 = gout32_grp.current()
+                            pl.set_validshape(gout32, [valid_bsv, h])
+                            pl.cast(gout32, gout16, mode=pl.RoundMode.CAST_NONE)
+                            ptnr16 = ptnr16_grp.current()
+                            pl.set_validshape(ptnr16, [valid_bsv, h])
+                            pl.load(ptnr16, value, [bs_off, h_off])
+                            ptnr32 = ptnr32_grp.current()
+                            pl.set_validshape(ptnr32, [valid_bsv, h])
+                            pl.cast(ptnr32, ptnr16, mode=pl.RoundMode.CAST_NONE)
+                            vf_grad_gate_accum(gout32, ptnr32, gg, valid_bsv, h, h_chunk_size)
 
                         # ── Step5: gate_bw(gg, score, gate) -> gs ──
-                        sc32 = sc32_grp.current()  # score FP32
-                        pl.set_validshape(sc32, [valid_bsv, 64])
-                        pl.load(sc32, scores, [bs_off, m_head, 0], order=[0, 2])
-                        gt32 = gt32_grp.current()  # gate FP32
-                        pl.set_validshape(gt32, [valid_bsv, 64])
-                        pl.load(gt32, gates, [bs_off, m_head, 0], order=[0, 2])
-                        gs = gs_grp.current()  # grad_score output
+                        score32 = score32_grp.current()                 # score FP32
+                        pl.set_validshape(score32, [valid_bsv, 64])
+                        pl.load(score32, scores, [bs_off, m_head, 0], order=[0, 2])
+                        gate32 = gate32_grp.current()                 # gate FP32
+                        pl.set_validshape(gate32, [valid_bsv, 64])
+                        pl.load(gate32, gates, [bs_off, m_head, 0], order=[0, 2])
+                        gs = gscore_grp.current()                     # grad_score output
                         pl.set_validshape(gs, [valid_bsv, 64])
-                        vf_gate_bw(gg, sc32, gt32, gs, valid_bsv)
-                        # ══ Step4 + Step3 (query): grad_nQuery -> rms_bw(hidden, γ_q) ══
-                        # Pass 1: sq over hidden_states
-                        sq = sq_grp.current()
+                        vf_gate_bw(gg, score32, gate32, gs, valid_bsv)
+                        pl.store(gscore_ws, gs, [bs_off, m_head, 0], order=[0, 2])  # cache gs for Phase B-query
+                        # Step4 + Step2 (key): grad_nKey -> rms_bw(keys, γ_k).
+                        # Cache keys (RMS-x) ONCE; reused in Pass2/Pass3 (3-pass pattern).
+                        sq = rsq_grp.current()
                         pl.set_validshape(sq, [valid_bsv, 64])
                         vf_zero_2d(sq, valid_bsv, 64, 64)
+                        xcache = xcache_grp.current()
+                        pl.set_validshape(xcache, [valid_bsv, h])
                         for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, hidden_states,
+                            h_off = h_chunk * h
+                            ptnr16 = ptnr16_grp.current()
+                            pl.set_validshape(ptnr16, [valid_bsv, h])
+                            pl.load(ptnr16, keys,
                                     [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsbw_sq(pt32, sq, valid_bsv, h_dim, H_CHUNK)
-                        rms = rms_grp.current()
+                            pl.cast(xcache, ptnr16, mode=pl.RoundMode.CAST_NONE)
+                            vf_rmsbw_sq(xcache, sq, valid_bsv, h, h_chunk_size)
+                        rms = rinv_grp.current()
                         pl.set_validshape(rms, [valid_bsv, 64])
                         vf_rmsbw_invrms(sq, rms, valid_bsv, h)
-                        # Recompute normed keys in FP32 for the query backward.
-                        partner_sq = sq_grp.current()
+                        # Recompute hidden inv_rms (normed_query) for the key backward.
+                        # norm32 (hidden FP32) stays in UB; Pass2 reuses it (n_h_chunks==1).
+                        partner_sq = rsq_grp.current()
                         pl.set_validshape(partner_sq, [valid_bsv, 64])
                         vf_zero_2d(partner_sq, valid_bsv, 64, 64)
                         for norm_h_chunk in pl.range(0, n_h_chunks):
-                            norm_h_off = norm_h_chunk * h_dim
-                            norm16 = pt16_grp.current()
-                            pl.set_validshape(norm16, [valid_bsv, h_dim])
-                            pl.load(norm16, keys,
-                                    [bs_off, m_head, norm_h_off], order=[0, 2])
-                            norm32 = pt32_grp.current()
-                            pl.set_validshape(norm32, [valid_bsv, h_dim])
-                            pl.cast(norm32, norm16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsbw_sq(norm32, partner_sq, valid_bsv, h_dim, H_CHUNK)
-                        vf_rmsbw_invrms(partner_sq, partner_sq, valid_bsv, h)
-
-                        # Pass 2: inner over h + grad_γ_q
-                        inner = inner_grp.current()
-                        pl.set_validshape(inner, [valid_bsv, 64])
-                        vf_zero_2d(inner, valid_bsv, 64, 64)
-                        for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            # 公式：grad_nQuery chunk = gs·(1/√H)·RMSNorm(key)
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, keys,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            gam16 = gam16_grp.current()
-                            pl.set_validshape(gam16, [1, h_dim])
-                            pl.load(gam16, key_gamma, [m_head, h_off], order=[0])
-                            gam32 = gam32_grp.current()
-                            pl.set_validshape(gam32, [1, h_dim])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsnorm_fwd(pt32, gam32, partner_sq, pt32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            gx32 = out32_grp.current()
-                            pl.set_validshape(gx32, [valid_bsv, h_dim])
-                            vf_scaled_dot(gs, pt32, gx32, valid_bsv, h_dim,
-                                           H_CHUNK, h)
-                            # reload hidden chunk
-                            x16 = pt16_grp.current()
-                            pl.set_validshape(x16, [valid_bsv, h_dim])
-                            pl.load(x16, hidden_states,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            x32 = pt32_grp.current()
-                            pl.set_validshape(x32, [valid_bsv, h_dim])
-                            pl.cast(x32, x16, mode=pl.RoundMode.CAST_NONE)
-                            pl.load(gam16, query_gamma, [m_head, h_off], order=[0])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            ggp = ggp_grp.current()
-                            pl.set_validshape(ggp, [1, h_dim])
-                            vf_zero_1d(ggp, h_dim)
-                            vf_rmsbw_inner(gx32, x32, gam32, rms, inner, ggp,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            # RMW this chunk's grad_γ_q in FP32 workspace.
-                            if sub_id == 0:
-                                gqacc = gqacc_grp.current()
-                                pl.set_validshape(gqacc, [1, h_dim])
-                                pl.load(gqacc, grad_qgamma_acc,
-                                        [core_id, m_head, h_off], order=[1, 2])
-                                pl.add(gqacc, gqacc, ggp)
-                                pl.store(grad_qgamma_acc, gqacc,
-                                         [core_id, m_head, h_off], tile_dims=[1, 2])
-                        vf_rmsbw_inner_finalize(inner, valid_bsv, h)
-                        # Pass 3: grad_hidden_m -> store GM
-                        partner_sq = sq_grp.current()
-                        pl.set_validshape(partner_sq, [valid_bsv, 64])
-                        vf_zero_2d(partner_sq, valid_bsv, 64, 64)
-                        for norm_h_chunk in pl.range(0, n_h_chunks):
-                            norm_h_off = norm_h_chunk * h_dim
-                            norm16 = pt16_grp.current()
-                            pl.set_validshape(norm16, [valid_bsv, h_dim])
-                            pl.load(norm16, keys,
-                                    [bs_off, m_head, norm_h_off], order=[0, 2])
-                            norm32 = pt32_grp.current()
-                            pl.set_validshape(norm32, [valid_bsv, h_dim])
-                            pl.cast(norm32, norm16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsbw_sq(norm32, partner_sq, valid_bsv, h_dim, H_CHUNK)
-                        vf_rmsbw_invrms(partner_sq, partner_sq, valid_bsv, h)
-                        for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, keys,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            gam16 = gam16_grp.current()
-                            pl.set_validshape(gam16, [1, h_dim])
-                            pl.load(gam16, key_gamma, [m_head, h_off], order=[0])
-                            gam32 = gam32_grp.current()
-                            pl.set_validshape(gam32, [1, h_dim])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsnorm_fwd(pt32, gam32, partner_sq, pt32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            gx32 = out32_grp.current()
-                            pl.set_validshape(gx32, [valid_bsv, h_dim])
-                            vf_scaled_dot(gs, pt32, gx32, valid_bsv, h_dim,
-                                           H_CHUNK, h)
-                            x16 = pt16_grp.current()
-                            pl.set_validshape(x16, [valid_bsv, h_dim])
-                            pl.load(x16, hidden_states,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            x32 = pt32_grp.current()
-                            pl.set_validshape(x32, [valid_bsv, h_dim])
-                            pl.cast(x32, x16, mode=pl.RoundMode.CAST_NONE)
-                            pl.load(gam16, query_gamma, [m_head, h_off], order=[0])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            gh32 = go32_grp.current()
-                            pl.set_validshape(gh32, [valid_bsv, h_dim])
-                            vf_rmsbw_gradx(gx32, x32, gam32, rms, inner, gh32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            gh16 = out16_grp.current()
-                            pl.set_validshape(gh16, [valid_bsv, h_dim])
-                            pl.cast(gh16, gh32, mode=pl.RoundMode.CAST_ROUND)
-                            pl.store(grad_hidden_states, gh16,
-                                     [bs_off, m_head, h_off], tile_dims=[0, 2])
-
-                        # Query gamma RMW and its dependent vector work use
-                        # the same local tile as key gamma RMW below.
-                        pl.system.bar_all()
-
-                        # ══ Step4 + Step2 (key): grad_nKey -> rms_bw(keys, γ_k) ══
-                        sq = sq_grp.current()
-                        pl.set_validshape(sq, [valid_bsv, 64])
-                        vf_zero_2d(sq, valid_bsv, 64, 64)
-                        for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, keys,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsbw_sq(pt32, sq, valid_bsv, h_dim, H_CHUNK)
-                        rms = rms_grp.current()
-                        pl.set_validshape(rms, [valid_bsv, 64])
-                        vf_rmsbw_invrms(sq, rms, valid_bsv, h)
-                        # Recompute normed queries in FP32 for the key backward.
-                        partner_sq = sq_grp.current()
-                        pl.set_validshape(partner_sq, [valid_bsv, 64])
-                        vf_zero_2d(partner_sq, valid_bsv, 64, 64)
-                        for norm_h_chunk in pl.range(0, n_h_chunks):
-                            norm_h_off = norm_h_chunk * h_dim
-                            norm16 = pt16_grp.current()
-                            pl.set_validshape(norm16, [valid_bsv, h_dim])
+                            norm_h_off = norm_h_chunk * h
+                            norm16 = ptnr16_grp.current()
+                            pl.set_validshape(norm16, [valid_bsv, h])
                             pl.load(norm16, hidden_states,
                                     [bs_off, m_head, norm_h_off], order=[0, 2])
-                            norm32 = pt32_grp.current()
-                            pl.set_validshape(norm32, [valid_bsv, h_dim])
+                            norm32 = ptnr32_grp.current()
+                            pl.set_validshape(norm32, [valid_bsv, h])
                             pl.cast(norm32, norm16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsbw_sq(norm32, partner_sq, valid_bsv, h_dim, H_CHUNK)
+                            vf_rmsbw_sq(norm32, partner_sq, valid_bsv, h, h_chunk_size)
                         vf_rmsbw_invrms(partner_sq, partner_sq, valid_bsv, h)
 
-                        inner = inner_grp.current()
-                        pl.set_validshape(inner, [valid_bsv, 64])
-                        vf_zero_2d(inner, valid_bsv, 64, 64)
+                        rmean = rmean_grp.current()
+                        pl.set_validshape(rmean, [valid_bsv, 64])
+                        vf_zero_2d(rmean, valid_bsv, 64, 64)
                         for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            # 公式：grad_nKey chunk = gs·(1/√H)·RMSNorm(hidden)
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, hidden_states,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            gam16 = gam16_grp.current()
-                            pl.set_validshape(gam16, [1, h_dim])
-                            pl.load(gam16, query_gamma, [m_head, h_off], order=[0])
-                            gam32 = gam32_grp.current()
-                            pl.set_validshape(gam32, [1, h_dim])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsnorm_fwd(pt32, gam32, partner_sq, pt32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            gx32 = out32_grp.current()
-                            pl.set_validshape(gx32, [valid_bsv, h_dim])
-                            vf_scaled_dot(gs, pt32, gx32, valid_bsv, h_dim,
-                                           H_CHUNK, h)
-                            x16 = pt16_grp.current()
-                            pl.set_validshape(x16, [valid_bsv, h_dim])
-                            pl.load(x16, keys,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            x32 = pt32_grp.current()
-                            pl.set_validshape(x32, [valid_bsv, h_dim])
-                            pl.cast(x32, x16, mode=pl.RoundMode.CAST_NONE)
-                            pl.load(gam16, key_gamma, [m_head, h_off], order=[0])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            ggp = ggp_k_grp.current()
-                            pl.set_validshape(ggp, [1, h_dim])
-                            vf_zero_1d(ggp, h_dim)
-                            vf_rmsbw_inner(gx32, x32, gam32, rms, inner, ggp,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            # RMW this chunk's grad_γ_k in FP32 workspace.
-                            if sub_id == 0:
-                                gkacc = gkacc_grp.current()
-                                pl.set_validshape(gkacc, [1, h_dim])
-                                pl.load(gkacc, grad_kgamma_acc,
-                                        [core_id, m_head, h_off], order=[1, 2])
-                                pl.add(gkacc, gkacc, ggp)
-                                pl.store(grad_kgamma_acc, gkacc,
-                                         [core_id, m_head, h_off], tile_dims=[1, 2])
-                        vf_rmsbw_inner_finalize(inner, valid_bsv, h)
+                            h_off = h_chunk * h
+                            # grad_nKey = gs·(1/√H)·RMSNorm(hidden); reuse hidden FP32 tile from Pass1b.
+                            ptnr32 = ptnr32_grp.current()
+                            gamma16 = gamma16_grp.current()
+                            pl.set_validshape(gamma16, [1, h])
+                            pl.load(gamma16, query_gamma, [m_head, h_off], order=[0])
+                            gamma32 = gamma32_grp.current()
+                            pl.set_validshape(gamma32, [1, h])
+                            pl.cast(gamma32, gamma16, mode=pl.RoundMode.CAST_NONE)
+                            vf_rmsnorm_fwd(ptnr32, gamma32, partner_sq, ptnr32,
+                                           valid_bsv, h, h_chunk_size)
+                            gx32 = gn32_grp.current()
+                            pl.set_validshape(gx32, [valid_bsv, h])
+                            vf_scaled_dot(gs, ptnr32, gx32, valid_bsv, h,
+                                           h_chunk_size, h)
+                            x32 = xcache_grp.current()           # reuse cached keys
+                            pl.set_validshape(x32, [valid_bsv, h])
+                            pl.load(gamma16, key_gamma, [m_head, h_off], order=[0])
+                            pl.cast(gamma32, gamma16, mode=pl.RoundMode.CAST_NONE)
+                            ggam = ggamk_grp.current()
+                            pl.set_validshape(ggam, [1, h])
+                            vf_zero_1d(ggam, h)
+                            vf_rmsbw_rmean(gx32, x32, gamma32, rms, rmean, ggam,
+                                           valid_bsv, h, h_chunk_size)
+                            # RMW this chunk's grad_γ_k in FP32 workspace (per-subblock).
+                            ggamk_acc = ggamk_acc_grp.current()
+                            pl.set_validshape(ggamk_acc, [1, h])
+                            pl.load(ggamk_acc, grad_kgamma_acc,
+                                    [worker_id, m_head, h_off], order=[1, 2])
+                            pl.add(ggamk_acc, ggamk_acc, ggam)
+                            pl.store(grad_kgamma_acc, ggamk_acc,
+                                     [worker_id, m_head, h_off], order=[1, 2])
+                        vf_rmsbw_rmean_finalize(rmean, valid_bsv, h)
+                        # Pass 3: grad_key_m -> store GM.  Reuse gx32 (grad_nKey
+                        # = gs·RMSNorm(hidden)) still live in gn32 from Pass 2.
                         for h_chunk in pl.range(0, n_h_chunks):
-                            h_off = h_chunk * h_dim
-                            pt16 = pt16_grp.current()
-                            pl.set_validshape(pt16, [valid_bsv, h_dim])
-                            pl.load(pt16, hidden_states,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            pt32 = pt32_grp.current()
-                            pl.set_validshape(pt32, [valid_bsv, h_dim])
-                            pl.cast(pt32, pt16, mode=pl.RoundMode.CAST_NONE)
-                            gam16 = gam16_grp.current()
-                            pl.set_validshape(gam16, [1, h_dim])
-                            pl.load(gam16, query_gamma, [m_head, h_off], order=[0])
-                            gam32 = gam32_grp.current()
-                            pl.set_validshape(gam32, [1, h_dim])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            vf_rmsnorm_fwd(pt32, gam32, partner_sq, pt32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            gx32 = out32_grp.current()
-                            pl.set_validshape(gx32, [valid_bsv, h_dim])
-                            vf_scaled_dot(gs, pt32, gx32, valid_bsv, h_dim,
-                                           H_CHUNK, h)
-                            x16 = pt16_grp.current()
-                            pl.set_validshape(x16, [valid_bsv, h_dim])
-                            pl.load(x16, keys,
-                                    [bs_off, m_head, h_off], order=[0, 2])
-                            x32 = pt32_grp.current()
-                            pl.set_validshape(x32, [valid_bsv, h_dim])
-                            pl.cast(x32, x16, mode=pl.RoundMode.CAST_NONE)
-                            gam16 = gam16_grp.current()
-                            pl.set_validshape(gam16, [1, h_dim])
-                            pl.load(gam16, key_gamma, [m_head, h_off], order=[0])
-                            gam32 = gam32_grp.current()
-                            pl.set_validshape(gam32, [1, h_dim])
-                            pl.cast(gam32, gam16, mode=pl.RoundMode.CAST_NONE)
-                            gk32 = go32_grp.current()
-                            pl.set_validshape(gk32, [valid_bsv, h_dim])
-                            vf_rmsbw_gradx(gx32, x32, gam32, rms, inner, gk32,
-                                           valid_bsv, h_dim, H_CHUNK)
-                            pl.store(grad_key_ws, gk32,
-                                     [bs_off, m_head, h_off], tile_dims=[0, 2])
+                            h_off = h_chunk * h
+                            gx32 = gn32_grp.current()
+                            pl.set_validshape(gx32, [valid_bsv, h])
+                            x32 = xcache_grp.current()           # reuse cached keys
+                            pl.set_validshape(x32, [valid_bsv, h])
+                            gamma32 = gamma32_grp.current()      # reuse key_gamma FP32 from Pass2
+                            gk32 = gout32_grp.current()
+                            pl.set_validshape(gk32, [valid_bsv, h])
+                            vf_rmsbw_gradx(gx32, x32, gamma32, rms, rmean, gk32,
+                                           valid_bsv, h, h_chunk_size)
+                            gk16 = gbuf16_grp.current()         # reuse OUT16(=GV32), free in Pass B-key
+                            pl.set_validshape(gk16, [valid_bsv, h])
+                            pl.cast(gk16, gk32, mode=pl.RoundMode.CAST_ROUND)  # FP32 -> BF16
+                            pl.store(grad_key_ws, gk16,
+                                     [bs_off, m_head, h_off], order=[0, 2])
 
-        # ── vector -> cube handoff (V->Cube: V->MTE3 fence, then
-        #    set MTE3 / wait MTE1) ──
-        # set_cross_core alone only publishes the cross-core event; it does
-        # not replace the intra-core ordering between Vector arithmetic and
-        # the MTE3 GM stores.  Without this fence, a following dynamic-shape
-        # launch can make Cube observe a partially materialized workspace.
-        # A hard MIX rendezvous prevents a previous dynamic-shape launch's
-        # per-core event state from being mistaken for this launch's handoff.
+        # ===== GK_DONE: Phase B-key (grad_key_ws) complete. sync_all(MIX) is
+        # REQUIRED: both AIV subblocks split the work, so cube must wait for ALL
+        # subblocks (a per-block signal would miss the other subblock's tiles). =====
         pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3,
-                           event_id=0)
-        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3,
-                           event_id=0)
-        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=0,
-                                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=EVENT_GK_DONE,
+                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+
+        # ===== Phase B-query: grad_hidden / grad_γ_q (overlaps Cube Nest1-key/Nest3) =====
+        # gs (Step7b/Step5) is recomputed here; it does not persist across loops.
+        for tile_idx in pl.range(0, iters_per_subblock):
+            bsi = worker_id + tile_idx * total_subblocks
+            if bsi < n_bs_v:
+                row_off = bsi * v_tile
+                bs_tile_rows = pl.min(v_tile, bs - row_off)
+                for bs_start in pl.range(0, bs_tile_rows, tile_bs_vec):
+                    valid_bsv = pl.min(tile_bs_vec, bs_tile_rows - bs_start)
+                    bs_off = row_off + bs_start
+                    # OUT16 aliases VA_GVAL32 (Phase A); Phase A is globally done.
+                    pl.system.bar_all()
+
+                    # Pass B-query: per-head Step4 -> Step3 (rms_q). gs loaded from
+                    # gscore_ws (computed once in Phase B-key, skips Step7b+Step5 here).
+                    for m_head in pl.range(0, m_h):
+                        gs = gscore_grp.current()
+                        pl.set_validshape(gs, [valid_bsv, 64])
+                        pl.load(gs, gscore_ws, [bs_off, m_head, 0], order=[0, 2])
+                        # Step4 + Step3 (query): grad_nQuery -> rms_bw(hidden, γ_q).
+                        # Pass 1: sq over hidden_states
+                        sq = rsq_grp.current()
+                        pl.set_validshape(sq, [valid_bsv, 64])
+                        vf_zero_2d(sq, valid_bsv, 64, 64)
+                        # Cache hidden_states (the RMS-x of the query backward) ONCE;
+                        # reuse in Pass2/Pass3 instead of reloading 3x.
+                        xcache = xcache_grp.current()
+                        pl.set_validshape(xcache, [valid_bsv, h])
+                        for h_chunk in pl.range(0, n_h_chunks):
+                            h_off = h_chunk * h
+                            ptnr16 = ptnr16_grp.current()
+                            pl.set_validshape(ptnr16, [valid_bsv, h])
+                            pl.load(ptnr16, hidden_states,
+                                    [bs_off, m_head, h_off], order=[0, 2])
+                            pl.cast(xcache, ptnr16, mode=pl.RoundMode.CAST_NONE)
+                            vf_rmsbw_sq(xcache, sq, valid_bsv, h, h_chunk_size)
+                        rms = rinv_grp.current()
+                        pl.set_validshape(rms, [valid_bsv, 64])
+                        vf_rmsbw_invrms(sq, rms, valid_bsv, h)
+                        # Recompute keys inv_rms (normed_key) for the query backward.
+                        # norm32 (keys FP32) stays in UB; Pass2 reuses it (n_h_chunks==1).
+                        partner_sq = rsq_grp.current()
+                        pl.set_validshape(partner_sq, [valid_bsv, 64])
+                        vf_zero_2d(partner_sq, valid_bsv, 64, 64)
+                        for norm_h_chunk in pl.range(0, n_h_chunks):
+                            norm_h_off = norm_h_chunk * h
+                            norm16 = ptnr16_grp.current()
+                            pl.set_validshape(norm16, [valid_bsv, h])
+                            pl.load(norm16, keys,
+                                    [bs_off, m_head, norm_h_off], order=[0, 2])
+                            norm32 = ptnr32_grp.current()
+                            pl.set_validshape(norm32, [valid_bsv, h])
+                            pl.cast(norm32, norm16, mode=pl.RoundMode.CAST_NONE)
+                            vf_rmsbw_sq(norm32, partner_sq, valid_bsv, h, h_chunk_size)
+                        vf_rmsbw_invrms(partner_sq, partner_sq, valid_bsv, h)
+
+                        # Pass 2: rmean over H + grad_γ_q
+                        rmean = rmean_grp.current()
+                        pl.set_validshape(rmean, [valid_bsv, 64])
+                        vf_zero_2d(rmean, valid_bsv, 64, 64)
+                        for h_chunk in pl.range(0, n_h_chunks):
+                            h_off = h_chunk * h
+                            # grad_nQuery = gs·(1/√H)·RMSNorm(key); reuse keys FP32 tile from Pass1b.
+                            ptnr32 = ptnr32_grp.current()
+                            gamma16 = gamma16_grp.current()
+                            pl.set_validshape(gamma16, [1, h])
+                            pl.load(gamma16, key_gamma, [m_head, h_off], order=[0])
+                            gamma32 = gamma32_grp.current()
+                            pl.set_validshape(gamma32, [1, h])
+                            pl.cast(gamma32, gamma16, mode=pl.RoundMode.CAST_NONE)
+                            vf_rmsnorm_fwd(ptnr32, gamma32, partner_sq, ptnr32,
+                                           valid_bsv, h, h_chunk_size)
+                            gx32 = gn32_grp.current()
+                            pl.set_validshape(gx32, [valid_bsv, h])
+                            vf_scaled_dot(gs, ptnr32, gx32, valid_bsv, h,
+                                           h_chunk_size, h)
+                            # reload hidden chunk
+                            x32 = xcache_grp.current()           # reuse cached hidden
+                            pl.set_validshape(x32, [valid_bsv, h])
+                            pl.load(gamma16, query_gamma, [m_head, h_off], order=[0])
+                            pl.cast(gamma32, gamma16, mode=pl.RoundMode.CAST_NONE)
+                            ggam = ggamq_grp.current()
+                            pl.set_validshape(ggam, [1, h])
+                            vf_zero_1d(ggam, h)
+                            vf_rmsbw_rmean(gx32, x32, gamma32, rms, rmean, ggam,
+                                           valid_bsv, h, h_chunk_size)
+                            # RMW this chunk's grad_γ_q in FP32 workspace (per-subblock).
+                            ggamq_acc = ggamq_acc_grp.current()
+                            pl.set_validshape(ggamq_acc, [1, h])
+                            pl.load(ggamq_acc, grad_qgamma_acc,
+                                    [worker_id, m_head, h_off], order=[1, 2])
+                            pl.add(ggamq_acc, ggamq_acc, ggam)
+                            pl.store(grad_qgamma_acc, ggamq_acc,
+                                     [worker_id, m_head, h_off], order=[1, 2])
+                        vf_rmsbw_rmean_finalize(rmean, valid_bsv, h)
+                        # Pass 3: grad_hidden_m -> store GM. gx32 (grad_nQuery) and
+                        # partner_sq (keys inv_rms) are still live from Pass2/Pass1b,
+                        # so Pass3 reuses them (n_h_chunks==1 -> H <= H_CHUNK).
+                        for h_chunk in pl.range(0, n_h_chunks):
+                            h_off = h_chunk * h
+                            gx32 = gn32_grp.current()
+                            pl.set_validshape(gx32, [valid_bsv, h])
+                            x32 = xcache_grp.current()           # reuse cached hidden
+                            pl.set_validshape(x32, [valid_bsv, h])
+                            gamma32 = gamma32_grp.current()      # reuse query_gamma FP32 from Pass2
+                            gh32 = gout32_grp.current()
+                            pl.set_validshape(gh32, [valid_bsv, h])
+                            vf_rmsbw_gradx(gx32, x32, gamma32, rms, rmean, gh32,
+                                           valid_bsv, h, h_chunk_size)
+                            gh16 = gbuf16_grp.current()
+                            pl.set_validshape(gh16, [valid_bsv, h])
+                            pl.cast(gh16, gh32, mode=pl.RoundMode.CAST_ROUND)
+                            pl.store(grad_hidden_states, gh16,
+                                     [bs_off, m_head, h_off], order=[0, 2])
+
+                        pl.system.bar_all()
 
     # ═══════════════════════════════════════════════════════════════
     # CUBE SECTION (consumes grad_value_ws / grad_key_ws and transposed inputs)
-    # ═══════════════════════════════════════════════════════════════
-    tt_f32_mat_a = pl.TileType(shape=[f32_tile, f32_tile], dtype=pl.DT_FP32,
-                               target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
-                               valid_shape=[-1, -1], compact=1)
-    tt_f32_mat_b = pl.TileType(shape=[f32_tile, f32_tile], dtype=pl.DT_FP32,
-                               target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
-                               valid_shape=[-1, -1], compact=1)
-    tt_f32_left = pl.TileType(shape=[f32_tile, f32_tile], dtype=pl.DT_FP32,
-                              target_memory=pl.MemorySpace.Left, layout=pl.NZ,
-                              valid_shape=[-1, -1], compact=1)
-    tt_f32_right = pl.TileType(shape=[f32_tile, f32_tile], dtype=pl.DT_FP32,
-                               target_memory=pl.MemorySpace.Right, layout=pl.ZN,
-                               valid_shape=[-1, -1], compact=1)
-    tt_f32_acc = pl.TileType(shape=[f32_tile, f32_tile], dtype=pl.DT_FP32,
-                             target_memory=pl.MemorySpace.Acc, fractal=1024,
-                             layout=pl.NZ, valid_shape=[-1, -1], compact=1)
+    # Cube tile: BF16 [128,128,128] (A/B/L0A/L0B BF16, L0C accumulator FP32).
+    tt_a_l1 = pl.TileType(shape=[cube_mn, cube_k], dtype=pl.DT_BF16,
+                            target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
+                            valid_shape=[-1, -1], compact=1)
+    tt_b_l1 = pl.TileType(shape=[cube_k, cube_mn], dtype=pl.DT_BF16,
+                            target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
+                            valid_shape=[-1, -1], compact=1)
+    tt_a_l0 = pl.TileType(shape=[cube_mn, cube_k], dtype=pl.DT_BF16,
+                            target_memory=pl.MemorySpace.Left, layout=pl.NZ,
+                            valid_shape=[-1, -1], compact=1)
+    tt_b_l0 = pl.TileType(shape=[cube_k, cube_mn], dtype=pl.DT_BF16,
+                            target_memory=pl.MemorySpace.Right, layout=pl.ZN,
+                            valid_shape=[-1, -1], compact=1)
+    tt_acc = pl.TileType(shape=[cube_mn, cube_mn], dtype=pl.DT_FP32,
+                            target_memory=pl.MemorySpace.Acc, fractal=1024,
+                            layout=pl.NZ, valid_shape=[-1, -1], compact=1)
 
-    # Keep the FP32 Cube path single-buffered.  The dynamic-shape kernel is
-    # launched repeatedly with different bs/de/h; a double-buffered ``next``
-    # sequence can retain an unsafe in-flight slot across such launches.
-    # Explicit bar_all() calls below serialize reuse without changing math.
-    f32_l1_left_grp = pl.make_tile_group(type=tt_f32_mat_a, addrs=0x20000, mutex_ids=[10])
-    f32_l1_right_grp = pl.make_tile_group(type=tt_f32_mat_b, addrs=0x28000, mutex_ids=[12])
-    f32_left_grp = pl.make_tile_group(type=tt_f32_left, addrs=0x0000, mutex_ids=[14])
-    f32_right_grp = pl.make_tile_group(type=tt_f32_right, addrs=0x0000, mutex_ids=[16])
-    f32_acc_grp = pl.make_tile_group(type=tt_f32_acc, addrs=0x0000, mutex_ids=[18])
+    # L1/L0 double-buffered (overlap GM->L1 load + L1->L0 move with matmul);
+    # acc single-buffered (matmul_acc K-chain is a true dependency).
+    a_l1_grp = pl.make_tile_group(type=tt_a_l1, addrs=[0x20000, 0x28000], mutex_ids=[10, 11])
+    b_l1_grp = pl.make_tile_group(type=tt_b_l1, addrs=[0x30000, 0x38000], mutex_ids=[12, 13])
+    a_l0_grp = pl.make_tile_group(type=tt_a_l0, addrs=[0x0000, 0x8000], mutex_ids=[14, 15])
+    b_l0_grp = pl.make_tile_group(type=tt_b_l0, addrs=[0x0000, 0x8000], mutex_ids=[16, 17])
+    acc_grp = pl.make_tile_group(type=tt_acc, addrs=0x0000, mutex_ids=[18])
 
     with pl.section_cube():
+        # wait GV_DONE: grad_value_ws ready. Nest1-val + Nest2 may now run,
+        # overlapping Vector Phase B.
         pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=0,
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=EVENT_GV_DONE,
                                  sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
         pl.system.set_mm_layout_transform(enabled=True)
 
-        # 公式：══ Nest 1: grad_emb[bs, de] = grad_value@W_v_t + Σ_m grad_key_m@W_k_t[m] ══
-        # 17 INDEPENDENT matmuls (each n_k_h=10 deep K-split), each Final + FIX store
-        # to grad_emb_ws[i] (cover-write). Vector section sums all 17 slots.
-        # NO atomicAdd, NO 170-deep Partial chain.
-
-        # Value contribution also uses the legal 64x64 FP32 Cube tiles:
-        # grad_value_ws @ wv_t_f32 -> grad_emb_ws[0].
-        for tile_idx in pl.range(0, iters_f32_per_core):
+        # Nest 1 (value): grad_value_ws @ wv_t -> atomic-add into grad_emb_acc.
+        # M-strided partitioning -> each output address has one cube owner ->
+        # atomicAdd is a local FP32 accumulate (no cross-core race).
+        for tile_idx in pl.range(0, iters_per_core):
             bsi = core_id + tile_idx * num_cores
-            for ni in pl.range(0, n_n_de_f32):
-                if bsi < n_bs_tiles_f32:
-                    row_off = bsi * f32_tile
-                    valid_bs = pl.min(f32_tile, bs_f32 - row_off)
-                    col_off = ni * f32_tile
-                    valid_n = pl.min(f32_tile, de - col_off)
-                    pl.system.bar_all()
-                    ac = f32_acc_grp.current()
+            for ni in pl.range(0, n_de):
+                if bsi < n_bs:
+                    row_off = bsi * cube_mn
+                    valid_bs = pl.min(cube_mn, bs - row_off)
+                    col_off = ni * cube_mn
+                    valid_n = pl.min(cube_mn, de - col_off)
+                    ac = acc_grp.current()
                     pl.set_validshape(ac, [valid_bs, valid_n])
-                    for k_idx in pl.range(0, n_k_h_f32):
-                        k_off = k_idx * f32_tile
-                        valid_k = pl.min(f32_tile, h - k_off)
-                        left = f32_l1_left_grp.current()
-                        right = f32_l1_right_grp.current()
+                    for k_idx in pl.range(0, n_kh):
+                        k_off = k_idx * cube_k
+                        valid_k = pl.min(cube_k, h - k_off)
+                        left = a_l1_grp.next()
+                        right = b_l1_grp.next()
                         pl.set_validshape(left, [valid_bs, valid_k])
                         pl.set_validshape(right, [valid_k, valid_n])
                         pl.load(left, grad_value_ws, [row_off, k_off])
-                        pl.load(right, wv_t_f32, [k_off, col_off])
-                        al = f32_left_grp.current()
-                        br = f32_right_grp.current()
+                        pl.load(right, wv_t, [k_off, col_off])
+                        al = a_l0_grp.next()
+                        br = b_l0_grp.next()
                         pl.set_validshape(al, [valid_bs, valid_k])
                         pl.set_validshape(br, [valid_k, valid_n])
                         pl.move(al, left)
                         pl.move(br, right)
-                        if k_idx == 0 and k_idx == n_k_h_f32 - 1:
+                        if k_idx == 0:
                             pl.matmul(ac, al, br)
-                        elif k_idx == 0:
-                            pl.matmul(ac, al, br)
-                        elif k_idx == n_k_h_f32 - 1:
-                            pl.matmul_acc(ac, ac, al, br)
                         else:
                             pl.matmul_acc(ac, ac, al, br)
-                    pl.store(grad_emb_ws, ac, [0, row_off, col_off],
-                             tile_dims=[1, 2])
-                # Every core reaches the barrier, including tail owners that
-                # have no valid bs tile.  This makes the tile-group reuse
-                # deterministic for arbitrary bs, not only aligned cases.
-                pl.system.bar_all()
+                    # Value contribution: atomic-add into grad_emb_acc (FP32 sum with
+                    # per-head key stores below).
+                    pl.store(grad_emb_acc, ac, [row_off, col_off],
+                             atomic=pl.AtomicType.AtomicAdd)
 
-        pl.system.bar_all()
-
-        # Per-head key contributions use legal 64x64 FP32 Cube tiles:
-        # grad_key_ws[m] @ wk_t_f32[m] -> grad_emb_ws[m + 1].
-        for m_head in pl.range(0, m_h):
-            for tile_idx in pl.range(0, iters_f32_per_core):
-                bsi = core_id + tile_idx * num_cores
-                for n_idx in pl.range(0, n_n_de_f32):
-                    if bsi < n_bs_tiles_f32:
-                        row_off = bsi * f32_tile
-                        valid_bs = pl.min(f32_tile, bs_f32 - row_off)
-                        col_off = n_idx * f32_tile
-                        valid_n = pl.min(f32_tile, de - col_off)
-                        pl.system.bar_all()
-                        ac = f32_acc_grp.current()
-                        pl.set_validshape(ac, [valid_bs, valid_n])
-                        for k_idx in pl.range(0, n_k_h_f32):
-                            k_off = k_idx * f32_tile
-                            valid_k = pl.min(f32_tile, h - k_off)
-                            left = f32_l1_left_grp.current()
-                            right = f32_l1_right_grp.current()
-                            pl.set_validshape(left, [valid_bs, valid_k])
-                            pl.set_validshape(right, [valid_k, valid_n])
-                            pl.load(left, grad_key_ws,
-                                    [row_off, m_head, k_off], order=[0, 2])
-                            pl.load(right, wk_t_f32,
-                                    [m_head, k_off, col_off], order=[1, 2])
-                            al = f32_left_grp.current()
-                            br = f32_right_grp.current()
-                            pl.set_validshape(al, [valid_bs, valid_k])
-                            pl.set_validshape(br, [valid_k, valid_n])
-                            pl.move(al, left)
-                            pl.move(br, right)
-                            if k_idx == 0 and k_idx == n_k_h_f32 - 1:
-                                pl.matmul(ac, al, br)
-                            elif k_idx == 0:
-                                pl.matmul(ac, al, br)
-                            elif k_idx == n_k_h_f32 - 1:
-                                pl.matmul_acc(ac, ac, al, br)
-                            else:
-                                pl.matmul_acc(ac, ac, al, br)
-                        pl.store(grad_emb_ws, ac, [m_head + 1, row_off, col_off],
-                                 tile_dims=[1, 2])
-                    # Keep the barrier outside the ownership predicate so
-                    # tail tiles cannot deadlock the other cores.
-                    pl.system.bar_all()
-#
-        pl.system.bar_all()
-
-        # ══ Nest 2: split grad_W_v reduction into shorter FP32 Cube chains.
-        # Each partial is stored in FP32 GM; Vector section reduces the
-        # partials before the single low-precision output cast.  This avoids
-        # a long BS-deep L0C accumulation chain for BS=8192/16384.
-        total_wv_f32 = n_de_tiles_f32 * n_h_tiles_f32
-        iters_wv_f32 = (total_wv_f32 + num_cores - 1) // num_cores
-        for part_idx in pl.range(0, n_vpw_parts):
-            part_start = part_idx * VPW_K_CHUNK
-            part_len = pl.min(VPW_K_CHUNK, bs - part_start)
-            n_k_part = (part_len + f32_tile - 1) // f32_tile
-            for wv_idx in pl.range(0, iters_wv_f32):
-                flat = core_id + wv_idx * num_cores
-                if flat < total_wv_f32:
-                    de_idx = flat // n_h_tiles_f32
-                    h_idx = flat % n_h_tiles_f32
-                    de_off = de_idx * f32_tile
-                    h_off = h_idx * f32_tile
-                    valid_de = pl.min(f32_tile, de - de_off)
-                    valid_h = pl.min(f32_tile, h - h_off)
-                    pl.system.bar_all()
-                    ac = f32_acc_grp.current()
-                    pl.set_validshape(ac, [valid_de, valid_h])
-                    for k_idx in pl.range(0, n_k_part):
-                        k_off = part_start + k_idx * f32_tile
-                        valid_k = pl.min(f32_tile, bs - k_off)
-                        valid_k = pl.min(valid_k, part_len - k_idx * f32_tile)
-                        left = f32_l1_left_grp.current()
-                        right = f32_l1_right_grp.current()
-                        pl.set_validshape(left, [valid_de, valid_k])
-                        pl.set_validshape(right, [valid_k, valid_h])
-                        pl.load(left, emb_t_f32, [de_off, k_off])
-                        pl.load(right, grad_value_ws, [k_off, h_off])
-                        al = f32_left_grp.current()
-                        br = f32_right_grp.current()
-                        pl.set_validshape(al, [valid_de, valid_k])
-                        pl.set_validshape(br, [valid_k, valid_h])
-                        pl.move(al, left)
-                        pl.move(br, right)
-                        if k_idx == 0 and k_idx == n_k_part - 1:
-                            pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
-                        elif k_idx == 0:
-                            pl.matmul(ac, al, br, phase=pl.AccPhase.Partial)
-                        elif k_idx == n_k_part - 1:
-                            pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Final)
-                        else:
-                            pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Partial)
-                    pl.store(grad_vpw_ws, ac, [part_idx, de_off, h_off],
-                             tile_dims=[1, 2], phase=pl.STPhase.Final)
-
-        pl.system.bar_all()
-
-        # 公式：══ Nest 3: grad_W_k[m][de, h] = emb_t_f32 @ grad_key_ws[m] ══
-        # This key path also uses 64x64 FP32 Cube tiles.  The final store
-        # narrows the FP32 accumulator into the low-precision output tensor.
-        total_wk_f32 = m_h * n_de_tiles_f32 * n_h_tiles_f32
-        iters_wk_f32 = (total_wk_f32 + num_cores - 1) // num_cores
-        for wk_idx in pl.range(0, iters_wk_f32):
-            flat = core_id + wk_idx * num_cores
-            if flat < total_wk_f32:
-                m_head = flat // (n_de_tiles_f32 * n_h_tiles_f32)
-                rem = flat % (n_de_tiles_f32 * n_h_tiles_f32)
-                de_idx = rem // n_h_tiles_f32
-                h_idx = rem % n_h_tiles_f32
-                de_off = de_idx * f32_tile
-                h_off = h_idx * f32_tile
-                valid_de = pl.min(f32_tile, de - de_off)
-                valid_h = pl.min(f32_tile, h - h_off)
-                pl.system.bar_all()
-                ac = f32_acc_grp.current()
+        # Nest 2: grad_W_v[De, H] = emb_t @ grad_value_ws. Only depends on
+        # grad_value_ws -> runs before wait(GK_DONE), overlapping Vector Phase B.
+        total_wv = n_de * n_h
+        iters_wv = (total_wv + num_cores - 1) // num_cores
+        for wv_idx in pl.range(0, iters_wv):
+            flat = core_id + wv_idx * num_cores
+            if flat < total_wv:
+                de_idx = flat // n_h
+                h_idx = flat % n_h
+                de_off = de_idx * cube_mn
+                h_off = h_idx * cube_mn
+                valid_de = pl.min(cube_mn, de - de_off)
+                valid_h = pl.min(cube_mn, h - h_off)
+                ac = acc_grp.current()
                 pl.set_validshape(ac, [valid_de, valid_h])
-                for k_idx in pl.range(0, n_k_bs_f32):
-                    k_off = k_idx * f32_tile
-                    valid_k = pl.min(f32_tile, bs - k_off)
-                    left = f32_l1_left_grp.current()
-                    right = f32_l1_right_grp.current()
+                for k_idx in pl.range(0, n_kbs):
+                    k_off = k_idx * cube_k
+                    valid_k = pl.min(cube_k, bs - k_off)
+                    left = a_l1_grp.next()
+                    right = b_l1_grp.next()
                     pl.set_validshape(left, [valid_de, valid_k])
                     pl.set_validshape(right, [valid_k, valid_h])
-                    pl.load(left, emb_t_f32, [de_off, k_off])
-                    pl.load(right, grad_key_ws,
-                            [k_off, m_head, h_off], order=[0, 2])
-                    al = f32_left_grp.current()
-                    br = f32_right_grp.current()
+                    pl.load(left, emb_t, [de_off, k_off])
+                    pl.load(right, grad_value_ws, [k_off, h_off])
+                    al = a_l0_grp.next()
+                    br = b_l0_grp.next()
                     pl.set_validshape(al, [valid_de, valid_k])
                     pl.set_validshape(br, [valid_k, valid_h])
                     pl.move(al, left)
                     pl.move(br, right)
-                    if k_idx == 0 and k_idx == n_k_bs_f32 - 1:
-                        pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
-                    elif k_idx == 0:
-                        pl.matmul(ac, al, br, phase=pl.AccPhase.Partial)
-                    elif k_idx == n_k_bs_f32 - 1:
-                        pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Final)
+                    if k_idx == 0:
+                        pl.matmul(ac, al, br)
                     else:
-                        pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Partial)
+                        pl.matmul_acc(ac, ac, al, br)
+                pl.store(grad_value_proj_weights, ac, [de_off, h_off])
+
+        # wait GK_DONE: grad_key_ws ready (both AIV subblocks split its production).
+        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=EVENT_GK_DONE,
+                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+
+        # Nest 1 (per-head key): grad_key_ws[m] @ wk_t[m] -> atomic-add into the
+        # same grad_emb_acc slot as the value store above.
+        for m_head in pl.range(0, m_h):
+            for tile_idx in pl.range(0, iters_per_core):
+                bsi = core_id + tile_idx * num_cores
+                for n_idx in pl.range(0, n_de):
+                    if bsi < n_bs:
+                        row_off = bsi * cube_mn
+                        valid_bs = pl.min(cube_mn, bs - row_off)
+                        col_off = n_idx * cube_mn
+                        valid_n = pl.min(cube_mn, de - col_off)
+                        ac = acc_grp.current()
+                        pl.set_validshape(ac, [valid_bs, valid_n])
+                        for k_idx in pl.range(0, n_kh):
+                            k_off = k_idx * cube_k
+                            valid_k = pl.min(cube_k, h - k_off)
+                            left = a_l1_grp.next()
+                            right = b_l1_grp.next()
+                            pl.set_validshape(left, [valid_bs, valid_k])
+                            pl.set_validshape(right, [valid_k, valid_n])
+                            pl.load(left, grad_key_ws,
+                                    [row_off, m_head, k_off], order=[0, 2])
+                            pl.load(right, wk_t,
+                                    [m_head, k_off, col_off], order=[1, 2])
+                            al = a_l0_grp.next()
+                            br = b_l0_grp.next()
+                            pl.set_validshape(al, [valid_bs, valid_k])
+                            pl.set_validshape(br, [valid_k, valid_n])
+                            pl.move(al, left)
+                            pl.move(br, right)
+                            if k_idx == 0:
+                                pl.matmul(ac, al, br)
+                            else:
+                                pl.matmul_acc(ac, ac, al, br)
+                        # Per-head key contribution: atomic-add into the same grad_emb_acc slot.
+                        pl.store(grad_emb_acc, ac, [row_off, col_off],
+                                 atomic=pl.AtomicType.AtomicAdd)
+
+        # Nest 3: grad_W_k[m][De, H] = emb_t @ grad_key_ws[m].
+        total_wk = m_h * n_de * n_h
+        iters_wk = (total_wk + num_cores - 1) // num_cores
+        for wk_idx in pl.range(0, iters_wk):
+            flat = core_id + wk_idx * num_cores
+            if flat < total_wk:
+                m_head = flat // (n_de * n_h)
+                rem = flat % (n_de * n_h)
+                de_idx = rem // n_h
+                h_idx = rem % n_h
+                de_off = de_idx * cube_mn
+                h_off = h_idx * cube_mn
+                valid_de = pl.min(cube_mn, de - de_off)
+                valid_h = pl.min(cube_mn, h - h_off)
+                ac = acc_grp.current()
+                pl.set_validshape(ac, [valid_de, valid_h])
+                for k_idx in pl.range(0, n_kbs):
+                    k_off = k_idx * cube_k
+                    valid_k = pl.min(cube_k, bs - k_off)
+                    left = a_l1_grp.next()
+                    right = b_l1_grp.next()
+                    pl.set_validshape(left, [valid_de, valid_k])
+                    pl.set_validshape(right, [valid_k, valid_h])
+                    pl.load(left, emb_t, [de_off, k_off])
+                    pl.load(right, grad_key_ws,
+                            [k_off, m_head, h_off], order=[0, 2])
+                    al = a_l0_grp.next()
+                    br = b_l0_grp.next()
+                    pl.set_validshape(al, [valid_de, valid_k])
+                    pl.set_validshape(br, [valid_k, valid_h])
+                    pl.move(al, left)
+                    pl.move(br, right)
+                    if k_idx == 0:
+                        pl.matmul(ac, al, br)
+                    else:
+                        pl.matmul_acc(ac, ac, al, br)
                 pl.store(grad_key_proj_weights, ac,
-                         [m_head, de_off, h_off], tile_dims=[1, 2],
-                         phase=pl.STPhase.Final)
-#
+                         [m_head, de_off, h_off], order=[1, 2])
+
         pl.system.set_mm_layout_transform(enabled=False)
-        # ── cube -> vector handoff (Cube->V: M->FIX fence, then
-        #    set FIX / wait MTE2) ──
-        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX,
-                           event_id=1)
-        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX,
-                           event_id=1)
-        pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=1,
-                                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
-
-    # ═══════════════════════════════════════════════════════════════
-    #    # VECTOR SECTION 2: sum grad_emb_ws[0..m_h] -> grad_embeddings
-#    # ═══════════════════════════════════════════════════════════════
-    with pl.section_vector():
-        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=1,
-                                     sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
-        # Cube has completed the GM stores at this point.  The two AIV
-        # subblocks share the Vector MTE/UB pipeline, so serialize the
-        # consumer section before selecting the single GM writer.
-        pl.system.bar_all()
-        # tile types for sum
-        tt_sum_f32 = pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32,
-                                    target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-        tt_sum_f16 = pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_BF16,
-                                    target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-        sum_grp = pl.make_tile_group(type=tt_sum_f32, addrs=0x00000, mutex_ids=[0])
-        slot_grp = pl.make_tile_group(type=tt_sum_f32, addrs=0x10000, mutex_ids=[1])
-        out_grp = pl.make_tile_group(type=tt_sum_f16, addrs=0x20000, mutex_ids=[2])
-
-        # Reduce the shorter FP32 grad_W_v Cube partials in Vector before
-        # casting the final result to the output dtype.
-        total_vpw = n_de_tiles_f32 * n_h_tiles_f32
-        iters_vpw = (total_vpw + num_cores - 1) // num_cores
-        if sub_id == 0:
-            for vpw_idx in pl.range(0, iters_vpw):
-                flat = core_id + vpw_idx * num_cores
-                if flat < total_vpw:
-                    de_idx = flat // n_h_tiles_f32
-                    h_idx = flat % n_h_tiles_f32
-                    de_off = de_idx * f32_tile
-                    h_off = h_idx * f32_tile
-                    valid_de = pl.min(f32_tile, de - de_off)
-                    valid_h = pl.min(f32_tile, h - h_off)
-                    acc = sum_grp.current()
-                    pl.set_validshape(acc, [valid_de, valid_h])
-                    for part_idx in pl.range(0, n_vpw_parts):
-                        if part_idx == 0:
-                            pl.load(acc, grad_vpw_ws,
-                                    [part_idx, de_off, h_off], order=[1, 2])
-                        else:
-                            part = slot_grp.current()
-                            pl.set_validshape(part, [valid_de, valid_h])
-                            pl.load(part, grad_vpw_ws,
-                                    [part_idx, de_off, h_off], order=[1, 2])
-                            pl.add(acc, acc, part)
-                    out = out_grp.current()
-                    pl.set_validshape(out, [valid_de, valid_h])
-                    pl.cast(out, acc, mode=pl.RoundMode.CAST_ROUND)
-                    pl.store(grad_value_proj_weights, out, [de_off, h_off])
-
-        pl.system.bar_all()
-
-        total_sum = n_bs_tiles * n_n_de
-        iters_sum = (total_sum + num_cores - 1) // num_cores
-        if sub_id == 0:
-            for sum_idx in pl.range(0, iters_sum):
-                flat = core_id + sum_idx * num_cores
-                if flat < total_sum:
-                    bsi = flat // n_n_de
-                    ni = flat % n_n_de
-                    row_off = bsi * TILE_M
-                    col_off = ni * TILE_N
-                    valid_bs = pl.min(TILE_M, bs - row_off)
-                    valid_n = pl.min(TILE_N, de - col_off)
-                    acc = sum_grp.current()
-                    pl.set_validshape(acc, [valid_bs, valid_n])
-                    # Sum all m_h+1 slots
-                    for slot_i in pl.range(0, m_h + 1):
-                        if slot_i == 0:
-                            pl.load(acc, grad_emb_ws, [slot_i, row_off, col_off],
-                                    order=[1, 2])
-                        else:
-                            slot = slot_grp.current()
-                            pl.set_validshape(slot, [valid_bs, valid_n])
-                            pl.load(slot, grad_emb_ws, [slot_i, row_off, col_off],
-                                    order=[1, 2])
-                            pl.add(acc, acc, slot)
-                    out = out_grp.current()
-                    pl.set_validshape(out, [valid_bs, valid_n])
-                    pl.cast(out, acc, mode=pl.RoundMode.CAST_ROUND)
-                    pl.store(grad_embeddings, out, [row_off, col_off])
-
-        # Do not let a following dynamic-shape launch observe unfinished
-        # Vector/MTE3 work from this output section.
-        pl.system.bar_all()
+        # grad_emb_acc is final (Nest1 value + per-head key atomic-add). Host casts it -> BF16.
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1206,20 +1080,20 @@ def engram_backward_kernel(
 # ═══════════════════════════════════════════════════════════════════
 
 def engram_backward_wrapper(
-    grad_output,  # [b, s, m_h, h] BF16
-    hidden_states,  # [b, s, m_h, h] BF16
-    embeddings,  # [b, s, de] BF16
-    key_proj_weights,  # [m_h, de, h] BF16 (host-pre-transposed below)
-    value_proj_weights,  # [de, h] BF16 (host-pre-transposed below)
-    key_gamma,  # [m_h, h] BF16
-    query_gamma,  # [m_h, h] BF16
-    scores,  # [b, s, m_h, 1] FP32
-    gates,  # [b, s, m_h, 1] FP32
-    keys,  # [b, s, m_h, h] BF16 cache; cast to FP32 in kernel
-    value,  # [b, s, h] BF16 cache; cast to FP32 in kernel
+    grad_output,        # [B, S, M_H, H] BF16
+    hidden_states,      # [B, S, M_H, H] BF16
+    embeddings,         # [B, S, De]     BF16
+    key_proj_weights,   # [M_H, De, H]   BF16  (host-pre-transposed below)
+    value_proj_weights, # [De, H]        BF16  (host-pre-transposed below)
+    key_gamma,          # [M_H, H]       BF16
+    query_gamma,        # [M_H, H]       BF16
+    scores,             # [B, S, M_H, 1] FP32
+    gates,              # [B, S, M_H, 1] FP32
+    keys,               # [B, S, M_H, H] BF16 cache; cast to FP32 in kernel
+    value,              # [B, S, H]      BF16 cache; cast to FP32 in kernel
     clamp_value=1e-6,
     eps=1e-6,
-    use_kernel_transpose=True,  # API-compat flag; only host-pre-transpose path exists
+    use_kernel_transpose=True,   # API-compat flag; only host-pre-transpose path exists
 ):
     """Host wrapper. Mirrors forward's reshape + launch + reshape-back, and
     additionally:
@@ -1237,17 +1111,29 @@ def engram_backward_wrapper(
         )
     b, s, m_dim, h = grad_output.shape
     bs = b * s
-    # Pad bs -> multiple of f32_tile(64): cube Nest1 must store grad_emb_ws as
-    # FULL 64-row FP32 tiles.  An undersized tail tile (bs not a multiple of 64)
-    # corrupts the FIX NZ->linear de-pad and scrambles the valid rows
-    # (this was the grad_embeddings failure at small M).  Padded workspace rows
-    # are zero; V2 and the final output still index by the real bs.
-    bs_f32 = ((bs + 63) // 64) * 64
     de = embeddings.shape[-1]
     device = grad_output.device
     dtype = grad_output.dtype
 
-    # ── Host reshape: merge B·S -> bs ──
+    # ── TilingKey selection: only H=1280/2560 have a specialized kernel. ──
+    if h not in (1280, 2560):
+        raise ValueError(
+            f"engram_backward_wrapper only supports H in {{1280, 2560}} (TilingKey "
+            f"specialization), got H={h}"
+        )
+    # BSMode: largest V_TILE that fills all 64 vector workers
+    # (need n_bs_v = ceil(BS/V_TILE) >= 64; small BS floors at V_TILE=16).
+    if bs >= 128 * 64:    # 8192
+        v_tile, bsmode = V_TILE_BS0, 0
+    elif bs >= 64 * 64:   # 4096
+        v_tile, bsmode = V_TILE_BS1, 1
+    elif bs >= 32 * 64:   # 2048
+        v_tile, bsmode = V_TILE_BS2, 2
+    else:
+        v_tile, bsmode = V_TILE_BS3, 3
+    tiling_key = {"HMode": 1 if h == 2560 else 0, "BSMode": bsmode}
+
+    # ── Host reshape: merge B·S -> BS ──
     go_bs = grad_output.reshape(bs, m_dim, h).contiguous()
     hid_bs = hidden_states.reshape(bs, m_dim, h).contiguous()
     emb_bs = embeddings.reshape(bs, de).contiguous()
@@ -1257,52 +1143,52 @@ def engram_backward_wrapper(
     sc_bs = scores.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
     gt_bs = gates.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
 
-    # ── Host pre-transpose (rule 3): kernel uses plain NZ loads ──
-    emb_t_f32 = emb_bs.float().t().contiguous()  # [de, bs] FP32
-    wv_t_f32 = value_proj_weights.float().t().contiguous()  # [h, de] FP32
-    wk_t_f32 = key_proj_weights.float().transpose(-1, -2).contiguous()  # [m_h, h, de] FP32
+    # ── Host pre-transpose (rule 3): kernel uses plain NZ loads.  Weights stay
+    #    BF16 (cube is BF16) -- no .float() upcast. ──
+    emb_t = emb_bs.t().contiguous()                                      # [De, BS] BF16
+    wv_t = value_proj_weights.t().contiguous()                          # [H, De] BF16
+    wk_t = key_proj_weights.transpose(-1, -2).contiguous()              # [M_H, H, De] BF16
 
-    # ── FP32 intermediate workspace (cover-write; vector produces, cube consumes) ──
-    # ZEROS (not empty): padded rows [bs, bs_f32) must read as 0 inside the cube
-    # so the matmul yields full zero-padded tiles and grad_emb_ws stores cleanly.
-    grad_value_ws = torch.zeros((bs_f32, h), dtype=torch.float32, device=device)
-    grad_key_ws = torch.zeros((bs_f32, m_dim, h), dtype=torch.float32, device=device)
-    n_vpw_parts = (bs + VPW_K_CHUNK - 1) // VPW_K_CHUNK
-    grad_vpw_ws = torch.zeros((n_vpw_parts, de, h),
-                              dtype=torch.float32, device=device)
+    # ── BF16 cube-operand workspaces (vector produces FP32, casts to BF16 on store) ──
+    grad_value_ws = torch.empty((bs, h), dtype=torch.bfloat16, device=device)
+    grad_key_ws = torch.empty((bs, m_dim, h), dtype=torch.bfloat16, device=device)
 
-    # ── num_cores (needed for per-core gamma workspace sizing) ──
-    natural_cores = max(1, min(32, (bs + TILE_M - 1) // TILE_M))
-    debug_cores = int(os.environ.get("ENGRAM_GAMMA_CORES", "0"))
-    num_cores = (
-        max(1, min(natural_cores, debug_cores))
-        if debug_cores > 0 else natural_cores
-    )
+    # Launch on all AI Cores (num_cores AIC x 2 AIV = num_cores*2 vector workers).
+    # NOTE: the TilingKey V_TILE / BSMode split and the gamma workspace sizing are
+    # currently tuned for 32 cores (a5 / DAV_3510, 64 workers). Other SoCs run but
+    # may need TilingKey retuning for best occupancy.
+    num_cores = get_platform_info().core_num
 
-    # ── FP32 per-core gamma workspace; reduce in FP32, cast output once ──
-    grad_qgamma_acc = torch.zeros((num_cores, m_dim, h), dtype=torch.float32, device=device)
-    grad_kgamma_acc = torch.zeros((num_cores, m_dim, h), dtype=torch.float32, device=device)
+    # FP32 per-core gamma workspace (one slot per AIV subblock); host reduces + casts.
+    grad_qgamma_acc = torch.zeros((num_cores * 2, m_dim, h), dtype=torch.float32, device=device)  # B-query split
+    grad_kgamma_acc = torch.zeros((num_cores * 2, m_dim, h), dtype=torch.float32, device=device)  # B-key split
 
-    # ── FP32 grad_emb workspace (cube cover-write slots, vector sums to grad_embeddings) ──
-    grad_emb_ws = torch.zeros((m_dim + 1, bs_f32, de), dtype=torch.float32, device=device)
+    # FP32 grad_emb accumulator [BS, De]: Nest1 value + per-head key all atomic-add
+    # here. MUST be pre-zeroed (atomicAdd accumulates onto the existing value).
+    grad_emb_acc = torch.zeros((bs, de), dtype=torch.float32, device=device)
+
+    # ── grad_score cache (B-key writes, B-query reads; avoids recomputing Step7b+Step5) ──
+    gscore_ws = torch.empty((bs, m_dim, 64), dtype=torch.float32, device=device)
 
     # ── Low-precision final outputs; all source calculations stay FP32 ──
+    # (grad_embeddings is now produced by host from grad_emb_acc, see below.)
     grad_hidden_states = torch.empty((bs, m_dim, h), dtype=dtype, device=device)
-    grad_embeddings = torch.empty((bs, de), dtype=dtype, device=device)
-    grad_kpw = torch.empty((m_dim, de, h), dtype=dtype, device=device)
-    grad_vpw = torch.empty((de, h), dtype=dtype, device=device)
+    grad_key_proj_weights = torch.empty((m_dim, de, h), dtype=dtype, device=device)
+    grad_value_proj_weights = torch.empty((de, h), dtype=dtype, device=device)
 
-    engram_backward_kernel[None, num_cores](
+    engram_backward_kernel[None, num_cores, tiling_key](
         go_bs, hid_bs, emb_bs,
         key_gamma, query_gamma,
         sc_bs, gt_bs, keys_bs, val_bs,
-        emb_t_f32, wv_t_f32, wk_t_f32,
-        grad_value_ws, grad_key_ws,
-        grad_vpw_ws,
-        grad_qgamma_acc, grad_kgamma_acc, grad_emb_ws,
-        grad_hidden_states, grad_embeddings, grad_kpw, grad_vpw,
+        emb_t, wv_t, wk_t,
+        grad_value_ws, grad_key_ws, gscore_ws,
+        grad_qgamma_acc, grad_kgamma_acc, grad_emb_acc,
+        grad_hidden_states, grad_key_proj_weights, grad_value_proj_weights,
     )
     torch.npu.synchronize()
+
+    # Cast FP32 grad_emb_acc -> BF16 grad_embeddings on host.
+    grad_embeddings = grad_emb_acc.to(dtype)
 
     # ── Reduce FP32 per-core gamma workspace, then cast once at the output ──
     grad_kgamma_out = grad_kgamma_acc.sum(dim=0).to(dtype)
@@ -1310,95 +1196,12 @@ def engram_backward_wrapper(
 
     grad_hidden_states = grad_hidden_states.reshape(b, s, m_dim, h)
     grad_embeddings = grad_embeddings.reshape(b, s, de)
-    grad_kpw = grad_kpw.reshape(m_dim, de, h)
+    grad_key_proj_weights = grad_key_proj_weights.reshape(m_dim, de, h)
     return (
         grad_hidden_states,
         grad_embeddings,
-        grad_kpw,
-        grad_vpw,
+        grad_key_proj_weights,
+        grad_value_proj_weights,
         grad_kgamma_out,
         grad_qgamma_out,
     )
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Layer F: Self-validation
-# ═══════════════════════════════════════════════════════════════════
-
-def _validate(b=1, s=64, m_dim=4, h=1280, de=512):
-    """Small-shape self-check against golden.
-    On NPU machine:  python custom/engram_backward/engram_backward_impl.py
-    """
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from engram_backward_golden import (
-        engram_backward_golden, engram_forward_with_cache,
-        _get_device,
-    )
-
-    device = _get_device()
-    torch.manual_seed(42)
-
-    hidden_states = torch.randn(b, s, m_dim, h, dtype=torch.bfloat16, device=device)
-    embeddings = torch.randn(b, s, de, dtype=torch.bfloat16, device=device)
-    key_proj_weights = torch.randn(m_dim, de, h, dtype=torch.bfloat16, device=device) * 0.5
-    value_proj_weights = torch.randn(de, h, dtype=torch.bfloat16, device=device) * 0.5
-    key_gamma = torch.ones(m_dim, h, dtype=torch.bfloat16, device=device)
-    query_gamma = torch.ones(m_dim, h, dtype=torch.bfloat16, device=device)
-
-    clamp_value, eps = 1e-6, 1e-6
-    with torch.no_grad():
-        _, cache = engram_forward_with_cache(
-            hidden_states, embeddings, key_proj_weights, value_proj_weights,
-            key_gamma, query_gamma, clamp_value, eps,
-        )
-
-    grad_output = torch.randn(b, s, m_dim, h, dtype=torch.bfloat16, device=device)
-
-    (ghs, ge, gkpw, gvpw, gkg, gqg) = engram_backward_wrapper(
-        grad_output,
-        hidden_states, embeddings, key_proj_weights, value_proj_weights,
-        key_gamma, query_gamma,
-        cache["scores"].float(), cache["gates"].float(),
-        cache["keys"], cache["value"],
-        clamp_value, eps,
-    )
-
-    (g_ghs, g_ge, g_gkpw, g_gvpw, g_gkg, g_gqg) = engram_backward_golden(
-        grad_output,
-        hidden_states, embeddings, key_proj_weights, value_proj_weights,
-        key_gamma, query_gamma,
-        cache["scores"].float(), cache["gates"].float(),
-        cache["keys"], cache["value"],
-        clamp_value, eps,
-    )
-
-    names = ["grad_hidden_states", "grad_embeddings", "grad_key_proj_weights",
-             "grad_value_proj_weights", "grad_key_gamma", "grad_query_gamma"]
-    npu_t = [ghs, ge, gkpw, gvpw, gkg, gqg]
-    gold_t = [g_ghs, g_ge, g_gkpw, g_gvpw, g_gkg, g_gqg]
-
-    log.info("=== engram_backward self-check (b=%s,s=%s,h=%s,de=%s) ===", b, s, h, de)
-    all_ok = True
-    atol, rtol = 0.001, 0.02
-    for name, nt, gt in zip(names, npu_t, gold_t):
-        nt = nt.cpu().float()
-        gt = gt.cpu().float()
-        max_diff = (nt - gt).abs().max().item()
-        max_val = gt.abs().max().item() + 1e-8
-        rel = max_diff / max_val
-        ok = (max_diff <= atol) or (rel <= rtol)
-        all_ok = all_ok and ok
-        log.info("  %s: max_diff=%.4e  rel=%.4e  shape=%s  %s",
-                 name, max_diff, rel, tuple(nt.shape), "OK" if ok else "FAIL")
-    tag = "[PRECISION_PASS]" if all_ok else "[PRECISION_FAIL]"
-    log.info("  => %s %s", "ALL OK" if all_ok else "FAIL", tag)
-    return all_ok
-
-
-if __name__ == "__main__":
-    ok = _validate(b=1, s=128, h=1280, de=512)
-    if not ok:
-        raise SystemExit(1)
-    log.info("=== Small shape PASS ===")
-    raise SystemExit(0)
