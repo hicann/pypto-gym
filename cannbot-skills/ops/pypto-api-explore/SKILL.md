@@ -54,10 +54,12 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 
 ### 步骤 2.5: 本地映射优先
 
-在发起 Explore subagent 之前，先查本地映射 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)：
-- 命中 A/B 类条目 → 直接取 Pypto API / 组合方案，并读对应 [examples/](examples/) 下的 kernel 参考骨架（占位符约定见 [examples/README.md](examples/README.md)）。
-- 命中后仍需 Explore 深挖具体约束与生产实现；未命中则进入步骤 3 全量探索。
-- 多策略算子参考 [references/strategy-comparison.md](references/strategy-comparison.md) 选型。
+发起 Explore subagent 前，先查本地映射 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)：
+
+- 算子命中「命名映射」或「组合方案」条目时，按表取用对应的 Pypto API 或组合方案，并阅读 [examples/](examples/) 下对应的 kernel 参考骨架（占位符约定见 [examples/README.md](examples/README.md)）。
+- 算子涉及量化数据流、稀疏注意力、RoPE 重排、多核写同一输出、UB/L1 gather 等场景时，查 [references/pypto-specific-ops.md](references/pypto-specific-ops.md) 中的 NPU 特有接口。
+- 命中条目后仍需通过 Explore 核实具体约束与生产实现；未命中则进入步骤 3 全量探索。
+- 存在多种实现策略的算子，参考 [references/strategy-comparison.md](references/strategy-comparison.md) 选型。
 
 ### 步骤 3: 并行探索
 
@@ -121,7 +123,7 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 
 | Subagent | 查什么 | 内容 | 优先级 |
 |----------|------|----------|--------|
-| **本地映射** | `references/torch-pypto-op-mapping.md`、`examples/<op>.md` | Torch↔Pypto 映射与 kernel 骨架 | **首查** |
+| **本地映射** | `references/torch-pypto-op-mapping.md`、`references/pypto-specific-ops.md`、`examples/<op>.md` | Torch↔Pypto 映射、NPU 特有接口与 kernel 骨架 | **首查** |
 | **1 API 文档** | `pypto-<op>.md` | 具体 API 签名/约束 | **主要** |
 | | `pypto-from_torch.md` | 入口约束 | **必查** |
 | | `pypto-set_vec_tile_shapes.md`（及 `set_cube_tile_shapes`） | Tiling 约束 | 条件 |
@@ -149,11 +151,10 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 | 构造 | zeros, ones, full, arange | `pypto.{op}` |
 | 类型转换 | cast | `pypto.cast` |
 
-> 完整 92 算子映射见 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)；本表仅为高频速查。
+> 命名映射与组合方案见 [references/torch-pypto-op-mapping.md](references/torch-pypto-op-mapping.md)；本表仅为高频速查。
 
 **常见 Substitute（无直接 API）**：
 - `mean` → `sum/count`
-- `sigmoid` → 仅支持 FP32；需在其他 dtype 场景下先 `cast` 到 FP32 再调用
 
 ### 算子类型判断
 
@@ -177,7 +178,6 @@ description: 探索 PyPTO API，为算子开发提供 API 映射、约束检查�
 | TileShape | 每维 > 0，最多 4 维 | set_vec_tile_shapes 文档 |
 | Cube TileShape | 32 字节对齐；buffer 空间需满足 K 轴 × 2 ≤ L1 容量 | set_cube_tile_shapes 文档 |
 | shape size | ≤ INT32_MAX | 各 API 文档 |
-| sigmoid dtype | 仅支持 DT_FP32 | pypto.sigmoid API 文档 |
 | **动态 shape 兼容性** | **matmul / 归约类 等计算 API 在编译期需要 concrete shape，不接受含 DYNAMIC 维度的 tensor（报错：`has invalid shape value: -1`）。若算子有动态轴且用到这类 API，必须在风险评估中标注，并说明需采用"loop 切 tile"策略（见 execution-constraints.md §5）** | execution-constraints.md §5 |
 
 ---

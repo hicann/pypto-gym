@@ -7,8 +7,8 @@
 def max_kernel(a: pypto.Tensor(sl, pypto_dtype),
            out: pypto.Tensor(ol, pypto_dtype)):
     for i in pypto.loop(batch, name="batch", unroll_list=[1]):
-        a_s = pypto.view(a, [1] + inner, [i] + zeros_in)
+        a_s = pypto.view(a, [1] + inner, [i] + [0] * len(inner))
         pypto.set_vec_tile_shapes(1, *inner)
         r = pypto.amax(a_s, dim=-1, keepdim=True)
-        pypto.assemble(r, [i] + zeros_out, out)
+        pypto.assemble(r, [i] + [0] * (len(ol) - 1), out)
 ```

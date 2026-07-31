@@ -8,7 +8,7 @@ def embedding_kernel(weight: pypto.Tensor(wl, pypto.DT_FP32),
                      indices: pypto.Tensor(il, pypto.DT_INT32),
                      out: pypto.Tensor(ol, pypto.DT_FP32)):
     for i in pypto.loop(batch, name="row", unroll_list=[1]):
-        idx_s = pypto.view(indices, [1] + idx_inner, [i] + idx_zeros)
+        idx_s = pypto.view(indices, [1] + idx_inner, [i] + [0] * len(idx_inner))
         r = pypto.gather(weight, 0, idx_s)
-        pypto.assemble(r, [i] + zeros_out, out)
+        pypto.assemble(r, [i] + [0] * (len(ol) - 1), out)
 ```

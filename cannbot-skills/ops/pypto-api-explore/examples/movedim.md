@@ -7,7 +7,7 @@
 def movedim_kernel(in_tensor: pypto.Tensor(sl, pypto_dtype),
                 out_tensor: pypto.Tensor(ol, pypto_dtype)):
     for i in pypto.loop(batch, name="batch", unroll_list=[1]):
-        a_s = pypto.view(in_tensor, [1] + inner, [i] + zeros_in)
+        a_s = pypto.view(in_tensor, [1] + inner, [i] + [0] * len(inner))
         pypto.set_vec_tile_shapes(1, *inner)
-        pypto.assemble(a_s, [i] + zeros_out, out_tensor)
+        pypto.assemble(a_s, [i] + [0] * (len(ol) - 1), out_tensor)
 ```

@@ -8,9 +8,9 @@ def stack_kernel(a: pypto.Tensor(sl, pypto_dtype),
            b: pypto.Tensor(sl, pypto_dtype),
            out: pypto.Tensor(ol, pypto_dtype)):
     for i in pypto.loop(batch, name="batch", unroll_list=[1]):
-        a_s = pypto.view(a, [1] + inner, [i] + zeros_in)
-        b_s = pypto.view(b, [1] + inner, [i] + zeros_in)
+        a_s = pypto.view(a, [1] + inner, [i] + [0] * len(inner))
+        b_s = pypto.view(b, [1] + inner, [i] + [0] * len(inner))
         pypto.set_vec_tile_shapes(1, *inner)
-        pypto.assemble(a_s, [0, i] + zeros_out, out)
-        pypto.assemble(b_s, [1, i] + zeros_out, out)
+        pypto.assemble(a_s, [0, i] + [0] * (len(ol) - 2), out)
+        pypto.assemble(b_s, [1, i] + [0] * (len(ol) - 2), out)
 ```

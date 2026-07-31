@@ -9,10 +9,10 @@ def masked_scatter_kernel(x: pypto.Tensor(sl, pypto.DT_FP32),
                           source: pypto.Tensor(sl, pypto.DT_FP32),
                           out: pypto.Tensor(sl, pypto.DT_FP32)):
     for i in pypto.loop(batch, name="row", unroll_list=[1]):
-        x_s = pypto.view(x, [1] + inner, [i] + zeros_in)
-        mask_s = pypto.view(mask, [1] + inner, [i] + zeros_in)
-        src_s = pypto.view(source, [1] + inner, [i] + zeros_in)
+        x_s = pypto.view(x, [1] + inner, [i] + [0] * len(inner))
+        mask_s = pypto.view(mask, [1] + inner, [i] + [0] * len(inner))
+        src_s = pypto.view(source, [1] + inner, [i] + [0] * len(inner))
         pypto.set_vec_tile_shapes(1, *inner)
         r = pypto.where(mask_s, src_s, x_s)
-        pypto.assemble(r, [i] + zeros_in, out)
+        pypto.assemble(r, [i] + [0] * len(inner), out)
 ```

@@ -7,8 +7,8 @@
 def repeat_interleave_kernel(a: pypto.Tensor(sl, pypto_dtype),
            out: pypto.Tensor(ol, pypto_dtype)):
     for i in pypto.loop(batch, name="batch", unroll_list=[1]):
-        a_s = pypto.view(a, [1] + inner, [i] + zeros_in)
+        a_s = pypto.view(a, [1] + inner, [i] + [0] * len(inner))
         pypto.set_vec_tile_shapes(1, *inner)
-        pypto.assemble(a_s, [i * rep] + zeros_out, out)
-        pypto.assemble(a_s, [i * rep + 1] + zeros_out, out)
+        pypto.assemble(a_s, [i * rep] + [0] * (len(ol) - 1), out)
+        pypto.assemble(a_s, [i * rep + 1] + [0] * (len(ol) - 1), out)
 ```
