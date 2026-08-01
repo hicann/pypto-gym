@@ -339,6 +339,8 @@ def mla_prolog(params, input_tensors, golden_tensors, dtype, is_nz):
     from torchair.configs.compiler_config import CompilerConfig
     compiler_config = CompilerConfig()
     compiler_config.mode = "reduce-overhead"
+    if pypto.platform.npuarch == 'DAV_3510':
+        compiler_config.debug.aclgraph.clone_input = False
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
     model = torch.compile(MLA_MODEL(), dynamic=False, fullgraph=True, backend=npu_backend)
 

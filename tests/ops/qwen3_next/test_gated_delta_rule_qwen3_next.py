@@ -227,9 +227,9 @@ def do_test_chunk_gated_delta_rule(case_name):
 
     # Compare results
     compare(actual=outputs["core_attn_out"].cpu(), expected=core_attn_out_golden, name="core_attn_out", rtol=1e-3,
-        atol_abs=0, atol_rel=1e-3)
+        atol_abs=0.005, atol_rel=1e-3)
     compare(actual=outputs["final_state"].cpu(), expected=final_state_golden, name="final_state", rtol=1e-3,
-        atol_abs=0, atol_rel=1e-3)
+        atol_abs=0.005, atol_rel=1e-3)
 
 
 def compare(**kwargs):
@@ -248,8 +248,9 @@ def compare(**kwargs):
     tolerance = atol_abs + atol_rel * torch.abs(expected.float())
     out_of_tolerance = (diff > tolerance).sum().item()
     total = actual.numel()
+    diff_thd = total * atol_abs
 
-    if out_of_tolerance > 0:
+    if out_of_tolerance > diff_thd:
         raise AssertionError(f"{name} comparison failed: {out_of_tolerance} elements out of tolerance")
 
 

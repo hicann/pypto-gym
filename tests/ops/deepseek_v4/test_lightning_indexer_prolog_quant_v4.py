@@ -306,6 +306,8 @@ def do_indexer_prolog_quant_torch_graph(inputs, golden_list):
 
     compiler_config = CompilerConfig()
     compiler_config.mode = "reduce-overhead"
+    if pypto.platform.npuarch == 'DAV_3510':
+        compiler_config.debug.aclgraph.clone_input = False
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
     model = torch.compile(
         QuantLightningIndexerProlog(),

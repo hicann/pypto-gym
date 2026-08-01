@@ -295,8 +295,9 @@ def _indexer_compute_weights(inputs, dims):
     d = dims["idx_head_dim"]
     x_dtype = x.dtype
 
+    # matmul use float32 for arm, arm平台matmul在bfloat16数据类型下表现跟x86不一致，通过升精度保证正确性
     weights = torch.matmul(x.to(torch.float32),
-                           w_idx_proj.to(torch.float32))
+                           w_idx_proj.to(torch.float32)).to(x_dtype).to(torch.float32)  # (b, s, n)
     weights = weights * (n ** -0.5) * (d ** -0.5)
     return weights.to(torch.float16)
 
