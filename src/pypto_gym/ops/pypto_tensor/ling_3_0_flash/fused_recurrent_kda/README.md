@@ -62,4 +62,4 @@ def fused_recurrent_kda_wrapper(
 
 ## Testing
 
-Tests under [`tests/ops/kda_flash/`](../../../../../../tests/ops/kda_flash/).
+Tests under [`tests/ops/ling_3_0_flash/fused_recurrent_kda/`](../../../../../../tests/ops/ling_3_0_flash/fused_recurrent_kda/).
