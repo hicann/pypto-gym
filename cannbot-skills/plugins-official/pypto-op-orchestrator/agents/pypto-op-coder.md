@@ -79,7 +79,7 @@ When MEMORY.md says `module_count == 1`, the orchestrator dispatches you **once*
 > This section applies only when `module_count ≥ 2`. On L0 path the integration is the original `<op>_impl.py` from the single-shot dispatch above.
 
 > **Cleanup is now scripted by default.** The orchestrator runs
-> `.opencode/skills/pypto-op-verify/scripts/gen_cleanup.py` (mechanical
+> `../skills/pypto-op-verify/scripts/gen_cleanup.py` (mechanical
 > rename/strip of the final module → `<op>_impl.py`, plus README from SPEC)
 > instead of dispatching you. You are dispatched for cleanup **only** as a
 > fallback when that script does not apply (e.g. the integration needs genuine
@@ -130,7 +130,7 @@ Production wrapper ABI policy: `<op>_module<suffix_k>_wrapper(...)` exposes only
   - 已知 op → 用 `pypto-docs-search` 搜索该 op 的 API 文档 `pypto-<op>.md`；已知具体文档也可直接读 raw URL `https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/operation/pypto-<op>.md`
   - 关键词 / 约束检索 → 用 `pypto-docs-search` 搜索关键词（如 `32-byte alignment`）定位相关 API 文档
   - 文件清单 / 概览 → 用 `pypto-docs-search` 搜索 op，或搜索 API operation 索引
-- **Script**: `python3 .opencode/skills/pypto-op-review/scripts/extract_pypto_calls.py <kernel.py>`
+- **Script**: `python3 ../skills/pypto-op-review/scripts/extract_pypto_calls.py <kernel.py>`
 
 ## Hard rules
 

@@ -49,9 +49,9 @@ import_module("torch_npu")  # Register torch.npu on supported installations.
 # detailed_tensor_compare path bootstrap (self-contained — no PYTHONPATH needed)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Walk up from this test file to locate
-# `.opencode/skills/pypto-op-verify/scripts/` and prepend it to sys.path. This
+# `../scripts/` and prepend it to sys.path. This
 # lets `python custom/<op>/test_<op>.py` work from any cwd without the user
-# having to set `PYTHONPATH=.opencode/skills/pypto-op-verify/scripts`. Keep the
+# having to set `PYTHONPATH=../scripts`. Keep the
 # helper symbol names underscore-prefixed and `del` them at the end so the
 # test file's public surface stays clean.
 _test_dir = os.path.dirname(os.path.abspath(__file__))
@@ -71,7 +71,7 @@ for _ in range(8):  # bounded ascent — repo root is typically 2-5 levels up
 if _candidate is None or not os.path.isdir(_candidate):
     raise ImportError(
         "Could not locate detailed_tensor_compare. Expected "
-        "`.opencode/skills/pypto-op-verify/scripts/detailed_tensor_compare.py` "
+        "`../scripts/detailed_tensor_compare.py` "
         f"reachable from {_test_dir} by walking up the directory tree."
     )
 del _test_dir, _current, _candidate

@@ -91,7 +91,7 @@ complete_phase(MN) 之后：
          FAIL → 在 MEMORY.md 追加 "## Composition Rejection — <ts>"，并
          state_transition(rollback_to_stage, target_stage=3 或 4, reason=...)。
     9. 清理（不再调度 coder）：运行脚本生成合成的 <op>_impl.py + README.md ——
-       `python .opencode/skills/pypto-op-verify/scripts/gen_cleanup.py --op <op>
+       `python ./*/skills/pypto-op-verify/scripts/gen_cleanup.py --op <op>
        --final-impl custom/<op>/modules/<op>_module<suffix_N>_impl.py
        --final-suffix <suffix_N> --spec custom/<op>/SPEC.md
        --golden custom/<op>/<op>_golden.py --out-dir custom/<op>`。
@@ -234,7 +234,7 @@ S4 返回后，编排器执行：
 | `complete_stage` | 子代理报告成功且 lint 门禁通过 | `opDir`, `stage` |
 | `fail_stage` | 子代理报告了不可恢复的失败 | `opDir`, `stage`, `reason` |
 
-`complete_stage` 会执行 `.opencode/hooks/pypto-op-lint/` 的 lint 门禁。若 lint FAIL，调用抛错且状态文件不变。
+`complete_stage` 会执行 `./*/hooks/pypto-op-lint/` 的 lint 门禁。若 lint FAIL，调用抛错且状态文件不变。
 
 ### Stage 4 Design action（Designer → Verifier 交接）
 

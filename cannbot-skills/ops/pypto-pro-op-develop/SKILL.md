@@ -13,7 +13,7 @@ description: PyPTO-Pro 算子 kernel 实现编码手册。L0 路径（纯vec/纯
 
 ## 两条性能强制（实现阶段须遵守）
 
-> 完整定义见 `.opencode/references/performance-constraints.md`。
+> 完整定义见 `../../references/performance-constraints.md`。
 > 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限（auto_mutex 管辖范围、跨核同步用 `set_cross_core`/`wait_cross_core`、mutex_id 与 event_id 独立命名空间）见该文件。
 > 2. Vector 数值计算用 `vf.*` 手写（完整理由见该文件）。
 

@@ -15,7 +15,7 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 ## 两条性能强制（设计阶段须落实）
 
-> 完整定义见 `.opencode/references/performance-constraints.md`。设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
+> 完整定义见 `../../references/performance-constraints.md`。设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
 > 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限（auto_mutex 管辖范围、跨核同步用 `set_cross_core`/`wait_cross_core`、mutex_id 与 event_id 独立命名空间）见该文件。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
 > 2. Vector 数值计算用 `vf.*` 手写（完整理由见该文件）。
 
@@ -66,8 +66,8 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
   - `modules[]`：每个 Module 的 `id` / `name` / `description` / `section`（`cube` 或 `vector`）/ `golden_steps`（该 Module 对应的数学步骤列表，供 mathematician 切分 golden 用）/ `inputs`（source 为 `primary` 或 `module_<j>`，`j < 当前 id`）/ `outputs` / `golden_stage_fn`
   - `final_outputs`：每个 golden 返回值对应到产出 Module
   - `composition_verification`：atol / rtol / seeds / shapes
-  - 骨架由脚本生成：`python .opencode/skills/pypto-pro-op-design/scripts/gen_module_interfaces.py custom/<op>/<op>_golden_cpu.py --spec custom/<op>/SPEC.md --op <op> --design custom/<op>/DESIGN.md > custom/<op>/module_interfaces.yaml`，自动填 `schema_version` / `op` / `primary_inputs` / `composition_verification`，architect 填标 `TODO` 的判断部分
-  - 产出后须自验：`python .opencode/skills/pypto-pro-op-design/scripts/validate_module_yaml.py custom/<op>/module_interfaces.yaml --json`，返回 `"status": "PASS"` 才算完成
+  - 骨架由脚本生成：`python ./scripts/gen_module_interfaces.py custom/<op>/<op>_golden_cpu.py --spec custom/<op>/SPEC.md --op <op> --design custom/<op>/DESIGN.md > custom/<op>/module_interfaces.yaml`，自动填 `schema_version` / `op` / `primary_inputs` / `composition_verification`，architect 填标 `TODO` 的判断部分
+  - 产出后须自验：`python ./scripts/validate_module_yaml.py custom/<op>/module_interfaces.yaml --json`，返回 `"status": "PASS"` 才算完成
 
 ---
 
@@ -190,7 +190,7 @@ description: Stage 3 架构设计。通过 9 轮迭代式约束收敛，基于 S
 
 **核心问题**：若算子含 Cube↔Vector 跨核数据传递，需手动插入哪些 `set_cross_core`/`wait_cross_core` 同步点？
 
-> 当前 PyPTO-Pro 框架下，核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，**无需设计阶段关心**。**唯一需要手动插入同步的是 cross_core**——即同物理核的 Cube↔Vector sub-block 间通过片上共享 buffer（L1/Mat 或 UB/Vec）传递数据时的 `set_cross_core`/`wait_cross_core`。同步分工与命名空间（`mutex_id` vs `event_id` 独立）见 `.opencode/references/performance-constraints.md`「强制 1」的同步分工表。
+> 当前 PyPTO-Pro 框架下，核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，**无需设计阶段关心**。**唯一需要手动插入同步的是 cross_core**——即同物理核的 Cube↔Vector sub-block 间通过片上共享 buffer（L1/Mat 或 UB/Vec）传递数据时的 `set_cross_core`/`wait_cross_core`。同步分工与命名空间（`mutex_id` vs `event_id` 独立）见 `../../references/performance-constraints.md`「强制 1」的同步分工表。
 >
 > **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时才需要 cross_core 同步。单 section 算子（纯 vec / 纯 cube）无跨核数据传递，本节填"不涉及 cross_core"即可。
 

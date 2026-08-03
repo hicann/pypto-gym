@@ -712,8 +712,8 @@ if [ "$LEVEL" = "project" ] && [ "$TOOL" = "opencode" ] &&
     git_common_dir="$(cd "$INSTALL_BASE" && cd "$git_common_dir" && pwd -P)"
     mkdir -p "$git_common_dir/info"
     touch "$git_common_dir/info/exclude"
-    grep -Fqx '/.opencode/' "$git_common_dir/info/exclude" ||
-        printf '/.opencode/\n' >> "$git_common_dir/info/exclude"
+    grep -Fqx "/$CONFIG_ROOT/" "$git_common_dir/info/exclude" ||
+        printf "/$CONFIG_ROOT/\n" >> "$git_common_dir/info/exclude"
     grep -Fqx '/AGENTS.md' "$git_common_dir/info/exclude" ||
         printf '/AGENTS.md\n' >> "$git_common_dir/info/exclude"
 fi

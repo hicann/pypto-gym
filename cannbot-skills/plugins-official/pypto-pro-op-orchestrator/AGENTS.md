@@ -50,7 +50,7 @@ python3 -c "
 import os, re
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path('.opencode/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
+manifest = next(Path().glob('./*/skills/pypto-pro-material-explore/references/official_samples.md')).read_text(encoding='utf-8')
 expected = len(re.findall(r'\`pro_ops/[^\`]+\.py\`', manifest))
 dirs = [cache / 'docs/pypto_pro/api', cache / 'docs/pypto_pro/tutorials', cache / 'pro_ops']
 if all(d.is_dir() and any(d.rglob('*')) for d in dirs):
@@ -67,12 +67,12 @@ else:
 PYPTO_SRC_URL=https://gitcode.com/gaoxiang618/pypto.git \
 PYPTO_GYM_URL=https://gitcode.com/cann/pypto.git \
 PYPTO_PRO_OPS_URL=https://gitcode.com/cann/pypto.git \
-python .opencode/skills/pypto-docs-search/scripts/sync_devkit.py
+python ./*/skills/pypto-docs-search/scripts/sync_devkit.py
 ```
 
 装配成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/pypto_pro/api/`、`docs/pypto_pro/tutorials/` 与 `pro_ops/`。装配失败（联网受限等）时先总结错误向用户汇报，不得凭空编造索引。
 
-**按清单清理 pro_ops**（装配成功后立即执行）：`sync_devkit.py` 拉取的是整个 a5 目录，其中大部分文件并非官方指定样例，质量无保障。官方指定样例清单定义在 `.opencode/skills/pypto-pro-material-explore/references/official_samples.md`（统一索引来源），装配后须按该清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件：
+**按清单清理 pro_ops**（装配成功后立即执行）：`sync_devkit.py` 拉取的是整个 a5 目录，其中大部分文件并非官方指定样例，质量无保障。官方指定样例清单定义在 `./*/skills/pypto-pro-material-explore/references/official_samples.md`（统一索引来源），装配后须按该清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件：
 
 ```bash
 # 解析清单提取白名单路径，删除 pro_ops/ 下不在白名单的 .py 文件
@@ -80,7 +80,7 @@ python3 -c "
 import re, os
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path('.opencode/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
+manifest = next(Path().glob('./*/skills/pypto-pro-material-explore/references/official_samples.md')).read_text(encoding='utf-8')
 whitelist = set()
 for m in re.finditer(r'\`pro_ops/[^\`]+\.py\`', manifest):
     whitelist.add(m.group(0).strip('\`'))
@@ -112,7 +112,7 @@ print(f'清理完成：保留 {len(whitelist)} 个官方指定样例，删除 {r
 | 3     | `pypto-pro-op-architect`     | pypto-pro-op-design       |
 | 4     | `pypto-pro-op-coder`         | pypto-pro-op-develop      |
 
-**原理**：专属 subagent 的 .md（`.opencode/agents/pypto-pro-op-*.md`）会话启动时自动作为该子代理的 system prompt 加载，自带角色边界、文件归属与全局硬性规则。因此 orchestrator **无需**在 dispatch prompt 中重复粘贴规则块——规则已内置于子代理 system prompt，比逐字粘贴 dispatch prompt 更可靠（system prompt 始终在场，不依赖每次正确粘贴）。
+**原理**：专属 subagent 的 .md（`./*/agents/pypto-pro-op-*.md`）会话启动时自动作为该子代理的 system prompt 加载，自带角色边界、文件归属与全局硬性规则。因此 orchestrator **无需**在 dispatch prompt 中重复粘贴规则块——规则已内置于子代理 system prompt，比逐字粘贴 dispatch prompt 更可靠（system prompt 始终在场，不依赖每次正确粘贴）。
 
 **dispatch prompt 只需包含技术细节**：任务描述、产物路径、上游 Stage 的失败信息（如有）。子代理收到任务后自行加载对应 skill 获取执行细节。
 
@@ -157,7 +157,7 @@ Stage 4 → 据 stage4_path 选择调度路径：
              5. [仅 impl 问题] 调度 coder 自包 debug → 回 3
              6. state_transition(complete_module, module=module_k)
            all modules verified:
-              7. cleanup: 用脚本 .opencode/skills/pypto-pro-op-develop/scripts/gen_cleanup.py 从最后一个 staged 文件生成 test_{op}.py（staged 文件链全部保留；直接按路径调用脚本）
+              7. cleanup: 用脚本 ./*/skills/pypto-pro-op-develop/scripts/gen_cleanup.py 从最后一个 staged 文件生成 test_{op}.py（staged 文件链全部保留；直接按路径调用脚本）
              8. 调度 pypto-pro-op-verifier（stage4-check）
              9. PASS: complete_stage(4) / FAIL 回退 / env_error 分流
 ```
@@ -185,7 +185,7 @@ Stage 4 → 据 stage4_path 选择调度路径：
    **背景**：coder 在复杂开发过程中容易出现失误或幻觉，将自身的 API 误用归因为"框架不支持"。利用 verifier agent 和编排器做两道把关——verifier 是独立判官，更加客观独立和具有质疑性。
 
    **禁止以 capability_gap 为由在 host 端做核心计算绕过**——发现此类行为按作弊红线处理（回退 Stage 4 红线重写）。
-8. **引用 skills 下的脚本时一律用确切路径直接调用，不得用 Glob 搜索**——skills 以 symlink 方式安装（`.opencode/skills/<skill>` 是指向 `cannbot-skills/ops/<skill>/` 的符号链接），Glob / find 默认不穿越符号链接会漏搜。已知确切路径的脚本（如 `.opencode/skills/pypto-pro-op-develop/scripts/gen_cleanup.py`、`.opencode/skills/pypto-docs-search/scripts/sync_devkit.py`）直接按路径调用，不做 Glob 搜索。
+8. **引用 skills 下的脚本时一律用确切路径直接调用，不得用 Glob 搜索**——skills 以 symlink 方式安装（`./*/skills/<skill>` 是指向 `cannbot-skills/ops/<skill>/` 的符号链接，`*` 为当前 Agent 平台目录名，如 `opencode`/`claude`），Glob / find 默认不穿越符号链接会漏搜。已知确切路径的脚本（如 `./*/skills/pypto-pro-op-develop/scripts/gen_cleanup.py`、`./*/skills/pypto-docs-search/scripts/sync_devkit.py`）直接按路径调用，不做 Glob 搜索。
 
 ---
 
@@ -325,7 +325,7 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 7. **cleanup**：从最后一个 staged 文件生成交付件 `test_{op}.py`（staged 文件链全部保留）
    - `modules/test_{op}_module1…N.py` 已是完整 kernel（累积实现到最后一轮）
    - 复制一份为 `test_{op}.py`，在副本上做交付整理（不动 staged 原文件）：wrapper 函数名从 `{op}_wrapper_module<suffix_N>` 改为 `{op}_wrapper`；test 函数从比对 Module N 的 `golden_stage` 改为比对 `{op}_golden_cpu`
-   - 方式：用脚本 `.opencode/skills/pypto-pro-op-develop/scripts/gen_cleanup.py` 直接调用（机械 rename + copy，秒级产出）。**脚本路径固定，直接调用，不得用 Glob 搜索**——skills 以 symlink 安装，Glob/find 不跟随符号链接会搜不到。脚本产出 `custom/<op>/test_<op>.py`，staged 文件链保留不动。仅当脚本因 staged 文件结构与脚本假设不符（如 wrapper 命名不匹配）报错时，才回退 dispatch coder 做一次 cleanup
+       - 方式：用脚本 `./*/skills/pypto-pro-op-develop/scripts/gen_cleanup.py` 直接调用（机械 rename + copy，秒级产出）。**脚本路径固定，直接调用，不得用 Glob 搜索**——skills 以 symlink 安装，Glob/find 不跟随符号链接会搜不到。脚本产出 `custom/<op>/test_<op>.py`，staged 文件链保留不动。仅当脚本因 staged 文件结构与脚本假设不符（如 wrapper 命名不匹配）报错时，才回退 dispatch coder 做一次 cleanup
 8. 调度 `pypto-pro-op-verifier`（模式 `stage4-check`）→ 13 项检查（对最终 `test_{op}.py`）
 9. **PASS** → `complete_stage(4)` / **FAIL** → 据 `failure_category` 路由（与 L0 路径 FAIL 路由一致）/ **env_error** → 环境分流
 

@@ -36,7 +36,7 @@ blockers: []
 ## Validation (mandatory)
 
 - **Runner:** `custom/<operator_name>/test_<operator_name>.py`
-- **Command (repo root):** `python custom/<operator_name>/test_<operator_name>.py` — the test file's path-bootstrap preamble locates `detailed_tensor_compare` automatically; no `PYTHONPATH` env var needed. (Legacy fallback if the preamble is somehow stripped: `PYTHONPATH=.opencode/skills/pypto-op-verify/scripts python custom/<operator_name>/test_<operator_name>.py`.)
+- **Command (repo root):** `python custom/<operator_name>/test_<operator_name>.py` — the test file's path-bootstrap preamble locates `detailed_tensor_compare` automatically; no `PYTHONPATH` env var needed. (Legacy fallback if the preamble is somehow stripped: `PYTHONPATH=../../pypto-op-verify/scripts python custom/<operator_name>/test_<operator_name>.py`.)
 - **Comparison:** `from detailed_tensor_compare import detailed_tensor_compare` (bundled: skill `pypto-op-verify`'s `scripts/detailed_tensor_compare.py`). **Do not** use `pytest` as the default for this golden vs PyPTO check unless documented under **blockers** as an exception.
 - **All outputs:** the runner must call **`detailed_tensor_compare`** on **every** leaf output tensor (tuple/list/dict/nested structures — **not** only `outputs[0]`). If any output is intentionally skipped, document under **blockers** with justification.
 
@@ -183,7 +183,7 @@ items; Coder must still complete the valid-shape audit before returning.
 
 Paste output of:
 
-`python3 .opencode/skills/pypto-op-review/scripts/extract_pypto_calls.py custom/<operator_name>/<operator_name>_module1234.py` *(or current staged / final kernel file)*
+`python3 ../../pypto-op-review/scripts/extract_pypto_calls.py custom/<operator_name>/<operator_name>_module1234.py` *(or current staged / final kernel file)*
 
 | # | Line | Call | doc OK? | notes |
 

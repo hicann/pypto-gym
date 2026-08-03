@@ -20,4 +20,4 @@ Layout and structure rules for `custom/<operator_name>/` (MEMORY.md / `test_<op>
 | `set_cube_tile_shapes` m/k/n = `[L0, L1]`, 0<L0<=L1, L1%L0==0; tile args are literals | OL48 |
 | `pypto.loop` present for dynamic-axis iteration | OL23 / OL43 |
 
-See `.opencode/hooks/pypto-op-lint/rules.json` for the full rule registry.
+See `../../../hooks/pypto-op-lint/rules.json` for the full rule registry.

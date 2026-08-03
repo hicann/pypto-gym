@@ -22,7 +22,7 @@
 
 从 `merged_swimlane.json` 的 `traceEvents` 中解析每个 leafHash 占用的 core 数量，并与芯片理论核数对比：
 
-> **路径说明**：以下脚本命令在技能目录 `.opencode/skills/pypto-op-perf-tune/tune-swimlane/` 下执行
+> **路径说明**：以下脚本命令在技能目录 `../` 下执行
 
 ```bash
 python3 scripts/analyze_core_usage.py <output_dir> [--device-id N]

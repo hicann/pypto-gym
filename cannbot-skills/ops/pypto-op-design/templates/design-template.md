@@ -21,7 +21,7 @@ precision: { rtol: 1e-3, atol: 1e-3 }
 
 | 信号 | 值 | 采集方式 |
 |------|----|---------|
-| effective_lines | {N} | `python .opencode/skills/pypto-op-design/scripts/count_golden_lines.py custom/<op>/<op>_golden.py` |
+| effective_lines | {N} | `python ../scripts/count_golden_lines.py custom/<op>/<op>_golden.py` |
 | loop_carried_state_groups | {N} | 人工统计：golden 中"上一步结果参与下一步"的独立递归状态组数（FA 的 m/l/o 算 1 组）|
 | matmul_count | {N} | 人工统计：`torch.matmul` 出现次数 |
 | cross_tile_reduce_count | {N} | 人工统计：跨 tile reduce（softmax 整套算 1 个；`sum`/`max` 跨超过单 tile 大小的 reduce 轴算 1 个）|

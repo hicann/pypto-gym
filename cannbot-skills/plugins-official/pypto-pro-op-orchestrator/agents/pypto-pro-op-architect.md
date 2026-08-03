@@ -43,7 +43,7 @@ tools:
 - `custom/<op>/DESIGN.md` 存在且含 §0–§10 十一个章节
 - `custom/<op>/module_interfaces.yaml` 存在且 `validate_module_yaml.py` 返回 PASS：
   ```
-  python .opencode/skills/pypto-pro-op-design/scripts/validate_module_yaml.py custom/<op>/module_interfaces.yaml --json
+  python ../skills/pypto-pro-op-design/scripts/validate_module_yaml.py custom/<op>/module_interfaces.yaml --json
   ```
 - §9 综合评估（准确性/泛化性/一致性）全部通过，无 ❌ 标记
 - §10 含 Tile 数据流全景图（含 `load_tile`/`store_tile`）

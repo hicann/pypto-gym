@@ -73,7 +73,7 @@ for _ in range(8):
         break
     _current = _parent
 if _candidate is None or not os.path.isdir(_candidate):
-    raise ImportError("Could not locate detailed_tensor_compare under .opencode/skills/pypto-op-verify/scripts")
+    raise ImportError("Could not locate detailed_tensor_compare under skills/pypto-op-verify/scripts")
 del _test_dir, _current, _candidate
 
 _compare_module = __import__(

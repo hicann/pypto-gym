@@ -69,7 +69,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 2. 将算子计算逻辑分解为原子操作序列，对每个操作从索引 §A 中查找对应 API 调用链
    - **公式分解以 SPEC 为准**：以 SPEC.md 中用户给出的数学公式为基准进行分解，不自行推导替代公式。仅当某步骤需要数值近似实现（如 erf/sigmoid 无直接 API，需多项式近似）时才进行近似推导，并代入 2-3 个已知正确值验证（如 erf(0)=0、erf(1)≈0.843），在 EXPLORE_REPORT §2 记录验证结果
 3. **API 映射**：将算子计算逻辑分解后的每个原子操作映射到对应 API 调用链：
-   - **Vector 数值计算**（elementwise、归约、非线性、排序等）：须从 §A 中查找对应的 `vf.*` 指令文档，映射到 vf 指令序列——**`pl.*` 计算 API 不得用于 Vector 数值计算**（完整约束见 `.opencode/references/performance-constraints.md`）
+   - **Vector 数值计算**（elementwise、归约、非线性、排序等）：须从 §A 中查找对应的 `vf.*` 指令文档，映射到 vf 指令序列——**`pl.*` 计算 API 不得用于 Vector 数值计算**（完整约束见 `../../references/performance-constraints.md`）
    - **Cube 步骤**（matmul 等）：照常映射 `pl.*` Cube API
    - **优先使用复合计算 API**：若框架提供了符合需求的复合 API（如 `vf.mul_add_dst` 等融合多步计算的 API），应优先使用，而非用多个基础 API 拼接等价写法（复合 API 指令数更少、访存更省，性能更优）
    - **未找到直接对应的 vf API**：优先尝试用其他 vf API 组合 + 循环结构手动实现，在 EXPLORE_REPORT §3 中记录组合方案及可行性分析依据；仅当穷尽 vf 组合方案仍不可行时，才标记 unsupported 并说明已尝试的组合路径

@@ -186,7 +186,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ## §6 核间同步（R6 输出）
 
-> 核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，无需在此记录。**仅 cross_core**（Cube↔Vector sub-block 间跨核数据传递）需手动插入 `set_cross_core`/`wait_cross_core`。同步分工见 `.opencode/references/performance-constraints.md`「强制 1」同步分工表。
+> 核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，无需在此记录。**仅 cross_core**（Cube↔Vector sub-block 间跨核数据传递）需手动插入 `set_cross_core`/`wait_cross_core`。同步分工见 `../../../references/performance-constraints.md`「强制 1」同步分工表。
 >
 > **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时填写。单 section 算子（纯 vec / 纯 cube）填"不涉及 cross_core"即可。
 

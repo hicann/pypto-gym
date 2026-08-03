@@ -161,7 +161,7 @@ The cumulative wrapper for module<suffix_N> (the full composition) must numerica
 Validate the module graph with the bundled script (the six wiring/shape/dtype rules are codified there):
 
 ```
-python .opencode/skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
+python ../skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
 ```
 
 On any reported violation, append a `## Architecture/Design Rejection — <timestamp>` block to `custom/<op>/MEMORY.md` with the script's violation list, stop, and report the rejection (the dispatching layer handles re-dispatch of the design roles). The rules: (1) `inputs[*].source: primary` exists in `primary_inputs`; (2) `inputs[*].source: module_j` has `j < current id` and the name exists in `module_j.outputs`; (3) `final_outputs[*].source: module_j` has `j ≤ N` and the name exists; (4) no duplicate `(module_id, name)`; (5) shape exprs use only `+ - * //` and name/int tokens; (6) dtype in `{float32, float16, bfloat16, int32, int64, bool, int}`.
@@ -272,7 +272,7 @@ Implementation: random-restart search over scale knobs is sufficient. Generator 
 **Do not hand-write the test file** — generate it (the bootstrap preamble, naming-convention imports, and the mandatory `_l0` / `_l1` functions are deterministic):
 
 ```
-python .opencode/skills/pypto-op-verify/scripts/gen_module_test.py \
+python ../skills/pypto-op-verify/scripts/gen_module_test.py \
     --op <op> --suffix <suffix_k> --spec custom/<op>/SPEC.md --golden custom/<op>/modules/<op>_module<suffix_k>_golden.py \
     > custom/<op>/modules/test_<op>_module<suffix_k>.py
 ```
@@ -302,7 +302,7 @@ for _ in range(8):
 if _candidate is None or not os.path.isdir(_candidate):
     raise ImportError(
         "Could not locate detailed_tensor_compare. Expected "
-        ".opencode/skills/pypto-op-verify/scripts/detailed_tensor_compare.py "
+        "../skills/pypto-op-verify/scripts/detailed_tensor_compare.py "
         f"reachable from {_test_dir} by walking up the tree."
     )
 del _test_dir, _current, _candidate
@@ -386,7 +386,7 @@ When MEMORY.md says `module_count == 1`, this is a single E2E precision verify o
 
 1. Golden function inventory — every op marked ✅
 2. Write `custom/<op>/test_<op>.py` (imports `<op>_impl` and `<op>_golden`; compares all leaf outputs via `detailed_tensor_compare`, run on the NPU)
-3. Run `PYTHONPATH=.opencode/skills/pypto-op-verify python custom/<op>/test_<op>.py` — `all_close: true` on every output leaf
+3. Run `PYTHONPATH=../skills/pypto-op-verify python custom/<op>/test_<op>.py` — `all_close: true` on every output leaf
 4. Layout / structure rules (OL44 module trio, OL45/OL57 loops, OL48 cube-tile, OL52 view rank, OL19 compare helper) are enforced automatically by the pypto-op-lint hooks on file write and at the gate — confirm no lint FAIL remains
 5. Append one row to MEMORY.md → Per-module verification log (single row for the L0 E2E run; `Module = M1`, `Staged file = <op>_impl.py`).
 

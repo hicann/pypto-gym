@@ -329,7 +329,7 @@ cd "$(dirname "$0")/../../.."    # -> repo root from custom/<op>/_debug/
 MANIFEST="{spec.manifest_path}"
 DEVICE="${{TILE_FWK_DEVICE_ID:-{spec.device}}}"
 
-python .opencode/skills/pypto-op-verify/scripts/snapshot_bisect.py \\
+python ./snapshot_bisect.py \\
     --manifest "$MANIFEST" \\
     --modes {modes_csv} \\
     --device "$DEVICE"

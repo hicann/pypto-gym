@@ -32,7 +32,7 @@ Cap active skills at 3.
 **Start from the generated skeleton** — do not hand-transcribe the deterministic parts:
 
 ```
-python .opencode/skills/pypto-op-verify/scripts/gen_module_interfaces.py \
+python ../skills/pypto-op-verify/scripts/gen_module_interfaces.py \
     custom/<op>/<op>_golden.py --spec custom/<op>/SPEC.md --op <op> \
     > custom/<op>/eval/module_interfaces.yaml
 ```
@@ -99,7 +99,7 @@ spec per module).
 `custom/<op>/eval/module_interfaces.yaml` exists and any Safeguard-B-induced `numerical_notes` are populated. **Before handing back, self-validate the wiring** (don't check rules 1-5 by eye):
 
 ```
-python .opencode/skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
+python ../skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
 ```
 
 Fix every reported violation until it returns `"status": "PASS"`, then hand back to pypto-op-orchestrator. This catches malformed wiring before @pypto-op-verifier rejects it, avoiding a re-dispatch round-trip.

@@ -5,7 +5,7 @@ what each produces, the gate criterion the verifier checks before
 `complete_stage`, and the handoff rule that decides the next dispatch.
 
 Sub-agent-internal skill loading is **not** described here. Each sub-agent
-declares its own active skills in its `.opencode/agents/<name>.md` →
+declares its own active skills in its `../../../agents/<name>.md` →
 **Mandatory reads** section. The orchestrator dispatches by name and does
 not inspect what skills each agent loads.
 

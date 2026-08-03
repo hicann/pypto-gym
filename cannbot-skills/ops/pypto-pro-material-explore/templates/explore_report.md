@@ -26,7 +26,7 @@ feasibility: {feasibility}
 ### 1.3 可能会涉及的 API 类别
 
 > 以下为常见类别提示，实际 API 以本次 PRO_MATERIAL_INDEX §A 扫描结果为准。
-> **性能强制**：见 `.opencode/references/performance-constraints.md`——Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
+> **性能强制**：见 `../../../references/performance-constraints.md`——Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
 
 | 类别 | 是否涉及 | 关键 API | 指定算子是否覆盖 |
 |------|---------|----------|------------------|
