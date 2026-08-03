@@ -60,7 +60,7 @@ from .sparse_attention_antiquant_impl import (
 from .sparse_flash_attention_quant_impl import (
     sparse_flash_attention_quant_p,
     sparse_flash_attention_quant_d,
-    sparse_flash_attention_quant_d_950,
+    sparse_flash_attention_d_950,
 )
 
 __all__ = [
@@ -89,5 +89,5 @@ __all__ = [
     # Sparse Flash Attention
     'sparse_flash_attention_quant_p',
     'sparse_flash_attention_quant_d',
-    'sparse_flash_attention_quant_d_950',
+    'sparse_flash_attention_d_950',
 ]
