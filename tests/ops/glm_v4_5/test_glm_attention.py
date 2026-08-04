@@ -30,7 +30,7 @@ import pypto
 from common_utils import detailed_allclose_manual as compare
 from glm_v4_5.glm_attention_impl import (
     attention, attention_for_950, attention_for_950_high_through, attention_for_910_high_performance, \
-    IfaTileShapeConfig, IfaConfig
+    attention_for_910_s1_range_high_performance, IfaTileShapeConfig, IfaConfig
 )
 
 
@@ -44,9 +44,16 @@ def get_case_config(case_name: str):
     cube_tile = 128
     test_case_config = {
         "ifa_b16_s1_1_s2_8k": {
-            "b": 16, "s1": 1, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 16,
+            "s1": 1,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 512],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -54,9 +61,33 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_b64_s1_2_s2_8k": {
-            "b": 64, "s1": 2, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 64,
+            "s1": 2,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
+                c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v1_tile_shape=[m_tile, 512],
+                c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
+                v2_tile_shape=[m_tile, cube_tile],
+            ),
+        },
+        "ifa_b64_s1_2_s2_8k_uniform": {
+            "b": 64,
+            "s1": 2,
+            "s2": [2048] * 12 + [4096] * 12 + [8192] * 16 + [12288] * 12 + [16384] * 12,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
+            "tile_config": IfaTileShapeConfig(
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 512],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -64,9 +95,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_b8_s1_1_s2_16k": {
-            "b": 8, "s1": 1, "s2": 16384, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 8,
+            "s1": 1,
+            "s2": 16384,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=512,
+                g_tile=12,
+                s2_tile=512,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 512],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -74,9 +112,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_b16_s1_1_s2_16k_nkv_2": {
-            "b": 16, "s1": 1, "s2": 16384, "nq": 12, "nkv": 2, "qd": 128, "block_size": 128,
+            "b": 16,
+            "s1": 1,
+            "s2": 16384,
+            "nq": 12,
+            "nkv": 2,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=6, s2_tile=512,
+                g_tile=6,
+                s2_tile=512,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 512],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -84,9 +129,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_950_b16_s1_1_s2_8k_nkv_2": {
-            "b": 16, "s1": 1, "s2": 8192, "nq": 12, "nkv": 2, "qd": 128, "block_size": 128,
+            "b": 16,
+            "s1": 1,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 2,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=6, s2_tile=1024,
+                g_tile=6,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 1024],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -94,9 +146,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_950_b16_s1_1_s2_8k": {
-            "b": 16, "s1": 1, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 16,
+            "s1": 1,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 1024],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -104,9 +163,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_950_b64_s1_1_s2_8k": {
-            "b": 64, "s1": 1, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 64,
+            "s1": 1,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 1024],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -114,9 +180,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_950_b16_s1_1_s2_16k": {
-            "b": 16, "s1": 1, "s2": 16384, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 16,
+            "s1": 1,
+            "s2": 16384,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 1024],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -124,9 +197,16 @@ def get_case_config(case_name: str):
             ),
         },
         "ifa_950_b64_s1_2_s2_8k_high_through": {
-            "b": 64, "s1": 2, "s2": 8192, "nq": 12, "nkv": 1, "qd": 128, "block_size": 128,
+            "b": 64,
+            "s1": 2,
+            "s2": 8192,
+            "nq": 12,
+            "nkv": 1,
+            "qd": 128,
+            "block_size": 128,
             "tile_config": IfaTileShapeConfig(
-                g_tile=12, s2_tile=1024,
+                g_tile=12,
+                s2_tile=1024,
                 c1_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
                 v1_tile_shape=[m_tile, 1024],
                 c2_tile_shape=[[m_tile, m_tile], [cube_tile, cube_tile], [cube_tile, cube_tile]],
@@ -151,16 +231,36 @@ def build_ifa_config(case_config):
     kv_layout = "PA_BSND"
     softmax_scale = qd ** -0.5
     block_table_batch = b
+
+    if isinstance(s2, int):
+        actual_seq_values = [s2] * b
+    elif isinstance(s2, list):
+        if len(s2) == b:
+            actual_seq_values = s2
+            s2 = max(s2)
+        else:
+            raise RuntimeError("unsupported actual_seq list length")
+    else:
+        raise RuntimeError("unsupported actual_seq data type")
+
     kv_num_blocks = b * ((s2 + block_size - 1) // block_size)
 
-    actual_seq_values = [s2] * b
     actual_seq_tensor = torch.tensor(actual_seq_values, dtype=torch.int32, device=device)
 
     atten_cfg = IfaConfig(
-        b=b, s1=s1, s2=s2, nq=nq, nkv=nkv, qd=qd, kvd=qd,
-        block_size=block_size, softmax_scale=softmax_scale, kv_layout=kv_layout,
-        block_table_batch=block_table_batch, kv_num_blocks=kv_num_blocks,
-        actual_seq=actual_seq_tensor
+        b=b,
+        s1=s1,
+        s2=s2,
+        nq=nq,
+        nkv=nkv,
+        qd=qd,
+        kvd=qd,
+        block_size=block_size,
+        softmax_scale=softmax_scale,
+        kv_layout=kv_layout,
+        block_table_batch=block_table_batch,
+        kv_num_blocks=kv_num_blocks,
+        actual_seq=actual_seq_tensor,
     )
     atten_cfg.max_num_blocks_per_query = (s2 + block_size - 1) // block_size
 
@@ -274,6 +374,8 @@ def softmax(x, is_fp16=False):
 
 
 def ifa(atten_cfg, tile_config, is_950=False, is_high_through=False, is_high_precision=True):
+    np.random.seed(0)
+    torch.manual_seed(0)
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch_dtype = torch.bfloat16
     torch.npu.set_device(int(device_id))
@@ -326,14 +428,7 @@ def ifa(atten_cfg, tile_config, is_950=False, is_high_through=False, is_high_pre
     else:
         ifa_flash_torch(q=q, k=k, v=v, block_table=block_table_torch, kv_act_seqs=act_seq_torch, out=attention_output)
 
-    inputs = [
-        q,
-        k,
-        v,
-        block_table_torch,
-        act_seq_torch,
-        out_torch
-    ]
+    inputs = [q, k, v, block_table_torch, act_seq_torch, out_torch]
     if is_950:
         if is_high_through:
             attention_for_950_high_through(*inputs, atten_cfg.softmax_scale, tile_config)
@@ -341,12 +436,20 @@ def ifa(atten_cfg, tile_config, is_950=False, is_high_through=False, is_high_pre
             attention_for_950(*inputs, atten_cfg.softmax_scale, tile_config)
     else:
         if is_high_through:
-            attention_for_910_high_performance(*inputs, atten_cfg.softmax_scale, tile_config)
+            if atten_cfg.s1 == 2:
+                attention_for_910_s1_range_high_performance(*inputs, atten_cfg.softmax_scale, tile_config)
+            else:
+                attention_for_910_high_performance(*inputs, atten_cfg.softmax_scale, tile_config)
         else:
             attention(*inputs, atten_cfg.softmax_scale, tile_config)
 
-    compare(np.array(attention_output.cpu().flatten().tolist()), np.array(out_torch.cpu().flatten().tolist()),
-            "out_torch", rtol=0.0078125, atol=0.0001)
+    compare(
+        np.array(attention_output.cpu().flatten().tolist()),
+        np.array(out_torch.cpu().flatten().tolist()),
+        "out_torch",
+        rtol=0.0078125,
+        atol=0.0001,
+    )
 
 
 def matmul_proxy(left, right):
@@ -437,8 +540,7 @@ def ifa_flash_torch(q, k, v, block_table, kv_act_seqs, out, is_fp32=False):
                             li = li_upd.unsqueeze(-1)
                             mi = mi_upd.unsqueeze(-1)
 
-                            mi_new, _ = torch.max(torch.cat([mi, tilda_mij], dim=-1), dim=-1,
-                                                  keepdim=True)
+                            mi_new, _ = torch.max(torch.cat([mi, tilda_mij], dim=-1), dim=-1, keepdim=True)
                             t1 = mi - mi_new
                             t2 = torch.exp(t1)
                             t3 = tilda_mij - mi_new
@@ -479,8 +581,9 @@ def test_ifa_for_950():
         case_config = get_case_config(case_name)
         atten_cfg, tile_config = build_ifa_config(case_config)
 
-        assert atten_cfg.b == len(
-            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        assert atten_cfg.b == len(atten_cfg.actual_seq), (
+            f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        )
 
         if atten_cfg.actual_seq.device.type != 'cpu':
             actual_seq_cpu = atten_cfg.actual_seq.cpu()
@@ -500,8 +603,9 @@ def test_ifa_for_950_high_through():
         case_config = get_case_config(case_name)
         atten_cfg, tile_config = build_ifa_config(case_config)
 
-        assert atten_cfg.b == len(
-            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        assert atten_cfg.b == len(atten_cfg.actual_seq), (
+            f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        )
 
         if atten_cfg.actual_seq.device.type != 'cpu':
             actual_seq_cpu = atten_cfg.actual_seq.cpu()
@@ -522,8 +626,9 @@ def test_ifa():
         case_config = get_case_config(case_name)
         atten_cfg, tile_config = build_ifa_config(case_config)
 
-        assert atten_cfg.b == len(
-            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        assert atten_cfg.b == len(atten_cfg.actual_seq), (
+            f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        )
 
         if atten_cfg.actual_seq.device.type != 'cpu':
             actual_seq_cpu = atten_cfg.actual_seq.cpu()
@@ -539,13 +644,15 @@ def test_ifa_910_high_performance():
     case_names = [
         "ifa_b16_s1_1_s2_8k",
         "ifa_b64_s1_2_s2_8k",
+        "ifa_b64_s1_2_s2_8k_uniform",
     ]
     for case_name in case_names:
         case_config = get_case_config(case_name)
         atten_cfg, tile_config = build_ifa_config(case_config)
 
-        assert atten_cfg.b == len(
-            atten_cfg.actual_seq), f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        assert atten_cfg.b == len(atten_cfg.actual_seq), (
+            f'{atten_cfg.b} {atten_cfg.actual_seq} B的大小必须和actual_seq长度相等'
+        )
 
         if atten_cfg.actual_seq.device.type != 'cpu':
             actual_seq_cpu = atten_cfg.actual_seq.cpu()
