@@ -27,7 +27,7 @@ import math
 import pypto
 from .lightning_indexer_prolog_quant_impl import rope_3d, quant_layer_norm, prolog_quant, quant_rope_2d
 from .mla_prolog_quant_impl import quant, dequant, MlaTileConfig, rms_norm, rope_3d_v2, rope_v2, \
-                                    MlaQuantInputs, k_nope_quant, pre_compute_2d
+                                    MlaQuantInputs, k_nope_quant
 
 
 L0M_INDEX = 0
@@ -40,6 +40,146 @@ SCATTER_DIM = -2
 
 VEC_TILE_4 = 4
 VEC_TILE_32 = 32
+
+
+def pre_compute_2d(
+    token_x: pypto.Tensor,
+    w_dq: pypto.Tensor,
+    w_uq_qr: pypto.Tensor,
+    w_dkv_kr: pypto.Tensor,
+    gamma_cq: pypto.Tensor,
+    epsilon_cq: float,
+    quant_inputs: MlaQuantInputs,
+    tile_config: MlaTileConfig
+) -> pypto.Tensor:
+    """Pre-compute query and key-value projections with optional quantization.
+
+    Performs the initial computation steps for MLA prolog:
+    1. Query path: token_x -> w_dq -> RMSNorm -> w_uq_qr
+    2. Key-value path: token_x -> w_dkv_kr
+
+    Supports optional quantization at different stages (quant_a and quant_b).
+
+    Args:
+        token_x: Input token tensor, shape (bs, h)
+        w_dq: Down-projection weight for query, shape (h, q_lora_rank)
+        w_uq_qr: Up-projection weight for query and RoPE, shape (q_lora_rank, n*q_head_dim)
+        w_dkv_kr: Down-projection weight for key-value and RoPE, shape (h, kv_lora_rank+rope_dim)
+        gamma_cq: RMSNorm scale parameter for query, shape (q_lora_rank,)
+        epsilon_cq: RMSNorm epsilon parameter
+        quant_inputs: MlaQuantInputs object containing quantization scales:
+            - dequant_scale_w_dq: Dequantization scale for w_dq (if quant_a)
+            - dequant_scale_w_dkv_kr: Dequantization scale for w_dkv_kr (if quant_a)
+            - dequant_scale_w_uq_qr: Dequantization scale for w_uq_qr (if quant_b)
+            - smooth_scales_cq: Smooth quantization factor (if has_smooth)
+        tile_config: MlaTileConfig object containing tiling parameters
+
+    Returns:
+        List containing:
+            - q_b_proj: Query projection result, shape (bs, n*q_head_dim)
+            - compressed_kv: Compressed key-value result, shape (bs, kv_lora_rank+rope_dim)
+            - q_norm or norm_res: Normalized query (quantized or not)
+            - q_norm_scale or None: Quantization scale (if quant_b) or None
+
+    Note:
+        The function supports three quantization modes:
+        - quant_a: Quantize input and weights w_dq, w_dkv_kr
+        - quant_b: Quantize normalized query and weight w_uq_qr
+        - smooth: Apply smooth quantization factor before quant_b
+    """
+    dequant_scale_w_dq = quant_inputs.dequant_scale_w_dq
+    dequant_scale_w_dkv_kr = quant_inputs.dequant_scale_w_dkv_kr
+    dequant_scale_w_uq_qr = quant_inputs.dequant_scale_w_uq_qr
+
+    is_quant_a = (dequant_scale_w_dq is not None) and (dequant_scale_w_dkv_kr is not None)
+    is_quant_b = dequant_scale_w_uq_qr is not None
+
+    smooth_scales_cq = quant_inputs.smooth_scales_cq
+    is_smooth = smooth_scales_cq is not None
+
+    bs = token_x.shape[0]
+    k = token_x.shape[1]
+    q_lora_rank = w_dq.shape[1]
+
+    dtype = token_x.dtype
+    dtype_quant_a_out = pypto.DT_INT32 if is_quant_a else dtype
+    dtype_quant_b_out = pypto.DT_INT32 if is_quant_b else dtype
+    qkv_pre_res = []
+
+    pypto.set_semantic_label("pre_reshape")
+
+    mv = tile_config.mv_tile
+
+    if is_quant_a:
+        pypto.set_vec_tile_shapes(mv, q_lora_rank)
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                                   [256, 256], [256, 256])
+        pypto.set_semantic_label("Quant_x")
+        quant_res = quant(token_x)
+        input_quant = quant_res[0]
+        input_quant_scale = quant_res[1]
+        pypto.set_semantic_label("QuantMatmul_qa")
+        q_a_proj = pypto.matmul(input_quant, w_dq, dtype_quant_a_out)
+        pypto.set_semantic_label("Dequant_qa")
+        q_a_proj[:] = dequant(dtype, q_a_proj, input_quant_scale, dequant_scale_w_dq)
+    else:
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                                   [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
+                                   [tile_config.pre_quant_cube_tile[4], tile_config.pre_quant_cube_tile[5]])
+        pypto.set_semantic_label("Matmul_qa")
+        q_a_proj = pypto.matmul(token_x, w_dq, pypto.DT_FP32)
+
+    pypto.set_vec_tile_shapes(mv, q_lora_rank)
+    pypto.set_semantic_label("RmsNorm_qa")
+    norm_res = rms_norm(q_a_proj, gamma_cq, epsilon_cq)
+
+    if is_quant_b:
+        pypto.set_vec_tile_shapes(mv, q_lora_rank)
+        pypto.set_semantic_label("Quant_qMnRes")
+        if is_smooth:
+            quant_res = quant(norm_res, True, True, smooth_scales_cq)
+        else:
+            quant_res = quant(norm_res, True, False)
+        norm_quant = quant_res[0]
+        norm_quant_scale = quant_res[1]
+        pypto.set_semantic_label("QuantMatmul_qb")
+        pypto.set_cube_tile_shapes([tile_config.cube_qb_tile[0], tile_config.cube_qb_tile[1]],
+                                   [tile_config.cube_qb_tile[2], tile_config.cube_qb_tile[3]],
+                                   [tile_config.cube_qb_tile[4], tile_config.cube_qb_tile[5]])
+        q_b_proj_tmp = pypto.matmul(norm_quant, w_uq_qr, dtype_quant_b_out)
+        pypto.set_semantic_label("Dequant_qb")
+        q_b_proj = dequant(dtype, q_b_proj_tmp, norm_quant_scale, dequant_scale_w_uq_qr)
+    else:
+        pypto.set_cube_tile_shapes([tile_config.cube_qb_tile[0], tile_config.cube_qb_tile[1]],
+                                   [tile_config.cube_qb_tile[2], tile_config.cube_qb_tile[3]],
+                                   [tile_config.cube_qb_tile[4], tile_config.cube_qb_tile[5]])
+        pypto.set_semantic_label("Matmul_qb")
+        q_b_proj = pypto.matmul(norm_res, w_uq_qr, dtype)
+
+    qkv_pre_res.append(q_b_proj)
+
+    ####### kv ##########
+    if is_quant_a:
+        pypto.set_vec_tile_shapes(mv, q_lora_rank)
+        pypto.set_cube_tile_shapes(tile_config.m_tile, [256, 256], [256, 256])
+        pypto.set_semantic_label("QuantMatmul_kva")
+        compressed_kv = pypto.matmul(input_quant, w_dkv_kr, dtype_quant_a_out)
+        pypto.set_semantic_label("Dequant_kva")
+        compressed_kv[:] = dequant(dtype, compressed_kv, input_quant_scale, dequant_scale_w_dkv_kr)
+    else:
+        pypto.set_cube_tile_shapes([tile_config.pre_quant_cube_tile[0], tile_config.pre_quant_cube_tile[1]],
+                                   [tile_config.pre_quant_cube_tile[2], tile_config.pre_quant_cube_tile[3]],
+                                   [tile_config.pre_quant_cube_tile[4], tile_config.pre_quant_cube_tile[5]])
+        pypto.set_semantic_label("Matmul_kva")
+        compressed_kv = pypto.matmul(token_x, w_dkv_kr, dtype)
+
+    qkv_pre_res.append(compressed_kv)
+    if is_quant_b:
+        qkv_pre_res.append(norm_quant)
+        qkv_pre_res.append(norm_quant_scale)
+    else:
+        qkv_pre_res.append(norm_res)
+    return qkv_pre_res
 
 
 def mla_indexer_prolog_quant_compute(
