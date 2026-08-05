@@ -30,6 +30,8 @@ Kernel 全程 4D，无 5D reshape/concat：
 4 个 kernel 实例：{N=1, N=128} × {bf16, fp16}。
 """
 
+from dataclasses import dataclass
+
 import pypto
 import torch
 
@@ -45,8 +47,15 @@ HALF = 32
 ASCEND_950_NPUARCH = "DAV_3510"
 
 
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
+@dataclass
+class RopeTileConfig:
+    def __init__(self):
+        self.n_length = 32
+        self.gather_tile = [1, 32, 16, 64]
+        self.elem_tile = [1, 16, 16, 32]
+        self.unroll_list = {64, 32, 1}
+
+
 @pypto.frontend.jit(
     runtime_options={
         "run_mode": pypto.RunMode.NPU,
@@ -60,40 +69,47 @@ def interleave_rope_kernel_n128_bf16(
     cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    tile_config = RopeTileConfig()
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
-    B = x.shape[0]
-    S = x.shape[2]
-    s_loops = (S + S_TILE_128 - 1) // S_TILE_128
-    for b in pypto.loop(B, name="b_loop"):
-        for n_blk in pypto.loop(128 // N_TILE_128, name="n_loop"):
-            n_off = n_blk * N_TILE_128
-            for s_blk in pypto.loop(s_loops, name="s_loop"):
-                s_off = s_blk * S_TILE_128
-                valid_s = (S - s_off).min(S_TILE_128)
-                vshape_x = [1, N_TILE_128, valid_s, D]
-                vshape_cs = [1, 1, valid_s, D]
-                x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
-                                 valid_shape=vshape_x)
-                c_t = pypto.view(cos, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+    batch = x.shape[0]
+    seq_len = x.shape[2]
+    dim = x.shape[3]
+    n_length = tile_config.n_length
+    gather_tile = tile_config.gather_tile
+    elem_tile = tile_config.elem_tile
+
+    for b_idx in pypto.loop(batch, name="b_loop"):
+        for n_blk in pypto.loop(128 // n_length, name="n_loop"):
+            n_off = n_blk * n_length
+            for s_blk, unroll_length in pypto.loop_unroll(
+                0, seq_len, 1, name="s_loop", idx_name="bs_blk_offset", unroll_list=tile_config.unroll_list
+            ):
+
+                x_t = pypto.view(x, [1, n_length, unroll_length, dim], [b_idx, n_off, s_blk, 0],
+                                 valid_shape=[1, n_length, unroll_length, dim])
+                c_t = pypto.view(cos, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
+                                 valid_shape=[1, 1, unroll_length, dim])
+                s_t = pypto.view(sin, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
+                                 valid_shape=[1, 1, unroll_length, dim])
+
                 pypto.set_pass_options(sg_set_scope=1)
-                x_e = pypto.gathermask(x_t, pattern_mode=1)
+                pypto.set_vec_tile_shapes(gather_tile[0], gather_tile[1], gather_tile[2], gather_tile[3])
+
+                x_e = pypto.gathermask(x_t, pattern_mode=1) #
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
                 c_e = pypto.gathermask(c_t, pattern_mode=1)
                 c_o = pypto.gathermask(c_t, pattern_mode=2)
                 s_e = pypto.gathermask(s_t, pattern_mode=1)
                 s_o = pypto.gathermask(s_t, pattern_mode=2)
-                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, HALF)
+
+                pypto.set_vec_tile_shapes(elem_tile[0], elem_tile[1], elem_tile[2], elem_tile[3])
                 ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
                 yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
-                pypto.assemble(ye, [b, n_off, s_off, 0], out)
-                pypto.assemble(yo, [b, n_off, s_off, HALF], out)
+
+                pypto.assemble(ye, [b_idx, n_off, s_blk, 0], out)
+                pypto.assemble(yo, [b_idx, n_off, s_blk, 32], out)
                 pypto.set_pass_options(sg_set_scope=-1)
-                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
 
 
 @pypto.frontend.jit(
