@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-mathematician
-description: "PyPTO-Pro Stage 2 Golden 生成。产出 {op}_golden.py 与 GOLDEN_PERF_REPORT.md。由 pypto-pro-op-orchestrator 调度。"
+description: "PyPTO-Pro Stage 2 Golden 生成。产出 NPU 与 CPU golden；用户明确要求时额外采集 NPU golden 性能。由 pypto-pro-op-orchestrator 调度。"
 mode: subagent
 skills:
   - pypto-docs-search
@@ -29,13 +29,24 @@ tools:
 
 使用 skill 工具加载 skill `pypto-pro-golden-generate`。
 
+## Dispatch 参数
+
+orchestrator 会传入 `collect_golden_perf=true|false`。未传入时必须按 `false` 处理。
+
+- `false`（默认）：生成并验证两份 golden，不运行 `profile_golden.py`
+- `true`：两份 golden 验证通过后，额外运行 `profile_golden.py` 并生成性能报告
+
+不得因为 SPEC.md 含性能 shape、任务要求高性能实现或本 agent 自行判断而开启采集；只有 orchestrator 根据用户明确要求传入 `true` 才能执行。
+
+若 dispatch 同时声明 `profile-only`，说明 Stage 2 已完成：不得重写两份 golden；先直接验证现有 `{op}_golden.py`，再按 `collect_golden_perf=true` 执行 profiling 并返回报告。
+
 ## Deliverables
 
 | 文件 | 用途 |
 |------|------|
 | `custom/<op>/{op}_golden.py` | torch/torch_npu NPU golden 参考实现（导出 `{op}_golden()` + `_make_inputs(device)` + `_validate()`） |
-| `custom/<op>/GOLDEN_PERF_REPORT.md` | NPU 性能采集报告 |
 | `custom/<op>/{op}_golden_cpu.py` | CPU 更高精度 golden（FP32，供 Stage 4 精度校验用，见 skill §15） |
+| `custom/<op>/GOLDEN_PERF_REPORT.md` | 可选；仅 `collect_golden_perf=true` 时生成的 NPU 性能采集报告 |
 
 你不产出：`DESIGN.md`、`test_{op}.py`——这些属于后续 Stage。
 
@@ -43,9 +54,9 @@ tools:
 
 - `custom/<op>/{op}_golden.py` 存在
 - golden 自验证通过（`python custom/<op>/{op}_golden.py` exit code 0）
-- `custom/<op>/GOLDEN_PERF_REPORT.md` 存在
 - `custom/<op>/{op}_golden_cpu.py` 存在
 - golden_cpu 自验证通过（`python custom/<op>/{op}_golden_cpu.py` exit code 0）
+- 仅当 `collect_golden_perf=true`：`custom/<op>/GOLDEN_PERF_REPORT.md` 存在且采集成功
 
 ## Handoff
 

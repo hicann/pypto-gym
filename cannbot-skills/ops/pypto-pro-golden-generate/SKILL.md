@@ -1,23 +1,25 @@
 ---
 name: pypto-pro-golden-generate
-description: 当需要生成 golden 参考实现时使用此 skill。基于算子规格信息，生成 torch + torch_npu NPU 参考实现 `{op}_golden.py`，导出 `{op}_golden()` 函数，作为精度验证基准。计算在 NPU 上执行；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件时回退 CPU。触发词：生成 golden、生成参考实现、写 golden 函数、golden script、golden reference、reference implementation、generate golden、torch 参考、验证基准、baseline implementation、写验证代码、'帮我写 golden'、golden.py、参考代码。
+description: 当需要生成 golden 参考实现时使用此 skill。基于算子规格信息，生成 torch + torch_npu NPU 参考实现 `{op}_golden.py` 与 CPU FP32 参考实现 `{op}_golden_cpu.py`；仅在调用方显式传入 `collect_golden_perf=true` 时采集 NPU golden 性能。NPU 计算使用 torch 标准操作；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件时回退 CPU。触发词：生成 golden、生成参考实现、写 golden 函数、golden script、golden reference、reference implementation、generate golden、torch 参考、验证基准、baseline implementation、写验证代码、'帮我写 golden'、golden.py、参考代码。
 ---
 
 # PyPTO-Pro Golden 参考实现生成（NPU）
 
-基于算子规格信息，自动生成 torch + torch_npu NPU golden 参考实现及完整验证代码。计算的 golden 脚本用于开发阶段快速验证算子实现的正确性，可以作为独立模块被 `test_{op}.py` 等其他脚本导入调用。基于固定模板 [templates/golden-template.py.tmpl](templates/golden-template.py.tmpl) 生成（在§9 生成文件结构阶段读取该模板）。使用 torch 标准操作在 NPU 上执行；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件（`device_count() == 0`）时回退 CPU。禁止引入 pypto / pypto_pro。性能采集不写入 golden 文件，统一由通用脚本 [scripts/profile_golden.py](scripts/profile_golden.py) 执行。
+基于算子规格信息，自动生成 torch + torch_npu NPU golden 参考实现及完整验证代码。计算的 golden 脚本用于开发阶段快速验证算子实现的正确性，可以作为独立模块被 `test_{op}.py` 等其他脚本导入调用。基于固定模板 [templates/golden-template.py.tmpl](templates/golden-template.py.tmpl) 生成（在§9 生成文件结构阶段读取该模板）。使用 torch 标准操作在 NPU 上执行；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件（`device_count() == 0`）时回退 CPU。禁止引入 pypto / pypto_pro。NPU 性能采集默认关闭；仅调用方传入 `collect_golden_perf=true` 时，才使用通用脚本 [scripts/profile_golden.py](scripts/profile_golden.py) 执行，profiling 代码始终不写入 golden 文件。
+
+**调用约定**：`collect_golden_perf` 缺失或为 `false` 时不得运行 profiling，也不要求 `GOLDEN_PERF_REPORT.md`；只有 orchestrator 根据用户明确要求传入 `true` 时才采集。SPEC.md 中存在性能 P0 shape、任务要求高性能实现等信息本身不能开启采集。
 
 1. 从用户输入提取算子名称、公式、输入输出规格等必要信息
 2. 如果信息不足，向用户逐步提问补充
 3. 按工作流执行 golden 函数生成和验证
-4. 输出 `{op}_golden.py` 到当前目录或用户指定位置
+4. 输出 `{op}_golden.py` 与 `{op}_golden_cpu.py` 到当前目录或用户指定位置；按开关决定是否额外输出性能报告
 
 ## 1. 所需信息
 
 | 项目 | 说明 |
 |------|------|
 | **输入** | 算子规格信息（如结构化规格内容、自然语言描述等） |
-| **输出** | `{op}_golden.py`，导出 `{op}_golden()` 函数，路径由调用者决定 |
+| **输出** | 必选：`{op}_golden.py` 与 `{op}_golden_cpu.py`；可选：`GOLDEN_PERF_REPORT.md`（仅 `collect_golden_perf=true`） |
 
 ---
 
@@ -136,7 +138,7 @@ def safe_div_golden(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 ### `_make_inputs()` 输入工厂函数（强制导出）
 
-每个 golden 文件**必须**导出 `_make_inputs(device)` 函数，构造 P0 典型输入。该函数供 `_validate()` 验证和 `profile_golden.py --factory` 性能采集**共用**，确保两处使用完全一致的输入。
+每个 golden 文件**必须**导出 `_make_inputs(device)` 函数，构造 P0 典型输入。该函数始终供 `_validate()` 验证使用；启用性能采集时再与 `profile_golden.py --factory` **共用**，确保验证和可选 profiling 使用完全一致的输入。
 
 **函数签名与返回值**：
 
@@ -331,11 +333,11 @@ python3 {op}_golden.py
 - `import torch` + `import torch_npu` + NPU 设备初始化
 - 文件级 docstring（算子名、公式、置信度）
 - `{op}_golden()` 函数：torch + torch_npu 参考实现，计算在 NPU 上执行（含示例注释）
-- `_make_inputs(device)` 函数：构造 P0 典型输入，返回 `(args_list, kwargs_dict)`，供验证和性能采集共用（详见 §4 `_make_inputs()` 节）
+- `_make_inputs(device)` 函数：构造 P0 典型输入，返回 `(args_list, kwargs_dict)`，供验证使用，并在启用时供性能采集复用（详见 §4 `_make_inputs()` 节）
 - `_validate()` 函数：自动验证（典型 case、泛化 case、值域检查、数值稳定性、API 对比），内部调用 `_make_inputs()` 获取输入
 - `if __name__ == "__main__": _validate()` 入口
 
-性能采集相关代码不进入 `{op}_golden.py`，统一使用 [scripts/profile_golden.py](scripts/profile_golden.py)，保证 golden 文件只包含可在 NPU 上运行的 PyTorch 参考实现和验证逻辑。
+性能采集相关代码不进入 `{op}_golden.py`。启用采集时统一使用 [scripts/profile_golden.py](scripts/profile_golden.py)，保证 golden 文件只包含可在 NPU 上运行的 PyTorch 参考实现和验证逻辑。
 
 ---
 
@@ -408,21 +410,21 @@ attention_golden 验证报告
 
 ---
 
-## 14. NPU 性能 Profiling（验证通过后必须执行）
+## 14. NPU 性能 Profiling（可选，默认不执行）
 
-> **⛔ 强制步骤**：验证通过后，**必须**使用通用脚本 `scripts/profile_golden.py` 采集 NPU 性能数据。**`GOLDEN_PERF_REPORT.md` 是 Stage 2 的强制交付物**，未生成不得进入 Stage 3。SPEC.md 中有多个性能 P0 shape 时，必须对每个 shape 分别 profiling 并在报告中注明对应关系。
+> **开关规则**：默认 `collect_golden_perf=false`，NPU golden 验证通过后直接生成 CPU golden，不运行 profiling，`GOLDEN_PERF_REPORT.md` 也不是 Stage 2 门禁。仅当调用方明确传入 `collect_golden_perf=true` 时，才使用 `scripts/profile_golden.py` 采集 NPU 性能并生成报告。启用后若 SPEC.md 中有多个性能 P0 shape，必须对每个 shape 分别 profiling 并在报告中注明对应关系。
 
 ### 执行指引（必读）
 
-> **⚠️ 执行 profiling 前必须先阅读** [references/profiling.md](references/profiling.md)。该文档包含输入模式决策树、多 case `_make_inputs()` 返回格式、参数构造步骤、约束类型表（6 种崩溃场景）、E2E 双路径提取逻辑、故障排查决策树等**不可跳过的操作步骤**。
+> **⚠️ 当 `collect_golden_perf=true` 时，执行 profiling 前必须先阅读** [references/profiling.md](references/profiling.md)。该文档包含输入模式决策树、多 case `_make_inputs()` 返回格式、参数构造步骤、约束类型表（6 种崩溃场景）、E2E 双路径提取逻辑、故障排查决策树等**不可跳过的操作步骤**。
 
 ---
 
 ## 15. CPU Golden 生成（精度校验用）
 
-> **强制步骤**：NPU golden 和性能报告完成后，**必须**生成 CPU 更高精度 golden `{op}_golden_cpu.py`，供 Stage 4 test 精度校验使用（方案A混合容差标准，见 `../pypto-pro-op-develop/scripts/precision_compare.py`）。
+> **强制步骤**：NPU golden 验证通过后，**必须**生成 CPU 更高精度 golden `{op}_golden_cpu.py`，供 Stage 4 test 精度校验使用（方案A混合容差标准，见 `../pypto-pro-op-develop/scripts/precision_compare.py`）。CPU golden 的生成不依赖可选性能采集。
 >
-> **golden 职责边界**：`{op}_golden.py`（NPU）仅用于 Stage 2 性能测试和提供 `_get_device()` 给 Stage 4 test 选设备；Stage 4 精度对比的参考实现**必须**是 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比。
+> **golden 职责边界**：`{op}_golden.py`（NPU）用于 Stage 2 NPU 参考实现验证、可选性能采集，并提供 `_get_device()` 给 Stage 4 test 选设备；Stage 4 精度对比的参考实现**必须**是 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比。
 
 ### 生成方式
 
@@ -449,4 +451,4 @@ exit code 0 = 通过。验证内容：基本功能（FP32/FP16 输入可运行�
 
 ### 交付物
 
-`custom/<op>/{op}_golden_cpu.py` 是 Stage 2 的强制交付物，与 NPU golden 和性能报告并列。
+`custom/<op>/{op}_golden.py` 与 `custom/<op>/{op}_golden_cpu.py` 是 Stage 2 的强制交付物。`GOLDEN_PERF_REPORT.md` 仅在 `collect_golden_perf=true` 时生成并验收。

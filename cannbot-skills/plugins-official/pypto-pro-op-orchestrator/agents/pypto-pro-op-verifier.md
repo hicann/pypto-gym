@@ -42,12 +42,12 @@ tools:
 
 ## Dispatch 模式
 
-orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），你执行对应检查清单并返回 verdict。
+orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），你执行对应检查清单并返回 verdict。`stage2-check` 还会携带 `collect_golden_perf=true|false`；若缺失，必须按 `false` 处理。
 
 | 模式 | 触发时机 | 检查项数 | 动态运行 |
 |---|---|---|---|
 | `stage1-check` | planner 返回后 | 5 | 否 |
-| `stage2-check` | mathematician 返回后 | 5 | 否 |
+| `stage2-check` | mathematician 返回后 | 4 项必选 + 1 项条件检查 | 否 |
 | `stage3-check` | architect 返回后 | 11 | 否 |
 | `module-check` | L1 路径 Module k impl 产完后 | 6 | 是（`python custom/<op>/modules/test_{op}_module<suffix_k>.py`） |
 | `capability_gap_check` | coder 报告 capability_gap 后 | 见下方 | 否（查文档/样例） |
@@ -73,9 +73,9 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 |---|--------|---------|
 | 1 | `custom/<op>/{op}_golden.py` 存在 | 文件存在检查 |
 | 2 | golden 自验证通过 | 确认子代理返回的验证报告中 exit code 0 |
-| 3 | `custom/<op>/GOLDEN_PERF_REPORT.md` 存在 | `ls custom/<op>/GOLDEN_PERF_REPORT.md` 确认性能报告已生成 |
-| 4 | `custom/<op>/{op}_golden_cpu.py` 存在 | 文件存在检查 |
-| 5 | golden_cpu 自验证通过 | `python custom/<op>/{op}_golden_cpu.py` exit code 0 |
+| 3 | `custom/<op>/{op}_golden_cpu.py` 存在 | 文件存在检查 |
+| 4 | golden_cpu 自验证通过 | `python custom/<op>/{op}_golden_cpu.py` exit code 0 |
+| 5（条件） | `custom/<op>/GOLDEN_PERF_REPORT.md` 有效 | 仅 `collect_golden_perf=true` 时执行：`test -s custom/<op>/GOLDEN_PERF_REPORT.md`，并确认报告包含 `E2E Performance` 与 `Op Performance`；为 `false` 或字段缺失时跳过，不得因报告不存在而 FAIL |
 
 ---
 

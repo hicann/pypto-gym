@@ -59,7 +59,7 @@ bash scripts/msprof_profile_run.sh --compare \
     --device=0 --op-name=<Op Name> --repeats=3 --seed=0
 ```
 
-> **前置条件**：`custom/{op}/GOLDEN_PERF_REPORT.md` 必须已存在（由 `pypto-pro-golden-generate` skill 在 Stage 2 产出）。
+> **前置条件**：仅 `--compare` 模式需要 `custom/{op}/GOLDEN_PERF_REPORT.md`。Stage 2 默认不生成该报告；只有用户明确要求 golden 性能采集或 golden 基线对比时，才先以 `collect_golden_perf=true` 调用 `pypto-pro-golden-generate` 生成报告。若用户只要求 PyPTO kernel 自身的性能采集或瓶颈分析，使用标准模式，不要为了它自动采集 golden。
 >
 > **必须指定 `--op-name`**：与标准采集模式同理，PyPTO 测试脚本含多个 case + `torch.randn`，不指定会选到非目标 op。Op Name 获取方法见标准采集模式 Step 2。
 >
@@ -105,7 +105,7 @@ custom/{op}/
 │   │   └── torch.testing.assert_close   # 精度验证
 │   └── if __name__ == "__main__": run_perf_test()
 ├── {op}_golden.py                      # golden 参考实现（pypto-pro-golden-generate 产出）
-├── GOLDEN_PERF_REPORT.md               # golden 性能报告（profile_golden.py 产出）
+├── GOLDEN_PERF_REPORT.md               # 可选；--compare 前按用户要求由 profile_golden.py 产出
 └── SPEC.md                             # 算子规格
 ```
 

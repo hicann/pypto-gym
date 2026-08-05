@@ -129,9 +129,11 @@ Stage 1 → 调度 pypto-pro-op-planner（加载 skill pypto-pro-op-plan）
        → 调度 pypto-pro-op-verifier（stage1-check）
        → PASS: state_transition(complete_stage, stage=1)（记录 SPEC.md 哈希 + 自动推进） / FAIL 回退
 
-Stage 2 → 调度 pypto-pro-op-mathematician（加载 skill pypto-pro-golden-generate）
-       → 产出 {op}_golden.py, GOLDEN_PERF_REPORT.md, {op}_golden_cpu.py
-       → 调度 pypto-pro-op-verifier（stage2-check）
+Stage 2 → 判定 collect_golden_perf（默认 false；仅用户明确要求采集 NPU golden 性能时为 true）
+       → 调度 pypto-pro-op-mathematician（加载 skill pypto-pro-golden-generate，传 collect_golden_perf）
+       → 必选产出 {op}_golden.py, {op}_golden_cpu.py
+       → collect_golden_perf=true 时额外产出 GOLDEN_PERF_REPORT.md
+       → 调度 pypto-pro-op-verifier（stage2-check，传同一 collect_golden_perf）
        → PASS: state_transition(complete_stage, stage=2)（自动推进） / FAIL 回退
 
 Stage 3 → 调度 pypto-pro-op-architect（加载 skill pypto-pro-op-design）
@@ -226,12 +228,21 @@ Stage 4 → 据 stage4_path 选择调度路径：
 
 ## Stage 2：Golden 生成
 
-**调度**：`pypto-pro-op-mathematician` 子代理。子代理加载 skill `pypto-pro-golden-generate`。
+**性能采集开关**：编排器在调度前确定 `collect_golden_perf`，并在 mathematician 与 verifier 的 dispatch prompt 中始终显式传递同一个布尔值。
 
-**门禁验证**：调度 `pypto-pro-op-verifier`（模式 `stage2-check`）执行检查清单。
+- 默认 `collect_golden_perf=false`，不运行 NPU profiling，也不要求 `GOLDEN_PERF_REPORT.md`
+- 只有用户明确要求“采集 NPU golden 性能 / profiling / 生成 GOLDEN_PERF_REPORT / 与 golden 做性能基线对比”时才设为 `true`
+- “开发高性能算子”“遵守性能约束”等泛化要求不等同于明确要求采集，仍保持 `false`
+- dispatch prompt 未携带该字段时，子代理与 verifier 必须按 `false` 处理，防止意外消耗 NPU 时间与资源
+
+**调度**：`pypto-pro-op-mathematician` 子代理。子代理加载 skill `pypto-pro-golden-generate`。无论开关为何值，都生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32）；仅 `collect_golden_perf=true` 时额外运行 `profile_golden.py` 并生成 `GOLDEN_PERF_REPORT.md`。
+
+**门禁验证**：调度 `pypto-pro-op-verifier`（模式 `stage2-check`，携带同一 `collect_golden_perf`）执行检查清单。两份 golden 及各自验证始终是硬门禁；性能报告仅在开关为 `true` 时是门禁。
 
 → **verifier FAIL**：将失败项反馈给 mathematician 子代理修正
 → **verifier PASS**：`complete_stage(2)` → Stage 3
+
+**Stage 2 完成后的晚启用**：若用户之后才明确要求 golden 性能采集，调度 mathematician 执行 `profile-only, collect_golden_perf=true`，复用已有 `{op}_golden.py` 生成报告；无需重生成两份 golden，也无需回滚 Stage 状态。随后再次调度 verifier 执行 `stage2-check, collect_golden_perf=true` 验收现有两份 golden 与新增报告。
 
 ---
 

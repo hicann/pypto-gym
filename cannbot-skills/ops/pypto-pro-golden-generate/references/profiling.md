@@ -1,10 +1,10 @@
-# NPU 性能 Profiling（验证通过后必须执行）
+# NPU 性能 Profiling（显式启用时执行）
 
 ## 说明
 
-**⛔ 强制步骤**：验证通过后，**必须**使用通用脚本 `../scripts/profile_golden.py` 调用 `{op}_golden.py`，并通过 `torch_npu.profiler` 采集 golden 算子在 NPU 上的性能数据。golden 文件本身不包含 profiling 代码。**`GOLDEN_PERF_REPORT.md` 是 Stage 2 的强制交付物**，未生成不得进入 Stage 3。
+NPU golden 性能采集默认关闭。仅当 orchestrator 根据用户明确要求传入 `collect_golden_perf=true` 时，才使用通用脚本 `../scripts/profile_golden.py` 调用 `{op}_golden.py`，并通过 `torch_npu.profiler` 采集性能数据。golden 文件本身不包含 profiling 代码。开关为 `false` 或缺失时跳过本流程，`GOLDEN_PERF_REPORT.md` 不是 Stage 2 必选交付物。
 
-**核心目标**：对所有算子的 golden 都必须成功采集到正确的性能数据。无论算子输入多复杂，都要找到一种方式让 profiling 成功运行。
+**启用后的目标**：一旦 `collect_golden_perf=true`，必须成功采集正确的性能数据并生成有效报告。无论算子输入多复杂，都要找到一种方式让 profiling 成功运行，不能用空报告冒充成功。
 
 ## 输入模式选择（决策树）
 
@@ -270,7 +270,7 @@ def _make_inputs(device):
 
 ## 故障排查
 
-**⛔ 核心原则：profiling 必须成功。遇到崩溃时按以下流程排查，不得跳过或留空报告。**
+**⛔ 启用后的核心原则：profiling 必须成功。遇到崩溃时按以下流程排查，不得跳过或留空报告。**
 
 ### Golden 函数崩溃（exit code 2）
 
