@@ -177,7 +177,7 @@ def _run_attention_and_golden_simple(inputs, attn_cfg):
     return output, residual_tmp, attention_output, residual_g
 
 
-@pytest.mark.skip("Failed for Precision")
+@pytest.mark.soc("950", "910")
 def test_attention():
     # 使用 torch 生成数据
     torch_npu.npu.config.allow_internal_format = True
