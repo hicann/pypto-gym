@@ -31,6 +31,7 @@ class AttentionTileConfig:
         v1_tile: Tile configuration for vector operations in first MM
         c2_tile: Tile configuration for second matrix multiplication (Softmax x V)
         v2_tile: Tile configuration for vector operations in second MM
+        unroll_list: unroll_list
     """
     g_tile: int
     s2_tile: int
@@ -39,6 +40,7 @@ class AttentionTileConfig:
     v1_tile: list
     c2_tile: list
     v2_tile: list
+    unroll_list: list
 
 
 @pypto.frontend.jit(
@@ -90,6 +92,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
     v1_tile = tile_cfg.v1_tile
     c2_tile = tile_cfg.c2_tile
     v2_tile = tile_cfg.v2_tile
+    unroll_list = tile_cfg.unroll_list
 
     block_num = s2_tile // block_size
 
@@ -106,7 +109,7 @@ def incre_flash_attention_gqa_antiquant_kernel(
                     max_update = pypto.tensor([g_tile, 1], pypto.DT_FP32, "max_update")
                     n1g_ofs = n2_idx * group + group_idx * g_tile
                     pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                    for s2_idx in pypto.loop(s2_loop, name="LOOP_s2", idx_name="s2_idx", unroll_list=[16, 8, 1]):
+                    for s2_idx in pypto.loop(s2_loop, name="LOOP_s2", idx_name="s2_idx", unroll_list=unroll_list):
                         pypto.set_pass_options(sg_set_scope=10001)
                         qi = pypto.view(q_2d, [g_tile, d], [b_idx * n1 + n1g_ofs, s1_idx * d])
                         actual_s2_tile = (cur_seq_len - s2_idx * s2_tile).min(s2_tile)

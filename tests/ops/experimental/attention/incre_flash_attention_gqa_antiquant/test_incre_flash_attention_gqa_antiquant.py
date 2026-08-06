@@ -439,6 +439,19 @@ def get_tile_config(case_config):
     n2 = case_config.n2
     group = n1 // n2
 
+    s2 = case_config.s2
+    if isinstance(s2, int):
+        if s2 == 16 * 1024:
+            unroll_list = [16, 8, 1]
+        else:
+            unroll_list = [8, 1]
+    else:  # s2 is list
+        s2_mean = int(sum(s2) // len(s2))
+        if s2_mean == 16 * 1024:
+            unroll_list = [16, 8, 1]
+        else:
+            unroll_list = [8, 1]
+
     g_tile = group
 
     if group in [64, 128]:
@@ -451,7 +464,8 @@ def get_tile_config(case_config):
         c1_tile=[[16, 16], [128, 128], [256, 256]],
         v1_tile=[128, 512],
         c2_tile=[[16, 16], [256, 512], [128, 128]],
-        v2_tile=[4, 128]
+        v2_tile=[4, 128],
+        unroll_list=unroll_list
     )
     return tile_config
 
