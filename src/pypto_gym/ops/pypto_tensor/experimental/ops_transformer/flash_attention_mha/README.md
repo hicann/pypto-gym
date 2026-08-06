@@ -85,6 +85,14 @@ Kernel 内部严格控制 BF16/FP32 转换以平衡精度和性能：
 | O matmul | P_bf16 @ V | BF16 → BF16 (out_dtype=BF16) |
 | 输出 | O, L, M | O: BF16, L/M: FP32 |
 
+## batch一致性
+该算子支持batch一致性，当batch大小变化或者样本在batch中的位置变化时，所有涉及浮点加减乘除计算类型的reduce轴的分块情况与分块间累加顺序保持不变。
+### 约束
+为了保证batch一致性，算子需要满足以下约束：
+
+1、Set_tile_shape：算子需要保证涉及浮点计算的reduce轴的tile shape设置不能随batch大小而变化（比如不能根据batch大小范围进行tile shape特化调优，在batch轴变化时调用不同tile shape配置，甚至实现逻辑不同的pypto算子kernel）
+2、pypto的atomic_add和index_add两个接口不保证确定性，在需要保证确定性和batch一致性的场景不应该使用此接口
+
 ## 测试用例
 
 通过独立的 `test_XX` 函数定义，每个函数指定不同的 `batch_size`、`num_heads`、`s1_size`、`s2_size`、`dim`：
