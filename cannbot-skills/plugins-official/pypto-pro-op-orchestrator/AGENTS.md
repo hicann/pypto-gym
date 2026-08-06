@@ -61,10 +61,10 @@ else:
 "
 ```
 
-**装配命令**：docs 主仓拉取源保持 `https://gitcode.com/gaoxiang618/pypto`（含 PyPTO-Pro 文档资料），pro_ops 样例与 ops 算子仓拉取源为 `https://gitcode.com/cann/pypto`：
+**装配命令**：拉取源统一为 `https://gitcode.com/cann/pypto`（含 PyPTO-Pro 文档资料、pro_ops 样例与 ops 算子）：
 
 ```bash
-PYPTO_SRC_URL=https://gitcode.com/gaoxiang618/pypto.git \
+PYPTO_SRC_URL=https://gitcode.com/cann/pypto.git \
 PYPTO_GYM_URL=https://gitcode.com/cann/pypto.git \
 PYPTO_PRO_OPS_URL=https://gitcode.com/cann/pypto.git \
 python ./*/skills/pypto-docs-search/scripts/sync_devkit.py

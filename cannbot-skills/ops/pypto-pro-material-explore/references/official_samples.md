@@ -12,7 +12,7 @@
 | # | 算子名称 | 缓存相对路径 | 类型 | 描述 |
 |---|---------|-------------|------|------|
 | 1 | add | `pro_ops/element_wise/test_add.py` | elementwise | |
-| 2 | matmul_8K_example | `pro_ops/matmul/test_matmul_8K_example.py` | matmul 入门 | |
+| 2 | matmul_8k_example | `pro_ops/matmul/test_matmul_8K_example.py` | matmul 入门 | |
 | 3 | matmul_perf_asw_4k | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset.py` | matmul 性能 | |
 | 4 | matmul_perf_asw_8k_k128 | `pro_ops/matmul/test_matmul_perf_asw_8k_k128_dn_move_offset.py` | matmul 性能 | |
 | 5 | matmul_perf_asw_4k_dynamic | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | matmul 性能（动态轴） | |
