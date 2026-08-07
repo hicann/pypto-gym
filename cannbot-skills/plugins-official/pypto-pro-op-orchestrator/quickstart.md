@@ -12,7 +12,7 @@ CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 
 | 编程语言 | Python（PyPTO-Pro API） | Python（PyPTO API） |
 | 开发内容 | PyPTO-Pro kernel + golden + test | PyPTO kernel + golden + test |
 | 阶段数 | 4 阶段工作流 | 7 阶段状态机驱动 |
-| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具，verifier 即门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
+| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具 + lint 机械门禁 + verifier 语义门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
 | 性能调优 | 按需参考 | Stage 7 独立调优阶段 |
 
 ## 一、环境搭建
@@ -33,7 +33,9 @@ bash init.sh project opencode   # 项目级（默认）
 bash init.sh global opencode    # 全局级
 ```
 
-### 其他工具
+### 其他工具（资源安装，不含自动状态机/硬门禁）
+
+> **自动门禁支持边界**：`state_transition` 工具、写入后 lint 和 Stage/Module 自动硬门禁目前通过 OpenCode 插件提供。下列其他工具的 `init.sh` 适配仅安装 skills、agents 与提示词资源，不会获得同等的 OpenCode 自动门禁能力。需要完整 4 阶段状态机和 fail-closed lint 流程时，请使用 OpenCode。
 
 <details>
 <summary>Claude Code</summary>

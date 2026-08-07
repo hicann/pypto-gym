@@ -8,6 +8,11 @@ import {
   type TransitionAction,
   type TransitionInput,
 } from "./lib/state-transition-core";
+import {
+  formatGateFinding,
+  parseGateSummary,
+  type GateSummary,
+} from "./lib/lint-output";
 
 const ALLOWED_ACTIONS = new Set<TransitionAction>([
   "init",
@@ -137,8 +142,65 @@ function buildTransitionInput(action: TransitionAction, args: Record<string, unk
 }
 
 export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
+  const $ = input.$;
   const client = input.client;
   const baseDir = input.directory || input.worktree || process.cwd();
+  const lintScript = new URL(
+    "../hooks/pypto-pro-op-lint/pypto_pro_op_lint.py",
+    import.meta.url,
+  ).pathname;
+
+  async function runGateIfNeeded(
+    opDir: string,
+    action: TransitionAction,
+    stage: number | undefined,
+    module: string | undefined,
+  ): Promise<GateSummary> {
+    let lintCmd;
+    if (action === "complete_stage" && stage !== undefined) {
+      lintCmd = $`python3 ${lintScript} --check-gate --op-dir ${opDir} --stage ${stage}`;
+    } else if (
+      (action === "submit_for_verify" || action === "complete_module") &&
+      module !== undefined
+    ) {
+      lintCmd = $`python3 ${lintScript} --check-module-gate --op-dir ${opDir} --module ${module}`;
+    } else {
+      return { warnCount: 0, infoCount: 0, failFindings: [] };
+    }
+
+    const result = await lintCmd.cwd(baseDir).quiet().nothrow();
+    const raw = result.stdout.toString();
+    const summary = parseGateSummary(raw);
+    const hasBlockingFinding = summary.failFindings.some(
+      (finding) => finding.severity === "S0" || finding.severity === "S1",
+    );
+
+    if (result.exitCode !== 0 || hasBlockingFinding) {
+      const details = summary.failFindings
+        .map(formatGateFinding)
+        .join("\n");
+      const scope =
+        action === "complete_module"
+          ? `Module ${module ?? "?"} completion`
+          : action === "submit_for_verify"
+            ? `Module ${module ?? "?"} verify-handoff`
+            : `Stage ${stage ?? "?"} completion`;
+      const guidance =
+        action === "complete_module" || action === "submit_for_verify"
+          ? "\n\nRecommended next step: re-dispatch pypto-pro-op-coder for the same module, " +
+            "instruct it to fix the violations listed above, and call complete_module (or " +
+            "submit_for_verify) again."
+          : "\n\nRecommended next step: re-dispatch the upstream agent with the violations " +
+            "listed above. After the agent fixes the artifacts, call complete_stage again.";
+      throw new Error(
+        details
+          ? `${scope} blocked by lint rule violations:\n${details}${guidance}`
+          : `lint script returned exit code ${result.exitCode} with no parsable findings`,
+      );
+    }
+
+    return summary;
+  }
 
   return {
     tool: {
@@ -151,7 +213,9 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           "rollback_to_stage (return to an earlier stage with reason and optional failure_category — wipes downstream stages). " +
           "Stage 4 path actions: plan_stage4 (set stage4_path L0/L1 based on is_fusion, init stage4_modules for L1), " +
           "start_module / submit_for_verify / complete_module / fail_module (L1 per-Module loop). " +
-          "Pro has no lint gate; the verifier agent is the gate. SPEC.md freeze is enforced: " +
+          "Lint gate fires on complete_stage / submit_for_verify / complete_module as a side effect " +
+          "(before state mutation; submit_for_verify is before verifier, the other two follow verifier PASS). " +
+          "SPEC.md freeze is enforced: " +
           "complete_stage(1) records the SPEC.md hash, and complete_stage(>=3) rejects if SPEC.md changed.",
         args: {
           opDir: tool.schema.string(),
@@ -212,6 +276,32 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           }
           const desiredMaxStage = args.max_stage !== undefined ? Number(args.max_stage) : DEFAULT_MAX_STAGE;
           const prevState = readStateOrInit(statePath, desiredMaxStage);
+
+          // ── Lint gate ──
+          // Fires on complete_stage / submit_for_verify / complete_module as a side effect.
+          // Runs before state mutation. submit_for_verify is the pre-verifier handoff;
+          // complete_stage / complete_module follow verifier PASS. lint FAIL keeps state unchanged.
+          let gateSummary: GateSummary = { warnCount: 0, infoCount: 0, failFindings: [] };
+          if (
+            action === "complete_stage" ||
+            action === "submit_for_verify" ||
+            action === "complete_module"
+          ) {
+            try {
+              gateSummary = await runGateIfNeeded(
+                opDir,
+                action,
+                args.stage as number | undefined,
+                args.module as string | undefined,
+              );
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `[pypto-pro-op-lint] gate blocked: action=${action}, ` +
+                `stage=${args.stage ?? "-"}, module=${args.module ?? "-"}, op_dir=${opDir}\n${detail}`,
+              );
+            }
+          }
 
           // ── SPEC.md freeze enforcement ──
           // complete_stage(1) auto-records the SPEC.md hash into artifact_hashes.spec_md.
@@ -278,6 +368,8 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
             stage4_path: nextState.stage4_path,
             module: args.module,
             statePath,
+            warnCount: gateSummary.warnCount,
+            infoCount: gateSummary.infoCount,
           });
         },
       }),

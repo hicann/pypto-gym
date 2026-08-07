@@ -195,7 +195,7 @@ Stage 4 → 据 stage4_path 选择调度路径：
 
 `custom/<op>/.orchestrator_state.json` 是机器可读的进度账本（Stage 状态、重试计数、artifact 哈希、回滚历史）。**只有编排者能写这个文件，且只能通过 `state_transition` 工具**——子代理把结果返回编排者，由编排者发起 transition。
 
-`state_transition` 是编排者推进 Stage 的工具。**无 lint 门禁**——verifier agent 即门禁，编排者在 `complete_stage` 前 dispatch verifier 并据其 verdict 决策。可用 action：
+`state_transition` 是编排者推进 Stage 的工具。**Lint 门禁作为 `complete_stage` / `submit_for_verify` / `complete_module` 的副作用自动运行，并且总是在状态写入前完成**：`submit_for_verify` 在 coder 交付后、verifier 调度前触发；`complete_stage` / `complete_module` 在 verifier PASS 后触发。未抛错即 PASS。lint 门禁做机械检查（import 门禁、单 kernel、golden 纯度、文件存在性），verifier agent 做语义检查（精度、作弊、性能）。lint FAIL 时状态不推进，编排器重新调度上游 agent 修复后再次调用。可用 action：
 
 | Action | 使用时机 | 参数 |
 |---|---|---|

@@ -507,8 +507,20 @@ if [ "$TOOL" = "opencode" ]; then
         step1_summary="${step1_summary} references"
     fi
     if [ "$INSTALL_OPENCODE_HOOKS" = true ]; then
-        mkdir -p "$CANNBOT_DIR/plugins"
+        mkdir -p "$CANNBOT_DIR/plugins" "$CANNBOT_DIR/hooks"
+        # Remove only files owned by this orchestrator before copying. This
+        # prevents renamed/deleted hooks from surviving an upgrade while
+        # preserving unrelated OpenCode plugins in the same directory.
+        for managed_plugin in \
+            "$CANNBOT_DIR/plugins"/pypto-pro-op-*.ts \
+            "$CANNBOT_DIR/plugins/pypto-pro-state-transition.ts"; do
+            [ -e "$managed_plugin" ] || continue
+            rm -f -- "$managed_plugin"
+        done
+        rm -rf -- "${CANNBOT_DIR:?}/hooks/pypto-pro-op-lint"
+        mkdir -p "$CANNBOT_DIR/hooks/pypto-pro-op-lint"
         cp -a "$PLUGIN_ROOT/hooks/opencode/." "$CANNBOT_DIR/plugins/"
+        cp -a "$PLUGIN_ROOT/hooks/pypto-pro-op-lint/." "$CANNBOT_DIR/hooks/pypto-pro-op-lint/"
         step1_summary="${step1_summary} hooks"
     fi
     ok "Linked: $step1_summary"
@@ -516,6 +528,7 @@ else
     # Claude/Trae/Cursor/Copilot: create directories (per-item symlinks handled in Step 3)
     mkdir -p "$CONFIG_ROOT/skills" "$CONFIG_ROOT/agents"
     ok "Prepared: skills/, agents/, rules/"
+    warn "Automated state_transition and lint hooks are OpenCode-only; this target installs prompt resources without automatic hard gates"
 fi
 [ -n "$step1_warns" ] && echo -e "$step1_warns"
 echo ""
@@ -758,6 +771,21 @@ else
     fi
 fi
 
+# OpenCode lint/state-transition plugins are required for the automated hard gate.
+if [ "$TOOL" = "opencode" ] && [ "$INSTALL_OPENCODE_HOOKS" = true ]; then
+    for hook_file in \
+        "$CANNBOT_DIR/plugins/pypto-pro-op-lint.ts" \
+        "$CANNBOT_DIR/plugins/pypto-pro-state-transition.ts" \
+        "$CANNBOT_DIR/plugins/lib/lint-output.ts" \
+        "$CANNBOT_DIR/hooks/pypto-pro-op-lint/pypto_pro_op_lint.py" \
+        "$CANNBOT_DIR/hooks/pypto-pro-op-lint/rules.json"; do
+        if [ ! -f "$hook_file" ]; then
+            health_errors="${health_errors}\n  ${RED}✗${NC} required lint component missing: $hook_file"
+            health_ok=false
+        fi
+    done
+fi
+
 # Generate brand manifest
 MANIFEST="$CONFIG_ROOT/cannbot-manifest.json"
 
@@ -799,6 +827,7 @@ else
     warn "Some warnings, see above"
   else
     err "Some checks failed, see above"
+    exit 1
   fi
 fi
 

@@ -1,0 +1,154 @@
+{
+  "version": "1.0.0",
+  "dimensions": {
+    "D1": { "name": "框架合规" },
+    "D2": { "name": "工件完整性" },
+    "D3": { "name": "Golden 纯度" },
+    "D4": { "name": "测试规范" }
+  },
+  "rules": [
+    {
+      "id": "PL01",
+      "severity": "S0",
+      "dimension": "D1",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "test",
+      "triggers": ["post-edit", "gate:M", "gate:S4"],
+      "rule": "test/staged 文件必须含 import pypto_pro.language as pl；禁止 @pypto.frontend.jit、import pypto.frontend、import pypto（非 Pro）",
+      "fix_hint": "将 import 改为 `import pypto_pro.language as pl`，kernel 装饰器改为 `@pl.jit(auto_mutex=True)`。禁止使用 pypto（非 Pro）前端 API。"
+    },
+    {
+      "id": "PL02",
+      "severity": "S0",
+      "dimension": "D1",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "test",
+      "triggers": ["post-edit", "gate:M", "gate:S4"],
+      "rule": "test/staged 文件中 @pl.jit 必须且仅能出现 1 次（单 kernel 铁律）",
+      "fix_hint": "L1 路径的逐 Module 开发是在同一个 kernel 函数内增量追加 section，不是每 Module 新建 kernel。删除多余的 @pl.jit 装饰函数，合并到唯一 kernel 中。"
+    },
+    {
+      "id": "PL03",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [1],
+      "target": "gate",
+      "triggers": ["gate:S1"],
+      "rule": "SPEC.md 存在且非空",
+      "fix_hint": "确保 custom/<op>/SPEC.md 已由 planner 产出且内容非空。"
+    },
+    {
+      "id": "PL04",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [2, 4],
+      "target": "gate",
+      "triggers": ["gate:S2", "gate:S4"],
+      "rule": "{op}_golden.py 存在",
+      "fix_hint": "确保 custom/<op>/{op}_golden.py 已由 mathematician 产出。"
+    },
+    {
+      "id": "PL05",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [2, 4],
+      "target": "gate",
+      "triggers": ["gate:S2", "gate:S4"],
+      "rule": "{op}_golden_cpu.py 存在",
+      "fix_hint": "确保 custom/<op>/{op}_golden_cpu.py 已由 mathematician 产出（CPU FP32 更高精度 golden）。"
+    },
+    {
+      "id": "PL07",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [3],
+      "target": "gate",
+      "triggers": ["gate:S3"],
+      "rule": "DESIGN.md 存在",
+      "fix_hint": "确保 custom/<op>/DESIGN.md 已由 architect 产出。"
+    },
+    {
+      "id": "PL08",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [3],
+      "target": "gate",
+      "triggers": ["gate:S3"],
+      "rule": "module_interfaces.yaml 存在",
+      "fix_hint": "确保 custom/<op>/module_interfaces.yaml 已由 architect 产出（Module 契约）。"
+    },
+    {
+      "id": "PL09",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "gate",
+      "triggers": ["gate:S4"],
+      "rule": "test_{op}.py 存在",
+      "fix_hint": "确保 custom/<op>/test_{op}.py 已由 coder 产出（L0 路径）或 cleanup 生成（L1 路径）。"
+    },
+    {
+      "id": "PL10",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [1, 2, 3, 4],
+      "target": "gate",
+      "triggers": ["gate:S1", "gate:S2", "gate:S3", "gate:S4"],
+      "rule": ".orchestrator_state.json 是合法 JSON 且 max_stage == 4",
+      "fix_hint": "检查 custom/<op>/.orchestrator_state.json 是否存在且为合法 JSON，max_stage 字段应为 4。如需重置，通过 state_transition(init) 初始化。"
+    },
+    {
+      "id": "PL11",
+      "severity": "S1",
+      "dimension": "D3",
+      "fix_effort": "E1",
+      "stages": [2, 4],
+      "target": "golden",
+      "triggers": ["post-edit", "gate:S2", "gate:S4"],
+      "rule": "{op}_golden.py / {op}_golden_cpu.py / {op}_golden_stage*.py 禁止 import pypto_pro 或 import pypto",
+      "fix_hint": "golden 文件必须是纯 torch 实现。删除 import pypto / import pypto_pro，数学计算只用 torch / torch_npu（golden_cpu 不含 torch_npu）。"
+    },
+    {
+      "id": "PL13",
+      "severity": "S1",
+      "dimension": "D3",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "golden",
+      "triggers": ["post-edit", "gate:S4"],
+      "rule": "{op}_golden_stage*.py 禁止 import 任何 test_{op}_module*.py（golden 独立性）",
+      "fix_hint": "per-Module golden 必须自包含，不 import staged impl 文件。删除对 test_{op}_module*.py 的 import，golden_stage 应独立实现数学逻辑。"
+    },
+    {
+      "id": "PL15",
+      "severity": "S1",
+      "dimension": "D4",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "test",
+      "triggers": ["gate:S4"],
+      "rule": "test_{op}.py 须含 _assert_precision；禁止 assert_close",
+      "fix_hint": "使用模板自带的 _assert_precision 函数做方案A混合容差精度校验。删除 assert_close 调用。"
+    },
+    {
+      "id": "PL16",
+      "severity": "S1",
+      "dimension": "D4",
+      "fix_effort": "E1",
+      "stages": [4],
+      "target": "test",
+      "triggers": ["gate:S4"],
+      "rule": "test_{op}.py 须 import {op}_golden_cpu",
+      "fix_hint": "精度对比必须用 CPU FP32 golden。_assert_precision 内部应 from {op}_golden_cpu import {op}_golden_cpu。禁止用 {op}_golden（NPU 同 dtype）做精度对比。"
+    }
+  ]
+}
