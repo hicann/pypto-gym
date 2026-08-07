@@ -553,3 +553,150 @@ def demo_wrapper(x, y):
         # Top-level clean → not block, module stub ignored
         assert decision != "block"
 
+
+# ── post-edit: SPEC.md 冻结豁免（仅减少 supported_dtypes 放行） ──
+
+
+def _make_stage5_op_dir(tmp_path: Path) -> Path:
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    state = {
+        "operator_name": "demo",
+        "max_stage": 7,
+        "current_stage": 5,
+        "stage_status": {"5": "in_progress"},
+    }
+    write_file(op_dir / ".orchestrator_state.json", json.dumps(state))
+    return op_dir
+
+
+def _post_edit_spec(spec_path: Path, old_string: str, new_string: str) -> tuple[int, str]:
+    rc, out = _run_hook("post-edit", {
+        "tool_input": {
+            "file_path": str(spec_path),
+            "old_string": old_string,
+            "new_string": new_string,
+        }
+    })
+    return rc, out
+
+
+def test_post_edit_spec_dtypes_reduction_allowed(tmp_path: Path):
+    """Stage>=2 时仅减少 supported_dtypes 的 Edit 应放行（冻结豁免）。"""
+    op_dir = _make_stage5_op_dir(tmp_path)
+    spec_path = op_dir / "SPEC.md"
+    # 磁盘上是缩减后的内容（post-edit 视角）
+    rc, out = _post_edit_spec(
+        spec_path,
+        old_string="supported_dtypes: [bfloat16, int32]",
+        new_string="supported_dtypes: [bfloat16]",
+    )
+    assert rc == 0
+    if out:
+        assert json.loads(out)["hookSpecificOutput"].get("decision") != "block"
+
+
+def test_post_edit_spec_dtypes_increase_blocked(tmp_path: Path):
+    """增加 supported_dtypes 仍被冻结 block。"""
+    op_dir = _make_stage5_op_dir(tmp_path)
+    spec_path = op_dir / "SPEC.md"
+    content = spec_path.read_text(encoding="utf-8")
+    write_file(spec_path, content.replace(
+        "supported_dtypes: [bfloat16]", "supported_dtypes: [bfloat16, int32]"))
+    rc, out = _post_edit_spec(
+        spec_path,
+        old_string="supported_dtypes: [bfloat16]",
+        new_string="supported_dtypes: [bfloat16, int32]",
+    )
+    assert rc == 0
+    assert json.loads(out)["hookSpecificOutput"]["decision"] == "block"
+
+
+def test_post_edit_spec_non_dtypes_edit_blocked(tmp_path: Path):
+    """改动 supported_dtypes 以外内容仍被冻结 block。"""
+    op_dir = _make_stage5_op_dir(tmp_path)
+    spec_path = op_dir / "SPEC.md"
+    content = spec_path.read_text(encoding="utf-8")
+    write_file(spec_path, content.replace("# SPEC", "# SPEC v2"))
+    rc, out = _post_edit_spec(spec_path, old_string="# SPEC", new_string="# SPEC v2")
+    assert rc == 0
+    assert json.loads(out)["hookSpecificOutput"]["decision"] == "block"
+
+
+def test_post_edit_spec_dtypes_replace_blocked(tmp_path: Path):
+    """替换（一增一减）不属于"只减不增"，仍 block。"""
+    op_dir = _make_stage5_op_dir(tmp_path)
+    spec_path = op_dir / "SPEC.md"
+    content = spec_path.read_text(encoding="utf-8")
+    write_file(spec_path, content.replace(
+        "supported_dtypes: [bfloat16]", "supported_dtypes: [int32]"))
+    rc, out = _post_edit_spec(
+        spec_path,
+        old_string="supported_dtypes: [bfloat16]",
+        new_string="supported_dtypes: [int32]",
+    )
+    assert rc == 0
+    assert json.loads(out)["hookSpecificOutput"]["decision"] == "block"
+
+
+# ── post-edit: {op}_pypto_impl.py 桥接文件豁免 ──
+
+
+def test_post_edit_bridge_adapter_exempt(tmp_path: Path):
+    """纯 torch 桥接文件（{op}_pypto_impl.py, 无 import pypto）不套用 impl 规则。"""
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    bridge_path = op_dir / "demo_pypto_impl.py"
+    write_file(bridge_path, """import torch
+
+class ModelNew(torch.nn.Module):
+    def forward(self, x):
+        return x
+""")
+    rc, out = _run_hook("post-edit", {"tool_input": {"file_path": str(bridge_path)}})
+    assert rc == 0
+    if out:
+        assert json.loads(out)["hookSpecificOutput"].get("decision") != "block"
+
+
+def test_post_edit_bridge_with_pypto_not_exempt(tmp_path: Path):
+    """文件名匹配但含 import pypto 时按 kernel impl 处理（OL01 缺 @jit → block）。"""
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    bridge_path = op_dir / "demo_pypto_impl.py"
+    write_file(bridge_path, """import pypto
+
+def demo_wrapper(x):
+    return x
+""")
+    rc, decision = _post_edit_decision(str(bridge_path))
+    assert rc == 0
+    assert decision == "block"
+
+
+def test_post_edit_bridge_with_pypto_utils_still_exempt(tmp_path: Path):
+    """桥接文件 import pypto_utils（同名前缀独立包）仍应豁免（AST 判定回归）。"""
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    bridge_path = op_dir / "demo_pypto_impl.py"
+    write_file(bridge_path, """import torch
+import pypto_utils
+
+class ModelNew(torch.nn.Module):
+    def forward(self, x):
+        return x
+""")
+    rc, out = _run_hook("post-edit", {"tool_input": {"file_path": str(bridge_path)}})
+    assert rc == 0
+    if out:
+        assert json.loads(out)["hookSpecificOutput"].get("decision") != "block"
+
+
+def test_post_edit_bridge_with_from_pypto_import_not_exempt(tmp_path: Path):
+    """from 形式 import pypto 也应识别：不豁免，按 kernel impl 检查（缺 @jit → block）。"""
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    bridge_path = op_dir / "demo_pypto_impl.py"
+    write_file(bridge_path, """from pypto import frontend
+
+def demo_wrapper(x):
+    return x
+""")
+    rc, decision = _post_edit_decision(str(bridge_path))
+    assert rc == 0
+    assert decision == "block"

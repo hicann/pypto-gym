@@ -222,6 +222,22 @@ def test_demo_l0():
     assert finding.status == "FAIL"
 
 
+def test_ol21_fail_message_is_self_contained(tmp_path: Path):
+    """FAIL 文案应直接给出合规命名示例（不依赖外部文档考古）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    test = """import torch
+def test_demo_basic():
+    pass
+"""
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL21")
+    assert finding.status == "FAIL"
+    assert "缺少测试级别" in finding.message
+    assert "_l0" in finding.message and "_l1" in finding.message
+    assert "test_demo_l0_basic" in finding.message
+
+
 def test_ol22_fail_when_no_manual_seed(tmp_path: Path):
     mod = load_lint_module()
     op_dir = build_stateless_op_dir(tmp_path, "demo")

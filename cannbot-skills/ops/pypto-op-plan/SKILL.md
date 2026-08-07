@@ -11,6 +11,8 @@ description: Requirement planning — structurally-similar example search and fe
 
 **If requirements are unstructured:** structure them into `SPEC.md` (task summary lives in SPEC.md, not MEMORY.md).
 
+**SPEC.md front matter 的 `supported_dtypes`** 仅收录 P0 输入/输出 tensor 的 dtype 集合，必须与 `REQUIRE.md` 声明一致；权重 buffer 与中间计算 dtype 不写入。模板与生成指引见 skill `pypto-intent-understand`（`templates/spec-template.md`）。
+
 **If environment issues arise:** confirm with the caller whether to ignore them and continue planning.
 
 ## Find structurally similar examples

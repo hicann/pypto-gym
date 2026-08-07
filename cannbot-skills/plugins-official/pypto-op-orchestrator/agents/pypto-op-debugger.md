@@ -51,6 +51,7 @@ Then load **exactly ONE** sub-skill matching the failure category (see router ta
 | **`divergence_fingerprint: "all_fail"`** (`sim=FAIL`, `npu=FAIL`) AND `failure_category: precision` | Load `pypto-precision-debug`. The kernel is wrong at the algorithmic level. |
 | `kernel_ok_npu_only` inside a module with `pypto.loop(NT)` or reverse-scan, AND the module's single-shot output diff does not localize the bug to one expression | Use the **snapshot automation pipeline** (see `pypto-op-verify/references/intermediate-snapshot-automation.md`). Write `custom/<op>/_debug/snapshot_manifest.yaml`, run `snapshot_generator.py`, then `run_snapshot_bisect.sh`. The drift-onset-per-intermediate report isolates the first expression to drift. |
 | `detailed_tensor_compare` `all_close: false` (no known fix, no clear fingerprint) | `pypto-precision-debug` |
+| `failure_category: jit_stall`（设备侧 JIT 编译死锁），或 `slow_compile` 风险提示 | 查 `pypto-op-knowledge` 经验表「JIT 编译卡死 / 编译缓慢排查」（`references/experience_classified/external_error.md` §21）——禁止重跑全量 kernel |
 | Need to bisect the diverging op | `pypto-precision-compare` |
 | **No Python error but wrong output / `FFFFF` / `UNKNOWN` / opaque code / run succeeds but produces zeros** | `pypto-general-debug` **+ follow `DEBUG_GUIDEBOOK.md` §2 ASCEND-log-capture + ast-grep protocol** before loading any other sub-skill |
 | `L0A/L0B/L0C/L1 size exceeded`, `tile align`, `tile shape not set`, `enable_split_k`, or lint OL48 flagged a `set_cube_tile_shapes` misuse | `pypto-general-debug` → `DEBUG_GUIDEBOOK.md` → `references/tile-shapes.md` |
@@ -100,6 +101,7 @@ Verified on matmul Phase M_k — saved a full code→verify cycle. Anti-pattern:
 
 ## Hard rules
 
+- **已否决方案表（MEMORY.md）。** 开工前先读 `custom/<op>/MEMORY.md` → `## 已否决方案表（Rejected Approaches）`（无该节则跳过）。表中方案不得重试，除非携带新证据（新报错形态 / 新实验结论）——且必须在返回中显式说明该证据。
 - **Never** modify production kernel code directly. The fix is applied in a later coding step. You only write diagnostic scratch files (under `custom/<op>/_debug/`) and memory log entries.
 - **All files stay inside the current working directory.** Every file you write — including CPU FP32 reproducers (`tolerance_analysis.py`), snapshot manifests (`snapshot_manifest.yaml`), bisect scripts (`run_snapshot_bisect.sh`), intermediate-tensor dumps, and any other diagnostic artifact — MUST be under `cwd` or one of its subdirectories. Recommended scratch root: `custom/<op>/_debug/` (create with `os.makedirs(..., exist_ok=True)` before first write). **Forbidden**: any absolute path outside `cwd` (`/tmp/...`, `/var/tmp/...`, `/dev/shm/...`, `$HOME` directly, `/root/...`, etc.) and any Python / Bash temp-file primitive that resolves to `/tmp` on Linux: `tempfile.mkdtemp()`, `tempfile.NamedTemporaryFile()`, `tempfile.gettempdir()`, `tempfile.TemporaryDirectory()`, Bash `mktemp`, redirecting to `/tmp/...`. Hard-code the path under `custom/<op>/_debug/` — never let the stdlib pick the location. **Rationale**: writes outside `cwd` trigger sandbox-permission prompts in OpenCode and other harnesses, which interrupt automated generation mid-debug.
 - **Never** advance to the next module. You own one failing file until it passes.

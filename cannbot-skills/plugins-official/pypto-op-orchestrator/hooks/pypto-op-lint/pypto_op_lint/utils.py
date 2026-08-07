@@ -31,6 +31,16 @@ DTYPE_ALIASES: dict[str, str] = {
     "float32": "fp32", "fp32": "fp32", "dt_fp32": "fp32", "torch.float32": "fp32",
     "float16": "fp16", "fp16": "fp16", "dt_fp16": "fp16", "torch.float16": "fp16",
     "bfloat16": "bf16", "bf16": "bf16", "dt_bf16": "bf16", "torch.bfloat16": "bf16",
+    "float64": "fp64", "fp64": "fp64", "dt_fp64": "fp64", "torch.float64": "fp64",
+    "int8": "int8", "dt_int8": "int8", "torch.int8": "int8",
+    "int16": "int16", "dt_int16": "int16", "torch.int16": "int16",
+    "int32": "int32", "dt_int32": "int32", "torch.int32": "int32",
+    "int64": "int64", "dt_int64": "int64", "torch.int64": "int64",
+    "uint8": "uint8", "dt_uint8": "uint8", "torch.uint8": "uint8",
+    "uint16": "uint16", "dt_uint16": "uint16", "torch.uint16": "uint16",
+    "uint32": "uint32", "dt_uint32": "uint32", "torch.uint32": "uint32",
+    "uint64": "uint64", "dt_uint64": "uint64", "torch.uint64": "uint64",
+    "bool": "bool", "dt_bool": "bool", "torch.bool": "bool",
 }
 
 
@@ -235,25 +245,39 @@ def validate_doc_schema(doc_type: str, meta: dict[str, Any]) -> list[str]:
     return _validate_doc_schema(doc_type, meta)
 
 
-def _extract_spec_dtypes_from_meta(meta: dict[str, Any]) -> set[str]:
+def _extract_spec_dtypes_from_meta(meta: dict[str, Any]) -> tuple[set[str], list[str]]:
+    """提取 front matter supported_dtypes 的 canonical dtype 集合。
+
+    返回 ``(recognized, unrecognized)``：识别出的 canonical dtype 集合，
+    以及无法识别的原始条目列表。未识别条目不再静默丢弃，由调用方
+    （OL30）给出"无法识别的 dtype，请检查拼写"提示，避免词表不全
+    导致漏报或产生误导性文案。
+    """
     raw = meta.get("supported_dtypes", [])
     if not isinstance(raw, list):
-        return set()
-    result: set[str] = set()
+        return set(), []
+    recognized: set[str] = set()
+    unrecognized: list[str] = []
     for item in raw:
         key = str(item).strip().lower()
         canonical = DTYPE_ALIASES.get(key)
         if canonical:
-            result.add(canonical)
-    return result
+            recognized.add(canonical)
+        else:
+            unrecognized.append(str(item))
+    return recognized, unrecognized
 
 
 def _extract_test_dtypes(source: str) -> set[str]:
-    """从 test 文件源码中提取使用的 dtype"""
+    """从 test 文件源码中提取使用的 dtype。
+
+    按标识符边界匹配别名（前后不得紧跟 [a-z0-9_]），避免子串误伤：
+    如 ``uint8`` 不应覆盖 ``int8``，``bfloat16`` 不应同时计入 ``float16``。
+    """
     dtypes: set[str] = set()
     lower = source.lower()
     for alias, canonical in DTYPE_ALIASES.items():
-        if alias in lower:
+        if re.search(rf"(?<![a-z0-9_]){re.escape(alias)}(?![a-z0-9_])", lower):
             dtypes.add(canonical)
     return dtypes
 

@@ -5,6 +5,10 @@
 
 Codifies the deterministic parts of ``pypto-op-design/SKILL.md``:
   - Round 0  — complexity signals L/O, total_complexity, module_count
+               (L = effective_lines/30, uncapped but rule-constrained:
+               line count measures golden verbosity, not structure, so it
+               may only lift total to structural + 1; 4+ modules must be
+               justified by the S/O signals or an explicit architect note)
   - Round 2  — pre-Stage-7 tile-shape baseline, per-op UB estimate,
                expression-expansion bound
   - Round 4  — tiling-layer checklist verdicts (machine-checkable subset)
@@ -80,13 +84,22 @@ def count_matmuls(golden: Path) -> int:
 def derive(lines: int, matmuls: int, state_groups: int, cross_tile_reduce: int) -> dict:
     sig_l = lines / LINES_PER_UNIT
     sig_o = (matmuls + cross_tile_reduce) / OPS_PER_UNIT
-    total = max(sig_l, float(state_groups), sig_o)
+    # 规则约束：行数信号 L 只度量 golden 写得啰嗦程度，
+    # 不能独立决定模块数。structural（S/O 结构信号）>= 1 时，L 只允许
+    # 在结构信号基础上 +1 修正；>=4 模块必须由 S/O 信号支撑（或由
+    # architect 在 DESIGN 中显式记录理由）。
+    structural = max(float(state_groups), sig_o)
+    if structural >= 1 and sig_l > structural + 1:
+        total = structural + 1
+    else:
+        total = max(sig_l, float(state_groups), sig_o)
     if total < L0_THRESHOLD:
         module_count = 1
     else:
         module_count = max(1, min(round(total), math.ceil(lines / LINES_CAP_DIVISOR)))
     return {
         "signals": {"L": round(sig_l, 2), "S": state_groups, "O": round(sig_o, 2),
+                    "structural": round(structural, 2),
                     "effective_lines": lines, "matmul_count": matmuls,
                     "cross_tile_reduce_count": cross_tile_reduce},
         "total_complexity": round(total, 2),
@@ -123,6 +136,19 @@ def self_test() -> int:
         ("attention_bwd", 17, 0, 6, 4, 2), ("FA_fwd", 28, 1, 2, 1, 1),
         ("FA_bwd", 45, 2, 4, 2, 2), ("gated_delta_rule", 40, 2, 4, 2, 2),
         ("mamba_ssm", 55, 2, 6, 2, 3),
+        # 规则约束用例：行数信号 L 只允许在结构信号基础上
+        # +1 修正，不能独立推高模块数；>=4 模块必须由 S/O 信号支撑。
+        # 短 golden（~80 有效行, S=1, O≈2）: total=max(2.67,1,2)=2.67 → 3
+        ("short_golden", 80, 1, 3, 3, 3),
+        # 长 golden（~150 有效行, S=1, O≈2）: L=5 > 2+1，行数被 +1 规则截断 → 3
+        ("long_golden", 150, 1, 3, 3, 3),
+        # L 远超 structural 被 +1 截断：L=10, structural=1 → total=2（无
+        # 规则约束时会给 min(round(10), 25)=10 模块）
+        ("line_only_truncated", 300, 1, 1, 2, 2),
+        # structural=0 时 L 正常生效（无结构信号可依附，直接取 max）
+        ("structural_zero", 60, 0, 0, 0, 2),
+        # structural>=3 时可达 4 模块（S=4 支撑）
+        ("structural_ge3", 100, 4, 3, 3, 4),
     ]
     bad = 0
     for name, lines, s, mm, red, want in cases:

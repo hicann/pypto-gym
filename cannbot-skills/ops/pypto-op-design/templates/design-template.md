@@ -33,7 +33,11 @@ L = effective_lines / 30                                   = {value}
 S = loop_carried_state_groups                              = {value}
 O = (matmul_count + cross_tile_reduce_count) / 3           = {value}
 
-total_complexity = max(L, S, O)                            = {value}
+structural = max(S, O)                                     = {value}
+if structural >= 1 and L > structural + 1:
+    total_complexity = structural + 1                      = {value}  # 行数仅允许 +1 修正
+else:
+    total_complexity = max(L, S, O)                        = {value}
 ```
 
 ### 0.3 module_count 决策
@@ -48,6 +52,8 @@ else:
 ```
 
 **Decision**: `module_count = {1 | N}` → `decomposition_level: {L0 | L1}`
+
+> **注**：模块数由结构信号（状态组数 S / 重算子密度 O）决定；行数信号 L 仅允许在结构信号基础上 +1 修正，不能独立推高模块数（`derive_design_params.py`）。≥4 模块必须由 S/O 信号支持，或由 architect 在 DESIGN 中显式记录理由。
 
 ### 0.4 Heavy / Light op 分类 (跨 tile 通信为准)
 

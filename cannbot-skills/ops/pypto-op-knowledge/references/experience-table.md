@@ -14,6 +14,7 @@
 | `F00001` + `not a valid torch tensor type` / `from_torch()` 返回值传给 `@jit` kernel | [external §1](experience_classified/external_error.md) |
 | `F00001` + `Element(): incompatible constructor` | [external §2](experience_classified/external_error.md) |
 | `F00001` + `RecordIfBranch` / `pypto.cond` 不接受任意比较表达式 | [external §3](experience_classified/external_error.md) |
+| `F00001` + `RecordIfBranch`（`@jit` / `@frontend.function` 内写 `pypto.cond`） | [external §20](experience_classified/external_error.md) |
 | `F00005` + `With is not supported` / `pypto.cond` 不支持 `with` 语法 | [external §3](experience_classified/external_error.md) |
 | `F00001` + `Return statements are not allowed` | [external §4](experience_classified/external_error.md) |
 | `F00001` + `reshape() requires integer shape` + `np.int64` | [external §4](experience_classified/external_error.md) |
@@ -26,6 +27,9 @@
 | `F00001` + `transpose dims`（list 传入 transpose） | [external §12](experience_classified/external_error.md) |
 | `F00002` + `Invalid data type ... for Element`（含双重包装） | [external §2](experience_classified/external_error.md) |
 | `F00002` + `Not concrete value` | [external §10](experience_classified/external_error.md) |
+| `F00002` + `Not concrete value`（未装饰 helper 内裸 if `is_loop_begin/end`） | [external §20](experience_classified/external_error.md) |
+| `F00003` + `function nested is not allowed`（`@jit` 内嵌套 `def`） | [external §20](experience_classified/external_error.md) |
+| 无错误码 + JIT 编译卡死（`jit_stall`）/ 编译缓慢（`slow_compile`） | [external §21](experience_classified/external_error.md) |
 | `F00003` + 类型注解 / `Invalid run mode` | [external §11](experience_classified/external_error.md) |
 | `F0FFFF` + `AnnAssign`（类型注解） | [external §11](experience_classified/external_error.md) |
 | `F0FFFF` + `Non-FP8 inputs require identical dtypes` | [matmul §2](experience_classified/matmul.md) |

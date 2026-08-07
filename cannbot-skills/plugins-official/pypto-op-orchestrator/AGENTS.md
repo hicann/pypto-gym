@@ -102,6 +102,10 @@ complete_phase(MN) 之后：
 
 **循环上限**：`fail_phase` 使 `cycles` 递增；当达到 `max_cycles_per_phase`（默认 10）时，phase 变为 `blocked` —— 见下方 `state_transition` 的 "When to rollback (vs. continue the inner loop)" 表格。
 
+**⛔ fast-fail 路由（解析期 / trace 期快速失败，`failure_category=structure`）：**
+
+解析期或 frontend trace 期在 5 秒内返回的失败，按压缩链路处理：debugger 归因 → coder 修复后自跑冒烟自检（`smoke_check_impl.py`），通过后方可重新 `submit_for_verify`。同类错误由 coder 在单个会话内批量修完，不再每个错误各开一轮 verify。冒烟自检通过 ≠ verify 通过——verifier 仍是 PASS/FAIL 的唯一判定方（judge-only 边界不变）；设备级测试一律由 verifier 执行。冒烟自检的执行方式与 `--shapes` 要求由 coder 侧规约定义（`pypto-op-develop` skill / coder agent），不在本文件展开。
+
 **禁止事项：**
 
 - 给 @pypto-op-coder 下达 "实现 M_k … M_N 多个模块" 这种指令
@@ -127,6 +131,12 @@ Stage 5 收尾时编排者已为 `<op>_impl.py` 调用过 `record_artifact_hash`
 
 #### 调度流程
 
+**⛔ Stage 7 调优轮次上限（initial prompt「stage7 性能优化轮次严格控制在 N 轮」）：**
+
+- N 只限制 S4 调优环节（`S4_FRONTEND` / `S4_SWIMLANE` / `S4_INCORE`）的迭代次数，S1/S2/S3/S5 照常执行。
+- **N=0 表示不做调优**：Stage 7 只执行 S1_SETUP → S2_COLLECT → S3_ANALYZE → S5_REPORT，不进入任何 S4 stage。S2_COLLECT 只运行 `test_command` 记录基线执行时间，不启用 `debug_options`、不采集 swimlane profiling；S2 验收标准相应放宽为「基线执行时间已返回且数值合法」，不要求 3 个 profiling 数据文件。注意：0 轮 ≠ 只执行一次 S4_FRONTEND。
+- N≥1 时按下方既有 S4 序列执行（`S4_FRONTEND` 单次开箱 pass → `[S4_SWIMLANE → S4_INCORE] × ≤3 轮`）。
+
 **激活检查（调度 optimizer 之前）：**
 
 进入 Stage 7 的前提是 Stage 6 已 `complete_stage(6)` —— 即 verifier 已判定 E2E 精度（`all_close`）+ layout 通过。编排者据此进入，**不再从 `custom/<op>/MEMORY.md` 复核 all_close / layout 证据**。若 Stage 6 尚未完成，则不进入 Stage 7。
@@ -137,6 +147,8 @@ Stage 5 收尾时编排者已为 `<op>_impl.py` 调用过 `record_artifact_hash`
 2. 计算具体目标值 `perf_target_us`
 3. 确定调优报告路径 `tuning_report_path = custom/<op>/<op_name>_tuning_report.md`
 4. 记录终止条件到 MEMORY.md
+
+**⛔ `perf_target_us` 来源（硬性条款）：** 若 initial prompt 已注入「Stage 7 性能目标」（来源 `task_desc.py` 的 `{platform}_PERF_BASELINE`），`perf_target_us` 必须原样采用该注入值，并透传给每次 Stage 7 dispatch，不得替换为其他来源的数值。
 
 **3 次 dispatch 流程：**
 

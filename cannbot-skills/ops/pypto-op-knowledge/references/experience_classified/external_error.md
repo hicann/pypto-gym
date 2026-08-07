@@ -227,3 +227,38 @@ pypto.cast(x, pypto.DT_INT8, satmode=pypto.SaturationMode.ON)
 | BF16/FP16 (2B) | >= 16 |
 
 `set_vec_tile_shapes(4, 1)` → `FC1001 ERR_CONFIG_ALIGNMENT`。改为 `set_vec_tile_shapes(4, 8)` 等满足 32B 对齐的值。
+
+---
+
+## 20. 分支写法与语义域配对（`is_loop_begin/end` / 循环内分支）
+
+PyPTO 前端有两个语义域，域判定**按装饰器，不按词法位置**：
+
+- **PARSER 域**：带 `@pypto.frontend.jit` 或 `@pypto.frontend.function` 装饰器的函数体（AST 改写）。模块级 `@pypto.frontend.function` helper 会被 parser 内联，同属 PARSER 域——其内写 `pypto.cond` 同样报 F00001。
+- **PLAIN 域**：未装饰的普通函数（trace 期按普通 Python eager 录制，parser 不碰）。
+
+| 写法 \ 域 | PLAIN（未装饰 helper） | PARSER（@jit / @frontend.function） |
+|---|---|---|
+| `if pypto.cond(predicate):` | ✅ 推荐 | ❌ `F00001 TypeError: ... got RecordIfBranch` |
+| 裸 `if pypto.is_loop_begin(idx):` | ❌ `F00002 Not concrete value` | ✅ 合法：parser 自动给 SymbolicScalar 条件包 cond |
+| 裸 `if` + 比较表达式（`if s2_idx < trip:`） | ❌ 同上（`SymbolicScalar.__bool__`） | ✅ AST rewriter 改写 |
+| @jit body 内嵌套 `def inner():` | — | ❌ `F00003 function nested is not allowed`（构造即非法） |
+
+**推荐模式**：online-softmax 类循环放**未装饰 helper** + `pypto.cond(is_loop_begin/end)`；状态张量声明在循环外、全程 `buf[:]` 原地写。
+
+**调试手段**：检查 trace 后分支是否录制，用 `pypto.pypto_impl.Dump()` 导出整个录制程序（`Function.dump()` 只看得到 entry 函数，循环体在隐藏 callee 函数里看不到）。
+
+**关联条目**：`pypto.cond` 不接受任意比较表达式见 §3；嵌套动态 loop 仅最内层带 `unroll_list`。
+
+---
+
+## 21. JIT 编译卡死（jit_stall）/ 编译缓慢（slow_compile）排查
+
+设备侧 JIT 编译卡死是确定性的——无进展时延长等待不会改变结果，**不要重跑全量 kernel**，按以下顺序排查：
+
+**jit_stall（按顺序）：**
+
+1. **分支写法与语义域配对** —— 按 §20 配对表检查 kernel。已知死锁模式：`@jit` body 内裸 `if pypto.is_loop_begin/end`，trace 期合法但可能导致设备侧编译卡死。
+2. **检查 trace 后的分支结构** —— 用 `pypto.pypto_impl.Dump()` 导出整个录制程序（`Function.dump()` 只看 entry 函数，分支体不可见，见 §20）。
+
+**slow_compile：** 检查 `unroll_list` 取值（多值列表导致编译路径爆炸）、循环嵌套深度、`ExpandFunction` 生成函数的数量与规模。

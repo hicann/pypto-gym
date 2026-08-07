@@ -210,6 +210,14 @@ Before writing each module's PyPTO code, review the matching subsections from **
 
 | When | Action | Result | Next |
 
+## 已否决方案表（Rejected Approaches）
+
+verifier/debugger 每次 FAIL 归因后，若结论为「此路线不可行」（而非「此实现有错」），必须向本表追加一行；orchestrator dispatch coder/debugger 时注入本表全文；表中方案不得重试，除非携带新证据并在返回中显式说明；每阶段最多保留 10 行，超出部分由 orchestrator 合并同类项。
+
+| 方案 | 否决证据（报错/会话/时间） | 否决时间 |
+|------|---------------------------|----------|
+| | | |
+
 ## Human review milestones (optional)
 
 MS1 … MS7 as in full workflow — or link to milestones in the relevant sub-skill under `skills/`.

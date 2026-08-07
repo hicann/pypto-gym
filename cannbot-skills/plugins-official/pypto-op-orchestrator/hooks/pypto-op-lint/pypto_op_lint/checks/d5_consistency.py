@@ -91,7 +91,12 @@ def check_ol30(ctx: CheckContext) -> Finding:
     if not test_source:
         return ctx.make_finding("OL30", "SKIP", f"{test_file} 不存在")
 
-    spec_dtypes = _extract_spec_dtypes_from_meta(spec_meta)
+    spec_dtypes, spec_unrecognized = _extract_spec_dtypes_from_meta(spec_meta)
+    if spec_unrecognized:
+        return ctx.make_finding("OL30", "WARN",
+            f"{SPEC_FILE} front matter supported_dtypes 含无法识别的 dtype: "
+            f"{', '.join(spec_unrecognized)}，请检查拼写",
+            file=SPEC_FILE)
     if not spec_dtypes:
         return ctx.make_finding("OL30", "FAIL",
             f"{SPEC_FILE} front matter 中未声明 supported_dtypes",
@@ -100,7 +105,13 @@ def check_ol30(ctx: CheckContext) -> Finding:
     test_dtypes = _extract_test_dtypes(test_source)
     missing = spec_dtypes - test_dtypes
     if missing:
-        canonical_names = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
+        canonical_names = {
+            "fp32": "float32", "fp16": "float16", "bf16": "bfloat16",
+            "fp64": "float64",
+            "int8": "int8", "int16": "int16", "int32": "int32", "int64": "int64",
+            "uint8": "uint8", "uint16": "uint16", "uint32": "uint32",
+            "uint64": "uint64", "bool": "bool",
+        }
         missing_names = sorted(canonical_names.get(d, d) for d in missing)
         return ctx.make_finding("OL30", "FAIL",
             f"{SPEC_FILE} 声明支持的 dtype ({', '.join(missing_names)}) "

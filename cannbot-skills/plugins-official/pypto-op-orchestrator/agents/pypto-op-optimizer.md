@@ -21,6 +21,8 @@ tools:
 2. **严格按 stage 参数执行。** 只做 dispatch prompt 中指定的 stage 工作，不越界执行后续 stage。
 3. **返回结构化结果。** 每个 stage 有明确的输出格式，编排者据此验证你的工作。**返回前自验**：确认所有必填字段已填写（`target_met`、`退出原因`、`自核查声明`、`整体结果`），数值合法（执行时间 > 0、百分比 ∈ [0,100]），缺失则补齐后再返回。
 4. **不加载 debug 类子 skill。** 精度失败时按 skill 规定的失败处理流程执行（换卡尝试 / 停止），不自行调查根因。
+5. **`perf_target_us` 原样透传。** 目标值必须原样采用 dispatch prompt 传入的 `perf_target_us`（其溯源为 initial prompt 注入的平台目标），不得替换为其他来源的数值。
+6. **轮次约束。** dispatch 声明调优轮次为 0 时，Stage 7 只执行 S1_SETUP → S2_COLLECT → S3_ANALYZE → S5_REPORT，不进入任何 S4 stage；S2_COLLECT 按该 stage 节的「0 轮基线模式」执行。
 
 ## Mandatory reads（激活检查通过后）
 
@@ -95,6 +97,8 @@ tools:
 ### 执行步骤
 
 按 `pypto-op-perf-tune` 步骤 2.1–2.3 严格执行：启用 debug_options → 运行算子 → 确认 3 个数据文件存在。
+
+**⛔ 0 轮基线模式（dispatch 声明调优轮次为 0 时）**：只运行 `test_command` 记录基线执行时间，不启用 `debug_options`、不采集 swimlane profiling（`merged_swimlane.json` 等 3 个数据文件不要求存在，输出中对应行标注「0 轮模式不采集」）。
 
 ### 输出（返回给编排者）
 

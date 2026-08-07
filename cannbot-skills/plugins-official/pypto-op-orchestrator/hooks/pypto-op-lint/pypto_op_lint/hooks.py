@@ -34,6 +34,72 @@ from .observability import (
     _emit_gate_event,
     _output_hook_json,
 )
+from .utils import (
+    DTYPE_ALIASES,
+    _parse_front_matter,
+)
+
+
+def _canonical_dtypes(items: object) -> set[str] | None:
+    """把 front matter supported_dtypes 列表归一到 canonical dtype 集合。
+
+    任一元素无法识别时返回 ``None``（调用方应按无法判定处理，不放行）。
+    """
+    if not isinstance(items, list):
+        return None
+    result: set[str] = set()
+    for item in items:
+        canonical = DTYPE_ALIASES.get(str(item).strip().lower())
+        if canonical is None:
+            return None
+        result.add(canonical)
+    return result
+
+
+def _spec_dtypes_reduction_only(data: dict, file_path: str) -> bool:
+    """SPEC.md 冻结豁免：本次 Edit 仅减少 front matter 的 supported_dtypes。
+
+    post-edit hook 只能看到写入后的新内容，因此用 tool_input 携带的
+    ``old_string``/``new_string`` 反推编辑前内容（要求 new_string 在当前
+    文件中唯一出现）。同时满足以下条件才放行：
+
+    1. 新旧内容均有 front matter，且 body 完全一致；
+    2. 除 ``supported_dtypes`` 外 front matter 各字段完全一致；
+    3. 归一化后的 dtype 集合严格缩小（只减不增），且不为空。
+    """
+    tool_input = data.get("tool_input", {})
+    old_string = tool_input.get("old_string")
+    new_string = tool_input.get("new_string")
+    if not isinstance(old_string, str) or not isinstance(new_string, str):
+        return False
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            new_content = f.read()
+    except (OSError, UnicodeDecodeError):
+        return False
+    if new_content.count(new_string) != 1:
+        return False
+    old_content = new_content.replace(new_string, old_string, 1)
+    new_meta, new_body = _parse_front_matter(new_content)
+    old_meta, old_body = _parse_front_matter(old_content)
+    if not old_meta or new_body != old_body:
+        return False
+    new_dtypes = _canonical_dtypes(new_meta.pop("supported_dtypes", None))
+    old_dtypes = _canonical_dtypes(old_meta.pop("supported_dtypes", None))
+    if new_meta != old_meta or new_dtypes is None or old_dtypes is None:
+        return False
+    return bool(new_dtypes) and new_dtypes < old_dtypes
+
+
+def _read_hook_file(file_path: str, basename: str) -> str | None:
+    """为文件分类读取编辑后内容（仅 ``*_pypto_impl.py`` 需要，避免每次 post-edit IO）。"""
+    if not basename.endswith("_pypto_impl.py"):
+        return None
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _post_edit_target(data: dict) -> tuple[CheckContext, str] | None:
@@ -122,25 +188,31 @@ def hook_post_edit() -> int:
     由插件侧拦截本次工具调用。
     """
     os.environ[MODE_ENV] = "post-edit"
-    target = _post_edit_target(_load_hook_input())
+    data = _load_hook_input()
+    file_path = data.get("tool_input", {}).get("file_path", "")
+    target = _post_edit_target(data)
     if target is None:
         return 0
     ctx, basename = target
     # ── SPEC.md 冻结：Stage 1（需求规划）完成后锁定。──
     # 在 Stage 1-7 模型中，SPEC.md 在 Stage 1 产出后便不可修改。
     # 如需合法修订规格，orchestrator 必须先通过 state_transition 回退到 Stage 1。
+    # 豁免：仅减少 front matter supported_dtypes 的修订放行（裁剪多写的
+    # dtype 属于收敛性修复，无需回退 Stage 1 清空后续产物）。
     if basename == SPEC_FILE and ctx.stage is not None and ctx.stage >= 2:
-        _output_hook_json(
-            "PostToolUse",
-            decision="block",
-            reason=(
-                f"[pypto-op-lint] {SPEC_FILE} 在 Stage 1 完成后已冻结。"
-                "如需修订规格，请通过 state_transition 回退到 target_stage=1。"
-            ),
-        )
-        return 0
+        if not _spec_dtypes_reduction_only(data, file_path):
+            _output_hook_json(
+                "PostToolUse",
+                decision="block",
+                reason=(
+                    f"[pypto-op-lint] {SPEC_FILE} 在 Stage 1 完成后已冻结。"
+                    "如需修订规格，请通过 state_transition 回退到 target_stage=1。"
+                    "（例外：仅减少 front matter supported_dtypes 的 Edit 放行）"
+                ),
+            )
+            return 0
 
-    rule_ids = _rule_ids_for_filename(basename)
+    rule_ids = _rule_ids_for_filename(basename, _read_hook_file(file_path, basename))
     if not rule_ids:
         return 0
 

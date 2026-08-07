@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import select
@@ -184,15 +185,61 @@ def _load_hook_input() -> dict[str, Any]:
 SPEC_RULE_IDS = ["OL09"]
 
 
-def _rule_ids_for_filename(filename: str) -> list[str]:
+def _import_node_targets_pypto(node: ast.AST) -> bool:
+    """单个 import 节点是否引入顶层包 ``pypto``。"""
+    if isinstance(node, ast.Import):
+        return any(
+            alias.name == "pypto" or alias.name.startswith("pypto.")
+            for alias in node.names
+        )
+    if isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        return module == "pypto" or module.startswith("pypto.")
+    return False
+
+
+def _imports_top_level_pypto(source: str) -> bool:
+    """AST 判定源码是否 import 了顶层包 ``pypto``。
+
+    ``import pypto`` / ``import pypto.xxx`` / ``from pypto import ...`` /
+    ``from pypto.xxx import ...`` 均视为含 pypto；``import pypto_utils``
+    等同名前缀的独立包不算。``ast.parse`` 失败时保守返回 True（不豁免），
+    避免语法不完整的文件逃逸 impl 规则集。
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    return any(_import_node_targets_pypto(node) for node in ast.walk(tree))
+
+
+def _is_bridge_adapter_file(filename: str, source: Optional[str]) -> bool:
+    """``{op}_pypto_impl.py`` 桥接文件豁免判定。
+
+    benchmark 要求生成的桥接文件命名为 ``{op}_pypto_impl.py``，按规约是
+    纯 torch adapter（含 ``ModelNew`` 类），禁止包含任何 pypto/jit 代码。
+    文件名匹配 ``*_pypto_impl.py`` 且 AST 判定未 import 顶层包 pypto 时
+    认定为桥接文件，不套用 kernel impl 规则集（OL01/OL07/OL08 等）。
+    内容不可获得（``source=None``）或无法解析时不豁免，按普通 impl 处理。
+    """
+    if not filename.endswith("_pypto_impl.py") or source is None:
+        return False
+    return not _imports_top_level_pypto(source)
+
+
+def _rule_ids_for_filename(filename: str, source: Optional[str] = None) -> list[str]:
     """Return rule IDs for post-edit checks on a single file.
 
     Only includes rules that validate the edited file itself.  Cross-file
     consistency rules (target=gate, D5 dimension: OL30-OL34, OL39, OL40,
     OL43) are deferred to the gate/stop check so that half-written
     artefacts don't cause spurious blocks during implementation.
+
+    ``source`` 为编辑后的文件内容（仅桥接文件豁免判定需要，可为 None）。
     """
     if filename.endswith("_impl.py"):
+        if _is_bridge_adapter_file(filename, source):
+            return POST_EDIT_CONSISTENCY_RULE_IDS
         return IMPL_RULE_IDS + POST_EDIT_CONSISTENCY_RULE_IDS
     if filename.endswith("_golden.py"):
         return GOLDEN_RULE_IDS + POST_EDIT_CONSISTENCY_RULE_IDS

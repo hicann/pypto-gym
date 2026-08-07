@@ -1,6 +1,9 @@
 ---
 schema_version: 1
 op_name: {operator_name}
+# supported_dtypes 语义：输入/输出 tensor 的 dtype 集合，必须与 REQUIRE.md
+# 声明一致；权重 buffer 与中间计算 dtype
+# （如量化权重 int8、中间累加 float32）不得写入。
 supported_dtypes: [bfloat16]
 p0_shapes: [[1024, 128], [1024, 256], [1024, 512]]
 tolerance: {tolerance}

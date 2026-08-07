@@ -423,6 +423,7 @@ Evidence: <memory row pointer>.
 | OOM / `rtMalloc failed` | `oom` |
 | `L0A/L0B/L0C/L1 size exceeded`, `tile align`, `tile shape not set`, `enable_split_k` error, or lint OL48 flagged `pypto.set_cube_tile_shapes` misuse | `tile_shape` |
 | Runner `status: "ERROR"` (missing module symbol in impl, malformed YAML, missing `<op>_module<suffix_k>_golden`) | `structure` |
+| `run_kernel_test.py` 判定 `JIT_STALL_SUSPECTED`，或 `COMPILE_SLOW` 在单次延长后仍失败 | `jit_stall` |
 | Layout check exit 1 (non-tile-shape) | `layout` |
 | Anything else | `other` |
 
@@ -472,6 +473,24 @@ Composition verification FAILED. Failing pair: seed=<s> shape=<sh> tensor=<t>. M
 ```
 
 **Composition verification acceptance:** every `(seed, shape, leaf-tensor)` triple matches under the YAML's tolerances.
+
+## 设备测试执行与 stall 处置（hard rules）
+
+所有设备（NPU）测试——per-module 测试、`adversarial_runner.py`、E2E `test_<op>.py`——必须经标准 wrapper 脚本执行，由它为被测命令提供分级超时与超时后的活性探针：
+
+```
+python .opencode/skills/pypto-op-verify/scripts/run_kernel_test.py -- <test command>
+```
+
+- **禁止绕过 wrapper 直接执行设备侧测试命令**。wrapper 以 `KERNEL_TEST_TIMEOUT`（默认 300s）包裹命令，超时后运行约 30s 探针（编译进程组 CPU% + 编译缓存产物增长）：有活性判 `COMPILE_SLOW` 并给予一次延长（`KERNEL_TEST_MAX_EXTEND`，默认 600s，总上限 900s）；无活性则终止运行并判 `JIT_STALL_SUSPECTED`。输出单行判定：`PASS` / `PRECISION_FAIL` / `JIT_STALL_SUSPECTED` / `COMPILE_SLOW` / `EXECUTION_HANG_SUSPECTED`。
+- **重跑预算：同一份未修改的代码最多重跑 1 次。** 未经探针诊断不得靠加大超时重试——病态 JIT stall 是确定性的，延长等待不会改变结果。（AICore 0% 不是 stall 信号：编译发生在 host 侧，只有探针判定有效。）
+- `JIT_STALL_SUSPECTED` → 上报 `failure_category=jit_stall`，探针输出附入判定。
+- `COMPILE_SLOW` 延长后仍失败 → 按 stall 上报（`failure_category=jit_stall`，注明 slow-compile 证据），转 debugger 做 unroll/codegen 膨胀归因；延长后通过则判 PASS，但在 memory 行记录 `slow_compile` 风险提示（编译缓慢常是 unroll/codegen 膨胀的早期信号）。
+- **对照实验只跑一次：** 发生 stall 时，将此前已验证模块的测试运行一次以确认环境健康（先前模块在正常耗时内通过即视为环境健康），随后停止重跑并上报。
+
+## 快速失败的批量上报（hard rule）
+
+失败在 5 秒内返回时（解析期 / frontend trace 期错误，host 侧即可完成检查），不得在首个错误即返回。先执行全量静态检查——`py_compile` + lint + 冒烟自检（`pypto-op-develop` 的 `scripts/smoke_check_impl.py`：import + frontend trace，不占设备）——在一次判定中返回**全部**同类错误，使 coder 能在单轮内批量修复。
 
 ## Hard rules
 

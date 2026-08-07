@@ -78,7 +78,13 @@ def check_ol21(ctx: CheckContext) -> Finding:
         missing.append("level1")
     if missing:
         return ctx.make_finding("OL21", "FAIL",
-            f"缺少测试级别: {', '.join(missing)}", file=test_file)
+            f"缺少测试级别: {', '.join(missing)}。"
+            "合规命名（函数名包含以下任一子串即可）："
+            "level0 → `_l0` 或 `level0`，level1 → `_l1` 或 `level1`；"
+            f"例: `def test_{ctx.op_name}_l0_basic():` 与 "
+            f"`def test_{ctx.op_name}_l1_basic():`。"
+            "（亦接受 功能_P0 / 性能_P0 命名：func_p0 / perf_p0）",
+            file=test_file)
     return ctx.make_finding("OL21", "PASS",
         "包含 Level 0 和 Level 1 测试", file=test_file)
 

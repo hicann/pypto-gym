@@ -448,6 +448,7 @@ Algorithm: Flash Attention (Forward)
   - `{performance_target}`
   - `{atol}` / `{rtol}`
   - 约定：`axes_list` 必须是 YAML 可解析列表（例如 `['N']` 或 `['N','M']`）
+  - 约定：`supported_dtypes` 仅收录 **P0 输入/输出 tensor 的 dtype 集合**；若存在 REQUIRE.md，必须与 REQUIRE.md front matter 的 `supported_dtypes` 保持一致。权重 buffer 与中间计算 dtype（如量化权重 int8、中间累加 float32）**不得写入**——它们不是对外的输入/输出 dtype，写入会导致 Stage 6 的 OL30 要求测试覆盖这些非 P0 dtype
 - `{feature_name}`, `{need_or_not}`, `{confidence}`, `{impl_note}`, `{priority}` — 关键特性表格行（复杂算子必须）
 - `{algorithm_name}` / `{带编号的伪代码步骤}` — 算法描述（可选，复杂算子需要）
 - `{ASCII数据流图}` — 数据流图

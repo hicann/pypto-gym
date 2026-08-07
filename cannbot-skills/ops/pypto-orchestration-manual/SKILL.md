@@ -41,6 +41,7 @@ the team as a set of progressive-disclosure references.
 | 1 | `references/principles.md` | 4 behavioral guidelines (Think, Simplify, Surgical, Goal-Driven) | Always load before the first dispatch of any session |
 | 2 | `references/agents.md` | Sub-agent dispatch contract: roster (stage column), per-agent deliverables / gates / handoff, verifier modes, `failure_category` enum, debugger iteration cap. Sub-agent-internal skill loading lives in each `../../agents/<name>.md` Mandatory reads. | Load before the first sub-agent dispatch; keep it at hand across the whole session |
 | 3 | `references/rules.md` | mandatory rules, module-at-a-time enforcement, 3 prohibitions. Every sub-agent output must pass these | On demand — sub-agents enforce these via their own skills + lint |
+| 4 | `references/lint-gate-rules.md` | pypto-op-lint 门禁规则速查（OL 规则语义、严重级别、适用阶段） | 门禁报 `[OLxx][Sx]` 需要查规则语义或向 subagent 解释拦截原因时 |
 
 These references were previously top-level files under `.agents/`. They
 have been relocated here to enforce the skill-library structure: the pypto-op-orchestrator

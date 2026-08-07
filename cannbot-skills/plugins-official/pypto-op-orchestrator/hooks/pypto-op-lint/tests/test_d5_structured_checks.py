@@ -510,3 +510,112 @@ if __name__ == "__main__":
     write_file(op_dir / "demo_impl.py", impl)
     finding = run_rule(mod, op_dir, "OL62")
     assert finding.status == "PASS"
+
+
+# ── OL30: int 系 dtype 别名与误判防护 ──
+
+
+def _write_spec_with_dtypes(op_dir: Path, dtypes: str):
+    spec = (op_dir / "SPEC.md").read_text(encoding="utf-8")
+    spec = spec.replace("supported_dtypes: [bfloat16]",
+                        f"supported_dtypes: {dtypes}")
+    write_file(op_dir / "SPEC.md", spec)
+
+
+def test_ol30_int_dtypes_recognized_and_covered(tmp_path: Path):
+    """SPEC 声明 bfloat16 + int32，test 覆盖两者 → PASS（修复前 int32 被静默丢弃）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "int32"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nidx = torch.zeros(4, dtype=torch.int32)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "PASS", finding.message
+
+
+def test_ol30_int_dtype_missing_fail(tmp_path: Path):
+    """SPEC 声明 int32 但 test 未覆盖 → FAIL，且文案点名 int32。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "int32"]')
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "FAIL"
+    assert "int32" in finding.message
+
+
+def test_ol30_uint8_does_not_cover_int8(tmp_path: Path):
+    """uint8 不应因子串匹配被当成 int8 覆盖（标识符边界判定）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "int8"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nw = torch.randint(0, 255, (4,), dtype=torch.uint8)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "FAIL"
+    assert "int8" in finding.message
+
+
+def test_ol30_torch_int64_alias_covered(tmp_path: Path):
+    """torch.int64 / DT_INT32 等别名形式可互相覆盖。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "int64"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nidx = torch.arange(4, dtype=torch.int64)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "PASS", finding.message
+
+
+# ── OL30: dtype 词表补全（uint 系/bool/fp64）与未识别 dtype 拒绝静默丢弃 ──
+
+
+def test_ol30_uint_dtypes_recognized_and_covered(tmp_path: Path):
+    """SPEC 声明 uint8，test 覆盖 torch.uint8 → PASS（补词表前 uint8 被静默丢弃）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "uint8"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nw = torch.randint(0, 255, (4,), dtype=torch.uint8)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "PASS", finding.message
+
+
+def test_ol30_bool_fp64_recognized_and_covered(tmp_path: Path):
+    """bool / float64（含 torch. 前缀变体）可识别并互相覆盖。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bool", "float64"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nmask = torch.zeros(4, dtype=torch.bool)\n"
+    test += "\nacc = torch.zeros(4, dtype=torch.float64)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "PASS", finding.message
+
+
+def test_ol30_uint8_not_covered_by_int8(tmp_path: Path):
+    """反向边界回归：SPEC 声明 uint8，test 仅有 int8 → FAIL 点名 uint8。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "uint8"]')
+    test = (op_dir / "test_demo.py").read_text(encoding="utf-8")
+    test += "\nw = torch.full((4,), 7, dtype=torch.int8)\n"
+    write_file(op_dir / "test_demo.py", test)
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "FAIL"
+    assert "uint8" in finding.message
+
+
+def test_ol30_unrecognized_dtype_warn(tmp_path: Path):
+    """SPEC 声明词表外 dtype（拼写错误）→ WARN 提示无法识别，不再静默丢弃。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_spec_with_dtypes(op_dir, '["bfloat16", "floa16"]')
+    finding = run_rule(mod, op_dir, "OL30")
+    assert finding.status == "WARN"
+    assert "无法识别" in finding.message
+    assert "floa16" in finding.message
