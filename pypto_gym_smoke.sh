@@ -34,10 +34,12 @@ function LOG_HEAD() {
 }
 
 function LOG_DO() {
-   local cmd="$*"
+   local -a cmd=("$@")
+   local cmd_desc
    date_time=$(date +%Y%m%d-%H%M%S)
-   echo -e "${BPurple}[Command]${Color_Off} ${date_time} ${Purple}${cmd}${Color_Off}"
-   ${cmd}
+   printf -v cmd_desc '%q ' "${cmd[@]}"
+   echo -e "${BPurple}[Command]${Color_Off} ${date_time} ${Purple}${cmd_desc}${Color_Off}"
+   "${cmd[@]}"
 }
 
 function LOG_INFO() {
@@ -58,7 +60,7 @@ function LOG_ERROR() {
 #    全局初始化操作调用
 #    自定义全局变量及函数实现
 # ======================================================================================================================
-LOG_DO "source $HOME/.bashrc"  # 如果是新环境, 注意修改 .bashrc 内容，去除 [ -z "$PS1" ] && return
+LOG_DO source "$HOME/.bashrc"  # 如果是新环境, 注意修改 .bashrc 内容，去除 [ -z "$PS1" ] && return
 
 # 获取当前脚本目录
 CUR_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -87,42 +89,130 @@ fi
 #     exit 1
 # fi
 
-run_build_ci() {
-    echo "========run build ci==========="
-    local _python3="$1"       # 第一个参数是 python3 路径
-    local desc="$2"           # 第二个参数是任务描述
-    shift 2                   # 剩余参数传给 build_ci.py
+run_pypto_build() {
+    local _python3="$1"
+    local gym_repo="$2"
+    shift 2
 
-    # 检查 python3 是否存在
     if ! command -v "$_python3" &>/dev/null; then
         LOG_ERROR "Python interpreter '$_python3' not found!"
-        exit 1
+        return 1
+    fi
+    if [ ! -f "$gym_repo/build_ci.py" ]; then
+        LOG_ERROR "pypto-gym build proxy '$gym_repo/build_ci.py' not found!"
+        return 1
     fi
 
-    # 开始执行
+    local start_time
+    local end_time
+    local elapsed
     start_time=$(date +%s)
-    # LOG_DO "ccache" "-z"  # 监测 CCACHE 命中率
-    LOG_DO "npu-smi" "info"  # 检测进程残留
-    LOG_HEAD "[BGN] $desc "
-    LOG_DO "$_python3" "build_ci.py" "$@"
-    local ret=$?
-
-    # 结束执行
+    LOG_HEAD "[BGN] Build PyPTO run package"
+    pushd "$gym_repo" > /dev/null || return 1
+    if "$_python3" build_ci.py "$@"; then
+        :
+    else
+        local ret=$?
+        popd > /dev/null || true
+        LOG_ERROR "Build PyPTO run package failed"
+        return "$ret"
+    fi
+    popd > /dev/null || return 1
     end_time=$(date +%s)
     elapsed=$((end_time - start_time))
-    LOG_HEAD "[END] $desc, Ret $ret, duration $elapsed secs."
-    # LOG_DO "ccache" "-s"  # 监测 CCACHE 命中率
+    LOG_HEAD "[END] Build PyPTO run package, duration $elapsed secs."
+}
 
-    # 结果处理
-    if [ $ret -ne 0 ]; then
-        LOG_ERROR "$desc failed"
-        LOG_DO "$_python3" "kill_npu_processes.py"  # 终止 NPU 进程
-        LOG_DO "npu-smi" "info"  # 检测进程残留
-        exit $ret
-    else
-        LOG_INFO "$desc succeeded"
-        LOG_DO "npu-smi" "info"  # 检测进程残留
+install_pypto_run() {
+    local pypto_repo="$1"
+    local cann_path="$2"
+    local timeout_secs="$3"
+    local run_pkg
+
+    if [ ! -d "$pypto_repo/build_out" ]; then
+        LOG_ERROR "PyPTO output directory '$pypto_repo/build_out' not found"
+        return 1
     fi
+    run_pkg=$(find "$pypto_repo/build_out" -maxdepth 1 -type f -name 'cann-pypto_*.run' -print -quit)
+    if [ -z "$run_pkg" ]; then
+        LOG_ERROR "No PyPTO run package found in $pypto_repo/build_out"
+        return 1
+    fi
+
+    LOG_INFO "PYPTO_RUN_PKG=$run_pkg"
+    LOG_HEAD "[BGN] Install PyPTO run package"
+    if timeout --signal=INT "$timeout_secs" \
+        bash "$run_pkg" --full -q --pylocal --install-path="$cann_path"; then
+        :
+    else
+        local ret=$?
+        LOG_ERROR "Install PyPTO run package failed"
+        return "$ret"
+    fi
+    LOG_HEAD "[END] Install PyPTO run package"
+}
+
+run_gym_tests() {
+    local _python3="$1"
+    local gym_repo="$2"
+    local timeout_secs="$3"
+    shift 3
+
+    local device_ids="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+    local imported_pypto
+    local pypto_site="$CANN_PATH/python/site-packages"
+    if [ ! -d "$pypto_site" ]; then
+        LOG_ERROR "PyPTO Python installation directory '$pypto_site' not found"
+        return 1
+    fi
+    export PYTHONPATH="$pypto_site${PYTHONPATH:+:$PYTHONPATH}"
+    local import_probe
+    import_probe=$(mktemp)
+    if ! "$_python3" -c 'import pypto; print(f"__PYPTO_IMPORT_PATH__={pypto.__file__}", flush=True)' >"$import_probe" 2>&1; then
+        LOG_ERROR "Failed to import PyPTO from the run package"
+        cat "$import_probe"
+        rm -f "$import_probe"
+        return 1
+    fi
+    imported_pypto=$(sed -n 's/^__PYPTO_IMPORT_PATH__=//p' "$import_probe" | tail -n 1)
+    rm -f "$import_probe"
+    if [ -z "$imported_pypto" ]; then
+        LOG_ERROR "Failed to determine the imported PyPTO path"
+        return 1
+    fi
+    LOG_INFO "PyPTO imported from: $imported_pypto"
+    if [[ "$imported_pypto" != "$CANN_PATH"* ]]; then
+        LOG_ERROR "PyPTO is not imported from the run package installation under $CANN_PATH"
+        return 1
+    fi
+
+    LOG_HEAD "[BGN] Run pypto-gym tests/ops"
+    pushd "$gym_repo" > /dev/null || return 1
+    if ASCEND_VISIBLE_DEVICES="$device_ids" \
+        PYTEST_AVAILABLE_DEVICES="$device_ids" \
+        timeout --signal=INT "$timeout_secs" \
+        "$_python3" -m pytest tests/ops/ -v --durations=0 -s --capture=no \
+        --rootdir="$gym_repo" -n 16 --dist=loadscope "$@"; then
+        :
+    else
+        local ret=$?
+        popd > /dev/null || true
+        LOG_ERROR "pypto-gym tests failed"
+        return "$ret"
+    fi
+    popd > /dev/null || return 1
+    LOG_HEAD "[END] Run pypto-gym tests/ops"
+}
+
+cleanup_npu_processes() {
+    local _python3="$1"
+    local gym_repo="$2"
+    if [ -f "$gym_repo/kill_npu_processes.py" ]; then
+        "$_python3" "$gym_repo/kill_npu_processes.py" || true
+    else
+        LOG_INFO "Skip NPU process cleanup: $gym_repo/kill_npu_processes.py not found"
+    fi
+    npu-smi info || true
 }
 
 parse_config_key() {
@@ -163,6 +253,7 @@ parse_config_key() {
 
 # PYTHON3_EXE=$(which python3)
 PYTHON3_EXE=/opt/conda/bin/python3
+export PATH="$(dirname "$PYTHON3_EXE"):$PATH"
 LOG_INFO "PYTHON3_EXE=$PYTHON3_EXE"
 
 PYPTO_GOLDEN_PATH=$(parse_config_key "PYPTO_GOLDEN_PATH")
@@ -224,6 +315,7 @@ if [ ! -d "$SRC_DIR" ]; then
     LOG_ERROR "$SRC_DIR is not a valid directory"
     exit 1
 fi
+SRC_DIR=$(cd "$SRC_DIR" && pwd)
 # 检查输出可选参数
 LOG_INFO "SRC_DIR=$SRC_DIR"
 LOG_INFO "SRC_TARGET_BRANCH=$SRC_TARGET_BRANCH"
@@ -241,6 +333,7 @@ if [ -z "$CANN_PATH" ]; then
     LOG_ERROR "  Please check if the key exists and has a valid value in the config file."
     exit 1
 fi
+export CANN_PATH
 LOG_INFO "CANN_PATH=$CANN_PATH"
 
 # 安装 PTO-ISA 包
@@ -277,7 +370,7 @@ if [ ! -f "$SETENV_SH" ]; then
     LOG_ERROR "$SETENV_SH not found (CANN path: $CANN_PATH)"
     exit 1
 fi
-LOG_DO "source $SETENV_SH"
+LOG_DO source "$SETENV_SH"
 
 # 下载pypto代码
 work_dir="$SRC_DIR"
@@ -302,7 +395,7 @@ fi
 echo "work_parent_dir 变量值为: ${work_parent_dir}"
 
 cd "${work_parent_dir}" || exit 1
-git clone https://gitcode.com/cann/pypto.git
+git clone --branch "$SRC_TARGET_BRANCH" --single-branch https://gitcode.com/cann/pypto.git
 
 echo "target_repo 变量值为: ${target_repo}"
 
@@ -321,42 +414,23 @@ cd "${work_dir}" || exit 1
 cd "$SRC_DIR" || { LOG_ERROR "Failed to cd to $SRC_DIR"; exit 1; }
 
 # 调用参数准备
-CHANGED_FILES_PARAM=""
 if [[ "$CI_MODE" == true ]]; then
-    if [ -n "$CHANGED_FILE_FROM_ARG" ]; then
-        changed_file_path="$CHANGED_FILE_FROM_ARG"
-        LOG_INFO "使用外部传入文件: $changed_file_path"
+    if [ -z "$CHANGED_FILE_FROM_ARG" ]; then
+        LOG_ERROR "--ci requires --f <changed-files-file>"
+        exit 1
     fi
-
-    LOG_INFO "$changed_file_path"
-    # if [ -f "$changed_file_path" ]; then
-    #     rm "$changed_file_path"
-    # fi
-
-    CHANGED_FILES_PARAM="--changed_files=$changed_file_path"
+    changed_file_path="$CHANGED_FILE_FROM_ARG"
+    if [ ! -f "$changed_file_path" ]; then
+        LOG_ERROR "Changed-files file '$changed_file_path' not found"
+        exit 1
+    fi
+    LOG_INFO "使用外部传入文件: $changed_file_path"
     LOG_INFO "Changed files content as follows:"
-    LOG_DO "cat $changed_file_path"
+    LOG_DO "cat" "$changed_file_path"
 fi
 
 # 开始执行任务
 total_start=$(date +%s)
-
-device_params=(
-    "-d=0"  "-d=1"
-    "-d=2"  "-d=3"
-    "-d=4"  "-d=5"
-    "-d=6"  "-d=7"
-    "-d=8"  "-d=9"
-    "-d=10" "-d=11"
-    "-d=12" "-d=13"
-    "-d=14" "-d=15"
-)
-common_params=(
-    "--clean"
-    "--verbose"
-    "--cann_3rd_lib_path=$PYPTO_3RD_LIB_PATH"
-    "--golden_path=$PYPTO_GOLDEN_PATH" "$CHANGED_FILES_PARAM"
-)
 
 # 参数默认值
 PYTHON_TOTAL_TIMEOUT=$(parse_config_key "PYTHON_TOTAL_TIMEOUT")
@@ -367,14 +441,60 @@ PYTHON_TOTAL_TIMEOUT="$PYTHON_TOTAL_TIMEOUT"
 LOG_INFO "PYTHON_TOTAL_TIMEOUT=$PYTHON_TOTAL_TIMEOUT"
 
 LOG_HEAD "Python Environment:"
-LOG_DO "$PYTHON3_EXE --version"
-LOG_DO "$PYTHON3_EXE -m pip list"
-run_build_ci "$PYTHON3_EXE" "Python(Examples)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --models "${device_params[@]}"
+LOG_DO "$PYTHON3_EXE" --version
+LOG_DO "$PYTHON3_EXE" -m pip list
+LOG_DO "npu-smi" "info"
 
-# run_build_ci "$PYTHON3_EXE" "Python(STest)" "${common_params[@]}" "--timeout=$PYTHON_TOTAL_TIMEOUT" --stest "${device_params[@]}"
-# # 2026/1/31 增加集合通信测试用例
-# # 2026/3/20: 重新梳理及明确规格 --timeout=300 --case_execute_timeout=35
-# run_build_ci "$PYTHON3_EXE" "C++(STest Distributed)" --frontend=cpp "${common_params[@]}" "--timeout=$CPP_HCCL_TOTAL_TIMEOUT" --stest_distributed "${device_params[@]}" "--case_execute_timeout=$CPP_CASE_EXEC_TIMEOUT"
+# 使用 PyPTO 仓库自身的构建入口生成 run 包。不要传 --just_build_whl，
+# 也不要传 --models/-u/-s，避免在 PyPTO 仓库内提前执行其自身测试。
+if run_pypto_build "$PYTHON3_EXE" "$SRC_DIR" \
+    --clean \
+    --verbose \
+    "--cann_3rd_lib_path=$PYPTO_3RD_LIB_PATH" \
+    "--timeout=$PYTHON_TOTAL_TIMEOUT"; then
+    :
+else
+    ret=$?
+    cleanup_npu_processes "$PYTHON3_EXE" "$SRC_DIR"
+    exit "$ret"
+fi
+
+# gym 验证对象是 run 安装结果，不直接 pip install build_out 中的 whl。
+elapsed_after_build=$(($(date +%s) - total_start))
+RUN_INSTALL_TIMEOUT=$((PYTHON_TOTAL_TIMEOUT - elapsed_after_build))
+if [ "$RUN_INSTALL_TIMEOUT" -le 0 ]; then
+    LOG_ERROR "No timeout budget remains for PyPTO run package installation"
+    cleanup_npu_processes "$PYTHON3_EXE" "$SRC_DIR"
+    exit 124
+fi
+LOG_INFO "RUN_INSTALL_TIMEOUT=$RUN_INSTALL_TIMEOUT"
+
+if install_pypto_run "$target_repo" "$CANN_PATH" "$RUN_INSTALL_TIMEOUT"; then
+    :
+else
+    ret=$?
+    cleanup_npu_processes "$PYTHON3_EXE" "$SRC_DIR"
+    exit "$ret"
+fi
+LOG_DO source "$SETENV_SH"
+
+elapsed_before_tests=$(($(date +%s) - total_start))
+GYM_TEST_TIMEOUT=$((PYTHON_TOTAL_TIMEOUT - elapsed_before_tests))
+if [ "$GYM_TEST_TIMEOUT" -le 0 ]; then
+    LOG_ERROR "No timeout budget remains for pypto-gym tests"
+    cleanup_npu_processes "$PYTHON3_EXE" "$SRC_DIR"
+    exit 124
+fi
+LOG_INFO "GYM_TEST_TIMEOUT=$GYM_TEST_TIMEOUT"
+
+if run_gym_tests "$PYTHON3_EXE" "$SRC_DIR" "$GYM_TEST_TIMEOUT"; then
+    :
+else
+    ret=$?
+    cleanup_npu_processes "$PYTHON3_EXE" "$SRC_DIR"
+    exit "$ret"
+fi
+LOG_DO "npu-smi" "info"
 
 # 总耗时统计
 total_end=$(date +%s)
