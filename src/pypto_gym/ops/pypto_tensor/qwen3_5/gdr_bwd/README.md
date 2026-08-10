@@ -44,6 +44,12 @@ S_i+1  = exp(γ[L-1]) · S_i + kᵀ @ ( v_new ⊙ exp(γ[L-1]-γ) )
 - **V 侧 (HV 头)**: v/g/beta — `HV == H`（不支持 GVA）
 - **chunk_size (BT)**: 分块大小，必须为 2 的幂
 - **A**: 前向保存的 `(I+L)^{-1}`，直接消费不重算（D1/D7）
+- **batch / varlen 约束**: 支持两种模式，不可混用
+
+| 模式 | batch | cu_seqlens | q/k/v/g/beta/do shape | A 矩阵 shape | h0/dht shape | 说明 |
+|------|-------|------------|----------------------|-------------|-------------|------|
+| 等长 batch | ≥1 | None | `[B, T, ...]` | `[B, T, HV, BT]` | `[B, HV, K, V]` | B 条等长独立序列 |
+| varlen | =1 | `[N+1]` int32 | `[1, ΣT, ...]` | `[1, ΣT, HV, BT]` | `[N, HV, K, V]` | 1 条扁平序列，按 cu 分 N 段 |
 
 ### 循环结构
 
@@ -119,18 +125,18 @@ Kernel 内部严格控制 BF16/FP32 转换以平衡精度和性能：
 
 ## 测试用例
 
-通过 `CASES` 字典集中定义，支持 `--case` 按名选择：
+通过 `def test_*()` 的 pytest 函数定义，每个用例在函数中给出 params：
 
 | 用例 | B | T | H | D | BT | varlen 段数 | 说明 |
 |------|---|---|---|----|-----|------------|------|
-| `t256` | 1 | 256 | 16 | 128 | 128 | 2 | 小规模冒烟 |
-| `t1024` | 1 | 1024 | 16 | 128 | 128 | 7 | P0 规模 |
-| `t4096` | 1 | 4096 | 16 | 128 | 128 | 15 | 大序列 |
-| `varlen64_t32k_h8_bt64` | 1 | 32768 | 8 | 128 | 128 | 64 | 性能优化目标 |
+| `test_t256` | 1 | 256 | 16 | 128 | 128 | 2 | 小规模冒烟 |
+| `test_t1024` | 1 | 1024 | 16 | 128 | 128 | 7 | P0 规模 |
+| `test_t4096` | 1 | 4096 | 16 | 128 | 128 | 15 | 大序列 |
+| `test_varlen64_t32k_h8_bt64` | 1 | 32768 | 8 | 128 | 128 | 64 | 性能优化目标，默认 skip |
 
 ### 精度校验
 
-使用 `detailed_tensor_compare` 进行精度验证，按梯度分量分别设置门限：
+kernel(bf16) vs golden(bf16 量化对齐)，按梯度分量分别设置门限：
 
 | 梯度 | rtol | atol | 说明 |
 |------|------|------|------|
@@ -140,46 +146,34 @@ Kernel 内部严格控制 BF16/FP32 转换以平衡精度和性能：
 | `db` | 1e-1 | 1e-1 | beta 梯度链较长 |
 | `dg` | 2.0 | 2.0 | gate 梯度跨 chunk 累积最严重 |
 
-校验输出包括 5 个梯度：`dq`, `dk`, `dv`, `db`, `dg`（`dh0` 可选）。
-
-Golden reference 严格模拟 kernel 内部的 bf16 量化路径（q/k/v/beta/do/A 均 bf16 量化后计算），确保对比基准与硬件行为一致。
-
 ## 运行方式
 
 ```bash
-# 设置设备 ID
 export TILE_FWK_DEVICE_ID=0
 
-# 精度校验（默认 t1024）
-python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py --case t1024 --mode precision
+# pytest 运行全部用例
+python -m pytest tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py -v
 
-# 性能测量
-python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py --case t4096 --mode perf --iters 10
+# 跳过大规模用例
+python -m pytest tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py -v -k "not varlen64"
 
-# 精度 + 性能
-python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py --case t1024 --mode both
+# 直接运行默认用例
+python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py
 ```
-
-**运行参数**:
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--device` | NPU 设备 ID | `TILE_FWK_DEVICE_ID` 环境变量 |
-| `--case` | 用例名 | `t1024` |
-| `--mode` | `precision` / `perf` / `both` | `precision` |
-| `--iters` | 性能测量迭代次数 | 1 |
-| `--warmup` | 性能测量 warmup 次数 | 2 |
-| `--seed` | 随机种子 | 0 |
 
 ## 添加新用例
 
-在 `test_gdr_bwd.py` 的 `CASES` 字典中追加一条：
+在 `test_gdr_bwd.py` 中添加新的 `def test_*()` 函数：
 
 ```python
-"my_case": dict(
-    B=1, T=2048, H=16, D=128, CHUNK=128,
-    VARLEN=[0, 512, 1024, 2048],
-),
+@pytest.mark.soc("950", "910")
+def test_my_case():
+    params = dict(
+        name="my_case",
+        batch=1, seq_len=2048, n_heads=16, d_head=128, chunk_size=128,
+        varlen=[0, 512, 1024, 2048],
+    )
+    do_test_gdr_bwd("my_case", params)
 ```
 
 ## 分块配置

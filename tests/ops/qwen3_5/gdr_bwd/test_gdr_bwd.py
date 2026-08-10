@@ -6,39 +6,39 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""反向 kernel 独立调优脚本（精度 + 性能），不依赖 GdrChain / gdr_fwd。
+"""gdr_bwd 算子精度测试入口（pytest）。
 
 直接调用 ``gdr_bwd_impl.chunk_gated_delta_rule_backward_wrapper``（PyPTO NPU kernel），
 以 ``gdr_bwd_golden.chunk_gated_delta_rule_bwd_torch_golden_aligned``（纯 torch 参考）为基准。
 
-输入构造对齐 ``test_gated_delta_rule_varlen14.py`` 的 varlen case：
-  - q, k, v : [batch=1, seq_len, n_heads=16, d_head=128] bf16/fp32，**不预归一化**（l2norm 在 kernel 内）
-  - g     : [batch=1, seq_len, n_heads] fp32，**自然 log** chunk-local cumsum（g_is_natural_cumsum=True）
-  - beta  : [batch=1, seq_len, n_heads] bf16，post-sigmoid 空间
-  - cu_seqlens : int32，varlen 分段
+测试用例：
+    test_t256                           B=1 T=256   H=16 D=128  2段 varlen（冒烟）
+    test_t1024                          B=1 T=1024  H=16 D=128  7段 varlen（P0规模）
+    test_t4096                          B=1 T=4096  H=16 D=128  15段 varlen
+    test_varlen64_t32k_h8_bt64          B=1 T=32K   H=8  D=128  64段 varlen（默认 skip）
 
-模式：
-  --mode precision : 精度校验（pypto_output vs G，detailed_tensor_compare）
-  --mode perf      : 性能测量（median us，不含 golden）
-  --mode both      : 先精度后性能（默认）
+精度门限（kernel bf16 vs golden bf16量化对齐）：
+    dq  atol/rtol=1e-1（dS carry 累积 + bf16 量化）
+    dk  atol/rtol=3e-2（dS carry 累积较轻）
+    dv  atol/rtol=3e-3（无 dS carry 依赖）
+    db  atol/rtol=1e-1（beta 梯度链较长）
+    dg  atol/rtol=2.0（gate 梯度跨 chunk 累积最严重）
 
 用法：
-    python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py --device 0 --case t1024 --mode both
-    python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py --device 0 --case t4096 --mode perf --iters 10
+    export TILE_FWK_DEVICE_ID=0
+    python -m pytest tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py -v
+    python tests/ops/qwen3_5/gdr_bwd/test_gdr_bwd.py
 """
 import os
 import sys
 import time
-import argparse
-import statistics
 import logging
+
+import pytest
 import torch 
 import torch_npu
 
-_pre = argparse.ArgumentParser(add_help=False)
-_pre.add_argument("--device", type=int, default=int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
-_a, _ = _pre.parse_known_args()
-DEV = _a.device
+DEV = int(os.environ.get("TILE_FWK_DEVICE_ID", "0"))
 os.environ["TILE_FWK_DEVICE_ID"] = str(DEV)
 
 torch.npu.set_device(DEV)
@@ -82,35 +82,6 @@ def _l2norm_vjp(dy, y, rstd):
     return rstd * (dy - dot * y)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# case params
-# ─────────────────────────────────────────────────────────────────────────────
-CASES = {
-    "t1024": dict(
-        batch=1, seq_len=1024, n_heads=16, d_head=128, chunk_size=128,
-        varlen=[0, 163, 297, 421, 540, 658, 781, 1024],
-    ),
-    "t256": dict(
-        batch=1, seq_len=256, n_heads=16, d_head=128, chunk_size=128,
-        varlen=[0, 163, 256],
-    ),
-    "t4096": dict(
-        batch=1, seq_len=4096, n_heads=16, d_head=128, chunk_size=128,
-        varlen=[0, 363, 711, 1046, 1370, 1676, 1975, 2269,
-                2561, 2847, 3130, 3411, 3683, 3950, 4096],
-    ),
-    "varlen64_t32k_h8_bt64": dict(
-        batch=1, seq_len=32768, n_heads=8, d_head=128, chunk_size=128,
-        varlen=[0, 796, 1560, 2262, 2914, 3535, 4137, 4734, 5319, 5893,
-                6415, 6925, 7422, 7898, 8358, 8802, 9234, 9656, 10073, 10488,
-                10878, 11226, 11550, 11860, 12162, 12462, 12758, 13047, 13333, 13613,
-                13893, 14173, 14451, 14728, 15004, 15279, 15551, 15822, 16089, 16354,
-                16616, 16876, 17135, 17394, 17647, 17899, 18151, 18401, 18650, 18896,
-                19138, 19376, 19611, 19842, 20072, 20302, 20530, 20756, 20981, 21204,
-                21419, 21633, 21844, 22041, 32768],
-    ),
-}
-
 
 def _l2norm(x, eps=1e-6):
     r = torch.rsqrt(x.pow(2).sum(-1, keepdim=True) + eps)
@@ -134,17 +105,30 @@ def _varlen_cumsum(x, lens, chunk):
     return out
 
 
-def make_inputs(case_name, seed=0):
-    """构造 varlen 反向输入（l2norm 在 kernel 内，输入不预归一化）。
+def make_inputs(params, seed=0):
+    """构造反向输入（l2norm 在 kernel 内，输入不预归一化）。
+
+    支持两种模式:
+    - varlen=False (默认): 等长 batch 模式，cu=None，strides 由 kernel 内推导
+    - varlen=True: 传入 varlen 分段列表
 
     Returns:
         dict with keys: q_raw, k_raw, v, g_nat(natural cumsum), beta, scale,
-                        cu, q_hat, k_hat, q_rstd, k_rstd, do, h0=None
+                        cu(or None), q_hat, k_hat, q_rstd, k_rstd, do, h0=None
     """
-    c = CASES[case_name]
-    batch, seq_len, n_heads, d_head, chunk_size = c["batch"], c["seq_len"], c["n_heads"], c["d_head"], c["chunk_size"]
-    varlen = c["varlen"]
-    lens = [varlen[i + 1] - varlen[i] for i in range(len(varlen) - 1)]
+    batch, seq_len, n_heads, d_head, chunk_size = params["batch"], params["seq_len"], \
+                            params["n_heads"], params["d_head"], params["chunk_size"]
+    varlen = params.get("varlen")
+    case_name = params.get("name", "unknown")
+
+    if varlen is not None:
+        lens = [varlen[i + 1] - varlen[i] for i in range(len(varlen) - 1)]
+        cu = torch.tensor(varlen, dtype=torch.int32, device=DEVICE)
+        num_seqs = len(lens)
+    else:
+        lens = [seq_len] * batch
+        cu = None
+        num_seqs = batch
 
     gen = torch.Generator(device="cpu").manual_seed(seed)
     q_raw = (torch.randn(batch, seq_len, n_heads, d_head, generator=gen) * 0.7)
@@ -154,15 +138,23 @@ def make_inputs(case_name, seed=0):
     beta = torch.rand(batch, seq_len, n_heads, generator=gen)
 
     # natural-log chunk-local cumsum (g_is_natural_cumsum=True)
-    g_nat = _varlen_cumsum(g_per_token, lens, chunk_size).float()
+    if varlen is not None:
+        g_nat = _varlen_cumsum(g_per_token, lens, chunk_size).float()
+    else:
+        nfull = (seq_len // chunk_size) * chunk_size
+        g_raw = g_per_token.float()
+        g_nat = g_raw.clone()
+        if nfull:
+            g_chunked = g_raw[:, :nfull].view(batch, nfull // chunk_size, chunk_size, n_heads).cumsum(2)
+            g_nat[:, :nfull] = g_chunked.view(batch, nfull, n_heads)
+        if seq_len > nfull:
+            g_nat[:, nfull:] = g_raw[:, nfull:].cumsum(1)
 
     # l2norm 残差（kernel 内做 l2norm，但 wrapper 的 aligned 接口需要归一化后的 q/k + rstd）
     q_hat, q_rstd = _l2norm(q_raw.float())
     k_hat, k_rstd = _l2norm(k_raw.float())
 
     scale = float(d_head ** -0.5)
-    cu = torch.tensor(varlen, dtype=torch.int32, device=DEVICE)
-    num_seqs = len(lens)
 
     # do cotangent
     do = (torch.randn(batch, seq_len, n_heads, d_head, generator=gen) * 0.5)
@@ -182,50 +174,52 @@ def make_inputs(case_name, seed=0):
     k_rstd_d = k_rstd.to(DEVICE)
     do_d = do.to(DEVICE)
 
+    varlen_label = f"varlen{len(lens)}" if varlen is not None else f"batch{batch}"
     return dict(
         q_raw=q_raw_d, k_raw=k_raw_d, v=v_d, g_nat=g_nat_d, beta=beta_d,
-        scale=scale, cu=cu, chunk_size=chunk_size,
+        scale=scale, cu=cu, chunk_size=chunk_size, num_seqs=num_seqs,
         q_hat=q_hat_d, k_hat=k_hat_d, q_rstd=q_rstd_d, k_rstd=k_rstd_d,
         do=do_d, h0=h0, dht=dht,
         lens=lens, case=case_name,
-        shape=f"batch={batch} seq_len={seq_len} n_heads={n_heads} d_head={d_head} varlen{len(lens)}",
+        shape=f"batch={batch} seq_len={seq_len} n_heads={n_heads} d_head={d_head} {varlen_label}",
     )
 
 
 def call_pypto(inp):
-    """调用 PyPTO NPU kernel wrapper。
-
-    wrapper 签名: (q, k, v, g, beta, a_tensor, scale, initial_state, do, dht, ...)
-    - q/k: 归一化后的 [batch, seq_len, n_heads, d_head] fp32（因为 use_qk_l2norm_in_kernel=True）
-    - g: natural-log chunk-local cumsum（g_is_natural_cumsum=True）
-    - a_tensor: 从 forward 重算的 (I+L)^{-1}，shape [batch, seq_len, n_heads, bt]
-    - initial_state=None, dht=None
-    - q_rstd/k_rstd: L2norm VJP 折进 kernel
-    """
     q_hat = inp["q_hat"]
     k_hat = inp["k_hat"]
-    cu = inp["cu"].to(torch.int64)
-    num_seqs = cu.numel() - 1
     bt = inp["chunk_size"]
+    num_seqs = inp["num_seqs"]
+    cu = inp.get("cu")
 
-    # 逐序列重算 A（与 call_golden 一致），A = (I+L)^{-1}
-    a_list = []
-    for n in range(num_seqs):
-        t0, t1 = int(cu[n]), int(cu[n + 1])
-        a_n = recompute_a(k_hat[:, t0:t1], inp["g_nat"][:, t0:t1] / float(PYTO_LN2),
-                          inp["beta"][:, t0:t1], chunk_size=bt)
-        a_list.append(a_n)
-    a_tensor = torch.cat(a_list, dim=1)
+    if cu is not None:
+        # varlen 模式：batch=1，cu 定义分段边界，沿 dim=1 拼接
+        cu64 = cu.to(torch.int64)
+        a_list = []
+        for n in range(num_seqs):
+            t0, t1 = int(cu64[n]), int(cu64[n + 1])
+            a_n = recompute_a(k_hat[:, t0:t1], inp["g_nat"][:, t0:t1] / float(PYTO_LN2),
+                              inp["beta"][:, t0:t1], chunk_size=bt)
+            a_list.append(a_n)
+        a_tensor = torch.cat(a_list, dim=1)
+    else:
+        # batch 模式：每条 batch 独立序列，沿 dim=0 拼接
+        a_list = []
+        for n in range(num_seqs):
+            a_n = recompute_a(k_hat[n:n + 1], inp["g_nat"][n:n + 1] / float(PYTO_LN2),
+                              inp["beta"][n:n + 1], chunk_size=bt)
+            a_list.append(a_n)
+        a_tensor = torch.cat(a_list, dim=0)
 
     return pypto_bwd(
         inp["q_hat"].to(torch.bfloat16), inp["k_hat"].to(torch.bfloat16),
         inp["v"].to(torch.bfloat16), inp["g_nat"], inp["beta"].to(torch.bfloat16),
-        a_tensor,                     # a_tensor from forward (no longer None)
-        inp["scale"],          # scale
-        inp["h0"],             # initial_state
-        inp["do"].to(torch.bfloat16),  # do
-        inp["dht"],            # dht
-        cu_seqlens=inp["cu"],
+        a_tensor,
+        inp["scale"],
+        inp["h0"],
+        inp["do"].to(torch.bfloat16),
+        inp["dht"],
+        cu_seqlens=cu,
         chunk_size=inp["chunk_size"],
         g_is_natural_cumsum=True,
         q_rstd=inp["q_rstd"],
@@ -234,51 +228,47 @@ def call_pypto(inp):
 
 
 def call_golden(inp):
-    """调用 torch golden（非 aligned 版，支持 varlen 非对齐分段）。
-
-    ⚠️ 语义对齐说明：
-    - golden 吃 base-2 gate（g_base2 = g_nat / LN2），内部逐序列调用 _bwd_core。
-    - golden 要求 a_tensor 不为 None，需手动逐序列重算（varlen 感知）。
-    - golden 的 dq/dk 是对传入 q_hat/k_hat 的梯度；pypto wrapper 传 rstd 返回对 raw 的。
-      为对齐：golden 返回后手动做 L2norm VJP 转换。
-    - kernel 收到 bf16 的 q/k，内部 cast 到 fp32 做计算。golden 也要用 bf16 量化后的
-      q/k 来对齐（否则 fp32 vs bf16 的 q/k 差异会放大 dq/dk 的误差）。
-    """
     q_hat = inp["q_hat"]
     k_hat = inp["k_hat"]
-    # bf16 量化：模拟 kernel 收到的 q/k/v/beta/do（bf16 → fp32 cast 后的值）
     q_hat_bf = q_hat.to(torch.bfloat16).to(torch.float32)
     k_hat_bf = k_hat.to(torch.bfloat16).to(torch.float32)
     v_bf = inp["v"].to(torch.bfloat16).to(torch.float32)
     beta_bf = inp["beta"].to(torch.bfloat16).to(torch.float32)
     do_bf = inp["do"].to(torch.bfloat16).to(torch.float32)
-    cu = inp["cu"].to(torch.int64)
-    num_seqs = cu.numel() - 1
+    num_seqs = inp["num_seqs"]
+    cu = inp.get("cu")
     bt = inp["chunk_size"]
 
-    # 逐序列重算 A（varlen 感知），拼回 [1, T, H, bt]
-    # A 用 bf16 量化后的 k_hat 计算，与 kernel 一致
-    a_list = []
-    for n in range(num_seqs):
-        t0, t1 = int(cu[n]), int(cu[n + 1])
-        a_n = recompute_a(k_hat_bf[:, t0:t1], inp["g_nat"][:, t0:t1] / float(PYTO_LN2),
-                          inp["beta"][:, t0:t1].to(torch.bfloat16).to(torch.float32),
-                          chunk_size=bt)
-        a_list.append(a_n)
-    a_tensor = torch.cat(a_list, dim=1)
-    # kernel 内部将 A cast 到 bf16 再做 matmul；golden 也要量化 A 到 bf16 对齐
+    if cu is not None:
+        # varlen 模式，沿 dim=1 拼接
+        cu64 = cu.to(torch.int64)
+        a_list = []
+        for n in range(num_seqs):
+            t0, t1 = int(cu64[n]), int(cu64[n + 1])
+            a_n = recompute_a(k_hat_bf[:, t0:t1], inp["g_nat"][:, t0:t1] / float(PYTO_LN2),
+                              inp["beta"][:, t0:t1].to(torch.bfloat16).to(torch.float32),
+                              chunk_size=bt)
+            a_list.append(a_n)
+        a_tensor = torch.cat(a_list, dim=1)
+    else:
+        # batch 模式，沿 dim=0 拼接
+        a_list = []
+        for n in range(num_seqs):
+            a_n = recompute_a(k_hat_bf[n:n + 1], inp["g_nat"][n:n + 1] / float(PYTO_LN2),
+                              inp["beta"][n:n + 1].to(torch.bfloat16).to(torch.float32),
+                              chunk_size=bt)
+            a_list.append(a_n)
+        a_tensor = torch.cat(a_list, dim=0)
     a_bf = a_tensor.to(torch.bfloat16).to(torch.float32)
 
     out = golden_bwd(
         q_hat_bf, k_hat_bf, v_bf, inp["g_nat"] / float(PYTO_LN2), beta_bf,
         a_bf, inp["scale"], inp["h0"], do_bf, inp["dht"],
-        cu_seqlens=cu,
+        cu_seqlens=cu.to(torch.int64) if cu is not None else None,
         chunk_size=bt,
     )
     out = list(out)
-    # dq: 对 q_hat_bf 的梯度 → 对 q_raw 的梯度（VJP 用 bf16 量化后的 q_hat）
     out[0] = _l2norm_vjp(out[0], q_hat_bf, inp["q_rstd"])
-    # dk: 对 k_hat_bf 的梯度 → 对 k_raw 的梯度
     out[1] = _l2norm_vjp(out[1], k_hat_bf, inp["k_rstd"])
     return tuple(out)
 
@@ -352,86 +342,94 @@ def run_precision(inp):
     return ok
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# perf mode
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# 测试辅助函数
+# =============================================================================
 
-def bench_fn(fn, warmup, iters, *args, **kw):
-    for _ in range(warmup):
-        fn(*args, **kw)
-    torch.npu.synchronize()
-    ts = []
-    for _ in range(iters):
-        torch.npu.synchronize()
-        t0 = time.perf_counter()
-        fn(*args, **kw)
-        torch.npu.synchronize()
-        ts.append((time.perf_counter() - t0) * 1e6)
-    return ts
+def do_test_gdr_bwd(case_name, params, seed=0):
+    """基于 params 运行精度验证。"""
+    logging.info(f"=== run test case: {case_name} ===")
+    inp = make_inputs(params, seed=seed)
+    ok = run_precision(inp)
+    if not ok:
+        raise AssertionError(f"Case {case_name} FAILED")
+    logging.info(f"=== {case_name}: PASS ===")
 
 
-def run_perf(inp, iters, warmup):
-    case = inp["case"]
-    logging.info(f"\n{'=' * 80}")
-    logging.info(f"PERF: {case}  {inp['shape']}  iters={iters} warmup={warmup}")
-    logging.info(f"{'=' * 80}")
+# =============================================================================
+# test cases
+# =============================================================================
 
-    ts = bench_fn(call_pypto, warmup, iters, inp)
-    med = statistics.median(ts)
-    mn = min(ts)
-    mx = max(ts)
-    logging.info(f"  [backward] median={med:11.1f}us  min={mn:11.1f}us  max={mx:11.1f}us  (n={len(ts)})")
-    return med
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# skill 约定的 L0 / L1 入口（OL21）
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_gdr_bwd_l0() -> None:
-    """L0：小规模快速冒烟（t256，2 段 varlen）。"""
-    inp = make_inputs("t256", seed=0)
+@pytest.mark.soc("950", "910")
+def test_t1024():
+    params = dict(
+        name="t1024",
+        batch=1, seq_len=1024, n_heads=16, d_head=128, chunk_size=128,
+        varlen=[0, 163, 297, 421, 540, 658, 781, 1024],
+    )
+    do_test_gdr_bwd("t1024", params)
 
 
-def test_gdr_bwd_l1() -> None:
-    """L1：P0 规模精度验证（t1024，7 段 varlen）。"""
-    inp = make_inputs("t1024", seed=0)
+@pytest.mark.soc("950", "910")
+def test_t256():
+    params = dict(
+        name="t256",
+        batch=1, seq_len=256, n_heads=16, d_head=128, chunk_size=128,
+        varlen=[0, 163, 256],
+    )
+    do_test_gdr_bwd("t256", params)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# main
-# ─────────────────────────────────────────────────────────────────────────────
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--device", type=int, default=DEV)
-    ap.add_argument("--case", default="t1024", choices=list(CASES.keys()))
-    ap.add_argument("--mode", default="precision", choices=["precision", "perf", "both"])
-    ap.add_argument("--iters", type=int, default=1)
-    ap.add_argument("--warmup", type=int, default=2)
-    ap.add_argument("--seed", type=int, default=0)
-    cfg = ap.parse_args()
-
-    inp = make_inputs(cfg.case, seed=cfg.seed)
-    ok = True
-    med = None
-
-    if cfg.mode in ("precision", "both"):
-        ok = run_precision(inp)
-
-    if cfg.mode in ("perf", "both"):
-        med = run_perf(inp, cfg.iters, cfg.warmup)
-
-    logging.info(f"\n{'=' * 80}")
-    logging.info(f"SUMMARY: case={cfg.case} mode={cfg.mode} "
-          f"precision={'PASS' if ok else 'FAIL' if cfg.mode in ('precision', 'both') else 'N/A'}"
-          f"  bwd_median={f'{med:.1f}us' if med else 'N/A'}")
-    logging.info(f"{'=' * 80}")
-
-    return 0 if ok else 1
+@pytest.mark.soc("950", "910")
+def test_t4096():
+    params = dict(
+        name="t4096",
+        batch=1, seq_len=4096, n_heads=16, d_head=128, chunk_size=128,
+        varlen=[0, 363, 711, 1046, 1370, 1676, 1975, 2269,
+                2561, 2847, 3130, 3411, 3683, 3950, 4096],
+    )
+    do_test_gdr_bwd("t4096", params)
 
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+@pytest.mark.soc("950", "910")
+@pytest.mark.skip(reason="large test case")
+def test_varlen64_t32k_h8_bt64():
+    params = dict(
+        name="varlen64_t32k_h8_bt64",
+        batch=1, seq_len=32768, n_heads=8, d_head=128, chunk_size=128,
+        varlen=[0, 796, 1560, 2262, 2914, 3535, 4137, 4734, 5319, 5893,
+                6415, 6925, 7422, 7898, 8358, 8802, 9234, 9656, 10073, 10488,
+                10878, 11226, 11550, 11860, 12162, 12462, 12758, 13047, 13333, 13613,
+                13893, 14173, 14451, 14728, 15004, 15279, 15551, 15822, 16089, 16354,
+                16616, 16876, 17135, 17394, 17647, 17899, 18151, 18401, 18650, 18896,
+                19138, 19376, 19611, 19842, 20072, 20302, 20530, 20756, 20981, 21204,
+                21419, 21633, 21844, 22041, 32768],
+    )
+    do_test_gdr_bwd("varlen64_t32k_h8_bt64", params)
+
+
+@pytest.mark.soc("950", "910")
+def test_t2048():
+    params = dict(
+        name="t2048",
+        batch=1, seq_len=2048, n_heads=4, d_head=128, chunk_size=128,
+        varlen=[0, 2048],
+    )
+    do_test_gdr_bwd("t2048", params)
+
+
+@pytest.mark.soc("950", "910")
+def test_b2_t2048():
+    params = dict(
+        name="b2_t2048",
+        batch=2, seq_len=2048, n_heads=4, d_head=128, chunk_size=128,
+    )
+    do_test_gdr_bwd("b2_t2048", params)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    logging.basicConfig(
+        format='%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s: %(message)s',
+        level=logging.INFO
+    )
+    test_t1024()

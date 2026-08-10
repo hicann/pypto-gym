@@ -43,6 +43,12 @@ S_i+1  = exp(γ[L-1]) · S_i + kᵀ @ ( v_new ⊙ exp(γ[L-1]-γ) )
 - **Q/K 侧 (H 头)**: q/k — 头数 `H`，head dim `K`
 - **V 侧 (HV 头)**: v/g/beta — 头数 `HV`（`HV % H == 0` 时触发 GVA）
 - **chunk_size (BT)**: 分块大小，固定 128
+- **batch / varlen 约束**: 支持两种模式，不可混用
+
+| 模式 | batch | cu_seqlens | q/k/v/g/beta shape | 说明 |
+|------|-------|------------|---------------------|------|
+| 等长 batch | ≥1 | None | `[B, T, ...]` | B 条等长独立序列，各有自己的 state |
+| varlen | =1 | `[N+1]` int64 | `[1, ΣT, ...]` | 1 条扁平序列，按 cu 分段，N 段各有自己的 state |
 
 ### 循环结构
 
@@ -114,65 +120,49 @@ Kernel 内部严格控制 BF16/FP32 转换以平衡精度和性能：
 
 ## 测试用例
 
-通过 `_CASES` 列表集中定义，支持 `--case` 按名选择：
+通过 `def test_*()` 的 pytest 函数定义，每个用例在函数中给出 shape 和 config：
 
-| 用例 | group | B | T | H | HV | D | BT | 说明 |
-|------|-------|---|---|---|----|----|-----|------|
-| `bt128` | precision | 2 | 512 | 4 | 4 | 128 | 128 | chunk_size=128 |
-| `depth256_T32K_H4` | long | 1 | 32768 | 4 | 4 | 128 | 128 | 链深 256（T=32K） |
-| `varlen_T32K_H8` | precision | 1 | 32768 | 8 | 8 | 128 | 128 | 64 段 varlen + l2norm |
+| 用例 | B | T | H | HV | D | BT | 说明 |
+|------|---|---|---|----|----|-----|------|
+| `test_bt128` | 2 | 512 | 4 | 4 | 128 | 128 | chunk_size=128 |
+| `test_depth256_T32K_H4` | 1 | 32768 | 4 | 4 | 128 | 128 | 链深 256（T=32K），默认 skip |
+| `test_varlen_T32K_H8` | 1 | 32768 | 8 | 8 | 128 | 128 | 64 段 varlen + l2norm |
 
 ### 精度校验
 
-使用 `detailed_tensor_compare` 进行双档精度验证：
+kernel(bf16) vs golden(emulate_bf16=True)，逐元素 atol/rtol + 整体 l2_rel 双门限：
 
-```python
-# 主判据：kernel(bf16) vs golden(emulate_bf16=True)
-MAIN_ATOL_O, MAIN_RTOL_O = 2e-3, 2e-3    # o
-MAIN_ATOL_S, MAIN_RTOL_S = 5e-3, 5e-3    # final_state
-MAIN_L2_GATE = 3e-3
-
-# 参考判据：kernel(bf16) vs golden(emulate_bf16=False, fp32 真值)
-REF_ATOL, REF_RTOL = 3e-2, 3e-2
-REF_L2_GATE = 1e-2
 ```
-
-校验输出包括：
-- **o (output)**: 前向输出
-- **final_state**: 最终状态（`output_final_state=True` 时）
-
-Golden reference 严格模拟 kernel 内部的 bf16 舍入点（`emulate_bf16=True`），确保对比基准与硬件行为一致。
+o:           atol/rtol = 2e-3, l2_gate = 3e-3
+final_state: atol/rtol = 5e-3, l2_gate = 3e-3
+long case:   l2_gate = 6e-3（状态递推累积舍入误差放宽）
+```
 
 ## 运行方式
 
 ```bash
-# 设置设备 ID
 export TILE_FWK_DEVICE_ID=0
 
-# 运行全部用例（P 精度 + L 长序列）
+# pytest 运行全部用例
+python -m pytest tests/ops/qwen3_5/gdr_fwd/test_gdr_fwd.py -v
+
+# 直接运行默认用例
 python tests/ops/qwen3_5/gdr_fwd/test_gdr_fwd.py
-
-# 按名选择用例
-python tests/ops/qwen3_5/gdr_fwd/test_gdr_fwd.py --case bt128
-
-# 列出所有可用用例
-python tests/ops/qwen3_5/gdr_fwd/test_gdr_fwd.py --list-cases
-
-# 仅执行 kernel（不跑 golden，供 msprof profiling）
-python tests/ops/qwen3_5/gdr_fwd/test_gdr_fwd.py --no-verify
 ```
 
 ## 添加新用例
 
-在 `test_gdr_fwd.py` 的 `_CASES` 列表中追加一条 dict：
+在 `test_gdr_fwd.py` 中添加新的 `def test_*()` 函数：
 
 ```python
-dict(name="my_case", group="precision", kind="pair", desc="自定义用例",
-     build=dict(b=2, t=1024, h=4, hv=4, d=128, seed=42),
-     call=dict(chunk_size=128)),
+@pytest.mark.soc("950", "910")
+def test_my_case():
+    shape = CaseShape(b=2, t=1024, h=4, hv=4, d=128, seed=42)
+    call_kwargs = dict(chunk_size=128)
+    do_test_gdr_fwd_pair("my_case", shape, call_kwargs)
 ```
 
-`build` 支持的可选参数：
+`CaseShape` 支持的参数：
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
