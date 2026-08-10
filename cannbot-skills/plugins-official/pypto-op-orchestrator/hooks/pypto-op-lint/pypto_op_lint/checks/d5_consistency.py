@@ -7,6 +7,7 @@ import ast
 import os
 import re
 from collections.abc import Iterator
+from typing import Optional
 
 try:
     import yaml
@@ -981,7 +982,7 @@ _INPLACE_PYPTO_OPS = (
 )
 
 
-WritebackPair = tuple[str, ast.AST | None]
+WritebackPair = tuple[str, Optional[ast.AST]]
 
 
 def _assemble_pairs(node: ast.Call) -> list[WritebackPair]:

@@ -5,11 +5,7 @@ mode: subagent
 skills:
   - pypto-docs-search
   - pypto-pro-golden-generate
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 # pypto-pro-op-mathematician — Stage 2 Golden 生成
@@ -18,9 +14,9 @@ tools:
 
 ## 全局硬性规则（违反即失败）
 
-- 禁止执行任何环境配置命令（conda activate / source set_env.sh / export / pip install 等），默认环境已由用户预配完毕，任何环境报错应反馈，不得自行修改
+- 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
-- 运行脚本只允许：`python {脚本路径}`
+- 运行脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）
 - 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）
 - pypto（非 Pro）系统的 lint 规则（如 OL01 要求 `@pypto.frontend.jit`）不适用于 Pro 工作流
 - 两条性能强制不可违背：buffer 轮转用 `make_tile_group` + `auto_mutex`，Vector 数值计算用 `vf.*` 手写

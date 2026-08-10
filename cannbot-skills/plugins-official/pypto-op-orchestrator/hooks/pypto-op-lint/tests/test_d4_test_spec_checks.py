@@ -2,6 +2,9 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
 
 """D4 测试规范规则（OL19-OL22）核心测试。"""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 from .helpers import build_stateless_op_dir, load_lint_module, run_rule, write_file

@@ -23,6 +23,36 @@ ok()   { echo -e "  ${DIM}${GREEN}✓${NC}${DIM} $*${NC}"; }
 warn() { echo -e "  ${YELLOW}⚠${NC}${DIM} $*${NC}"; }
 err()  { echo -e "  ${RED}✗${NC}${DIM} $*${NC}"; }
 info() { echo -e "  ${DIM}${CYAN}→${NC}${DIM} $*${NC}"; }
+
+# Reject an AGENTS.md that this installer's substitution cannot make correct.
+#
+# Called from every branch that installs a substituted copy. It used to live inline in one
+# of the three, and TOOL defaults to "opencode", so a bare `bash init.sh` took a branch
+# with no check at all -- the guard sat 30 lines away in a branch that install never enters.
+#
+# $1 = substituted temp file, $2 = the source AGENTS.md.
+assert_config_root_substitutable() {
+    local substituted="$1" source_file="$2"
+    # The substitution only rewrites the bare `$CANNBOT_CONFIG_ROOT` spelling. An
+    # `os.environ['CANNBOT_CONFIG_ROOT']` read or a single-tool `$(pwd)/.opencode` default
+    # passes through untouched, and on a non-opencode install both resolve to a directory
+    # that does not exist -- Stage-0 bootstrap dies and pro_ops is never pruned.
+    if grep -q "os\.environ\[['\"]CANNBOT_CONFIG_ROOT['\"]\]" "$substituted" \
+       || grep -q '\${CANNBOT_CONFIG_ROOT:-\$(pwd)' "$substituted"; then
+        rm -f "$substituted"
+        err "AGENTS.md still resolves CANNBOT_CONFIG_ROOT at runtime (os.environ or a \$(pwd) default). Use the bare \$CANNBOT_CONFIG_ROOT literal so this installer can substitute it."
+        exit 1
+    fi
+    # Checked against the *source*: a self-referential default
+    # `${CANNBOT_CONFIG_ROOT:-$CANNBOT_CONFIG_ROOT}` looks fine after sed (the fallback
+    # becomes a real path) but resolves to the empty string on the symlink install branch,
+    # which sed never touches -- yielding `/skills/...` at the filesystem root.
+    if grep -q '\${CANNBOT_CONFIG_ROOT:-\$CANNBOT_CONFIG_ROOT}' "$source_file"; then
+        rm -f "$substituted"
+        err "AGENTS.md defaults CANNBOT_CONFIG_ROOT to itself; that resolves to empty when installed by symlink. Detect the config root instead."
+        exit 1
+    fi
+}
 step() { echo -e "${DIM}$*${NC}"; }
 
 list_entry_names() (
@@ -213,6 +243,14 @@ if [ -d "$PLUGIN_ROOT/../../$SKILL_CATEGORY" ]; then
 else
     SHARED_SKILL_ROOT=""
 fi
+# Knowledge base: reference the shared pypto-pro-op-kb directory (pypto-pro knowledge layer)
+# Skills reference it via ../../pypto-pro-op-kb/ relative paths, so it must be symlinked
+# into the config root (e.g. .opencode/pypto-pro-op-kb) for those paths to resolve.
+if [ -d "$PLUGIN_ROOT/../../ops/pypto-pro-op-kb" ]; then
+    SHARED_KB_ROOT="$(cd "$PLUGIN_ROOT/../../ops/pypto-pro-op-kb" && pwd)"
+else
+    SHARED_KB_ROOT=""
+fi
 
 for arg in "$@"; do
     case "$arg" in
@@ -221,6 +259,14 @@ for arg in "$@"; do
         opencode|claude|trae|cursor|copilot|codearts)   TOOL="$arg" ;;
     esac
 done
+
+# KB is a required part of the PyPTO-Pro Stage 1-4 contract. Failing here is
+# clearer and safer than installing a workflow that cannot produce or verify
+# KB_SELECTION.json later.
+if [ -z "$SHARED_KB_ROOT" ]; then
+    err "共享 pypto-pro-op-kb 目录未找到 ($PLUGIN_ROOT/../../ops/pypto-pro-op-kb)，无法安装 PyPTO-Pro 编排器"
+    exit 1
+fi
 
 # If last argument is not a known keyword, treat it as install_path
 if [ $# -gt 0 ]; then
@@ -396,6 +442,18 @@ for name in $AGENTS_TO_INSTALL; do
 done
 
 echo ""
+if [ -n "$SHARED_KB_ROOT" ]; then
+    echo -e "${CYAN}知识库 (pypto-pro-op-kb, 来自共享 pypto-pro-op-kb 目录)：${NC}"
+    target="$CANNBOT_DIR/pypto-pro-op-kb"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        echo -e "  ${YELLOW}pypto-pro-op-kb${NC} → 将被替换为软连接到 ${SHARED_KB_ROOT}"
+    else
+        echo -e "  ${GREEN}pypto-pro-op-kb${NC} → 将创建软连接到 ${SHARED_KB_ROOT}"
+    fi
+    echo -e "    ${DIM}目标路径: $target${NC}"
+fi
+
+echo ""
 echo -e "${CYAN}配置文件：${NC}"
 config_src="$PLUGIN_ROOT/AGENTS.md"
 if [ "$TOOL" = "opencode" ]; then
@@ -506,6 +564,17 @@ if [ "$TOOL" = "opencode" ]; then
         done
         step1_summary="${step1_summary} references"
     fi
+
+    # Knowledge base symlink (shared pypto-pro-op-kb, if present)
+    # Skills reference it via ../../pypto-pro-op-kb/ relative paths; the symlink at
+    # $CANNBOT_DIR/pypto-pro-op-kb makes those paths resolve from the config root.
+    if [ -n "$SHARED_KB_ROOT" ]; then
+        target="$CANNBOT_DIR/pypto-pro-op-kb"
+        [ -e "$target" ] || [ -L "$target" ] && rm -rf "$target"
+        ln -sfn "$SHARED_KB_ROOT" "$target"
+        step1_summary="${step1_summary} pypto-pro-op-kb"
+    fi
+
     if [ "$INSTALL_OPENCODE_HOOKS" = true ]; then
         mkdir -p "$CANNBOT_DIR/plugins" "$CANNBOT_DIR/hooks"
         # Remove only files owned by this orchestrator before copying. This
@@ -551,12 +620,17 @@ if [ "$TOOL" = "opencode" ]; then
         if [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
             PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
             ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
+            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
+            # this script knows which root the chosen tool actually got.
+            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
             tmpfile=$(mktemp)
             sed \
+              -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
               -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
               -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
               -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
               "$config_src" > "$tmpfile"
+            assert_config_root_substitutable "$tmpfile" "$config_src"
             safe_install_file "$tmpfile" "$config_target" "AGENTS.md" "$LEVEL"
         else
             ln -sf "$config_src" "$config_target"
@@ -575,12 +649,17 @@ elif [ "$TOOL" = "claude" ]; then
     elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
         PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
         ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
+            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
+            # this script knows which root the chosen tool actually got.
+            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
         tmpfile=$(mktemp)
         sed \
-          -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
+          -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
+              -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
           -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
           -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
           "$config_src" > "$tmpfile"
+        assert_config_root_substitutable "$tmpfile" "$config_src"
         safe_install_file "$tmpfile" "$config_target" "CLAUDE.md" "$LEVEL"
     else
         if [ -e "$config_target" ] && [ ! -L "$config_target" ]; then
@@ -603,12 +682,17 @@ else
     elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
         PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
         ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
+            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
+            # this script knows which root the chosen tool actually got.
+            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
         tmpfile=$(mktemp)
         sed \
-          -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
+          -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
+              -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
           -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
           -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
           "$config_src" > "$tmpfile"
+        assert_config_root_substitutable "$tmpfile" "$config_src"
         safe_install_file "$tmpfile" "$config_target" "AGENTS.md" "$LEVEL"
     else
         if [ -e "$config_target" ] && [ ! -L "$config_target" ]; then
@@ -654,10 +738,15 @@ else
         link_count=$((link_count + 1))
     done
 
-    # Clean broken symlinks
-    for link in "$DISCOVERY"/*/; do
+    # Clean broken symlinks.
+    # `*/` only matches paths the shell can resolve to a directory, which a DANGLING
+    # symlink is not -- so this loop never cleaned the thing it is named for. Observed
+    # after a skill was deleted: its discovery symlink survived every reinstall. Glob
+    # both forms and test with -L, which is true for a dangling link.
+    for link in "$DISCOVERY"/* "$DISCOVERY"/*/; do
         link="${link%/}"
-        [ -L "$link" ] && [ ! -e "$link" ] && rm "$link"
+        [ -L "$link" ] || continue
+        [ -e "$link" ] || rm -f "$link"
     done
 
     ok "Skills: $link_count discovery symlinks"
@@ -713,6 +802,14 @@ else
         done
         ok "References: $ref_link_count discovery symlinks"
     fi
+
+    # Knowledge base symlink (shared pypto-pro-op-kb, if present) for non-opencode tools
+    if [ -n "$SHARED_KB_ROOT" ]; then
+        target="$CONFIG_ROOT/pypto-pro-op-kb"
+        [ -e "$target" ] || [ -L "$target" ] && rm -rf "$target"
+        ln -sfn "$SHARED_KB_ROOT" "$target"
+        ok "pypto-pro-op-kb: linked to $SHARED_KB_ROOT"
+    fi
 fi
 echo ""
 
@@ -749,6 +846,18 @@ for sub in skills agents; do
     health_ok=false
   fi
 done
+
+# Check required knowledge base symlink.
+if [ -n "$SHARED_KB_ROOT" ]; then
+    kb_target="$CANNBOT_DIR/pypto-pro-op-kb"
+    if [ ! -e "$kb_target" ] && [ ! -L "$kb_target" ]; then
+        health_errors="${health_errors}\n  ${RED}✗${NC} pypto-pro-op-kb/ symlink missing (required knowledge base unavailable)"
+        health_ok=false
+    elif [ -L "$kb_target" ] && [ ! -e "$kb_target" ]; then
+        health_errors="${health_errors}\n  ${RED}✗${NC} pypto-pro-op-kb/ symlink broken"
+        health_ok=false
+    fi
+fi
 
 # Check config file
 if [ "$TOOL" = "opencode" ]; then
@@ -803,6 +912,11 @@ if [ -d "$CANNBOT_DIR/agents" ]; then
     python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
 fi
 
+KB_INSTALLED=false
+if [ -n "$SHARED_KB_ROOT" ] && { [ -e "$CANNBOT_DIR/pypto-pro-op-kb" ] || [ -L "$CANNBOT_DIR/pypto-pro-op-kb" ]; }; then
+    KB_INSTALLED=true
+fi
+
 cat > "$MANIFEST" << MANIFEST_EOF
 {
   "brand": "CANNBot",
@@ -812,6 +926,7 @@ cat > "$MANIFEST" << MANIFEST_EOF
   "tool": "$TOOL",
   "installed_skills": $SKILLS_JSON,
   "installed_agents": $AGENTS_JSON,
+  "kb_installed": $KB_INSTALLED,
   "brand_dir": "$CONFIG_ROOT",
   "install_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

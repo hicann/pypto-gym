@@ -7,6 +7,18 @@
 
 ---
 
+## Knowledge Bindings
+
+> 逐条覆盖 `KB_SELECTION.json.optional_patterns` 与 `required_constraints`。可选模式必须产生
+> 真实、独立的设计不变量；若前提不成立、仅属背景或作用重复，回退 Stage 1 删除或替换，
+> 不得强行绑定。必需约束不得省略，不适用时写明理由交 verifier 裁定。
+
+| 类型 | KB 相对路径 | 本 class 的具体不变量 | 计划实现位置 | verifier 检查方法 |
+|---|---|---|---|---|
+| optional pattern / required constraint | `{patterns/... 或 constraints/...}` | `{不是标题复述，而是可落到代码的约束}` | `{文件 + symbol/设计章节}` | `{静态检查/运行/profiling 证据}` |
+
+---
+
 ## §0 Module 划分（R0 输出）
 
 ### 维度契约
@@ -51,7 +63,28 @@
 
 > **性能强制**：Vector 数值计算步骤须映射到 `vf.*` 指令序列（通过 `@pl.vector_function` 装饰器或 `@pl.inline` + `with pl.section_vf():` 块，在 `section_vector()` 内执行）。Cube 步骤用 `pl.*` Cube API。具体 vf 指令选用以 vf API 文档与官方指定算子为准。
 >
-> ⚠️ 本标注为性能强制要求，**不可改写为 `pl.*` Vector API 或其他非 vf 措辞**。若 vf.* 路径不可行，须按 R1 流程第 5 步标注 unsupported 并触发回退——不得通过改写本措辞使非 vf 方案"合规"。
+> ⚠️ 本标注为性能强制要求，**不可改写为 `pl.*` Vector API 或其他非 vf 措辞**——不得通过改写措辞使非 vf 方案"合规"。
+>
+> **vf.* 路径不可行时，先判是不是下面两类例外**（不是直接走 unsupported 回退）：
+>
+> | 类别 | 含义 |
+> |---|---|
+> | `capability_missing` | 目标版本没有对应 vf 指令，或其 dtype/shape/layout 约束使该步骤无法表达 |
+> | `incorrect` | 能写出来但结果错（精度、边界或语义不符） |
+>
+> 属于其一 → 在该步骤下方填 `tile_op_exception:` 行（格式见下），**就地继续设计，不回退**。
+> 两类都不属于（含「实测更快」「更简洁」「tile-op 也能做」）→ **不是例外**，按 R1 第 5 步标注
+> unsupported 并触发回退。
+>
+> ```
+> tile_op_exception: capability_missing | incorrect
+>   step:     <本 §1 中的哪一步>
+>   evidence: <API 文档原文，或实测报错原文；不接受性能数据>
+> ```
+>
+> **这一行由 stage3-check #10 裁定**——verifier 会实际去查 API 文档与官方样例求证，找到可用
+> vf 写法即判 FAIL 并回退本阶段。裁定通过后该例外冻结，Stage 4 只核对实现与它逐条对应，
+> **coder 无权新增或改写**。
 
 ### Phase1 API 调用序列
 

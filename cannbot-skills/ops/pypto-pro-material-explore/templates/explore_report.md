@@ -31,7 +31,7 @@ feasibility: {feasibility}
 | 类别 | 是否涉及 | 关键 API | 指定算子是否覆盖 |
 |------|---------|----------|------------------|
 | 数据搬运 | {是/否} | `load_tile` / `store_tile` / `load` / `store` / `move` | {覆盖 / 未覆盖} |
-| VF 计算（Vector 数值计算强制） | {是/否} | `vf.add` / `vf.mul` / `vf.max` / `vf.cast` / `vf.exp_sub` / `vf.muls` 等 | 覆盖（FA/lightning/vf_api） |
+| VF 计算（Vector 数值计算强制） | {是/否} | `vf.add` / `vf.mul` / `vf.max` / `vf.astype` / `vf.exp_sub` / `vf.muls` 等 | 覆盖（FA/lightning/vf_api） |
 | 矩阵计算（Cube） | {是/否} | `matmul` / `matmul_acc` | 覆盖（matmul 类样例） |
 | 系统访问 | 是 | `get_block_idx` / `get_block_num` | 覆盖 |
 | 控制流 | 是 | `section_vector` / `section_cube` / `pl.range` | 覆盖 |

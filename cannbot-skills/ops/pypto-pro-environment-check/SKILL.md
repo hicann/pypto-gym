@@ -130,12 +130,42 @@ HANG_CONFIRMED 后，**跑一次 Step 2 的 `env_preflight.py`** 拿可用卡列
 - 有其他健康卡 → 反馈编排器换卡重派（`TILE_FWK_DEVICE_ID` 指定健康卡），原卡标记不可用。
 - 无其他可用卡 → 停机向用户反馈，附完整评定证据。
 
+## 设备故障伪装成精度失败（无超时路径）
+
+上面的三段式由**超时 / 无响应**触发。但坏卡还有一条**不触发任何超时**的表现形式，
+且更危险：**运行正常结束，干净地报出 `TOTAL 0/N passed`**。
+
+这在现场发生过：一次完整评测跑完，代码生成阶段成功（数十个 kernel、模块正常 parse），随后全部 case "失败"。按"以 `passed` 为准"的规则，
+这读起来就是灾难性回归，其预先登记的响应是 **revert 两个 commit**——而那两个 commit
+毫无问题，坏的是卡。
+
+**判别要点：坏卡在比对*之前*就失败了，坏 kernel 是比对*失败*。** 按下列证据判断，
+任何一条命中即高度怀疑设备故障：
+
+| 证据 | 设备故障 | kernel 缺陷 |
+|---|---|---|
+| 异常类型 | `RuntimeError`，来自 `npuSynchronizeDevice` / `copy_between_host_and_device_opapi` 等同步/拷贝入口 | 报出 MARE/MERE 与阈值对比，不抛异常 |
+| 波及范围 | N/N 全失败，**包括本次改动根本没碰的 case** | 选择性失败，与改动相关 |
+| core id | 报出的 core id **超出该 SKU 的核数**（如 56 核的卡报 core 56–63） | 在合法范围内 |
+| 跨进程 | 相隔数分钟的两个独立进程，**逐核 dump 逐字节相同**（只有 serial 号变化）——这是被闩锁的错误被重复读出，不是发生了两次故障 | 两次故障不会产生相同寄存器状态 |
+| control | **control 工作负载本身失败**（纯 `torch.sqrt`，在任何自定义 kernel 启动之前） | control 正常 |
+| `npu-smi` | `Alarm`；或 Util 恒为 100% 且占着 HBM 但**没有任何进程在跑**；降温后仍 `Alarm` 说明是卡死不是过热 | 健康 |
+
+**处置**：不进 debug 循环，不回退代码。按 `env_error` 上报，附上述证据，并在报告中
+**明确声明该次运行未产生任何精度结论**（"未测量"，而非"测量为 0/N"）。
+
+**总规则**：`TOTAL n/N passed` 只有在**精度比对确实执行过**时才是精度结论。
+处置任何"全量失败"之前，先要求能证明比对执行过的**正面证据**——先读 `npu-smi`
+（只读、一次往返），再归因于代码。
+
+---
+
 ### 评定结论输出格式
 
 反馈环境问题时必须附此结论，编排器据证据决策：
 
 ```
-device_assessment: HANG_CONFIRMED / TRANSIENT_RECOVERED / DEVICE_HEALTHY
+device_assessment: HANG_CONFIRMED / TRANSIENT_RECOVERED / DEVICE_HEALTHY / FAULT_NO_TIMEOUT
 smoke_script: <脚本路径>
 smoke_result: PASS / FAIL / TIMEOUT (attempt <n>/5)
 evidence: <smoke 输出原文 + npu-smi 状态>

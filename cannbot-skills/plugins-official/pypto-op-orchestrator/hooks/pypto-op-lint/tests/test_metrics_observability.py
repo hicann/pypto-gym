@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
 
+from __future__ import annotations
+
 import importlib.util
 import json
 import os

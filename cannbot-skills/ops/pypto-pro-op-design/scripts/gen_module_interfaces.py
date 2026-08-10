@@ -30,6 +30,16 @@ from pathlib import Path
 _LOGGER = logging.getLogger("gen_module_interfaces")
 
 
+def _emit_skeleton(skeleton: str) -> None:
+    """Write generated YAML to stdout through a non-propagating logger."""
+    output_logger = logging.Logger("gen_module_interfaces.output", level=logging.INFO)
+    output_logger.propagate = False
+    output_handler = logging.StreamHandler(sys.stdout)
+    output_handler.setFormatter(logging.Formatter("%(message)s"))
+    output_logger.addHandler(output_handler)
+    output_logger.info("%s", skeleton)
+
+
 def extract_golden_signature(golden_path: Path) -> dict:
     """Parse the golden function signature to extract primary input names.
 
@@ -126,7 +136,16 @@ composition_verification:                 # 组合验证参数（atol/rtol 从 S
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # The skeleton goes to stdout with print(); diagnostics stay on stderr.
+    #
+    # Both halves are load-bearing, and getting either wrong is silent. The documented
+    # usage redirects stdout into custom/<op>/module_interfaces.yaml, so logging the
+    # skeleton (logging defaults to stderr) produced a 0-byte file. But routing the whole
+    # logger to stdout to fix that was worse: an error then landed *inside* the YAML, and
+    # validate_module_yaml.py reports PASS on it -- a one-key mapping parses fine, so
+    # `modules` is [] and module_count defaults to 0 == len([]). The architect advanced to
+    # Stage 4 with an error string as the module contract. Split the two streams instead.
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
     ap = argparse.ArgumentParser(
         description="Generate module_interfaces.yaml skeleton"
     )
@@ -144,7 +163,7 @@ def main() -> int:
     op_name = args.op or extract_op_name(args.golden)
 
     skeleton = generate_skeleton(args.golden, args.spec, op_name)
-    _LOGGER.info("%s", skeleton)
+    _emit_skeleton(skeleton)
     return 0
 
 

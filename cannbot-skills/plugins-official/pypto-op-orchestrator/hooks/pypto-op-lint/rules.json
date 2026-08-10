@@ -618,7 +618,7 @@
         6
       ],
       "target": "impl",
-      "rule": "Layer K host wrapper 内禁止调用 pypto.zeros / pypto.empty / pypto.ones / pypto.full —— 这些是 JIT-context creation API, 在 host 上下文调用会 runtime crash (`device=` kwarg 不接受, 或 `F21003 INVALID_TYPE`)。output buffer 必须用 torch.empty / torch.zeros / torch.empty_like 等 torch allocation API (显式 dtype= 与 device=) 预先分配, 再作为参数传给 @pypto.frontend.jit 入口。每个传入 JIT 入口的 Name 参数必须解析到 wrapper 参数, 或 torch.* allocation, 或对 wrapper 参数的 torch 变换 (例 .reshape / .contiguous)"
+      "rule": "Layer K host wrapper 内禁止调用 pypto.zeros / pypto.empty / pypto.ones / pypto.full —— 这些是 JIT-context creation API, 在 host 上下文调用会 runtime crash (`device=` kwarg 不接受, 或 `F21003 INVALID_TYPE`)。output buffer 必须用 torch.empty / torch.zeros / torch.empty_like 等 torch allocation API (显式 dtype= 与 device=) 预先分配, 再作为参数传给 @pypto.frontend.jit 入口。每个传入 JIT 入口的 Name 参数必须解析到 wrapper 参数, 或 torch.* allocation, 或对 wrapper 参数的 torch 变换 (例 .reshape / .contiguous)——此处只解析参数来源，不表示这些变换是推荐做法；会 materialize 的变换应移入 kernel，见 pypto-pro-op-kb/constraints/wrapper-boundary.md"
     },
     {
       "id": "OL52",
@@ -668,7 +668,7 @@
         7
       ],
       "target": "impl",
-      "rule": "<op>_impl.py 内 torch 仅可用于 layout/alloc/cast/reshape；任何 torch 张量算术 (torch.matmul / .exp / .sum / `@` / F.* 等) 即 FAIL。算子数值计算必须在 @pypto.frontend.jit 图内用 pypto.* op 实现，host (wrapper / 非 JIT helper) 只允许打包/分配/布局/dtype 转换。封堵 dummy-JIT 全谱 (dead JIT+host torch / 小 JIT+torch 主计算 / torch 旁路再计算)。AST 检测，忽略注释与 __main__/_validate 等自测块"
+      "rule": "<op>_impl.py 内 torch 仅可用于 layout/alloc/cast/reshape；任何 torch 张量算术 (torch.matmul / .exp / .sum / `@` / F.* 等) 即 FAIL。算子数值计算必须在 @pypto.frontend.jit 图内用 pypto.* op 实现。封堵 dummy-JIT 全谱 (dead JIT+host torch / 小 JIT+torch 主计算 / torch 旁路再计算)。AST 检测，忽略注释与 __main__/_validate 等自测块。**本规则判定的是「是否把计算搬到 host 作弊」，不是 wrapper 允许做什么的清单**——layout/cast/reshape 不构成作弊，但它们仍是被计入分数的 device 算子，由 pypto-pro-op-kb/constraints/wrapper-boundary.md 单独约束；本规则放行不等于允许。"
     },
     {
       "id": "OL53",
@@ -733,7 +733,10 @@
       "id": "OL61",
       "severity": "S1",
       "dimension": "D2",
-      "stages": [5, 6],
+      "stages": [
+        5,
+        6
+      ],
       "target": "gate",
       "rule": "Experience Preflight 门禁（Stage 5/6，Coder 写 impl 前创建并自检；Stage 1-4 不触碰 MEMORY.md）: (1) MEMORY.md `## Experience Preflight` section 存在且非占位符; (2) 格式合规（markdown checklist 非表格，≤20 条，[-] 项须有 ⚠️ 待验证 注释）; (3) 所有 [-] 待验证项必须消除（改为 [x] 或标注 ✅ 已知风险）; (4) 对 impl.py 做 AST 扫描检测 4 类反模式（F4 非法 cast 路径/F2 Element 双重包装/F1 scalar 首参/F8 zeros dtype 位置错误）"
     }

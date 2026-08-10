@@ -30,14 +30,14 @@ description: 分析 PyPTO 算子的性能指标。用于分析 PyPTO 算子的�
 ### 使用方法
 
 ```bash
-# 传入完整的 output 目录路径（推荐使用绝对路径）
+# 传入 output 目录路径（相对于仓库根，或由仓库根拼出的路径）
 python3 <脚本路径>/analyze_perf.py <output_dir>
 
 # 示例1：在算子目录下执行的，output 就在算子目录下
 python3 scripts/analyze_perf.py custom/operator_name/output/output_20260304_171658_543682_529508
 
-# 示例2：使用绝对路径
-python3 scripts/analyze_perf.py /home/user/project/custom/operator_name/output/output_20260304_171658_543682_529508
+# 示例2：从其他目录执行时，用仓库根变量拼出路径，不要写死机器路径
+python3 scripts/analyze_perf.py "$REPO_ROOT"/custom/operator_name/output/output_20260304_171658_543682_529508
 ```
 
 **⚠️ 路径说明**：

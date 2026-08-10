@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-material-explore
-description: PyPTO-Pro 资料探索。构建 PRO_MATERIAL_INDEX.md 资料索引（API 文档 + 官方指定算子样例 + 教程），基于索引从三个方向依次探索（API 映射/约束检查、指定样例参考、教程设计模式），产出 EXPLORE_REPORT.md。触发词：资料探索、API 探索、查找 API、PyPTO-Pro 有没有 xxx、支持什么 dtype、约束是什么、API 映射、可行性分析、这个算子能做吗、pl.api。
+description: 探索和评估 PyPTO-Pro 算子开发资料。用于查询 API 可用性、dtype、shape、layout、内存和平台约束，查找官方样例与设计指南，或在设计前形成带来源的可行性与 API 映射结论。
 ---
 
 # pypto-pro-material-explore
@@ -18,6 +18,30 @@ description: PyPTO-Pro 资料探索。构建 PRO_MATERIAL_INDEX.md 资料索引�
 
 ---
 
+## 实现选择规则
+
+探索阶段先确定正确、受支持的实现，再用目标平台实测选择性能方案：
+
+1. **buffer 管理优先复用目标版本的官方模式**：需要 buffer
+   切换或轮转时，先检查当前 API 文档与官方样例是否使用
+   `make_tile_group` + `auto_mutex`；单次使用的 scratch tile 才考虑
+   `make_tile`。不要在没有目标版本证据时混合自动互斥与手动核内同步。
+
+   **auto_mutex 与跨核同步的分工**：
+   - `auto_mutex` 处理 tile-group 的核内互斥；具体覆盖范围和
+     `mutex_id` 限制以当前 API 文档为准。
+   - AIC↔AIV 等跨核依赖使用当前版本记录的 cross-core API；确认
+     `event_id` 范围和命名空间后再设计事件分配。
+
+2. **Vector 实现选择规则**（本节是该规则的完整定义，design SKILL 转指此处）：
+   **`vf.*` 是 Vector 数值计算的默认**，选它不需要举证。tile-op **仅**在两类情况可用：
+   `capability_missing`（目标版本无对应 vf 指令，或其 dtype/shape/layout 约束使该步骤
+   无法表达）与 `incorrect`（能写出但结果错）。走 tile-op 必须在 DESIGN.md §1 填
+   `tile_op_exception:` 并附证据（API 文档原文或实测报错），**由 stage3-check #10 独立裁定**。
+   **「实测更快」不构成例外**——性能不是理由，否则每一步都要重新论证，verifier 也无从判定。
+
+---
+
 ## Step 1：构建资料索引
 
 PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C**；§B 为官方指定样例清单（从 [references/official_samples.md](references/official_samples.md) 读取，该清单是整个工作流的统一官方样例索引来源）。
@@ -30,7 +54,8 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 |----------|------|----------|
 | API 文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`（递归） | `find` 获取所有 `.md` 文件 |
 | 官方指定算子样例 | 见 [references/official_samples.md](references/official_samples.md) | 读取清单文件，不扫描 a5 全目录 |
-| 教程文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`（递归） | `find` 获取所有 `.md` 文件 |
+| 教程文档 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/{guide,tutorials}`（递归，上游改过名，两者都查） | `find` 获取所有 `.md` 文件；**两个都为空要报错，不要交空的 §C** |
+| **设计知识库（kb）** | `cannbot-skills/ops/pypto-pro-op-kb/` | 静态补充资料，按 [`pypto-pro-op-kb/ROUTER.md`](../../pypto-pro-op-kb/ROUTER.md) 按需读取；API 签名和平台事实仍以当前环境的官方文档与样例为准 |
 
 > **§B 说明**：官方指定算子样例是**唯一的算子写法参考来源**，`$PYPTO_DEVKIT_DIR/pro_ops/` 下其余文件不得作为样例参考或索引对象（orchestrator 资源缓存准备时已按清单清理，仅保留清单内文件）。清单后续可能增减，增减时**只改 [references/official_samples.md](references/official_samples.md)**，无需改动其他文件。
 
@@ -69,7 +94,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 2. 将算子计算逻辑分解为原子操作序列，对每个操作从索引 §A 中查找对应 API 调用链
    - **公式分解以 SPEC 为准**：以 SPEC.md 中用户给出的数学公式为基准进行分解，不自行推导替代公式。仅当某步骤需要数值近似实现（如 erf/sigmoid 无直接 API，需多项式近似）时才进行近似推导，并代入 2-3 个已知正确值验证（如 erf(0)=0、erf(1)≈0.843），在 EXPLORE_REPORT §2 记录验证结果
 3. **API 映射**：将算子计算逻辑分解后的每个原子操作映射到对应 API 调用链：
-   - **Vector 数值计算**（elementwise、归约、非线性、排序等）：须从 §A 中查找对应的 `vf.*` 指令文档，映射到 vf 指令序列——**`pl.*` 计算 API 不得用于 Vector 数值计算**（完整约束见 `../../references/performance-constraints.md`）
+   - **Vector 数值计算**（elementwise、归约、非线性、排序等）：查 `vf.*` 文档并记录可用指令；`vf.*` 是默认。只有在怀疑属于 `capability_missing` / `incorrect` 两类例外时，才另查 tile-op 文档并把证据一并记下，供 Stage 3 填 `tile_op_exception:` 用（见「实现选择规则」）
    - **Cube 步骤**（matmul 等）：照常映射 `pl.*` Cube API
    - **优先使用复合计算 API**：若框架提供了符合需求的复合 API（如 `vf.mul_add_dst` 等融合多步计算的 API），应优先使用，而非用多个基础 API 拼接等价写法（复合 API 指令数更少、访存更省，性能更优）
    - **未找到直接对应的 vf API**：优先尝试用其他 vf API 组合 + 循环结构手动实现，在 EXPLORE_REPORT §3 中记录组合方案及可行性分析依据；仅当穷尽 vf 组合方案仍不可行时，才标记 unsupported 并说明已尝试的组合路径
@@ -80,16 +105,23 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
    - **约束**：dtype 支持、shape 范围、layout 要求、MemorySpace 约束、Tile 规格约束（TileType 文档）、DataType 枚举值；若文档含 layout/参数范围等约束表则逐一记录
 
    文档结构以实际为准
-5. **探测关键常量**：从 API 文档与教学文档中提取硬件/版本相关常量——UB 容量上限（直接查 `multi_core_partitioning_and_Tiling.md` §5.2，A5/DAV_3510 为 248KB）、cross_core event_id 上限（`max_event_id` 默认值）、地址对齐要求、Cube tile 对齐要求等，记录值 + 文档路径
+5. **探测关键常量**：从当前平台的 API 文档与教学文档中提取 UB 容量、cross-core event 范围、地址对齐和 Cube tile 对齐等硬件/版本相关常量；每个值都记录目标平台、软件版本和来源路径，不复用其他平台或历史版本的记忆值
 6. **动态维度声明方式**：从 API 文档（如 Tensor 数据结构文档）和官方指定算子样例中确认动态维度的正确声明方式，在 EXPLORE_REPORT §3 中记录
 
-**返回**：API 映射表、API 约束表（含 vf 指令参数语义/寄存器级行为）、动态维度声明方式、环境常量（值 + 来源路径）、证据路径列表
+**返回**：API 映射表（含 Vector 实现层级的选择依据）、API 约束表（含 vf 指令参数语义/寄存器级行为）、动态维度声明方式、环境常量（值 + 来源路径）、证据路径列表
 
 ### 方向 2：官方指定算子样例
 
 **搜索范围**：PRO_MATERIAL_INDEX.md §B 中的官方指定算子（固定清单）
 
 > **注意**：指定算子是官方精选的实现参考，是最主要的写法参考。a5 目录下其余文件不得参考，质量无保障。
+>
+> **kb 补充**：可从
+> [`pypto-pro-op-kb/examples/kernel-index.md`](../../pypto-pro-op-kb/examples/kernel-index.md)
+> 选择补充 study kernel。只允许使用 selector 中状态为 `validated`、路径存在、
+> 且 topology/dtype/layout/platform 与当前需求相符的条目。读取候选源码中的
+> 验证证据，并在报告中记录适用边界；当前平台或 SDK 版本不一致时必须重跑验证。
+> 没有合适候选优于强行套用。KB 不替代官方文档与 §B 官方样例。
 
 **任务**：
 
@@ -103,6 +135,9 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 
 **返回**：按 cube/vec 组成分类的样例参考表（路径 + 可复用点）、可复用模式（直接可复用 + 通用写法参考）、关键常量（UB 容量/stride 经验阈值 + 来源路径）、**高参考价值样例推荐**（分析后对当前算子更具参考价值的样例清单，仅作推荐不否定其余样例）
 
+> **Vector 写法学习路径**：先查当前版本的 tile-op 与 vf API 文档，再用
+> 官方指定算子核对调用方式。样例和 API 文档命名不一致时，以当前环境的实际
+> 文档、源码与运行结果为准。
 
 ### 方向 3：教程与设计指南
 
@@ -119,7 +154,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 
 三个方向依次探索完成后：
 
-1. 合并 API 映射与约束检查结果（方向 1）——注意 vec 步骤须为 `vf.*` 序列
+1. 合并 API 映射与约束检查结果（方向 1），记录每个 Vector 步骤的实现层级与依据
 2. 合并样例搜索结果（方向 2），按 cube/vec 组成分类整理样例参考表与可复用模式
 3. 合并教程建议（方向 3），补充设计策略
 4. **合并关键常量**：汇总方向 1（event_id 上限/对齐要求/Cube tile 约束）和方向 2（UB 容量/stride 阈值）探测到的常量，填入 EXPLORE_REPORT §7 环境常量快照表，标注来源路径
@@ -149,7 +184,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 1. 文件存在
 2. 以下章节存在且内容不为空：
    - `## 1. 概述`
-   - `## 3. API 文档探索`（须包含 §3.1 API 映射结果 + §3.3 API 约束；vec 步骤映射到 `vf.*`，非高层 `pl.*`）
+   - `## 3. API 文档探索`（须包含 §3.1 API 映射结果 + §3.3 API 约束，以及 Vector 实现层级选择依据）
    - `## 4. 算子样例探索`（可标注「无匹配」但不可缺失 §4.1–§4.4 四个子章节）
    - `## 5. 教程与设计指南探索`（须遍历 §C 中索引的全部教程文档并给出适用性评估）
    - `## 6. Tile / 同步策略建议`（综合 §3+§4+§5 三个来源）
@@ -166,7 +201,7 @@ PyPTO-Pro 资料处于持续更新中，**每次执行必须重新扫描 §A/§C
 | 场景 | 处理 |
 |------|------|
 | 输入无法解析 | 引导用户提供公式或代码 |
-| API 不存在 | **优先尝试其他 vf API 组合 + 循环结构手动实现**（记录组合方案与可行性依据）；仅当穷尽 vf 组合仍不可行时标记 unsupported，在风险中说明已尝试路径 |
+| API 不存在 | 检查 tile-op、vf 组合与官方样例；都不可行后标记 unsupported 并记录证据 |
 | 约束不满足 | 标记 ✗，在风险中给出替代方案 |
 | 无匹配样例 | 在「参考实现」章节标注「无匹配」，不阻断流程 |
-| vec 步骤映射到非 vf 指令 | 纠正为 `vf.*` 指令序列，以 vf API 文档为准 |
+| Vector 实现层级缺少依据 | 补充 tile-op/vf API 支持、正确性与实测依据 |

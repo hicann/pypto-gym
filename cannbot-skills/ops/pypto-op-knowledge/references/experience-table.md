@@ -67,7 +67,7 @@
 | `FC4001` + `ERR_CONFIG_ALIGNMENT: must be aligned to 16 elements` | [matmul §1](experience_classified/matmul.md) |
 | K 维度 cube tile kL0/kL1 设置错误（将 K/kL0 的商误当 kL1） | [pass §1](experience_classified/pass.md) |
 | `F0F619` + `COMPILE_CODE_FAILED` + `make: *** Terminated`（unroll 编译超时） | [pass §2](experience_classified/pass.md) |
-| `F0F619` + `Cols=1 / 32 bytes align`（RoPE nh=1 对齐） | [vector §4](experience_classified/vector.md) |
+| `F0F619` + `Cols=1 / 32 bytes align`（transpose 把真实为 1 的数据维搬到尾轴；典型：RoPE nh=1） | [vector §4](experience_classified/vector.md) |
 | `F0F61B` + BOOL cast 不支持 | [vector §1](experience_classified/vector.md) |
 | `AC110005` / `aicore error` / `Aborted`（loop 内 SSA 重赋值） | [function §4](experience_classified/function.md) |
 | `AC110005` + matmul 后 vec op tile 未重设 | [machine §3](experience_classified/machine.md) |
@@ -75,8 +75,8 @@
 | `aicore error (507018 / 0x2a)` + Python `for` 展开重循环体 | [machine §4](experience_classified/machine.md) |
 | `CCU instruction address check error` / `retcode 507015` | [machine §7](experience_classified/machine.md) |
 | `PRECISION_FAIL` + `n_tiles boundary` | [matmul §4](experience_classified/matmul.md) |
-| `PRECISION_FAIL` + L 输出精度失败，O 和 M 正常（Online Softmax） | [function §5](experience_classified/function.md) |
-| `PRECISION_FAIL` + RoPE qo/ko 大面积 mismatch | [function §8](experience_classified/function.md) |
+| `PRECISION_FAIL` + 依赖累积量的输出错、只依赖本块的输出对（在线归约的分支未用更新后的全局基准 rescale；典型：online softmax 的 L/O） | [function §5](experience_classified/function.md) |
+| `PRECISION_FAIL` + 大面积、按元素位置有规律的 mismatch（成对元素的配对约定不一致；典型：RoPE interleave vs half-split） | [function §8](experience_classified/function.md) |
 | `PRECISION_FAIL` + 大面积 OOT ~75%（view offset 超出 tile 覆盖） | [view_op §3](experience_classified/view_op.md) |
 | `PRECISION_FAIL` + 跨 `pypto.loop` assemble→view 数据不可靠 | [machine §10](experience_classified/machine.md) |
 | `PRECISION_FAIL` + 3 层顺序 `pypto.loop` 恰好 16 次后失败 | [codegen §1](experience_classified/codegen.md) |

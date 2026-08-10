@@ -174,7 +174,7 @@ Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集�
     → Stage 3: Tile 数据流设计 → Stage 4: Kernel 实现与精度验证
 ```
 
-每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Stage 推进通过 `state_transition` 工具管理 `custom/<op>/.orchestrator_state.json` 状态机。详见 AGENTS.md。
+每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Pro 流程**使用** `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具，随 OpenCode 插件安装；其他工具下按 AGENTS.md 降级协议手工维护同一账本）。详见 AGENTS.md「共享状态与 state_transition 工具」。
 
 Stage 2 默认只生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），不采集 NPU golden 性能。若需要性能报告，请在需求中明确说明“采集 NPU golden 性能”或“生成 GOLDEN_PERF_REPORT.md”；编排器才会启用 profiling。
 

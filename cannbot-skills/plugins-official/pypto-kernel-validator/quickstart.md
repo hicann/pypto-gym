@@ -24,7 +24,7 @@ CANNBot PyPTO Kernel Validator 用于校验一个声称由 PyPTO 开发的算子
 ### 前置条件
 
 - 已安装 OpenCode、Claude Code、TRAE、Cursor、Copilot、CodeArts 等受支持的 AI 编程工具
-- 校验目标为 KernelBench 产物时：在含 `benchmark` 模块的 pypto-gym 仓根下使用（skill 内调用 `python -m benchmark.verifier`）
+- 校验目标为 KernelBench 产物时：需要 `benchmark` 模块，**该模块已从 pypto-gym 移除**，须由外部提供；不可用时 skill 记 `blocked` 而非 PASS（skill 内调用 `python -m benchmark.verifier`）
 - 需要精度 / 性能验证时：已配置 CANN、torch/torch_npu 与 PyPTO 环境，NPU 可见
 
 ### OpenCode（推荐）

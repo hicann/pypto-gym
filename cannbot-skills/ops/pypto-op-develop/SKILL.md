@@ -140,6 +140,9 @@ export PTO_TILE_LIB_CODE_PATH=./pto_isa/pto-isa/
    - **Layer I**（kernel 实现）：所有 `pypto.loop` 调用所在层；不放 `set_*_tile_shapes` 全局调用
    - **Layer J**（JIT 入口）：`@pypto.frontend.jit`，纯类型签名 + `runtime_options`，body 一行委托 Layer I
    - **Layer K**（host wrapper）：仅 4 个职责（layout / 分配输出 / 单次调用 JIT / reshape 还原），**禁止 Python `for ... in range(...)` 循环驱动 kernel**（OL45）
+
+     > ⚠️ **host 端的 layout/reshape 是被计入分数的 device kernel**（`aclnn*Cast` / `*Transpose` / `*Slice` 等），CANN-Bench 计时覆盖整个提交入口。已连续张量的纯 view reshape 不产生 device 算子，可以保留；任何会 materialize 的整形（`.contiguous()` / dtype 转换 / transpose）应移入 kernel，无法移入时必须在设计文档中记录原因与实测代价。统一口径见 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)。
+
 4. 完成后停止；不要继续生成 M_{k+1} 或 test 文件。
 
 **生成顺序（cleanup 调度）**：

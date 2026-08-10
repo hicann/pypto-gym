@@ -29,6 +29,12 @@
 
 ## 强制 2：Vector 数值计算用 `vf.*` 手写
 
+> ⚠️ **本仓覆盖**：本节的无条件禁令已被 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/constraints/vec.md`
+> （源码位于 `cannbot-skills/ops/pypto-pro-op-kb/constraints/vec.md`，KB 根相对路径 `constraints/vec.md`）
+> 的条件式选择规则取代——tile-op 与 `vf.*` 按目标版本的 API 支持与正确性择一，
+> 两者都可行时以当前平台的同条件实测决定，没有哪一层是通用默认值。
+> 冲突时以 `pypto-pro-op-kb/constraints/vec.md` 为准；下表的写法与理由仍然有效。
+
 | 项目 | 规则 |
 |------|------|
 | Vector 数值计算（逐元素/归约/广播/非线性） | `vf.*` 指令手写，在 `section_vector()` 内通过 `@pl.vector_function` 执行 |

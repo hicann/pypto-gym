@@ -41,7 +41,7 @@ find $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ -name "*.md" | sort
 
 > **重要**：以下为官方明确允许 agent 开发算子时参考的算子代码，是**唯一的算子写法参考来源**。`$PYPTO_DEVKIT_DIR/pro_ops/` 下其余文件**不得**作为样例参考或索引对象（orchestrator 资源缓存准备时已按清单清理，仅保留清单内文件）。
 >
-> **生成方式**：直接复制 `../references/official_samples.md` 的清单内容。清单是该统一索引来源的唯一维护点——增删样例时只改该文件，无需改动其他文件。
+> **生成方式**：直接复制 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md` 的清单内容。清单是该统一索引来源的唯一维护点——增删样例时只改该文件，无需改动其他文件。
 
 ### 扫描命令
 
@@ -51,7 +51,7 @@ python3 -c "
 import re, os
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path('../references/official_samples.md').read_text(encoding='utf-8')
+manifest = Path(os.environ['CANNBOT_CONFIG_ROOT'] + '/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
 expected = {m.group(0).strip('\`') for m in re.finditer(r'\`pro_ops/[^\`]+\.py\`', manifest)}
 pro_ops = cache / 'pro_ops'
 actual = {'pro_ops/' + str(f.relative_to(pro_ops)) for f in pro_ops.rglob('*.py')} if pro_ops.is_dir() else set()
@@ -64,7 +64,7 @@ if not missing and not extra: print('一致')
 "
 
 # 2. 读取统一清单文件（orchestrator 资源缓存准备时已按此清单清理 pro_ops/）
-cat ../references/official_samples.md
+cat $CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md
 ```
 
 **差异处理**：

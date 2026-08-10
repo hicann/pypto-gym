@@ -322,7 +322,7 @@ run_batch() {
     LOG_FILE="${BASE_DIR}/batch_performance.log"
     : > "$LOG_FILE"
 
-    LOCK_DIR="/tmp/ascend_locks_$$"
+    LOCK_DIR="/tmp/ascend_locks_$$"  # kb-integrity: allow-path (a device lock shared across runs; per-cwd would not mutually exclude)
     mkdir -p "$LOCK_DIR"
 
     device_id=$DEVICE_START

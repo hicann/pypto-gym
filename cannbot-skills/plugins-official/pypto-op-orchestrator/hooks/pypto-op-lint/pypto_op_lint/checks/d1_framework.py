@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import os
 from collections.abc import Iterator
+from typing import Optional
 
 from ..ast_helpers import (
     _dynamic_tensor_annotation_status,
@@ -1853,7 +1854,7 @@ def _looks_like_output(name: str) -> bool:
     return name in ("out", "output") or name.startswith("out_") or name.endswith("_out")
 
 
-JitArgViolation = tuple[ast.Call, str, ast.Name, str, ast.AST | None]
+JitArgViolation = tuple[ast.Call, str, ast.Name, str, Optional[ast.AST]]
 
 
 def _jit_arg_violation(

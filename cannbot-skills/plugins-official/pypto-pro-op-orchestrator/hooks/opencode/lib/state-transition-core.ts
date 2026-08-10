@@ -157,12 +157,40 @@ export function applyTransition(
   input: TransitionInput,
 ): OrchestratorState {
   const next = cloneState(prev);
-  const maxStage = next.max_stage ?? DEFAULT_MAX_STAGE;
+  // `init` establishes how many stages there are; every other action inherits whatever
+  // the ledger already says. Reading it only from the previous state meant a caller
+  // passing max_stage to init was ignored the moment a state file existed.
+  const maxStage =
+    input.action === "init"
+      ? (input.max_stage ?? next.max_stage ?? DEFAULT_MAX_STAGE)
+      : (next.max_stage ?? DEFAULT_MAX_STAGE);
   next.max_stage = maxStage;
 
-  // Ensure required maps exist before any branch reads them.
-  if (!next.stage_status) next.stage_status = emptyStageStatus(maxStage);
-  if (!next.stage_retry_count) next.stage_retry_count = emptyRetryCount(maxStage);
+  // Fill in any stage the ledger is missing rather than only replacing an absent map:
+  // `{}` is truthy, so a partially written or older-schema file kept its gaps, and then
+  // `nextKey in statusMap` was false and complete_stage stopped advancing in silence.
+  // Fill gaps below maxStage AND drop keys above it. The spread alone only filled gaps:
+  // the classic 7-stage orchestrator and this 4-stage one write the same
+  // `custom/<op>/.orchestrator_state.json`, so keys '5'..'7' survived an init(max_stage: 4)
+  // and complete_stage's auto-advance then found '5' `in` the map and moved current_stage
+  // past the final stage. Every later action throws at ensureStageNumber(5, 4), so only
+  // rollback_to_stage escapes.
+  const prune = <T,>(base: Record<string, T>, carried: Record<string, T> | undefined) => {
+    const merged = { ...base, ...(carried ?? {}) };
+    for (const key of Object.keys(merged)) {
+      const n = Number(key);
+      if (!Number.isInteger(n) || n < 1 || n > maxStage) delete merged[key];
+    }
+    return merged;
+  };
+  // Snapshot BEFORE pruning. init's `hasInProgress` guard reads stage_status, and pruning
+  // first deleted the very keys it needs to see: a live 7-stage ledger in progress at stage
+  // 6 was silently accepted and overwritten instead of refused, losing stages 5-7 and their
+  // retry counts with no rollback_history entry. Pruning is right; doing it before the
+  // guard reads is not.
+  const carriedStatus = { ...(next.stage_status ?? {}) };
+  next.stage_status = prune(emptyStageStatus(maxStage), next.stage_status);
+  next.stage_retry_count = prune(emptyRetryCount(maxStage), next.stage_retry_count);
 
   const statusMap = next.stage_status;
   const retryMap = next.stage_retry_count;
@@ -173,7 +201,8 @@ export function applyTransition(
       if (stage !== 1) {
         throw new Error(`init action must target stage 1, got stage ${stage}`);
       }
-      const hasInProgress = Object.values(statusMap).some((s) => s === "in_progress");
+      // Judge the ledger as it was found, not as pruning left it.
+      const hasInProgress = Object.values(carriedStatus).some((s) => s === "in_progress");
       if (hasInProgress) {
         throw new Error(`cannot init: a stage is already in_progress`);
       }
@@ -228,18 +257,36 @@ export function applyTransition(
           `cannot complete stage ${stage}: status is "${statusMap[compKey]}", not "in_progress"`,
         );
       }
-      // Stage 4 L1 precondition: all phases must be verified.
+      // Stage 4 L1 precondition: at least one module must exist, and all must be verified.
       if (stage === 4 && next.stage4_path === "L1") {
         const phases = next.stage4_modules;
-        if (phases) {
-          const phaseCount = phases.module_count;
-          for (let i = 1; i <= phaseCount; i++) {
-            const ps = phases.module_status[String(i)];
-            if (ps !== "verified") {
-              throw new Error(
-                `cannot complete_stage(4): module ${i} status is "${ps}", not "verified"`,
-              );
-            }
+        // The producer-side guard (plan_stage4 requires module_count >= 1) does not cover
+        // a hand-maintained ledger, which CLAUDE.md explicitly sanctions. Without this,
+        // `if (phases)` short-circuited the all-modules-verified precondition and an L1
+        // operator was certified with zero modules built -- the outcome that guard exists
+        // to refuse. Read `module_status`: that is the field Stage4Modules declares.
+        // `!(n >= 1)`, not `n < 1`: a non-numeric module_count coerces to NaN, and
+        // `NaN < 1` is false, so the refusal was skipped -- while `i <= NaN` is also
+        // false, so the all-verified loop below never ran either. A hand-maintained
+        // ledger with module_count: "many" was certified with nothing verified. This
+        // matches how plan_stage4 already spells the same precondition.
+        const moduleCount = Number(phases?.module_count);
+        if (
+          !phases ||
+          !(moduleCount >= 1) ||
+          Object.keys(phases.module_status ?? {}).length === 0
+        ) {
+          throw new Error(
+            `cannot complete Stage 4 on the L1 path: stage4_modules is absent or empty, so ` +
+            `no module was ever verified. Call plan_stage4 with module_count >= 1 first.`,
+          );
+        }
+        for (let i = 1; i <= moduleCount; i++) {
+          const ps = phases.module_status[String(i)];
+          if (ps !== "verified") {
+            throw new Error(
+              `cannot complete_stage(4): module ${i} status is "${ps}", not "verified"`,
+            );
           }
         }
       }
@@ -338,6 +385,17 @@ export function applyTransition(
         );
       }
       next.stage4_path = input.is_fusion ? "L1" : "L0";
+      if (input.is_fusion && !(Number(input.module_count) >= 1)) {
+        // An L1 plan with no modules is not a plan. The wrapper coerces a missing
+        // module_count to 0, which built an empty module map -- and then complete_stage(4)
+        // certified the operator with nothing ever built, while fail_module's
+        // `cycles >= max_cycles_per_module` stayed permanently false so `blocked` never
+        // fired either. Refuse it here rather than letting both guards read as satisfied.
+        throw new Error(
+          `plan_stage4 with is_fusion=true requires module_count >= 1, got ` +
+          `${input.module_count === undefined ? "undefined" : input.module_count}`,
+        );
+      }
       if (input.is_fusion) {
         const phaseStatus: Record<string, ModuleStatus> = {};
         const phaseRetry: Record<string, number> = {};

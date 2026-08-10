@@ -15,8 +15,8 @@
 #   - 输出人类可读摘要 + 末尾一行机器可读 JSON（PREFLIGHT_JSON: {...}）。
 #
 # 用法：
-#   python ./env_preflight.py          # 完整检测
-#   python ./env_preflight.py --json    # 仅输出 JSON
+#   python $CANNBOT_CONFIG_ROOT/skills/pypto-pro-environment-check/scripts/env_preflight.py          # 完整检测
+#   python $CANNBOT_CONFIG_ROOT/skills/pypto-pro-environment-check/scripts/env_preflight.py --json    # 仅输出 JSON
 # -----------------------------------------------------------------------------
 
 import argparse

@@ -146,7 +146,11 @@ tsub = pypto.sub(sij_scale, tilda_mij)
 
 ---
 
-## 6. Workspace overlap in PagedAttention / online-softmax
+## 6. 并发存活的 buffer 共用 workspace 会互相覆盖
+
+**适用条件**：两块或更多逻辑 buffer 映射到同一段 workspace，且它们的存活区间**重叠**
+（一块还要被读，另一块已经开始写）。流式/在线累积的算法最容易踩到——跨块携带的状态
+在下一块写入时仍然存活。典型实例：PagedAttention、online-softmax 的在线累积。
 
 **触发场景**：PagedAttention / Flash Attention / online-softmax 手工实现中，使用共享 workspace 存储 partial statistics（partial_max、partial_sum、KV_cache 切片）。若两个 live 中间 tensor 的 allocate 范围发生重叠（共享 workspace 内地址复用），会导致非确定性输出或 SIGABRT。
 

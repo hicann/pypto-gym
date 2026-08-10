@@ -8,11 +8,25 @@ description: 校验一个声称由 PyPTO 开发的算子产物 — 反作弊 (�
 > 给定一个算子产物目录, 判定该实现是否 (1) 真正使用 PyPTO 而非作弊, (2) 精度通过, (3) 性能符合要求.
 > 整套流程以 **JSON 报告** 结束, 不在对话中堆叠人类总结.
 
+## 外部依赖
+
+本 skill 的 Step 1（cheat-check）与 Step 3（verify）依赖 `benchmark.verifier` 模块。
+**该模块已从 pypto-gym 移除**（开源整改时随 KernelBench 桥接层一并删除），本仓内不可用。
+
+因此这两步前必须先探测：
+
+```
+python -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('benchmark.verifier') else 1)"
+```
+
+探测失败时**不要跳过静默通过**——在 `skill_report.json` 记 `{"outcome": "blocked", "unavailable_dependency": "benchmark.verifier"}` 并如实上报：
+一个跑不了的门禁必须说自己没跑，而不是报 PASS。其余不依赖该模块的检查照常执行。
+
 ## 适用场景
 
 任意 agent 工作流生成 PyPTO 算子之后, 在交付前调用本 skill 做最终把关. 典型调用方:
 
-- KernelBench 桥接层 (`pypto-gym/benchmark/`) 在 verify 阶段.
+- KernelBench 桥接层在 verify 阶段（**该桥接层已从本仓移除**，见下方「外部依赖」）.
 - 外部团队的算子 agent, 把产物丢给本 skill 做合规校验.
 
 ## 输入约定 (由调用方在 prompt 中传入)

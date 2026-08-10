@@ -311,16 +311,36 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           const specPath = path.join(opDir, "SPEC.md");
           if (action === "complete_stage" && Number(args.stage) === 1) {
             const hash = computeFileHash(specPath);
-            if (hash) {
-              prevState.artifact_hashes = prevState.artifact_hashes ?? {};
-              prevState.artifact_hashes.spec_md = hash;
+            if (!hash) {
+              // Skipping the record when SPEC.md is absent disarmed the freeze for the
+              // whole run: `typeof savedHash === "string"` stayed false and the spec was
+              // then freely editable with no signal. Stage 1's deliverable IS SPEC.md, so
+              // completing it without one is the earlier error.
+              throw new Error(
+                `cannot complete Stage 1: ${specPath} does not exist. SPEC.md is Stage 1's ` +
+                `deliverable and the artifact the freeze is taken over; completing without ` +
+                `it would leave the freeze unarmed for the rest of the run.`,
+              );
             }
+            prevState.artifact_hashes = prevState.artifact_hashes ?? {};
+            prevState.artifact_hashes.spec_md = hash;
           }
           if (action === "complete_stage" && Number(args.stage) >= 3) {
             const savedHash = prevState.artifact_hashes?.spec_md;
             if (typeof savedHash === "string") {
               const currentHash = computeFileHash(specPath);
-              if (currentHash && currentHash !== savedHash) {
+              if (currentHash === null) {
+                // Deleting or renaming SPEC.md used to SATISFY the freeze: computeFileHash
+                // returns null for a missing path and `currentHash &&` short-circuited.
+                // Absence is the strongest form of "modified", not an exemption.
+                throw new Error(
+                  `SPEC.md freeze violation: ${specPath} no longer exists. It was recorded ` +
+                  `at Stage 1 (hash=${savedHash.slice(0, 12)}…) and the freeze is taken over ` +
+                  `that file; deleting or renaming it is a spec change. To legitimately ` +
+                  `revise the spec, call rollback_to_stage(target_stage=1, reason=...).`,
+                );
+              }
+              if (currentHash !== savedHash) {
                 throw new Error(
                   `SPEC.md freeze violation: SPEC.md was modified after Stage 1 completion. ` +
                   `current hash=${currentHash.slice(0, 12)}… recorded hash=${savedHash.slice(0, 12)}…. ` +

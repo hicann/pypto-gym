@@ -198,7 +198,8 @@ def _parse_cli() -> argparse.Namespace:
                          "./_debug/smoke_trace under the current working "
                          "directory); cleaned up after the run. NOTE: "
                          "tempfile.TemporaryDirectory() is forbidden here — "
-                         "it lands in /tmp and triggers sandbox prompts.")
+                         "it lands in the system temporary directory and "
+                         "triggers sandbox prompts.")
     return ap.parse_args()
 
 
@@ -219,7 +220,7 @@ def _ast_precheck(impl: Path) -> bool:
 
 
 def _prepare_workdir(workdir_arg) -> Path:
-    """Fresh scratch dir under the CWD (never /tmp — sandbox prompts)."""
+    """Create a fresh CWD-local scratch directory to avoid sandbox prompts."""
     workdir = Path(workdir_arg).resolve() if workdir_arg else (
         Path.cwd() / "_debug" / "smoke_trace")
     shutil.rmtree(workdir, ignore_errors=True)
