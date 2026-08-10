@@ -51,7 +51,7 @@ ASCEND_950_NPUARCH = "DAV_3510"
 class RopeTileConfig:
     def __init__(self):
         self.n_length = 32
-        self.gather_tile = [1, 32, 16, 64]
+        self.gather_tile = [1, 16, 16, 64]
         self.elem_tile = [1, 16, 16, 32]
         self.unroll_list = {64, 32, 1}
 
