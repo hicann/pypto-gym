@@ -388,6 +388,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
 
 
 @pypto.frontend.jit(
+    new_ir=False,
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1

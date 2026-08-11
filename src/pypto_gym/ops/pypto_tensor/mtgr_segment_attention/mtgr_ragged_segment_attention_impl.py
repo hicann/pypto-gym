@@ -24,6 +24,7 @@ MASK_PENALTY = 40000.0
 
 # ── Single JIT Kernel: Attention ────────────────────────────────────────────
 @pypto.frontend.jit(
+    new_ir=False,
     runtime_options={
         "device_sched_mode": 1,
         "stitch_function_max_num": 1024,

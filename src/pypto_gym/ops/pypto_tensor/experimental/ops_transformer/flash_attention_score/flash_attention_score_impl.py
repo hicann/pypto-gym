@@ -14,6 +14,7 @@ BLOCK_KV = 320
 
 
 @pypto.frontend.jit(
+    new_ir=False,
     runtime_options={
         "stitch_function_max_num": 1024,
     },
