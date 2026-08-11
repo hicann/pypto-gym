@@ -78,7 +78,6 @@ def _make_qk_rope_kernel(num_heads: int):
 
     @pypto.frontend.jit(
         runtime_options={"stitch_function_max_num": 128, "device_sched_mode": 1},
-        debug_options={"runtime_debug_mode": 0},
     )
     def kernel(
         x: pypto.Tensor([pypto.DYNAMIC, num_heads, D], pypto.DT_BF16),

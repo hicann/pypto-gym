@@ -189,9 +189,6 @@ def _chunk_compute(qc, kc, vc, gc, bc, s_carry, tril_incl, tril_strict, eye_stac
             "cube_l1_reuse_setting": {-1: 32},
             "cube_nbuffer_setting": {-1: 8},
         },
-        debug_options={
-            "runtime_debug_mode": 0
-        }
         )
 def chunk_kda_varlen_kernel(
     q:      pypto.Tensor([1, pypto.DYNAMIC, pypto.DYNAMIC, 128], pypto.DT_BF16),  # [1,T,H,K] packed  # SNAP:SIG_JIT

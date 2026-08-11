@@ -237,7 +237,6 @@ def ifa_func_kernel(
         "vec_nbuffer_setting": {-2: 1, 0: 1, 1: 1},
     },
     host_options={"compile_monitor_enable": 0},
-    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0},
 )
 def ifa_func_kernel_for_910_high_performance(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
@@ -397,7 +396,6 @@ def ifa_func_kernel_for_910_high_performance(
         "vec_nbuffer_setting": {-2: 1, 0: 1, 1: 1},
     },
     host_options={"compile_monitor_enable": 0},
-    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0},
 )
 def ifa_func_kernel_for_910_s1_range_high_performance(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

@@ -439,7 +439,6 @@ def sparse_flash_attention_compute_flash(query_nope, query_rope, key_2d,
                 "ready_on_host_tensors": ["block_table", "kv_act_seqs"],
                 "max_workspace_kb": 1648000,
             },
-    debug_options={"runtime_debug_mode": 0},
 )
 def sparse_flash_attention_d_950(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),

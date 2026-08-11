@@ -26,9 +26,6 @@ K_TILE = 320
 
 
 @pypto.frontend.jit(
-    debug_options={
-        "runtime_debug_mode": 1,
-    },
     runtime_options={
         "device_sched_mode": 0,
         "stitch_function_max_num": 1024,

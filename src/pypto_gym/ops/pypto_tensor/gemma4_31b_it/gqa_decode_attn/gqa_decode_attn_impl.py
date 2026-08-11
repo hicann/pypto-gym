@@ -98,7 +98,6 @@ def _compensated_pv(p_ij, v_tile):
 @pypto.frontend.jit(
     runtime_options={"device_sched_mode": 1, "run_mode": pypto.RunMode.NPU},
     pass_options={"cube_l1_reuse_setting": {0: 4}},
-    debug_options={"runtime_debug_mode": 0},
 )
 def gemma4_decode_attn_gqa(
     q: pypto.Tensor([Nq, D], pypto.DT_BF16),

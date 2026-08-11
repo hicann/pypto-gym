@@ -733,7 +733,6 @@ def sparse_attention_antiquant_compute_950(
                 "max_workspace_kb": 1607648,
             },
     host_options={"compile_monitor_enable": 0},
-    debug_options={"runtime_debug_mode": 0, "compile_debug_mode": 0},
 )
 def sparse_attention_antiquant_d_950(
     query_nope: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),

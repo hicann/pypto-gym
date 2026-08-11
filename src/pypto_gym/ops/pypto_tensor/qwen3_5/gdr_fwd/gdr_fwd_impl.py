@@ -526,9 +526,6 @@ def _gdr_fwd_body(q, k, v, beta, gate, states, tril_incl, strict_low, eye_stack,
         "cube_l1_reuse_setting": {-1: 32},
         "cube_nbuffer_setting": {-1: 8},
     },
-    debug_options={
-        "runtime_debug_mode": 0
-    }
 )
 
 

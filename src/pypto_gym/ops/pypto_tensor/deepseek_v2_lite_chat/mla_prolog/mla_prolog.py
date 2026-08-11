@@ -164,9 +164,7 @@ class HybridManager:
 manager = HybridManager()
 
 
-@pypto.frontend.jit(
-    debug_options={"runtime_debug_mode": 1}  # 步骤2.1：启用泳道图采集
-)
+@pypto.frontend.jit()
 def hybrid_stage2_kernel(
     compressed_kv_norm_2d: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP16),
     k_pe_2d: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP16),
