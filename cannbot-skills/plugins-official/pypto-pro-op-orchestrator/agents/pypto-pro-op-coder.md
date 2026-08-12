@@ -6,6 +6,7 @@ skills:
   - pypto-docs-search
   - pypto-pro-environment-check
   - pypto-pro-op-develop
+  - pypto-pro-op-perf-tune
 tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
@@ -25,13 +26,8 @@ tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 - 运行脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）
 - 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）
 - pypto（非 Pro）系统的 lint 规则（如 OL01 要求 `@pypto.frontend.jit`）不适用于 Pro 工作流
-- 两条性能强制不可违背：buffer 轮转用 `make_tile_group` + `auto_mutex`，Vector 数值计算
-  **首选 `vf.*` 手写**。此条为硬性规则，**你不得自行弱化或添加例外**。
-  唯一的例外由 **DESIGN.md 携带**：§1 若写明 `tile_op_exception:` 并归入「vf 缺失该能力」
-  或「vf 在该步骤上不正确」之一且附了证据，该步骤按 DESIGN.md 施工。
-  **「实测更快」不构成例外。** DESIGN.md 没写例外而你认为需要 tile-op 时，按实现偏差
-  声明上报编排器，由其裁决是否回 Stage 3——**不要自己改成 tile-op 再声明**。
-- **禁止语义作弊**（红线，违反即失败）。**核心计算定义**：算子 SPEC 声明的数学语义所对应的计算——即输出值依赖于输入张量数值大小关系的决策步骤（比较、排序、选择、去重、索引重排等）。host 端只允许**不派发设备 kernel**的操作：纯 Python 标量运算（参数校验、形状推导、num_cores 计算）、`torch.empty` 分配输出、**张量本就连续时的 `.reshape`/`.view` 纯视图**（只改元数据，不产生 `aclnn*` 条目），以及单次 kernel 调用。**派发即违规**：`.contiguous()`、`.to()`/dtype 转换、以及在非连续张量上的 `.permute()`/`.transpose()`/`.movedim()` 都会产生真实设备 kernel，必须搬进 kernel。**判据是 profile：`op_times.device_kernels` 里任何 `aclnn*` 都是 wrapper 时间**（依据 `pypto-pro-op-kb/constraints/wrapper-boundary.md`）。除"单 kernel / wrapper 单次调用 / kernel 调用不在循环内"三条机械规则外，以下行为均判定为作弊（以计算实质为准，不以命名/措辞为准）：
+- buffer 轮转遵守 `make_tile_group` + `auto_mutex` 约束；不得改写 DESIGN 或自行切换已冻结的 Vector 实现层级
+- **禁止语义作弊**（红线，违反即失败）。**核心计算定义**：算子 SPEC 声明的数学语义所对应的计算——即输出值依赖于输入张量数值大小关系的决策步骤（比较、排序、选择、去重、索引重排等）。host 端绝不能承担核心计算；纯 Python 标量运算（参数校验、形状推导、num_cores 计算）、`torch.empty` 分配输出、张量本就连续时的 `.reshape`/`.view` 纯视图以及单次 kernel 调用不构成作弊。`.contiguous()`、`.to()` 或非连续张量上的 `.permute()`/`.transpose()`/`.movedim()` 会派发真实 device kernel，按 wrapper 边界规则默认必须搬进 kernel；只有 DESIGN.md 在 Stage 3 已裁定且记录证据/代价的例外可保留，Stage 4 不得事后新增。**判据是 profile：`op_times.device_kernels` 里任何 `aclnn*` 都是 wrapper 时间**（依据 `pypto-pro-op-kb/constraints/wrapper-boundary.md`）。除"单 kernel / wrapper 单次调用 / kernel 调用不在循环内"三条机械规则外，以下行为均判定为作弊（以计算实质为准，不以命名/措辞为准）：
   - **host 端做核心计算**：wrapper 或 test 函数体内出现值依赖变换——输出依赖于输入数值大小关系的操作（如调用排序/选择类 API、Python 循环按值筛选/去重）
   - **kernel 输出非最终结果**：kernel 只产出中间/候选结果，host 端从中筛选/提取/转换出最终输出——即把算子语义的关键决策步骤挪到 host
   - **规格砍单**：通过 `assert`/`if` 把算子定义声明的维度/dtype/参数支持范围缩减为单点，使 kernel 只能处理能通过的 case
@@ -70,20 +66,20 @@ tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 - `custom/<op>/test_{op}.py` 存在
 - **import 门禁**：`import pypto_pro.language as pl` 存在；无 `@pypto.frontend.jit`；无 `import pypto.frontend`
 - **单 kernel 铁律**：文件中 `@pl.jit` 装饰的 kernel 函数**仅一个**。L1 路径的 staged 文件同样如此——逐 Module 是在同一个 kernel 内增量追加，不是每 Module 新建 kernel。多个 `@pl.jit` → 严重违规
-- **未作弊**（红线）：所有的核心计算逻辑集中在单一 kernel 函数内，host 端不做任何核心计算步骤（host 端只做支撑性操作：纯 Python 标量/形状运算、输出分配、num_cores 等参数计算）。**注意本条只判定「是否作弊」，不是 wrapper 允许做什么的清单**——dtype 转换、permute、contiguous 等张量整形即使不算作弊，也被[`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md) 禁止，因为它们是被计入分数的 device kernel；文件中只允许一个 kernel；**`{op}_wrapper` 只调用一次 kernel**（多次调用 kernel 分担计算视为作弊）；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊）。**语义判定**按全局硬性规则「禁止语义作弊」的核心计算定义执行——host 端不得出现值依赖变换、kernel 须输出最终结果、不得规格砍单、不得偷换测试输入。判定标准是计算实质，不是命名
+- **未作弊**（红线）：所有的核心计算逻辑集中在单一 kernel 函数内，host 端不做任何核心计算步骤（host 端只做支撑性操作：纯 Python 标量/形状运算、输出分配、num_cores 等参数计算）。**注意本条只判定「是否作弊」，不是 wrapper 允许做什么的清单**——dtype 转换、permute、contiguous 等张量整形即使不算作弊，也受运行时 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/constraints/wrapper-boundary.md` 限制：默认移入 kernel，只有 DESIGN.md 在 Stage 3 已裁定并记录证据/代价的例外可保留；文件中只允许一个 kernel；**`{op}_wrapper` 只调用一次 kernel**（多次调用 kernel 分担计算视为作弊）；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊）。**语义判定**按全局硬性规则「禁止语义作弊」的核心计算定义执行——host 端不得出现值依赖变换、kernel 须输出最终结果、不得规格砍单、不得偷换测试输入。判定标准是计算实质，不是命名
 - **入口函数命名合规**：文件暴露 `{op}_wrapper` 入口函数（签名与算子定义一致），`test_{op}_*` 通过 wrapper 调 kernel，不直接调 `{op}_kernel`。**optional 参数必须带默认值**：若 `cases.yaml`（由驱动方提供，可能不存在）中存在省略某个输入参数的 case，`{op}_wrapper` 签名中该参数必须设 `=None`，否则外部调用方省略该参数时触发 `TypeError`
 - 测试设备不硬编码，从 `{op}_golden.py` 导入 `_get_device()`
 - atol 取值有注释来源，未盲目放大到 1e-1 以上且无说明
 - **精度对比必须用 `{op}_golden_cpu`（CPU FP32）**：`_assert_precision` 内部 `from {op}_golden_cpu import {op}_golden_cpu`，禁止用 `{op}_golden`（NPU 同 dtype）做精度对比。`{op}_golden` 仅用于 `from {op}_golden import _get_device` 获取设备号
 - **性能强制 — buffer**：buffer 切换/轮转用 `make_tile_group`（`make_tile` 仅限单次 scratch tile，无 `make_tile` + 手动 `sync_src`/`sync_dst` 管 buffer 轮转的写法）
-- **性能强制 — vf**：Vector 数值计算用 `vf.*` 手写（在 `@pl.vector_function` 内）；pl.* 计算API 不得用于 Vector 数值计算
+- **Vector 实现一致性**：与 DESIGN.md §1 已冻结的唯一实现一致
 - 至少 4 个 `def test_`，与 DESIGN.md §8「目标测试 case」一致
 - 动态维度声明与 API 文档/官方指定算子样例一致
 - `python custom/<op>/test_{op}.py` exit code 0，输出含 `PASS`（无 Traceback/Error/Exception）
 
 ## capability_gap 退出路径
 
-Stage 4 内穷尽 vf API 组合方案 + 循环结构替代方案后仍无法纯 kernel 实现算子时（如精度限制使纯 kernel 方案做不出正确结果、vf API 能力不足），允许返回 `capability_gap` verdict + 失败证据给 orchestrator，证据须含：代码位置、编译错误原文 / 精度报告（matched_ratio/max_abs_error）、已尝试的 vf 方案清单及各自失败原因、为何无法在 kernel 内解决的判断依据。
+Stage 4 内穷尽 DESIGN 已冻结实现的目标版本合法组合与循环结构替代后仍无法纯 kernel 实现算子时，允许返回 `capability_gap` verdict + 失败证据给 orchestrator。证据须含：代码位置、编译错误原文或精度报告、已尝试方案及各自失败原因，以及为何无法在 kernel 内解决的判断依据。
 
 **编排器收到 `capability_gap` 后不会直接回退**，而是将你的完整报告传达给 verifier 执行 `capability_gap_check`——verifier 会以独立判官身份实际查阅 API 文档、官方算子样例、教程，验证你声称的"框架限制"是否真的成立。如果 verifier 找到 working example 或发现你的 API 误用，会将分析结果原样返回给你，要求你参照修正后继续开发。只有 verifier 确认限制确实成立后，编排器才会回退 Stage 3 重新设计。
 

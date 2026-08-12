@@ -27,18 +27,26 @@
 
 ---
 
-## 强制 2：Vector 数值计算用 `vf.*` 手写
+## <a id="强制-2vector-数值计算用-vf-手写"></a>强制 2：Vector 默认使用 VF
 
-> ⚠️ **本仓覆盖**：本节的无条件禁令已被 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/constraints/vec.md`
-> （源码位于 `cannbot-skills/ops/pypto-pro-op-kb/constraints/vec.md`，KB 根相对路径 `constraints/vec.md`）
-> 的条件式选择规则取代——tile-op 与 `vf.*` 按目标版本的 API 支持与正确性择一，
-> 两者都可行时以当前平台的同条件实测决定，没有哪一层是通用默认值。
-> 冲突时以 `pypto-pro-op-kb/constraints/vec.md` 为准；下表的写法与理由仍然有效。
+Vector 数值计算按以下静态规则选择实现，不比较 VF 与 tile-op 性能：
+
+| 条件 | 选择规则 | 必要证据 |
+|------|----------|----------|
+| `KB_SELECTION.json` 已选中的 KB pattern/template 明确要求当前具体步骤使用 tile-op `pl.*` | 使用该模板要求的 `pl.*` | KB 路径、明确要求的原文/片段、目标版本和适用条件 |
+| 其他情况 | 使用 `vf.*` | 目标版本 VF API 或可行 VF 组合的依据 |
+
+“明确要求”必须直接约束当前步骤的实现方式。KB 只展示 tile-op 写法、官方样例使用 `pl.*`、
+存在对应 `pl.*` API，或推测 tile-op 更快/更简洁，都不构成例外。Stage 1 记录默认 VF 映射
+并完成 `KB_SELECTION.json`；Stage 3 核对已选 KB 模板并冻结唯一实现；Stage 4 只执行 DESIGN，不再生成
+双候选或触发额外选择验证。若冻结方案无法实现，按既有 `capability_gap` 流程处理，不在
+Stage 4 自行切换实现层级。
 
 | 项目 | 规则 |
 |------|------|
-| Vector 数值计算（逐元素/归约/广播/非线性） | `vf.*` 指令手写，在 `section_vector()` 内通过 `@pl.vector_function` 执行 |
-| 禁止 | `pl.*` 计算 API 用于 Vector 数值计算（无论在何处编写）|
+| 默认实现 | `vf.*` 指令手写，在 `section_vector()` 内通过 `@pl.vector_function` 执行 |
+| tile-op 例外 | 仅在已选 KB pattern/template 明确要求当前步骤时使用对应 `pl.*` API |
+| 禁止 | 无明确 KB 模板要求时使用 tile-op，或在 Stage 4 改写 DESIGN 已冻结的实现层级 |
 | 不受此限（数据搬运与控制流） | `pl.load`/`pl.store`/`pl.load_tile`/`pl.store_tile`/`pl.range`/`pl.get_block_idx` 等 |
 | 等价写法① | `@pl.vector_function` 装饰器（通常模块级，从 `section_vector()` 调用，见 FA；也可工厂函数内定义，见 lightning）|
 | 等价写法② | `@pl.inline` + `with pl.section_vf():` 块（见 vf API 文档示例）|

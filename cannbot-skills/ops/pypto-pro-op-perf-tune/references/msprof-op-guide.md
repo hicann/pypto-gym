@@ -1,17 +1,32 @@
 # msprof op 采集与分析
 
+## Contents
+
+- [前提](#prerequisites)
+- [Step 1：构建算子](#build-operator)
+- [Step 2：采集](#collect-profile)
+- [Step 3：归档 + 统计摘要](#archive-summary)
+- [Step 4：性能标准判定](#performance-criteria)
+- [Step 5：瓶颈定位与优化](#bottleneck-analysis)
+- [Step 6：验证优化效果](#validate-optimization)
+- [数据目录结构](#data-layout)
+- [上板 vs 仿真选择](#target-selection)
+- [注意事项](#cautions)
+- [相关资源](#resources)
+
+
 > 标准上板采集流程：依赖 `$ASCEND_HOME/tools/msopprof/bin/msopprof`，产出 8 份独立 CSV + 逐核 `PipeUtilization.csv`，可走完 **构建 → 采集 → 归档 → 判定 → 优化 → 回归** 闭环。
 
 ---
 
-## 前提
+## <a id="prerequisites"></a>前提
 
 - 环境中存在 `$ASCEND_HOME/tools/msopprof/bin/msopprof`
 - 推荐用法包含 `--warm-up` 以规避 DVFS
 
 ---
 
-## Step 1：构建算子
+## <a id="build-operator"></a>Step 1：构建算子
 
 **直调算子**：
 
@@ -29,7 +44,7 @@ bash build.sh --run_example {operator_name} eager cust --vendor_name=custom
 
 ---
 
-## Step 2：采集
+## <a id="collect-profile"></a>Step 2：采集
 
 ```bash
 # 基本用法
@@ -55,7 +70,7 @@ msprof op --warm-up=10 --launch-count=5 --output=./msprof_output ./demo
 
 ---
 
-## Step 3：归档 + 统计摘要
+## <a id="archive-summary"></a>Step 3：归档 + 统计摘要
 
 ```bash
 # 找到最新 OPPROF 目录
@@ -73,7 +88,7 @@ python3 {skill_path}/scripts/perf_summary.py $OPPROF_DIR ops/{operator_name}
 
 ---
 
-## Step 4：性能标准判定
+## <a id="performance-criteria"></a>Step 4：性能标准判定
 
 对照下表与各流水占比，判定算子性能是否达标。**性能达标**指：主导流水与算子类型匹配（见 4.3）、表 4.2 中严重项未集中触发，且核间负载、带宽等未同时恶化。
 
@@ -120,7 +135,7 @@ python3 {skill_path}/scripts/perf_summary.py $OPPROF_DIR ops/{operator_name}
 
 ---
 
-## Step 5：瓶颈定位与优化
+## <a id="bottleneck-analysis"></a>Step 5：瓶颈定位与优化
 
 1. **先读 `summary.txt`** — 全局概览  
 2. **结合 `csv_fields_reference.md`** — 理解字段含义和阈值  
@@ -143,7 +158,7 @@ python3 {skill_path}/scripts/perf_summary.py $OPPROF_DIR ops/{operator_name}
 
 ---
 
-## Step 6：验证优化效果
+## <a id="validate-optimization"></a>Step 6：验证优化效果
 
 每次优化后重新执行 Step 2–3，数据自动归档为 `round_NNN+1`。
 
@@ -163,7 +178,7 @@ diff ops/{operator_name}/docs/perf/round_001/summary.txt ops/{operator_name}/doc
 
 ---
 
-## 数据目录结构
+## <a id="data-layout"></a>数据目录结构
 
 ### 临时输出（采集后、归档前）
 
@@ -203,7 +218,7 @@ ops/{算子名}/docs/perf/
 
 ---
 
-## 上板 vs 仿真选择
+## <a id="target-selection"></a>上板 vs 仿真选择
 
 | 维度 | 上板 (msprof op) | 仿真 (msprof op simulator) |
 |------|-----------------|---------------------------|
@@ -220,7 +235,7 @@ ops/{算子名}/docs/perf/
 
 ---
 
-## 注意事项
+## <a id="cautions"></a>注意事项
 
 1. **必须 warm-up**：首次运行受 DVFS 影响，耗时偏高。始终使用 `--warm-up=10`
 2. **频率检查**：读取 `OpBasicInfo.csv` 的 `Current Freq` 和 `Rated Freq`，若 Current < Rated，说明芯片未满频运行
@@ -230,7 +245,7 @@ ops/{算子名}/docs/perf/
 
 ---
 
-## 相关资源
+## <a id="resources"></a>相关资源
 
 | 文件 | 内容 |
 |------|------|

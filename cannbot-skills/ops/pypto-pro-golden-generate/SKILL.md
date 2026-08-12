@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-golden-generate
-description: 当需要生成 golden 参考实现时使用此 skill。基于算子规格信息，生成 torch + torch_npu NPU 参考实现 `{op}_golden.py` 与 CPU FP32 参考实现 `{op}_golden_cpu.py`；仅在调用方显式传入 `collect_golden_perf=true` 时采集 NPU golden 性能。NPU 计算使用 torch 标准操作；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件时回退 CPU。触发词：生成 golden、生成参考实现、写 golden 函数、golden script、golden reference、reference implementation、generate golden、torch 参考、验证基准、baseline implementation、写验证代码、'帮我写 golden'、golden.py、参考代码。
+description: 当需要从 PyPTO-Pro SPEC 生成、规范化或验证 golden 参考实现时使用。基于算子规格信息，生成 torch + torch_npu NPU 参考实现 `{op}_golden.py` 与 CPU FP32 参考实现 `{op}_golden_cpu.py`；仅在调用方显式传入 `collect_golden_perf=true` 时采集 NPU golden 性能。NPU 计算使用 torch 标准操作；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件时回退 CPU。不要用于 kernel 实现或性能调优。触发词：生成 golden、生成参考实现、写 golden 函数、golden script、golden reference、reference implementation、generate golden、torch 参考、验证基准、baseline implementation、写验证代码、'帮我写 golden'、golden.py、参考代码。
 ---
 
 # PyPTO-Pro Golden 参考实现生成（NPU）

@@ -19,7 +19,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 - 运行脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）
 - 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）
 - pypto（非 Pro）系统的 lint 规则（如 OL01 要求 `@pypto.frontend.jit`）不适用于 Pro 工作流
-- 两条性能强制不可违背：buffer 轮转用 `make_tile_group` + `auto_mutex`，Vector 数值计算用 `vf.*` 手写
+- Stage 2 只实现独立数学 Golden，不选择 Vector 实现层级或 buffer 策略
 
 ## Mandatory reads
 

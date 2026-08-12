@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-plan
-description: 算子规划：串行组织需求理解与资料探索，产出算子规格与可复用的资料索引。用于在设计开始前把自然语言需求与可用 API/样例整理成结构化依据。首先加载 pypto-pro-intent-understand 产出 SPEC.md，之后加载 pypto-pro-material-explore 构建 PRO_MATERIAL_INDEX.md 全量资料索引并产出 EXPLORE_REPORT.md，初始化 MEMORY.md。
+description: 算子规划：串行组织需求理解与资料探索，在 PyPTO-Pro 算子进入设计前规划时，把已授权的自然语言需求与当前可用 API/官方样例整理成结构化依据。首先加载 pypto-pro-intent-understand 产出 SPEC.md，之后加载 pypto-pro-material-explore 构建 PRO_MATERIAL_INDEX.md 全量资料索引并产出 EXPLORE_REPORT.md，初始化 MEMORY.md，并完成知识选择。不要用于 Stage 2 之后的 golden、设计、实现或调优。
 ---
 
 # PyPTO-Pro 复杂 Kernel — Stage 1 规划

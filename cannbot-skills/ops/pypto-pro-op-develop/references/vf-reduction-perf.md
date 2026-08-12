@@ -1,12 +1,24 @@
 # Vector reduction authoring and performance
 
+## Contents
+
+- [Selection rule](#selection-rule)
+- [Correct `vf.load_align` and mask placement](#load-mask-placement)
+- [Reduction checklist](#reduction-checklist)
+- [Do not branch inside a vector function](#no-branch)
+- [Per-call overhead and loop form](#call-overhead)
+- [Load-issue cost model — a hypothesis to re-probe, not a fact](#load-cost-model)
+- [Reviewable examples](#reviewable-examples)
+- [Scratch stores need a barrier before the next vector load](#scratch-barrier)
+- [Primary source order](#primary-sources)
+
+
 Use this reference for row reductions and reduce-then-broadcast dataflows in a
-PyPTO-Pro vector section. It does not make `vf.*` or tile operations a universal
-default.
+PyPTO-Pro vector section. Candidate selection is defined by `DESIGN.md`.
 
-## Selection rule
+## <a id="selection-rule"></a>Selection rule
 
-Choose the implementation level in this order:
+Apply the workflow policy in this order:
 
 1. **Correctness and API support.** Confirm the operation, dtype, mask, layout,
    and tail behavior in the API documentation installed for the target
@@ -16,20 +28,14 @@ Choose the implementation level in this order:
    widened by the caller. See
    [`pypto-pro-op-kb/constraints/precision.md`](../../../pypto-pro-op-kb/constraints/precision.md).
    A faster candidate that returns `inf` is not a candidate.
-2. **Use a supported tile operation** when it expresses the complete operation
-   and its runtime `valid_shape` behavior is sufficient.
-3. **Use `vf.*`** when the target API requires register-level masks, lane-level
-   control, instruction combinations not available as tile operations, or when
-   a measured candidate is faster.
-4. **Measure both legal candidates** on the actual target when performance
-   determines the choice. Use identical shapes, dtypes, launch geometry,
-   warm-up, correctness checks, and profiler configuration.
+2. **Follow `DESIGN.md §1`.** Implement its single frozen choice. Use tile
+   operations only when DESIGN cites an explicit selected-KB-template requirement.
 
 Do not generalize a result from softmax, RMSNorm, L2Norm, LayerNorm, one shape,
 or one platform to all vector operators. The profiler result for the current
 kernel is authoritative.
 
-## Correct `vf.load_align` and mask placement
+## <a id="load-mask-placement"></a>Correct `vf.load_align` and mask placement
 
 `vf.load_align` loads a register view and does not take a predicate register.
 Apply masks to computation and store operations whose installed API signature
@@ -51,7 +57,7 @@ loaded = vf.load_align(input_tile, offset, predicate)
 Verify the exact argument order against the target version's API page before
 copying a call; names and signatures may differ across SDK versions.
 
-## Reduction checklist
+## <a id="reduction-checklist"></a>Reduction checklist
 
 - Keep reduction accumulators in the precision required by the numerical
   contract; use FP32 unless a documented and validated narrower path is
@@ -66,7 +72,7 @@ copying a call; names and signatures may differ across SDK versions.
 - Use profiler data to distinguish vector-compute, scalar/control, and
   data-movement limits before selecting an optimization.
 
-## Do not branch inside a vector function
+## <a id="no-branch"></a>Do not branch inside a vector function
 
 Transferred from measured EasyASC work on the same A5 silicon (a different DSL
 over the same vector unit). The hardware claim is a property of the unit, not
@@ -95,7 +101,7 @@ Write the alternative out of the vector function instead:
   followed by `vf.select` is a data-path operation, not a branch — and masks
   measured free (see the cost model below).
 
-## Per-call overhead and loop form
+## <a id="call-overhead"></a>Per-call overhead and loop form
 
 EasyASC-measured on Ascend 950; the instruction-level premise that EasyASC
 micro ≈ pypto-pro `vf.*` is unverified, so treat the numbers as hypotheses and
@@ -121,7 +127,7 @@ the structure as the default until a probe on this DSL says otherwise.
   integer division at all (see
   [`pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md`](../../../pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md)).
 
-## Load-issue cost model — a hypothesis to re-probe, not a fact
+## <a id="load-cost-model"></a>Load-issue cost model — a hypothesis to re-probe, not a fact
 
 EasyASC-measured on Ascend 950, solved from four builds of one fp32
 accumulation loop that differed only in body: roughly **25 cycles per
@@ -159,7 +165,7 @@ one fp32 `vf` accumulation loop over a fixed UB tile, differing only in body —
 load issue is what costs. Until it runs, use the model only to rank
 candidates, never to reject one.
 
-## Reviewable examples
+## <a id="reviewable-examples"></a>Reviewable examples
 
 - Tile-operation softmax:
   [`../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py)
@@ -172,7 +178,7 @@ These examples establish API usage only for their recorded environment. They
 are not proof that the same implementation level is fastest for another
 operator or target.
 
-## Scratch stores need a barrier before the next vector load
+## <a id="scratch-barrier"></a>Scratch stores need a barrier before the next vector load
 
 Any VF vector store into UB scratch that a later vector load reads — inside
 one vector function or across calls that share the scratch — needs
@@ -187,7 +193,7 @@ KB): irrelevant to throughput, decisive for correctness. The WAR direction
 needs no barrier (register dependences cover it; the same sample reuses
 scratch without one).
 
-## Primary source order
+## <a id="primary-sources"></a>Primary source order
 
 1. `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` for the installed `pl` and `vf`
    signatures and constraints. In the current documentation layout, verify

@@ -24,11 +24,7 @@ warn() { echo -e "  ${YELLOW}⚠${NC}${DIM} $*${NC}"; }
 err()  { echo -e "  ${RED}✗${NC}${DIM} $*${NC}"; }
 info() { echo -e "  ${DIM}${CYAN}→${NC}${DIM} $*${NC}"; }
 
-# Reject an AGENTS.md that this installer's substitution cannot make correct.
-#
-# Called from every branch that installs a substituted copy. It used to live inline in one
-# of the three, and TOOL defaults to "opencode", so a bare `bash init.sh` took a branch
-# with no check at all -- the guard sat 30 lines away in a branch that install never enters.
+# Reject an AGENTS.md that this installer's rendering cannot make correct.
 #
 # $1 = substituted temp file, $2 = the source AGENTS.md.
 assert_config_root_substitutable() {
@@ -43,13 +39,11 @@ assert_config_root_substitutable() {
         err "AGENTS.md still resolves CANNBOT_CONFIG_ROOT at runtime (os.environ or a \$(pwd) default). Use the bare \$CANNBOT_CONFIG_ROOT literal so this installer can substitute it."
         exit 1
     fi
-    # Checked against the *source*: a self-referential default
-    # `${CANNBOT_CONFIG_ROOT:-$CANNBOT_CONFIG_ROOT}` looks fine after sed (the fallback
-    # becomes a real path) but resolves to the empty string on the symlink install branch,
-    # which sed never touches -- yielding `/skills/...` at the filesystem root.
+    # Checked against the source because substitution would turn this shell expansion into
+    # invalid syntax instead of a concrete path.
     if grep -q '\${CANNBOT_CONFIG_ROOT:-\$CANNBOT_CONFIG_ROOT}' "$source_file"; then
         rm -f "$substituted"
-        err "AGENTS.md defaults CANNBOT_CONFIG_ROOT to itself; that resolves to empty when installed by symlink. Detect the config root instead."
+        err "AGENTS.md uses a self-referential CANNBOT_CONFIG_ROOT default. Use the bare installer placeholder instead."
         exit 1
     fi
 }
@@ -126,6 +120,46 @@ safe_install_file() {
     else
         ok "$name (absolute paths for project mode)"
     fi
+}
+
+# Install an owned agent prompt as a rendered copy. Agent discovery files used to be
+# symlinks, so `$CANNBOT_CONFIG_ROOT` remained a runtime shell expression and could
+# collapse to `/references/...` inside a subagent. Rendering here keeps prompt content
+# host-neutral while init.sh owns the concrete resource mapping.
+install_rendered_agent() {
+    local source="$1" target="$2" tmpfile escaped_config_root
+    escaped_config_root="${CONFIG_ROOT//#/\\#}"
+    tmpfile=$(mktemp)
+    sed "s#\$CANNBOT_CONFIG_ROOT#${escaped_config_root}#g" "$source" > "$tmpfile"
+    if grep -q '\$CANNBOT_CONFIG_ROOT' "$tmpfile"; then
+        rm -f "$tmpfile"
+        err "Agent prompt still contains an unresolved \$CANNBOT_CONFIG_ROOT: $(basename "$source")"
+        exit 1
+    fi
+    [ -e "$target" ] || [ -L "$target" ] && rm -rf "$target"
+    mv "$tmpfile" "$target"
+}
+
+render_config_content() {
+    local source="$1" output="$2"
+    local plugin_root_abs escaped_root escaped_config_root
+    plugin_root_abs="$PLUGIN_ROOT"
+    escaped_root="${plugin_root_abs//#/\\#}"
+    escaped_config_root="${CONFIG_ROOT//#/\\#}"
+    sed \
+      -e "s#\$CANNBOT_CONFIG_ROOT#${escaped_config_root}#g" \
+      -e "s#\`workflows/#\`${escaped_root}/workflows/#g" \
+      -e "s#pypto/docs/#${escaped_root}/pypto/docs/#g" \
+      -e "s#pypto/examples/#${escaped_root}/pypto/examples/#g" \
+      "$source" > "$output"
+    assert_config_root_substitutable "$output" "$source"
+}
+
+install_rendered_config() {
+    local source="$1" target="$2" display_name="$3" level="$4" tmpfile
+    tmpfile=$(mktemp)
+    render_config_content "$source" "$tmpfile"
+    safe_install_file "$tmpfile" "$target" "$display_name" "$level"
 }
 
 
@@ -344,10 +378,16 @@ else
     preflight_config_target="$CONFIG_ROOT/AGENTS.md"
 fi
 if { [ -e "$preflight_config_target" ] || [ -L "$preflight_config_target" ]; } &&
-   [ "$config_src" != "$preflight_config_target" ] &&
-   ! diff -q "$config_src" "$preflight_config_target" >/dev/null 2>&1; then
-    err "$(basename "$preflight_config_target") already belongs to another configuration"
-    exit 1
+   [ "$config_src" != "$preflight_config_target" ]; then
+    preflight_rendered=$(mktemp)
+    render_config_content "$config_src" "$preflight_rendered"
+    if ! diff -q "$config_src" "$preflight_config_target" >/dev/null 2>&1 &&
+       ! diff -q "$preflight_rendered" "$preflight_config_target" >/dev/null 2>&1; then
+        rm -f "$preflight_rendered"
+        err "$(basename "$preflight_config_target") already belongs to another configuration"
+        exit 1
+    fi
+    rm -f "$preflight_rendered"
 fi
 
 # Clean up legacy cannbot subdirectory from previous installations
@@ -432,11 +472,10 @@ echo ""
 echo -e "${CYAN}Agents (${AGENT_COUNT} 项，来自本地 agents/)：${NC}"
 for name in $AGENTS_TO_INSTALL; do
     target="$CANNBOT_DIR/agents/$name"
-    src="$LOCAL_AGENT_ROOT/$name"
     if [ -e "$target" ] || [ -L "$target" ]; then
-        echo -e "  ${YELLOW}$name${NC} → 将被替换为软连接到 ${src}"
+        echo -e "  ${YELLOW}$name${NC} → 将被替换为已渲染资源路径的副本"
     else
-        echo -e "  ${GREEN}$name${NC} → 将创建软连接到 ${src}"
+        echo -e "  ${GREEN}$name${NC} → 将创建已渲染资源路径的副本"
     fi
     echo -e "    ${DIM}目标路径: $target${NC}"
 done
@@ -463,11 +502,11 @@ if [ "$TOOL" = "opencode" ]; then
         config_target="$CONFIG_ROOT/AGENTS.md"
     fi
     if [ "$LEVEL" = "project" ] && [ "$PLUGIN_ROOT" = "$INSTALL_BASE" ]; then
-        echo -e "  ${GREEN}AGENTS.md${NC} → 已存在于项目目录，无需创建软链接"
+        echo -e "  ${GREEN}AGENTS.md${NC} → 已在目标位置"
     elif [ -e "$config_target" ] || [ -L "$config_target" ]; then
-        echo -e "  ${YELLOW}AGENTS.md${NC} → 将被替换为软连接到 ${config_src}"
+        echo -e "  ${YELLOW}AGENTS.md${NC} → 将被替换为已渲染配置"
     else
-        echo -e "  ${GREEN}AGENTS.md${NC} → 将创建软连接到 ${config_src}"
+        echo -e "  ${GREEN}AGENTS.md${NC} → 将创建已渲染配置"
     fi
     echo -e "    ${DIM}目标路径: $config_target${NC}"
 elif [ "$TOOL" = "claude" ]; then
@@ -530,7 +569,7 @@ if [ "$TOOL" = "opencode" ]; then
     done
     step1_summary="skills(${skill_count}) "
 
-    # OpenCode: per-item symlinks for agents (from local agents/, whitelist filtered)
+    # Render per-agent discovery files so concrete resource roots stay in the adapter layer.
     mkdir -p "$CANNBOT_DIR/agents"
     # Pre-clean existing agent symlinks (only whitelist items)
     for agent_entry in "$LOCAL_AGENT_ROOT"/*; do
@@ -548,7 +587,7 @@ if [ "$TOOL" = "opencode" ]; then
         name=$(basename "$agent_entry")
         base_name="${name%.md}"
         agent_is_included "$base_name" || continue
-        ln -sfn "$agent_entry" "$CANNBOT_DIR/agents/$name"
+        install_rendered_agent "$agent_entry" "$CANNBOT_DIR/agents/$name"
         agent_count=$((agent_count + 1))
     done
     step1_summary="${step1_summary}agents(${agent_count})"
@@ -602,107 +641,26 @@ fi
 [ -n "$step1_warns" ] && echo -e "$step1_warns"
 echo ""
 
-# --- Step 2: Install config file (AGENTS.md / CLAUDE.md) ---
+# --- Step 2: Install rendered config file (AGENTS.md / CLAUDE.md) ---
 step "[2/5] Installing configuration..."
 
 config_src="$PLUGIN_ROOT/AGENTS.md"
 
-if [ "$TOOL" = "opencode" ]; then
-    # OpenCode: AGENTS.md in project root (or CONFIG_ROOT for global)
-    if [ "$LEVEL" = "project" ]; then
-        config_target="$INSTALL_BASE/AGENTS.md"
-    else
-        config_target="$CONFIG_ROOT/AGENTS.md"
-    fi
-    if [ "$LEVEL" = "project" ] && [ "$PLUGIN_ROOT" = "$INSTALL_BASE" ]; then
-        ok "AGENTS.md already in project directory"
-    else
-        if [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-            PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
-            ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
-            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
-            # this script knows which root the chosen tool actually got.
-            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
-            tmpfile=$(mktemp)
-            sed \
-              -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
-              -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
-              -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
-              -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
-              "$config_src" > "$tmpfile"
-            assert_config_root_substitutable "$tmpfile" "$config_src"
-            safe_install_file "$tmpfile" "$config_target" "AGENTS.md" "$LEVEL"
-        else
-            ln -sf "$config_src" "$config_target"
-            ok "AGENTS.md"
-        fi
-    fi
-elif [ "$TOOL" = "claude" ]; then
-    # Claude: CLAUDE.md in project root (or CONFIG_ROOT for global)
-    if [ "$LEVEL" = "project" ]; then
-        config_target="$INSTALL_BASE/CLAUDE.md"
-    else
-        config_target="$CONFIG_ROOT/CLAUDE.md"
-    fi
-    if [ "$config_src" = "$config_target" ]; then
-        info "$(basename "$config_target") already at target location"
-    elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-        PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
-        ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
-            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
-            # this script knows which root the chosen tool actually got.
-            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
-        tmpfile=$(mktemp)
-        sed \
-          -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
-              -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
-          -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
-          -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
-          "$config_src" > "$tmpfile"
-        assert_config_root_substitutable "$tmpfile" "$config_src"
-        safe_install_file "$tmpfile" "$config_target" "CLAUDE.md" "$LEVEL"
-    else
-        if [ -e "$config_target" ] && [ ! -L "$config_target" ]; then
-            backup="${config_target}.bak.$(date +%Y%m%d_%H%M%S)"
-            cp -a "$config_target" "$backup"
-            warn "CLAUDE.md already exists, backed up to $(basename "$backup")"
-        fi
-        ln -sf "$config_src" "$config_target"
-        ok "CLAUDE.md"
-    fi
+if [ "$TOOL" = "claude" ]; then
+    config_name="CLAUDE.md"
 else
-    # Cursor: AGENTS.md in project root (same as OpenCode)
-    if [ "$LEVEL" = "project" ]; then
-        config_target="$INSTALL_BASE/AGENTS.md"
-    else
-        config_target="$CONFIG_ROOT/AGENTS.md"
-    fi
-    if [ "$config_src" = "$config_target" ]; then
-        info "$(basename "$config_target") already at target location"
-    elif [ "$LEVEL" = "global" ] || { [ "$LEVEL" = "project" ] && [ "$INSTALL_BASE" != "$SCRIPT_DIR" ]; }; then
-        PLUGIN_ROOT_ABS="$PLUGIN_ROOT"
-        ESCAPED_ROOT="${PLUGIN_ROOT_ABS//#/\\#}"
-            # AGENTS.md refers to the install root as $CANNBOT_CONFIG_ROOT; only
-            # this script knows which root the chosen tool actually got.
-            ESCAPED_CONFIG_ROOT="${CONFIG_ROOT//#/\\#}"
-        tmpfile=$(mktemp)
-        sed \
-          -e "s#\$CANNBOT_CONFIG_ROOT#${ESCAPED_CONFIG_ROOT}#g" \
-              -e "s#\`workflows/#\`${ESCAPED_ROOT}/workflows/#g" \
-          -e "s#pypto/docs/#${ESCAPED_ROOT}/pypto/docs/#g" \
-          -e "s#pypto/examples/#${ESCAPED_ROOT}/pypto/examples/#g" \
-          "$config_src" > "$tmpfile"
-        assert_config_root_substitutable "$tmpfile" "$config_src"
-        safe_install_file "$tmpfile" "$config_target" "AGENTS.md" "$LEVEL"
-    else
-        if [ -e "$config_target" ] && [ ! -L "$config_target" ]; then
-            backup="${config_target}.bak.$(date +%Y%m%d_%H%M%S)"
-            cp -a "$config_target" "$backup"
-            warn "AGENTS.md already exists, backed up to $(basename "$backup")"
-        fi
-        ln -sf "$config_src" "$config_target"
-        ok "AGENTS.md"
-    fi
+    config_name="AGENTS.md"
+fi
+if [ "$LEVEL" = "project" ]; then
+    config_target="$INSTALL_BASE/$config_name"
+else
+    config_target="$CONFIG_ROOT/$config_name"
+fi
+
+if [ "$config_src" = "$config_target" ]; then
+    info "$config_name already at target location"
+else
+    install_rendered_config "$config_src" "$config_target" "$config_name" "$LEVEL"
 fi
 echo ""
 
@@ -751,7 +709,7 @@ else
 
     ok "Skills: $link_count discovery symlinks"
 
-    # Claude/Trae/Cursor: also create agent discovery symlinks (from local agents/)
+    # Render agent discovery files instead of exposing raw prompts through symlinks.
     AGENT_DISCOVERY="$CONFIG_ROOT/agents"
 
     # Pre-clean existing agents (only whitelist items)
@@ -765,15 +723,15 @@ else
         [ -e "$target" ] || [ -L "$target" ] && rm -rf "$target"
     done
 
-    agent_link_count=0
+    agent_count=0
     for agent_entry in "$LOCAL_AGENT_ROOT"/*; do
         [ -e "$agent_entry" ] || continue
         name=$(basename "$agent_entry")
         base="${name%.md}"
         agent_is_included "$base" || continue
         target="$AGENT_DISCOVERY/$name"
-        ln -sfn "$agent_entry" "$target"
-        agent_link_count=$((agent_link_count + 1))
+        install_rendered_agent "$agent_entry" "$target"
+        agent_count=$((agent_count + 1))
     done
 
     # Clean broken symlinks
@@ -781,7 +739,7 @@ else
         [ -L "$link" ] && [ ! -e "$link" ] && rm "$link"
     done
 
-    ok "Agents: $agent_link_count discovery symlinks"
+    ok "Agents: $agent_count rendered discovery files"
 
     # Claude/Trae/Cursor: also create references discovery symlinks (plugin-level shared refs)
     if [ -d "$PLUGIN_ROOT/references" ]; then

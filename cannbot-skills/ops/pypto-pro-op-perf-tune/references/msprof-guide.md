@@ -1,16 +1,28 @@
 # `msprof` 采集与分析
 
+## Contents
+
+- [适用场景](#scope)
+- [Step 1：构建算子（如果有指定的调用方式，这一步可跳过）](#build-operator)
+- [Step 2：采集](#collect-profile)
+- [Step 3：归档 + 统计摘要](#archive-summary)
+- [主 Bound 判定（msprof 归档）](#bound-classification)
+- [数据目录结构](#data-layout)
+- [注意事项](#cautions)
+- [相关资源](#resources)
+
+
 > 使用各 CANN 自带的 `msprof`：多组 `--aic-metrics` + sample-based `aicore.db`，得到可分析的 `op_summary_*`、`per_core_cycles.csv` 与 `summary.txt`。
 
 ---
 
-## 适用场景
+## <a id="scope"></a>适用场景
 
 - 目标环境以 `msprof` 为采集手段，或团队约定采用本工具链。
 
 ---
 
-## Step 1：构建算子（如果有指定的调用方式，这一步可跳过）
+## <a id="build-operator"></a>Step 1：构建算子（如果有指定的调用方式，这一步可跳过）
 
 **直调算子**：
 
@@ -28,7 +40,7 @@ bash build.sh --run_example {operator_name} eager cust --vendor_name=custom
 
 ---
 
-## Step 2：采集
+## <a id="collect-profile"></a>Step 2：采集
 
 原生 `msprof` 每次运行只支持一个 `--aic-metrics` 组，且 `op_summary_*.csv` 是 per-op 聚合值而非逐核。流程：
 
@@ -51,7 +63,7 @@ bash {skill_path}/scripts/msprof_profile_run.sh \
 
 ---
 
-## Step 3：归档 + 统计摘要
+## <a id="archive-summary"></a>Step 3：归档 + 统计摘要
 
 ```bash
 GROUP_DIR=$(ls -td <output_dir>/PROF_GROUP_* | head -1)
@@ -89,7 +101,7 @@ python3 {skill_path}/scripts/msprof_perf_summary.py $GROUP_DIR ops/{operator_nam
 
 ---
 
-## 主 Bound 判定（msprof 归档）
+## <a id="bound-classification"></a>主 Bound 判定（msprof 归档）
 
 本节适用于 **`msprof` 经 Step 2～3 得到的归档目录**（`round_NNN/`）。
 
@@ -121,7 +133,7 @@ python3 {skill_path}/scripts/msprof_perf_summary.py $GROUP_DIR ops/{operator_nam
 
 ---
 
-## 数据目录结构
+## <a id="data-layout"></a>数据目录结构
 
 ### 临时输出（`msprof_profile_run.sh` 的 `--output` 目录下）
 
@@ -160,7 +172,7 @@ ops/{算子名}/docs/perf/
 
 ---
 
-## 注意事项
+## <a id="cautions"></a>注意事项
 
 1. **必须 warm-up**：脚本默认 `--warm-up=3` 可调，避免 DVFS 影响首次运行
 2. **无频率字段**：`op_summary` 没有 `Current Freq/Rated Freq`；脚本通过 `aicore_time / max_cycles` 反推主频
@@ -170,7 +182,7 @@ ops/{算子名}/docs/perf/
 
 ---
 
-## 相关资源
+## <a id="resources"></a>相关资源
 
 | 文件 | 内容 |
 |------|------|

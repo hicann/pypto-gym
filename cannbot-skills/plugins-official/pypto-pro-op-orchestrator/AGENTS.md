@@ -39,12 +39,9 @@ python {脚本路径}
 ```bash
 export PYPTO_DEVKIT_DIR="$(pwd)/.devkit"
 
-# 解析 cannbot 安装根。**每个用到它的代码块都要重复这两行**——环境变量不跨 Bash 调用存活，
-# 上一个块里的 export 在这里已经不在了。探测标记用 skills/pypto-pro-op-develop（cannbot 必装
-# skill），不能只看 skills/ 目录存在：Claude Code 自己也会建 .claude/skills/，只看目录会在
-# opencode 安装上错绑到 .claude。init.sh 以 sed 安装时下面的 :- 分支不会被用到。
-CANNBOT_CONFIG_ROOT="${CANNBOT_CONFIG_ROOT:-$(for d in .claude .opencode .trae .marscode .traecli .cursor .github .codeartsdoer; do [ -d "$PWD/$d/skills/pypto-pro-op-develop" ] && printf '%s' "$PWD/$d" && break; done)}"
-[ -n "$CANNBOT_CONFIG_ROOT" ] || { echo "未探测到 cannbot 安装根（找不到 <root>/skills/pypto-pro-op-develop）；先运行 init.sh" >&2; exit 1; }
+# `init.sh` 安装时会将下方占位符渲染为实际资源根；prompt 不自行推断路径。
+CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
+[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
 ```
 
 调度 Stage 1 子代理前，使用 skill `pypto-docs-search` **仅装配（部署）一次开发资源缓存**——此处只运行缓存装配，**不在此进行任何检索 / explore**（PyPTO-Pro 的 API 文档、pro_ops 样例、教程无在线形态，必须本地在场）。检索留待后续各 Stage 按需进行：本次仅装配，不检索。之后 Stage 1 的 `pypto-pro-material-explore` 基于同一份缓存扫描生成 `PRO_MATERIAL_INDEX.md` 资料索引，后续各 Stage 按该索引中的缓存路径直接读取 API 文档、pro_ops 样例与教程。
@@ -52,19 +49,18 @@ CANNBOT_CONFIG_ROOT="${CANNBOT_CONFIG_ROOT:-$(for d in .claude .opencode .trae .
 **跳过判定**：若 `$PYPTO_DEVKIT_DIR` 下 `docs/pypto_pro/api/`、`docs/pypto_pro/tutorials/` 与 `pro_ops/` 三者均已存在且非空，且 `pro_ops/` 下 `.py` 文件数与 `official_samples.md` 清单条目数一致（已清理过），则缓存就绪，**跳过装配与清理，直接进入 Stage 1**。否则执行下方装配 + 清理：
 
 ```bash
-# 解析 cannbot 安装根。**每个用到它的代码块都要重复这两行**——环境变量不跨 Bash 调用存活，
-# 上一个块里的 export 在这里已经不在了。探测标记用 skills/pypto-pro-op-develop（cannbot 必装
-# skill），不能只看 skills/ 目录存在：Claude Code 自己也会建 .claude/skills/，只看目录会在
-# opencode 安装上错绑到 .claude。init.sh 以 sed 安装时下面的 :- 分支不会被用到。
-CANNBOT_CONFIG_ROOT="${CANNBOT_CONFIG_ROOT:-$(for d in .claude .opencode .trae .marscode .traecli .cursor .github .codeartsdoer; do [ -d "$PWD/$d/skills/pypto-pro-op-develop" ] && printf '%s' "$PWD/$d" && break; done)}"
-[ -n "$CANNBOT_CONFIG_ROOT" ] || { echo "未探测到 cannbot 安装根（找不到 <root>/skills/pypto-pro-op-develop）；先运行 init.sh" >&2; exit 1; }
+# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
+CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
+[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
 
 # 跳过判定脚本——输出 READY 或 NEED_PROVISION
 python3 -c "
 import os, re
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path('$CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
+manifest = Path(
+    '$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md'
+).read_text(encoding='utf-8')
 expected = len(re.findall(r'\`pro_ops/[^\`]+\.py\`', manifest))
 dirs = [cache / 'docs/pypto_pro/api', cache / 'docs/pypto_pro/tutorials', cache / 'pro_ops']
 if all(d.is_dir() and any(d.rglob('*')) for d in dirs):
@@ -78,17 +74,14 @@ else:
 **装配命令**：拉取源统一为 `https://gitcode.com/cann/pypto`（含 PyPTO-Pro 文档资料、pro_ops 样例与 ops 算子）：
 
 ```bash
-# 解析 cannbot 安装根。**每个用到它的代码块都要重复这两行**——环境变量不跨 Bash 调用存活，
-# 上一个块里的 export 在这里已经不在了。探测标记用 skills/pypto-pro-op-develop（cannbot 必装
-# skill），不能只看 skills/ 目录存在：Claude Code 自己也会建 .claude/skills/，只看目录会在
-# opencode 安装上错绑到 .claude。init.sh 以 sed 安装时下面的 :- 分支不会被用到。
-CANNBOT_CONFIG_ROOT="${CANNBOT_CONFIG_ROOT:-$(for d in .claude .opencode .trae .marscode .traecli .cursor .github .codeartsdoer; do [ -d "$PWD/$d/skills/pypto-pro-op-develop" ] && printf '%s' "$PWD/$d" && break; done)}"
-[ -n "$CANNBOT_CONFIG_ROOT" ] || { echo "未探测到 cannbot 安装根（找不到 <root>/skills/pypto-pro-op-develop）；先运行 init.sh" >&2; exit 1; }
+# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
+CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
+[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
 
 PYPTO_SRC_URL=https://gitcode.com/cann/pypto.git \
 PYPTO_GYM_URL=https://gitcode.com/cann/pypto.git \
 PYPTO_PRO_OPS_URL=https://gitcode.com/cann/pypto.git \
-python $CANNBOT_CONFIG_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py
+python $CANNBOT_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py
 ```
 
 装配成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/pypto_pro/api/`、`docs/pypto_pro/tutorials/` 与 `pro_ops/`。装配失败（联网受限等）时先总结错误向用户汇报，不得凭空编造索引。
@@ -96,19 +89,18 @@ python $CANNBOT_CONFIG_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py
 **按清单清理 pro_ops**（装配成功后立即执行）：`sync_devkit.py` 拉取的是整个 a5 目录，其中大部分文件并非官方指定样例，质量无保障。官方指定样例清单定义在 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md`（统一索引来源），装配后须按该清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件：
 
 ```bash
-# 解析 cannbot 安装根。**每个用到它的代码块都要重复这两行**——环境变量不跨 Bash 调用存活，
-# 上一个块里的 export 在这里已经不在了。探测标记用 skills/pypto-pro-op-develop（cannbot 必装
-# skill），不能只看 skills/ 目录存在：Claude Code 自己也会建 .claude/skills/，只看目录会在
-# opencode 安装上错绑到 .claude。init.sh 以 sed 安装时下面的 :- 分支不会被用到。
-CANNBOT_CONFIG_ROOT="${CANNBOT_CONFIG_ROOT:-$(for d in .claude .opencode .trae .marscode .traecli .cursor .github .codeartsdoer; do [ -d "$PWD/$d/skills/pypto-pro-op-develop" ] && printf '%s' "$PWD/$d" && break; done)}"
-[ -n "$CANNBOT_CONFIG_ROOT" ] || { echo "未探测到 cannbot 安装根（找不到 <root>/skills/pypto-pro-op-develop）；先运行 init.sh" >&2; exit 1; }
+# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
+CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
+[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
 
 # 解析清单提取白名单路径，删除 pro_ops/ 下不在白名单的 .py 文件
 python3 -c "
 import re, os
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path('$CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md').read_text(encoding='utf-8')
+manifest = Path(
+    '$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md'
+).read_text(encoding='utf-8')
 whitelist = set()
 for m in re.finditer(r'\`pro_ops/[^\`]+\.py\`', manifest):
     whitelist.add(m.group(0).strip('\`'))
@@ -151,6 +143,8 @@ print(f'清理完成：保留 {len(whitelist)} 个官方指定样例，删除 {r
 没有 verdict、verifier 空返回、verifier 报错或 verdict 不是 PASS 时一律不得推进状态。
 
 ## 核心循环
+
+下图用 `state_transition(...)` 表示统一的抽象状态转换合同。该合同的工具映射、hook 装配与兼容适配由 `init.sh` 和插件层负责；编排器始终执行同一组 action，不感知或分支判断具体宿主。
 
 ```
 init    → state_transition(init, opDir="custom/<op>", stage=1, max_stage=4)
@@ -204,42 +198,49 @@ Stage 4 → 据 stage4_path 选择调度路径：
 2. 每个 Stage 结束时，orchestrator 调度 `pypto-pro-op-verifier`（声明对应 `stageN-check` 模式）执行检查清单。verifier 返回 FAIL 时，orchestrator 将失败项反馈给子代理修正。orchestrator **绝不亲自调试或修改 kernel 代码**，也**绝不亲自执行检查清单**——只做编排和决策。
 3. 不得因困难而偷懒放弃或跳过——每个问题必须正向解决。但穷尽合理方案后编排器与 verifier 仍判定算子无法完成时，允许将 Stage 4 标记为失败并诚实上报用户（见 Stage 4「放弃路径」），不强行 `complete_stage(4)`。
 4. 不得随意调用本文件未声明的 skill 或 agent。
-5. **Stage 推进通过 `state_transition` 工具管理**（该工具随 OpenCode 插件安装；其他工具下不可用时，编排者按同一 schema 手工维护 `custom/<op>/.orchestrator_state.json`，每个 Stage 边界写一次，字段与下方状态机一致——降级的是写入方式，不是账本本身）。Pro 流程使用 `.orchestrator_state.json` 状态机记录 Stage 状态、重试计数与 artifact 哈希。编排者在每个 verifier PASS 后调用 `complete_stage` 推进，在跨 Stage 回退时调用 `rollback_to_stage`。子代理**不得**调用 `state_transition`——它们把结果返回给编排者，由编排者发起 transition。详见下方「共享状态与 state_transition 工具」。
+5. **Stage 推进统一执行 `state_transition` 抽象合同**。安装适配必须对下方 action
+   schema、verifier/lint 前置门禁、artifact 哈希和原子写入提供等价语义；编排器不根据
+   宿主选择另一套流程。verifier PASS 后才能执行 `complete_stage` / `complete_module`，跨
+   Stage 回退执行 `rollback_to_stage`。子代理不得维护状态，只有编排者可以写入。
 6. **实现偏差强制声明**：Stage 4 coder 若实现与 DESIGN.md 任何关键常量、算法步骤、tile 布局偏离，必须在回复中显式列出偏离点 + 原因 + 是否需回退 Stage 3。**静默偏离视为违规**。orchestrator 收到偏离声明后据偏离性质裁决——须区分两类偏差：
-   - **笔误 / 参数失误 / 设计约束类**（如精度限制、API 能力不足等）：可声明，orchestrator 裁决后据实修正 DESIGN.md 继续推进或回退 Stage 3 重新设计（现行机制保留）。
+   - **笔误 / 参数失误 / 设计约束类**（如精度限制、API 能力不足等）：coder 只声明偏差并附证据，不直接改写 DESIGN.md；若实现未偏离设计且只是代码翻译错误，留在 Stage 4 修复；若需改变设计，orchestrator 必须回退 Stage 3，由 architect 修订并重新通过 stage3-check。
    - **铁律违规类**（单 kernel、未作弊等"违反即失败"项）：**不可声明豁免**——coder 无权自我授权违反铁律，orchestrator 也无权授权 verifier 跳过铁律检查。verifier 检测到铁律违规必须 FAIL，"实现偏差声明"机制不得被滥用以放行严重违规。
 
-     > **`vf.*` 首选与本条不冲突，因为它不是靠声明豁免的。** tile-op 的例外由
-     > **Stage 3 裁定**：architect 在 DESIGN.md §1 填 `tile_op_exception:` + 证据，
-     > **stage3-check #10 的 verifier 作为独立判官实际查 API 文档与官方样例求证**，
-     > 不成立就 FAIL 回退设计阶段。裁定通过后例外冻结，Stage 4 只核对实现是否与它
-     > 逐条对应。**coder 在 Stage 4 仍然不能自我授权任何例外**——这正是把裁定前移的
-     > 目的：例外要在设计时被独立论证，而不是在实现后被声明。
-7. **capability_gap 必须先经 verifier 验证，不可直接回退**：coder 穷尽 vf API 组合方案 + 循环结构替代方案后仍无法纯 kernel 实现算子时，可返回 `capability_gap` verdict + 失败证据。**编排器收到后不可直接 `rollback_to_stage(3)`**，必须先做以下流程：
-   1. 编排器将 coder 报告的 `capability_gap` 完整内容（编译错误原文、精度报告、已尝试的 vf 方案清单及各自失败原因、coder 的"无法解决"判断依据）**完整且准确**地传达给 verifier，调度 verifier 执行 `capability_gap_check` 模式
-   2. verifier 以**独立判官**身份，带着**客观和质疑的眼光**，实际查阅 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` API 文档、`$PYPTO_DEVKIT_DIR/pro_ops/` 官方算子样例、`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/` 教程，搜索与 coder 声称"不可行"的用法相关的 working example，找到完整证据及解决办法
-   3. verifier 返回两种结论之一：
+     > Vector 选择遵循 `references/performance-constraints.md`，各角色只执行本阶段职责；
+     > coder 不得直接改 DESIGN。
+7. **capability_gap 必须先经 verifier 验证，不可直接回退**：coder 穷尽 DESIGN 已冻结实现的目标版本合法组合与循环结构替代后仍无法纯 kernel 实现算子时，可返回 `capability_gap` verdict + 失败证据。**编排器收到后不可直接 `rollback_to_stage(3)`**，必须先做以下流程：
+   1. 编排器将 coder 报告的 `capability_gap` 完整内容（编译错误原文、精度报告、已尝试候选及各自失败原因、coder 的“无法解决”判断依据）**完整且准确**地传达给 verifier，调度 verifier 执行 `capability_gap_check` 模式
+   2. verifier 以**独立判官**身份，实际查阅 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` API 文档、`$PYPTO_DEVKIT_DIR/pro_ops/` 官方算子样例、`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/` 教程；静态证据不足时在 cwd 临时目录运行最小 probe，记录命令与原始输出后清理
+   3. verifier 返回三种结论之一：
       - **capability_gap 为虚假**（找到 working example 或发现 coder 的 API 误用）：返回 `verdict: false_gap` + working example 路径 + 正确用法分析 + coder 应参照修正的具体建议。编排器收到后，将 verifier 的分析结果**原样**告知 coder，让其继续开发任务（不调 state_transition，不回退）
-      - **capability_gap 成立**（未找到 working example，限制确实存在）：返回 `verdict: confirmed_gap` + 验证过程及结论。编排器收到后，调 `rollback_to_stage(target_stage=3, failure_category="capability_gap")` 回退 Stage 3 重新设计或上报用户
+      - **capability_gap 成立**（目标版本文档约束与可复现最小实验共同证明限制存在；仅未找到 working example 不足以确认）：返回 `verdict: confirmed_gap` + 验证过程及结论。编排器收到后，调 `rollback_to_stage(target_stage=3, failure_category="capability_gap")` 回退 Stage 3 重新设计或上报用户
+      - **证据不足**：返回 `INCONCLUSIVE` / `capability_inconclusive`，列明已查证据与缺口；编排器不得推进或猜测回退，先补齐指定版本、设备或复现条件后重新调度调查
    4. **回退时只传递失败信息（含编译错误原文），不预定解决方案**——避免编排器基于未验证的假设引导 architect 走向特定架构
 
    **背景**：coder 在复杂开发过程中容易出现失误或幻觉，将自身的 API 误用归因为"框架不支持"。利用 verifier agent 和编排器做两道把关——verifier 是独立判官，更加客观独立和具有质疑性。
 
    **禁止以 capability_gap 为由在 host 端做核心计算绕过**——发现此类行为按作弊红线处理（回退 Stage 4 红线重写）。
-8. **引用 skills 下的脚本时一律用确切路径直接调用，不得用 Glob 搜索**——skills 以 symlink 方式安装（`$CANNBOT_CONFIG_ROOT/skills/<skill>` 是指向 `cannbot-skills/ops/<skill>/` 的符号链接，`$CANNBOT_CONFIG_ROOT` 为当前 Agent 平台的配置根目录，如 `.opencode`/`.claude`，由 init.sh 安装时写入），Glob / find 默认不穿越符号链接会漏搜。已知确切路径的脚本（如 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py`、`$CANNBOT_CONFIG_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py`）直接按路径调用，不做 Glob 搜索。
+8. **引用 skills 下的脚本时一律用确切路径直接调用，不得用 Glob 搜索**——skills 以
+   symlink 方式安装，Glob / find 默认不穿越符号链接会漏搜。已知确切路径的脚本（如
+   `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py`、
+   `$CANNBOT_CONFIG_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py`）直接按安装后的路径调用，
+   不做 Glob 搜索。
 
 ---
 
 ## 共享状态与 state_transition 工具
 
-`custom/<op>/.orchestrator_state.json` 是机器可读的进度账本（Stage 状态、重试计数、artifact 哈希、回滚历史）。**只有编排者能写这个文件，且只能通过 `state_transition` 工具**——子代理把结果返回编排者，由编排者发起 transition。
+`custom/<op>/.orchestrator_state.json` 是机器可读的进度账本（Stage 状态、重试计数、
+artifact 哈希、回滚历史）。**只有编排者能通过 `state_transition` 抽象合同写这个文件**；
+子代理只返回结果，不得写状态。合同实现必须先校验完整下一状态，再以同目录临时文件原子替换；
+不得原地局部编辑、跳过账本或跳过门禁。
 
 `state_transition` 是编排者推进 Stage 的工具。**Lint 门禁作为 `complete_stage` / `submit_for_verify` / `complete_module` 的副作用自动运行，并且总是在状态写入前完成**：`submit_for_verify` 在 coder 交付后、verifier 调度前触发；`complete_stage` / `complete_module` 在 verifier PASS 后触发。未抛错即 PASS。lint 门禁做机械检查（import 门禁、单 kernel、golden 纯度、文件存在性），verifier agent 做语义检查（精度、作弊、性能）。lint FAIL 时状态不推进，编排器重新调度上游 agent 修复后再次调用。可用 action：
 
 | Action | 使用时机 | 参数 |
 |---|---|---|
 | `init` | 启动新算子首次调用（创建目录 + 初始化状态机） | `opDir`, `stage=1`, `max_stage=4` |
-| `complete_stage` | verifier 返回 PASS 后推进。自动把下一 Stage 置为 `in_progress`，正常流程无需显式 `start_stage`。Stage 4 L1 路径下校验所有 module 已 `verified` | `opDir`, `stage` |
+| `complete_stage` | verifier 返回明确 PASS 后推进。自动把下一 Stage 置为 `in_progress`。Stage 4 L1 路径下校验所有 module 已 `verified` | `opDir`, `stage` |
 | `fail_stage` | 子代理报告不可恢复失败，或编排器穷尽方案后放弃算子（见 Stage 4 放弃路径） | `opDir`, `stage`, `reason` |
 | `start_stage` | `fail_stage` 后重新进入该 Stage（重试） | `opDir`, `stage`, `reason?` |
 | `rollback_to_stage` | 跨 Stage 回退（`design_violation` / `capability_gap` 等需重做上游）。target 之后 Stage 重置为 pending、retry 递增、丢弃下游 artifact 哈希。`target_stage < 4` 时清空 `stage4_path` + `stage4_modules` | `opDir`, `target_stage`, `reason`（必填）, `failure_category?` |
@@ -247,10 +248,12 @@ Stage 4 → 据 stage4_path 选择调度路径：
 | `plan_stage4` | Stage 3 完成后、Stage 4 进入前。设置 `stage4_path`（L0 或 L1，判据为 `is_fusion`），L1 时初始化 `stage4_modules` | `opDir`, `module_count`, `is_fusion` |
 | `start_module` | L1 only。开始为 Module k 调度 coder。`module` 传 Module 序号（"1"/"2"/"3"），状态机内部算 suffix | `opDir`, `module` |
 | `submit_for_verify` | L1 only。coder 产完 staged 文件 | `opDir`, `module` |
-| `complete_module` | L1 only。verifier module-check PASS | `opDir`, `module` |
+| `complete_module` | L1 only。`submit_for_verify` 后，verifier 返回明确 PASS 时完成 | `opDir`, `module` |
 | `fail_module` | L1 only。verifier module-check FAIL | `opDir`, `module`, `failure_category`, `failing_module_boundary?`, `last_error?` |
 
-**SPEC.md 冻结**：`complete_stage(1)` 自动记录 SPEC.md 哈希；从 Stage 3 起 `complete_stage` 校验 SPEC.md 未被篡改，变了则抛错。要改 SPEC.md 须先 `rollback_to_stage(target_stage=1, reason=...)`。此跨 Stage 不变量无法由 verifier 执行，由状态机机械强制。
+**SPEC.md 冻结**：`complete_stage(1)` 自动记录 SPEC.md 哈希；从 Stage 3 起 `complete_stage`
+在每次转换前校验 SPEC.md 未被篡改，变了则抛错。要改 SPEC.md 须先
+`rollback_to_stage(target_stage=1, reason=...)`。
 
 ---
 
@@ -314,9 +317,10 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 
 **① 反馈环境异常**（附 smoke 测试等证据）→ 环境分流（不调 state_transition）：**所有环境问题（硬件 / 软件 / hang）一律指示子代理加载 skill `pypto-pro-environment-check` 统一检测与评定**，编排器据其评定结论决策——硬件问题（卡 bad state / 不可见 / hang）→ 换卡重新调度 coder（`TILE_FWK_DEVICE_ID` 指定其他可用卡）；软件问题（torch_npu / pypto_pro 未安装、CANN 未配置等）→ 停机向用户反馈。
 
-**② 返回 `capability_gap` verdict**（附编译错误原文 / 精度报告 / 已尝试 vf 方案清单）→ 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：
+**② 返回 `capability_gap` verdict**（附编译错误原文 / 精度报告 / 已尝试的冻结实现及替代组合）→ 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：
    - **false_gap**（虚假）：将 verifier 分析结果原样告知 coder，让其继续开发
    - **confirmed_gap**（成立）：`rollback_to_stage(target_stage=3, failure_category="capability_gap")` 回退 Stage 3 重新设计或上报用户
+   - **capability_inconclusive**（证据不足）：保持当前 Stage，不推进、不回退；补齐 verifier 指定证据后重新调查
 
 **③ 正常交付**（test_{op}.py 已产）→ 调度 `pypto-pro-op-verifier`（模式 `stage4-check`）执行检查清单（verifier 先静态扫描，后动态运行 `python custom/<op>/test_{op}.py`）。verifier 裁决后再分三类：
 
@@ -350,7 +354,7 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 2. 调度 `pypto-pro-op-coder`（带 module_k 参数）→ 产 `modules/test_{op}_module<suffix_k>.py`（完整独立算子，实现 Module 1..k，输出 Module k 结果，参考前一轮的 `test_{op}_module<suffix_{k-1}>.py` 追加实现）
    - ↩ coder 返回 → 编排器读 `active_module` 确认仍在 module_k，按返回信号三分流：
       - ① 环境异常 → 环境分流（不调 state_transition，`active_module` 不变）：指示子代理加载 skill `pypto-pro-environment-check` 统一检测与评定，编排器据结论决策（硬件→换卡重派 coder 仍带 module_k；软件→停机反馈用户）
-     - ② `capability_gap` → 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：**false_gap**（虚假）→ 将 verifier 分析结果原样告知 coder，让其继续开发（仍带 module_k）；**confirmed_gap**（成立）→ `rollback_to_stage(3)`（Module 划分问题，回 architect）
+     - ② `capability_gap` → 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：**false_gap**（虚假）→ 将 verifier 分析结果原样告知 coder，让其继续开发（仍带 module_k）；**confirmed_gap**（成立）→ `rollback_to_stage(3)`（回 architect 重审候选、数据流或 Module 契约）；**capability_inconclusive**（证据不足）→ 保持当前 Module，补齐指定证据后重新调查
      - ③ 正常交付 → 进入第 3 步
 3. `state_transition(submit_for_verify, module=module_k)`
 4. 调度 `pypto-pro-op-verifier`（模式 `module-check, module_k`）→ 跑 `python custom/<op>/modules/test_{op}_module<suffix_k>.py`，比对 staged impl vs `modules/{op}_golden_stage<suffix_k>.py`

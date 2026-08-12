@@ -1,12 +1,25 @@
 # NPU 性能 Profiling（显式启用时执行）
 
-## 说明
+## Contents
+
+- [说明](#description)
+- [输入模式选择（决策树）](#input-mode-selection)
+- [模式 A：`--input` / `--arg`（随机值模式）](#input-mode-a)
+- [模式 B：`--factory`（工厂函数模式）](#input-mode-b)
+- [Profiling 流程](#profiling-flow)
+- [产物](#outputs)
+- [GOLDEN_PERF_REPORT.md 示例](#report-example)
+- [故障排查](#troubleshooting)
+- [注意事项](#cautions)
+
+
+## <a id="description"></a>说明
 
 NPU golden 性能采集默认关闭。仅当 orchestrator 根据用户明确要求传入 `collect_golden_perf=true` 时，才使用通用脚本 `../scripts/profile_golden.py` 调用 `{op}_golden.py`，并通过 `torch_npu.profiler` 采集性能数据。golden 文件本身不包含 profiling 代码。开关为 `false` 或缺失时跳过本流程，`GOLDEN_PERF_REPORT.md` 不是 Stage 2 必选交付物。
 
 **启用后的目标**：一旦 `collect_golden_perf=true`，必须成功采集正确的性能数据并生成有效报告。无论算子输入多复杂，都要找到一种方式让 profiling 成功运行，不能用空报告冒充成功。
 
-## 输入模式选择（决策树）
+## <a id="input-mode-selection"></a>输入模式选择（决策树）
 
 `profile_golden.py` 支持两种输入模式。**必须在执行前根据算子特征选择正确的模式**，避免盲目尝试后崩溃：
 
@@ -29,7 +42,7 @@ NPU golden 性能采集默认关闭。仅当 orchestrator 根据用户明确要�
                 压缩器、带 block table 的算子等
 ```
 
-## 模式 A：`--input` / `--arg`（随机值模式）
+## <a id="input-mode-a"></a>模式 A：`--input` / `--arg`（随机值模式）
 
 **适用条件**：所有 tensor 接受任意随机值，或仅少量 tensor 有简单值域约束。
 
@@ -76,7 +89,7 @@ python3 ../scripts/profile_golden.py \
   --device 15
 ```
 
-## 模式 B：`--factory`（工厂函数模式）
+## <a id="input-mode-b"></a>模式 B：`--factory`（工厂函数模式）
 
 **适用条件**：算子输入有语义约束，随机值会导致 golden 函数崩溃。典型场景：
 
@@ -151,7 +164,7 @@ def _make_inputs(device):
     return args, kwargs
 ```
 
-## Profiling 流程
+## <a id="profiling-flow"></a>Profiling 流程
 
 1. **由 `profile_golden.py` 预分配输入 tensor**（避免 `randn` 开销混入 kernel 计时）
    - 模式 A：根据 `--input` 规格用 `torch.randn` / `torch.randint` 生成
@@ -166,14 +179,14 @@ def _make_inputs(device):
 6. **Per-op 统计**：按 `Type` 列分组，计算每个 op type 的 `count`（调用次数）、`mean_duration`（单次均值）、`total`（总耗时）
 7. 写入 GOLDEN_PERF_REPORT.md
 
-## 产物
+## <a id="outputs"></a>产物
 
 | 产物 | 位置 | 说明 |
 |------|------|------|
 | `GOLDEN_PERF_REPORT.md` | `custom/{op}/` | 可直接阅读的性能报告（E2E 双路径、op 级 count + mean_duration + total） |
 | `kernel_details.csv` | `custom/{op}/prof/{op}_golden/.../ASCEND_PROFILER_OUTPUT/` | 每个设备侧 kernel 的 Name、Type、Duration(us) 等 |
 
-## GOLDEN_PERF_REPORT.md 示例
+## <a id="report-example"></a>GOLDEN_PERF_REPORT.md 示例
 
 ### 单 case（向后兼容）
 
@@ -268,7 +281,7 @@ def _make_inputs(device):
 - Each iteration: noise injection (480MB randn + max) → golden call → sync
 ```
 
-## 故障排查
+## <a id="troubleshooting"></a>故障排查
 
 **⛔ 启用后的核心原则：profiling 必须成功。遇到崩溃时按以下流程排查，不得跳过或留空报告。**
 
@@ -352,7 +365,7 @@ E2E 异常
      → 在 profile_golden.py 的 NOISE_OPS 中添加额外噪声 op type
 ```
 
-## 注意事项
+## <a id="cautions"></a>注意事项
 
 - 仅 NPU 环境下生效；无 NPU 硬件时 `profile_golden.py` 跳过采集
 - 若 torch_npu 未安装，profiling 阶段返回 `npu_import_error`（注：pypto-pro 与 pypto 安装方式一致——标准安装带 pro 框架代码的 pypto 后 pypto-pro 自动安装；请参考 CANN 与 PyPTO 官方安装文档完成环境部署）

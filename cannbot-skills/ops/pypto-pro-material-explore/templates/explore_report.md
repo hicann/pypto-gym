@@ -26,12 +26,12 @@ feasibility: {feasibility}
 ### 1.3 可能会涉及的 API 类别
 
 > 以下为常见类别提示，实际 API 以本次 PRO_MATERIAL_INDEX §A 扫描结果为准。
-> **性能强制**：见 `../../../references/performance-constraints.md`——Vector 数值计算用 `vf.*` 手写；Cube 计算用 `pl.*` Cube API。
+> Vector 规则见 [Vector 选择规范](../../../references/performance-constraints.md#强制-2vector-数值计算用-vf-手写)；本阶段记录默认 VF 映射，KB 模板例外交 Stage 3 裁定。
 
 | 类别 | 是否涉及 | 关键 API | 指定算子是否覆盖 |
 |------|---------|----------|------------------|
 | 数据搬运 | {是/否} | `load_tile` / `store_tile` / `load` / `store` / `move` | {覆盖 / 未覆盖} |
-| VF 计算（Vector 数值计算强制） | {是/否} | `vf.add` / `vf.mul` / `vf.max` / `vf.astype` / `vf.exp_sub` / `vf.muls` 等 | 覆盖（FA/lightning/vf_api） |
+| VF 实现 | {是/否} | `vf.add` / `vf.mul` / `vf.max` / `vf.astype` / `vf.exp_sub` / `vf.muls` 等 | 覆盖（FA/lightning/vf_api） |
 | 矩阵计算（Cube） | {是/否} | `matmul` / `matmul_acc` | 覆盖（matmul 类样例） |
 | 系统访问 | 是 | `get_block_idx` / `get_block_num` | 覆盖 |
 | 控制流 | 是 | `section_vector` / `section_cube` / `pl.range` | 覆盖 |
@@ -60,7 +60,11 @@ feasibility: {feasibility}
 
 ### 3.2 替代方案
 
-<!-- 仅标注"不支持"或"需组合"时填写 -->
+<!-- 每个 Vector 步骤均填写；无 Vector 步骤时注明不适用 -->
+
+| 步骤 | 默认 VF 映射 | API 依据 | 目标版本 | 适用条件 | 交接状态 |
+|------|---------------|----------|----------|----------|----------|
+| {n} | `vf.{api}` | {API path + excerpt} | {version} | {dtype/shape/layout} | 待 Stage 3 核对已选 KB 模板 |
 
 ### 3.3 API 约束
 

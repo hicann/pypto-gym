@@ -31,6 +31,14 @@
 | {如 1D [L]} | reshape [L,1] | [M,N] | reshape 回 [L] |
 | {2D [M,N]} | 直接传入 | [M,N] | 直接输出 |
 
+### Wrapper 操作清单
+
+> 默认填“空（仅参数校验、纯 Python 形状运算、输出分配和一次 kernel 启动）”。仅当目标框架确实无法迁移、且本阶段有可核验证据时逐项填写；Stage 4 不得新增或扩大例外。
+
+| API / 操作 | 无法迁入 kernel 的目标版本证据 | 适用条件 | 预期代价预算 | Stage 4 profile 测量方法 |
+|---|---|---|---|---|
+| {空；或具体 API / 操作} | {文档/官方样例路径、原文片段、目标版本；为空时写 N/A} | {dtype/shape/layout 条件；为空时写 N/A} | {允许的 device kernel / 时间上界；为空时写 0} | {profile 命令及核对项；为空时写确认无 aclnn*} |
+
 ### 划分依据
 
 {数据依赖分析 + Section 分隔判断}
@@ -61,31 +69,19 @@
 
 ## §1 API 映射（R1 输出）
 
-> **性能强制**：Vector 数值计算步骤须映射到 `vf.*` 指令序列（通过 `@pl.vector_function` 装饰器或 `@pl.inline` + `with pl.section_vf():` 块，在 `section_vector()` 内执行）。Cube 步骤用 `pl.*` Cube API。具体 vf 指令选用以 vf API 文档与官方指定算子为准。
->
-> ⚠️ 本标注为性能强制要求，**不可改写为 `pl.*` Vector API 或其他非 vf 措辞**——不得通过改写措辞使非 vf 方案"合规"。
->
-> **vf.* 路径不可行时，先判是不是下面两类例外**（不是直接走 unsupported 回退）：
->
-> | 类别 | 含义 |
-> |---|---|
-> | `capability_missing` | 目标版本没有对应 vf 指令，或其 dtype/shape/layout 约束使该步骤无法表达 |
-> | `incorrect` | 能写出来但结果错（精度、边界或语义不符） |
->
-> 属于其一 → 在该步骤下方填 `tile_op_exception:` 行（格式见下），**就地继续设计，不回退**。
-> 两类都不属于（含「实测更快」「更简洁」「tile-op 也能做」）→ **不是例外**，按 R1 第 5 步标注
-> unsupported 并触发回退。
+> 按 [Vector 选择规范](../../../references/performance-constraints.md#强制-2vector-数值计算用-vf-手写)填写。每个 Vector 步骤冻结唯一实现：
 >
 > ```
-> tile_op_exception: capability_missing | incorrect
->   step:     <本 §1 中的哪一步>
->   evidence: <API 文档原文，或实测报错原文；不接受性能数据>
+> vector_selection:
+>   step:                  <本 §1 中的哪一步>
+>   implementation:        vf | tile_op
+>   api_sequence:          <vf.* 或 pl.* API 序列>
+>   decision_reason:       default_vf | kb_template_required
+>   kb_template_evidence:  <default_vf 写 n/a；tile_op 写已选 KB 路径、明确要求的原文/片段>
+>   target_version:        <目标软件/框架版本>
+>   applicable_conditions: <dtype/shape/layout/算子条件>
 > ```
 >
-> **这一行由 stage3-check #10 裁定**——verifier 会实际去查 API 文档与官方样例求证，找到可用
-> vf 写法即判 FAIL 并回退本阶段。裁定通过后该例外冻结，Stage 4 只核对实现与它逐条对应，
-> **coder 无权新增或改写**。
-
 ### Phase1 API 调用序列
 
 ```

@@ -2,9 +2,9 @@
 # coding: utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
 
-"""精度对比引擎 — 方案A 混合容差标准。
+"""精度对比引擎 — 当前工作流固定的方案A混合容差策略。
 
-依据《生态算子精度标准》§2（experimental_standard.md）实现：
+以下阈值和判定逻辑以本文件为当前可执行事实源：
   - 逐元素通过条件: |actual - golden| <= atol + rtol * |golden|
   - 整体通过条件: matched_ratio >= required_matched_ratio AND max_abs_error <= max_abs_error_limit
   - max_abs_error_limit = max(fixed_limit, 32 * ULP)  ('or' 语义取较大者)
@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 
 # ============================================================================
-# 阈值表 (experimental_standard.md §2.2)
+# 当前工作流固定阈值表（可执行事实源）
 # ============================================================================
 
 _REQUIRED_MATCHED_RATIO = 0.99
@@ -31,7 +31,7 @@ _THRESHOLDS = {
     torch.float64: (2.0**-10, 2.0**-16, 1e-2),  # 同 float32
 }
 
-# HiFloat32 / Float8 类型（torch 可能不支持，用字符串映射）
+# 对外接受的 dtype 名称及常用别名；未列出的名称显式拒绝
 _DTYPE_NAME_MAP = {
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
@@ -46,7 +46,8 @@ _DTYPE_NAME_MAP = {
 def _get_threshold(dtype):
     """查表返回 (rtol, atol, required_matched_ratio, max_abs_error_limit)。
 
-    对于整数类型，返回 None 表示走精确匹配路径。
+    对已登记浮点类型返回阈值；其他 dtype 返回 None，由调用方再区分整数精确匹配
+    与不支持类型，避免把未知浮点、复数或量化类型误当作整数。
     """
     if dtype in _THRESHOLDS:
         rtol, atol, fixed_limit = _THRESHOLDS[dtype]
@@ -162,7 +163,7 @@ def _format_float_result(metrics):
 def _compare_single_tensor(actual: torch.Tensor, golden: torch.Tensor, threshold_dtype=None) -> Tuple[bool, str, dict]:
     """对比单个 tensor，返回 (passed, summary, metrics)。
 
-    依据 experimental_standard.md §2:
+    按本文件固定策略：
       - 浮点: 混合容差 + matched_ratio + max_abs_error_limit
       - 整数: torch.equal 精确匹配
       - NaN 位置必须一致
@@ -173,12 +174,34 @@ def _compare_single_tensor(actual: torch.Tensor, golden: torch.Tensor, threshold
     if actual.shape != golden.shape:
         return False, f"shape mismatch: actual={tuple(actual.shape)} vs golden={tuple(golden.shape)}", {}
     total = actual.numel()
-    if total == 0:
-        return True, "empty tensor", {}
+    if actual.is_quantized or golden.is_quantized:
+        return False, f"unsupported quantized dtype pair: actual={actual.dtype}, golden={golden.dtype}", {}
+    if actual.is_complex() or golden.is_complex():
+        return False, f"unsupported complex dtype pair: actual={actual.dtype}, golden={golden.dtype}", {}
+
     comparison_dtype = threshold_dtype or actual.dtype
     threshold = _get_threshold(comparison_dtype)
     if threshold is None:
+        if actual.dtype != golden.dtype:
+            return False, f"dtype mismatch for exact comparison: actual={actual.dtype}, golden={golden.dtype}", {}
+        if actual.is_floating_point() or golden.is_floating_point():
+            return False, f"unsupported floating dtype: {comparison_dtype}", {}
+        if actual.dtype != torch.bool:
+            try:
+                torch.iinfo(actual.dtype)
+            except (TypeError, RuntimeError):
+                return False, f"unsupported exact-comparison dtype: {actual.dtype}", {}
+        if total == 0:
+            return True, "empty tensor", {}
         return _compare_integer(actual, golden, total)
+    if not actual.is_floating_point() or not golden.is_floating_point():
+        return (
+            False,
+            f"unsupported dtype pair for floating comparison: actual={actual.dtype}, golden={golden.dtype}",
+            {},
+        )
+    if total == 0:
+        return True, "empty tensor", {}
     prepared, error = _prepare_float_tensors(actual, golden, comparison_dtype)
     if error is not None:
         return False, error, {}
@@ -189,15 +212,24 @@ def _compare_single_tensor(actual: torch.Tensor, golden: torch.Tensor, threshold
 def _normalize_outputs(output) -> List[Optional[torch.Tensor]]:
     """将输出标准化为 tensor 列表。
 
-    支持: 单个 tensor / tuple / list / None 占位。
+    支持: 单个 tensor / tuple / list / None 占位。None 只能作为多输出对齐占位；
+    顶层 None 或全 None 会由 check_precision 判定为失败。
     """
     if output is None:
         return [None]
     if isinstance(output, torch.Tensor):
         return [output]
     if isinstance(output, (tuple, list)):
-        return [o if isinstance(o, torch.Tensor) else None for o in output]
-    return [None]
+        normalized = []
+        for index, item in enumerate(output):
+            if item is None or isinstance(item, torch.Tensor):
+                normalized.append(item)
+            else:
+                raise TypeError(
+                    f"unsupported output leaf at index {index}: {type(item).__name__}"
+                )
+        return normalized
+    raise TypeError(f"unsupported output type: {type(output).__name__}")
 
 
 def check_precision(
@@ -215,7 +247,7 @@ def check_precision(
     Returns:
         (passed, summary): passed=True/False, summary=人类可读的精度指标摘要
 
-    标准 (experimental_standard.md §2):
+    本文件固定策略：
       - 逐元素: |actual - golden| <= atol + rtol * |golden|
       - 整体: matched_ratio >= 0.99 AND max_abs_error <= max_abs_error_limit
       - max_abs_error_limit = max(fixed_limit, 32 * ULP)
@@ -223,8 +255,11 @@ def check_precision(
       - NaN 位置必须一致
       - Inf: 同号匹配, 异号 FAIL, 一方Inf→替换为 finfo.max
     """
-    actuals = _normalize_outputs(actual)
-    goldens = _normalize_outputs(golden)
+    try:
+        actuals = _normalize_outputs(actual)
+        goldens = _normalize_outputs(golden)
+    except TypeError as error:
+        return False, str(error)
 
     if len(actuals) != len(goldens):
         return False, f"output count mismatch: actual={len(actuals)} vs golden={len(goldens)}"
@@ -234,6 +269,7 @@ def check_precision(
 
     all_passed = True
     summaries = []
+    compared_tensors = 0
 
     for i, (a, g) in enumerate(zip(actuals, goldens)):
         if a is None and g is None:
@@ -243,10 +279,15 @@ def check_precision(
             summaries.append(f"output[{i}]: one side is None")
             continue
 
+        compared_tensors += 1
         passed, summary, _ = _compare_single_tensor(a, g, threshold_dtype)
         if not passed:
             all_passed = False
         prefix = "" if len(actuals) == 1 else f"output[{i}]: "
         summaries.append(f"{prefix}{summary}")
+
+    if compared_tensors == 0:
+        all_passed = False
+        summaries.append("no tensor output was compared")
 
     return all_passed, "; ".join(summaries)

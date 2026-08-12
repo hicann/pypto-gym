@@ -1,11 +1,11 @@
 ---
 name: pypto-pro-op-develop
-description: 实现、调试并验证 PyPTO-Pro 算子 kernel，覆盖纯 Vector、纯 Cube 与融合数据流。用于根据 DESIGN.md 编写实现、补齐测试、排查编译或精度问题，以及交付可运行的算子代码。L0 路径（纯vec/纯cube）一口气产出 `test_{op}.py`；L1 路径（融合算子）逐 Module 产出 staged 文件 `modules/test_{op}_module<suffix>.py`。
+description: 实现、调试并验证 PyPTO-Pro 算子 kernel，覆盖纯 Vector、纯 Cube 与融合数据流。当 DESIGN.md 和 Module 契约已通过 Stage 3 门禁，需要根据 DESIGN.md 编写实现、补齐测试、排查编译或精度问题，或交付可运行的算子代码时使用。L0 路径（纯 vec/纯 cube）一口气产出 `test_{op}.py`；L1 路径（融合算子）逐 Module 产出 staged 文件 `modules/test_{op}_module{suffix}.py`。产物交给独立 verifier；不要改写 SPEC 或自行认证 Stage 完成。
 ---
 
 # PyPTO-Pro 算子 Kernel 实现
 
-生成完整的 PyPTO-Pro kernel 实现文件（一个 `.py` 文件，含 kernel 函数 + 测试函数），并本地跑通验证。运行验证为最终准则——当运行结果与 DESIGN.md 冲突时，以实际 API 文档、教学文档、官方指定算子为准修正 DESIGN.md 的失误。
+生成完整的 PyPTO-Pro kernel 实现文件（一个 `.py` 文件，含 kernel 函数 + 测试函数），并本地跑通验证。运行结果若暴露 DESIGN.md 问题，返回 `design_violation` 证据并由编排器回退 Stage 3；本阶段不直接修改上游设计。
 
 > **角色说明**：本 skill 描述 Stage 4 的**实现方法**——承担者需自行完成 **开发 → 自验证 → 发现问题 → 分析根因 → 解决问题 → 再自验证** 的闭环，直到自认为可交付。**但门禁判定不由实现者做**：交付后由独立的 verifier 裁决，verifier 只检查不改代码。自验证通过不等于通过门禁，不要据此跳过或简化交付前自检。
 
@@ -15,14 +15,12 @@ description: 实现、调试并验证 PyPTO-Pro 算子 kernel，覆盖纯 Vector
 
 ## 实现约束
 
-> 完整定义见 `pypto-pro-material-explore` SKILL「实现选择规则」节。
+> 实现阶段只执行已冻结的 DESIGN.md，不重新裁定实现层级。
 > 1. 所有需要 buffer 切换/轮转的 tile（含 double buffer）一律用 `make_tile_group` + `auto_mutex`，由框架自动管理 buffer 切换与互斥。`make_tile` 仅限**单次使用 scratch tile**（写入一次、读取一次、不参与 buffer 切换/轮转循环，如一次性中间结果暂存、不迭代的归约标量结果）。**禁止用 `make_tile` + 手动 `sync_src`/`sync_dst` 管理 buffer 轮转**。
 >
 >    同步方案按 DESIGN.md §6 施工——auto_mutex 管核内 pipe 互斥（禁止在其管理的 tile 上叠加 `sync_src`/`sync_dst`，否则死锁）；跨核同步用 `set_cross_core`/`wait_cross_core`（手动）。具体同步点与 event_id 分配已在 §6 确定。
 >
-> 2. **Vector 数值计算用 `vf.*` 手写**。tile-op 的例外**已在 Stage 3 裁定完毕**：
->    DESIGN.md §1 若载有 `tile_op_exception:`，按它施工；没写就是没有例外。
->    **你无权新增或改写例外**——需要而 DESIGN.md 没写时，按实现偏差声明上报编排器。
+> 2. **Vector 数值计算按 DESIGN.md 已冻结的 `vector_selection` 施工**，不得生成双候选或改写 DESIGN。
 
 ---
 
@@ -55,7 +53,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 
 | 来源 | 内容 | 用途 |
 |------|------|------|
-| `custom/<op>/DESIGN.md` | Module 划分（§0）、API 映射（§1）、Tile 规划（§2）、UB 空间布局（§3）、循环与 Section（§4）、分核/流水/尾块（§5-7）、目标测试 case（§8）、全景图（§10） | **初步设计**——kernel 实现的初始主要依据；运行验证发现问题时可据实修正 |
+| `custom/<op>/DESIGN.md` | Module 划分（§0）、API 映射（§1）、Tile 规划（§2）、UB 空间布局（§3）、循环与 Section（§4）、分核/流水/尾块（§5-7）、目标测试 case（§8）、全景图（§10） | 已通过 Stage 3 的实现合同；发现设计问题时返回证据并回退，不在本阶段修改 |
 | `custom/<op>/EXPLORE_REPORT.md` | API 约束（§3）、相似样例与可复用模式（§4）、教程指导（§5）、Tile/同步策略建议（§6） | **编码参考**——API 约束速查、样例写法定位、教程设计指导 |
 
 ### 按需取用（EXPLORE_REPORT.md 不足时查阅）
@@ -72,7 +70,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 | `$PYPTO_DEVKIT_DIR/pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | **纯 cube 算子候选实现起点**——两级 K 分块 + move offset + 嵌套四分支 K 累加 + 尾块处理 + ASW 蛇形调度；仅在该路径存在且目标版本匹配时使用 | 纯 cube 算子生成代码前 |
 | [templates/impl_template.py.tmpl](templates/impl_template.py.tmpl) | kernel 文件骨架（tile 声明 + section + Module + 测试函数）——**通用**（含 CV 融合 / 多 Module / 跨核流水）；CV 融合算子当前无专用模板，走此通用骨架 + 步骤 0~8 | 生成代码前必读 |
 | [references/debugging-methodology.md](references/debugging-methodology.md) | 调试方法论：**先确认失败可信** → 症状快查表 → 分层 review → 定位技术（最小复现/消融/单原语替换/差异属性）→ 升级切换 → **修正后验证** + 诊断纪律 | 验证失败进入 debug 状态时必读 |
-| [references/vf-reduction-perf.md](references/vf-reduction-perf.md) | Vector reduction 的条件式 tile-op/vf 选择、正确 API 形态与测量规则 | 实现或调优 Vector reduction 时 |
+| [references/vf-reduction-perf.md](references/vf-reduction-perf.md) | Vector reduction 的数值安全、正确 API 形态与性能注意事项 | 实现或调优 Vector reduction 时 |
 | [../../pypto-pro-op-kb/ROUTER.md](../../pypto-pro-op-kb/ROUTER.md) | 按任务选择一个补充约束、pattern 或 validated study kernel | API 文档与官方样例不足时 |
 | [scripts/list_idle_chip_ids.sh](scripts/list_idle_chip_ids.sh) | 查找空闲 NPU chip | 运行前按需执行 |
 
@@ -89,7 +87,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 |------|---------------|--------|------|
 | 0：响应编排器 dispatch | 所有算子统一 | 同左 | L0/L1 路径由编排器决定，coder 不自行判断 |
 | 1~4：确认输入 → API 确认 → tile 声明 → section 骨架 | 所有算子统一 | 同左 | 模板不能替代——模板只提供骨架，参数和结构来自对 DESIGN.md 的确认 |
-| 5~6：编写实现 + 测试函数 | **模板可作为起点**：按模板内置骨架填充（CONFIG 常量 + `>>> FILL` 标记），模板已内置同步、尾块处理，但须先按目标 API、DESIGN.md 与当前平台核对；Vector 部分按已确认的 tile-op/vf 选择实现 | **非模板优先**：以官方 c-v 融合算子（PRO_MATERIAL_INDEX.md §B）为优先参考，纯vec/cube模板仅作局部写法参考 | 步骤 5~6 按算子类型分叉 |
+| 5~6：编写实现 + 测试函数 | **模板可作为起点**：按模板内置骨架填充（CONFIG 常量 + `>>> FILL` 标记），模板已内置同步、尾块处理，但须先按目标 API、DESIGN.md 与当前平台核对 | **非模板优先**：以官方 c-v 融合算子（PRO_MATERIAL_INDEX.md §B）为优先参考，纯vec/cube模板仅作局部写法参考 | 步骤 5~6 按算子类型分叉 |
 | 7~8 + debug：本地验证 → 自修复闭环 → 交付前自检 | 所有算子统一 | 同左 | 照常执行 |
 
 **兜底路径**：步骤 5~6 套用模板 / 参考样例后运行失败时，按步骤 7 的 debug 自修复闭环修复。
@@ -133,7 +131,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 - **§10** Tile 数据流全景图（确认全局理解）
 - **EXPLORE_REPORT.md §3-5**：API 约束 / 相似样例 / 教程，步骤 2/5 按需查阅
 
-信息不足时优先查 EXPLORE_REPORT.md / API 文档 / 官方指定算子补全，仍缺失（尤其 §0/§1/§2/§3/§8 关键项）时回调 Stage 3，不做猜测。运行验证发现的 DESIGN.md 失误则据实修正。
+信息不足时优先查 EXPLORE_REPORT.md / API 文档 / 官方指定算子核对；仍缺失（尤其 §0/§1/§2/§3/§8 关键项）或运行证据推翻 DESIGN.md 时，停止施工并返回 `design_violation`，由编排器回退 Stage 3 修订并重新过门禁。coder 不猜测、不直接改写 DESIGN.md。
 
 > **L1 路径额外确认**：
 > - 读取 `module_interfaces.yaml`，确认当前 Module k 的 `inputs`（来源：`primary` 或 `module_<j>`）、`outputs`（Module k 的输出张量及 shape/dtype）、`golden_steps`（该 Module 的数学步骤）
@@ -148,10 +146,6 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 1. **参数名是否为关键字参数**：大部分是位置参数，少数（如 `set_pipe=`、`wait_pipe=`、`event_id=`）是关键字参数。参数传参方式（位置 vs 关键字）以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分
 2. **参数顺序**：如 `pl.matmul(dst, a, b, phase=...)`（dst 先于操作数），`pl.load_tile(tile, tensor, [i, j])`（tile 先于 tensor）。具体顺序以 API 文档为准
 3. **约束条件**：dtype 限制、layout 要求、MemorySpace 约束——以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分
-
-> **Vector API 选择影响本轮**：按 DESIGN.md 记录的依据确认所选 tile-op 或
-> `vf.*` 签名；若依据缺失，先回到目标 API 文档补齐。Cube 步骤确认 `pl.*`
-> Cube API 签名。
 
 **确认方式**（先汇总后原文，减少阅读量）：
 1. **先查 EXPLORE_REPORT.md §3**（API 映射结果 + API 约束 + MemorySpace 约束已汇总）——大部分信息在此可直接获得，无需读原文
@@ -169,7 +163,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 
 1. **编译期常量（TS、TD、SCALE 等）复制到模块级**——从 DESIGN.md §2.1 取值；⚠️ 必须声明在 kernel 函数**外部**（模块级）。写进 kernel 函数体内会被 JIT 当作 IR 语句处理，触发编译错误。
 2. **动态维度声明**——从 DESIGN.md §0 的维度契约取动态轴名称，按 `docs/` API 文档和官方指定算子样例中的正确声明方式编写（声明方式以文档/样例为准，不臆测）。循环内通过 `tensor.shape[i]` 获取动态维度值
-3. **逐条写 tile 声明**——按 DESIGN.md §2 Tile 属性表 + §3 地址映射表，精确复制每个 tile 的 shape / dtype / layout / addr / size；需要 buffer 切换/轮转的 tile 用 `make_tile_group` + `auto_mutex`，单次使用 scratch tile 用 `make_tile`；地址无重叠、归约输出等 layout 约束均已在 DESIGN §2/§3 定好，此处照抄即可。运行验证发现地址/属性有误时据实修正。
+3. **逐条写 tile 声明**——按 DESIGN.md §2 Tile 属性表 + §3 地址映射表，精确复制每个 tile 的 shape / dtype / layout / addr / size；需要 buffer 切换/轮转的 tile 用 `make_tile_group` + `auto_mutex`，单次使用 scratch tile 用 `make_tile`；地址无重叠、归约输出等 layout 约束均已在 DESIGN §2/§3 定好，此处照抄即可。运行验证发现地址/属性有误时返回 `design_violation`，不得在 Stage 4 私改设计。
 
 ### 步骤 4：编写 section 和循环框架
 
@@ -190,8 +184,7 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 
 ### 步骤 5：编写 Module 内部实现
 
-> **纯vec算子**：按 DESIGN.md §1 的选择实现 tile-op 数据流或
-> `@pl.vector_function` / `vf.*` chain。使用 `vf.*` 时先读
+> **纯vec算子**：按 DESIGN.md §1 已冻结的 `vector_selection` 实现。使用 `vf.*` 时先读
 > [references/vf-reduction-perf.md](references/vf-reduction-perf.md) 并逐项核对
 > 当前 API 文档；使用 tile-op 时同样核对 dtype、layout 与 valid-shape 行为。
 
@@ -201,9 +194,6 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 
 将步骤 4 骨架的占位逐 Module 翻译成实际代码，对照 DESIGN.md §10 全景图确认每个 Module 的输入/输出 tile：计算 API 序列取自 §1（参数用步骤 2 已确认的结论）、tile 变量取自 §3、同步取自 §4-6、尾块处理取自 §7。写法不确定时先查 EXPLORE_REPORT.md §4 的可复用模式，不足时按 §B 定位官方指定算子原文。
 
-> **实现层级检查**：Vector 按 DESIGN.md 的条件式选择实现，Cube 用已确认的
-> `pl.*` Cube API；两者都须通过运行验证。
-
 ### 步骤 6：编写测试函数
 
 在同一文件中编写测试函数，结构照 [templates/impl_template.py.tmpl](templates/impl_template.py.tmpl)（含完整多 case 骨架）。输入 shape/dtype 取自 DESIGN.md。以下是必须守住的规则：
@@ -211,16 +201,16 @@ SDK 的官方文档和样例补齐验证。平台专属参考须先确认目标�
 > **L0 路径**：golden 签名取自 `{op}_golden.py`，测试 case 取自 DESIGN.md §8，wrapper 名为 `{op}_wrapper`。
 > **L1 路径**：golden 导入 `modules/{op}_golden_stage<suffix_k>`（由 mathematician 一次性产出），wrapper 名为 `{op}_wrapper_module<suffix_k>`，测试 case 仍取自 DESIGN.md §8 但只验证到当前 Module k 的输出（与 `{op}_golden_stage<suffix_k>` 的返回值比对）。
 
-- **测试 case 直接取自 DESIGN.md §8「目标测试 case」表**，不自行重算 shape。每个 case 拆为独立 `def test_` 函数、命名沿用 §8；orchestrator 门禁以 `def test_` 数量 ≥ 4 为泛化性判据（覆盖整除 / 单轴尾块 / 双轴尾块 / 跨多 tile+尾块）。§8 已确认这些 case 均可适配；若某 case 跑不通属 design 失误，按步骤 7 据实修正 kernel，**不得删改 case 迁就实现**。§8 缺失或不足 4 个时回调 Stage 3。
+- **测试 case 直接取自 DESIGN.md §8「目标测试 case」表**，不自行重算 shape。每个 case 拆为独立 `def test_` 函数、命名沿用 §8；orchestrator 门禁以 `def test_` 数量 ≥ 4 为泛化性判据（覆盖整除 / 单轴尾块 / 双轴尾块 / 跨多 tile+尾块）。§8 已确认这些 case 均可适配；若某 case 因实现翻译错误跑不通，在步骤 7 修正 kernel；若证据表明设计本身不适配，返回 `design_violation`。**不得删改 case 迁就实现**。§8 缺失或不足 4 个时回调 Stage 3。
 - **⚠️ 设备必须与 golden 一致**：kernel 异步执行，设备不一致会让 NPU 错误污染 golden、traceback 误指向 torch。**不要硬编码 `npu:0`**，从 `{op}_golden.py` 导入 `_get_device()`（golden 模板已通过 `TILE_FWK_DEVICE_ID` 环境变量选择设备）。
-- **⚠️ atol 取值有据**：精度阈值由 `precision_compare.py` 按 dtype 自动查表（方案A混合容差标准），**禁止自定义 atol/rtol**。阈值表见 `scripts/precision_compare.py`（与《生态算子精度标准》§2.2 一致）。
+- **⚠️ atol 取值有据**：精度阈值由 `precision_compare.py` 按 dtype 自动查表（方案A混合容差标准），**禁止自定义 atol/rtol**。当前仓内可执行事实源是 `scripts/precision_compare.py` 的 `_THRESHOLDS`、`_REQUIRED_MATCHED_RATIO` 与计算逻辑；在权威标准文件未纳入仓库前，不得声称已与某个不可核验章节自动同步。
 - **精度验证使用 `precision_compare.check_precision` + `{op}_golden_cpu`**（方案A混合容差标准）。模板已内置 `_assert_precision` 辅助函数，test 函数只需调用 `_assert_precision(output, *inputs, label="...")`，内部自动完成 CPU golden 计算 + 精度对比。**精度对比的参考实现必须是 `{op}_golden_cpu`（CPU FP32 更高精度），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比**——`{op}_golden` 用于 Stage 2 NPU 参考实现验证、可选性能采集和提供 `_get_device()`。
   - **L1 路径例外**：staged 文件的 test 导入 `modules/{op}_golden_stage<suffix_k>`（纯 torch CPU FP32，由 mathematician 从 `{op}_golden_cpu.py` 切分产出），用 `_assert_precision` 比对 kernel 输出 vs `golden_stage<suffix_k>` 输出。`_assert_precision` 内部的 import 仍写在函数体内（import 安全）。
 - **⚠️ 复制精度对比脚本（仅 dev 态）**：编写 test 文件前，将 `scripts/precision_compare.py` 复制到算子目录 `custom/<op>/`（与 `test_<op>.py` 同级）。该脚本仅用于本地 dev 自测，供 `_assert_precision` 在 dev 环境运行时 import。
 - **⚠️ 交付态 import 安全（硬性要求）**：算子的**交付单元仅含 `test_{op}.py` + `{op}_golden.py` 两个文件**——`precision_compare.py`、`{op}_golden_cpu.py` 是 dev-only 自测工具，**只在 `custom/<op>/` 本地自测时使用，不进入交付单元**。交付单元被作为模块加载时会执行其全部顶层代码——若 `precision_compare`、`{op}_golden_cpu` 的 import 写在模块顶层，此时会直接 `ModuleNotFoundError`，导致交付态全部 case 0 分。因此这两个 dev-only 依赖的 import **必须写在函数体内**（仿 [impl_template.py.tmpl](templates/impl_template.py.tmpl) 的 `_assert_precision`，import 在函数内 → 模块加载不触发 → 安全），**或在顶层用 `try/except ImportError` 容错**（仿已交付的 rms_norm）。**禁止裸顶层 `from precision_compare import` / `from {op}_golden_cpu import`**。`test_{op}.py` 必须能在仅含 `test_{op}.py` + `{op}_golden.py` 两文件的环境下被作为模块加载通过。
   - **L1 路径**：staged 文件的 dev-only 依赖（`precision_compare.py`、`{op}_golden_stage<suffix_k>.py`）同样 import 在函数体内。staged 文件不是交付单元，import 安全要求相对宽松，但仍建议遵循函数内 import 惯例。
 - **host 维度适配**：若 DESIGN.md §0 维度契约要求 kernel 只处理 2D 而 SPEC 需 1D/多维，在调用侧做 reshape 适配（模板见 impl_template）。
-- **通过 wrapper 调 kernel**：test 函数必须通过 wrapper 调 kernel，不直接调 kernel。wrapper 内部只做「三件事」（参数校验与纯 Python 形状运算 / 用 torch.empty 分配输出 / 启动一次 kernel），**dtype 转换等张量整形不在其中**（见本文「强制规则：wrapper 只做三件事」），核心计算全部集中在单一 kernel 函数内（核心原则 #2/#3）。
+- **通过 wrapper 调 kernel**：test 函数必须通过 wrapper 调 kernel，不直接调 kernel。wrapper 默认只做「三件事」（参数校验与纯 Python 形状运算 / 用 torch.empty 分配输出 / 启动一次 kernel）；dtype 转换等张量整形仅可执行 DESIGN.md 在 Stage 3 已裁定的逐项例外（见本文「强制规则：wrapper 只做三件事」），核心计算始终集中在单一 kernel 函数内（核心原则 #2/#3）。
   - **L0 路径**：wrapper 名为 `{op}_wrapper`。
   - **L1 路径**：wrapper 名为 `{op}_wrapper_module<suffix_k>`。
 
@@ -256,8 +246,8 @@ python custom/<op>/modules/test_<op>_module<suffix_k>.py
 
 **① 定位方向**：按 [references/debugging-methodology.md](references/debugging-methodology.md) 排查（**先确认失败现象可信** → 症状快查表 → 分层 review → 定位技术（最小复现/消融/单原语替换/差异属性） → 升级与切换 → **修正后验证**）。该文档是调试的完整指引，此处不复述。**不要跳过第零步**：一次设备故障会污染 NPU 上下文，使后续 case 全部连坐；名字没变的 kernel 可能收到旧二进制。失败计数是证据，不是结论——先分清「一个真故障」和「N 个独立故障」，否则整轮排查会被引到错误的层级。
 
-**② 定位到哪一层就修哪一层**：遵循「先修模型、再修 kernel」——根因在模型层（DESIGN.md / 维度契约）时先改正 DESIGN，别在错误设计上给 kernel 打补丁；根因在 kernel 实现时直接改代码。修改 DESIGN.md 后直接在 develop 内继续，不需回 Stage 3。以实际证据为准，可调整 API 序列、tile 属性/地址、循环结构、同步策略、尾块处理等；Vector 方案不可行时重新执行 tile-op/vf 条件式选择并记录证据。
-**③ 记录修正**：在代码注释或 MEMORY.md 中记录"DESIGN.md 原方案 → 实际修正方案及依据"，便于后续追溯。
+**② 按根因归属处理**：根因仅在当前 Stage 的代码翻译、参数抄录或实现细节时直接修复 kernel；根因涉及 DESIGN.md 的维度合同、API 序列、tile 属性/地址、循环、同步、尾块或 Vector 实现选择时，停止修改并返回 `design_violation`，附最小复现、错误原文和建议修改点。编排器必须回退 Stage 3，由 architect 修订并重新通过 stage3-check。coder 不得直接编辑 DESIGN.md。
+**③ 记录修正**：当前 Stage 的实现修正在代码注释或 MEMORY.md 中记录；设计根因只在 verdict 中记录证据，不提前改写上游产物。
 **④ 重跑验证**：修复后重新运行。若 `PASS` 且无告警，debug 结束；若暴露新问题，针对新问题回到 ① 再走一轮。
 **⑤ 诚实失败退出（capability_gap）**：若在②中穷尽受支持的 tile-op、
 `vf.*` 组合与 kernel 内循环方案后，根因确属框架能力不足，**不得以 host 端
@@ -273,10 +263,10 @@ python custom/<op>/modules/test_<op>_module<suffix_k>.py
 | `test_{op}.py` 为最终单文件 | 确认文件存在；L1 路径的 staged 文件链（`modules/test_{op}_module*.py`）保留不动，cleanup 由编排器调度（从最后一个 staged 文件生成 `test_{op}.py`） |
 | 设备与 golden 一致 | 确认已导入 `{op}_golden._get_device()`，未在各 test 中硬编码分散的 `npu:` 设备号 |
 | atol 有据 | 确认 test 使用 `_assert_precision`（非 `torch.testing.assert_close`），无自定义 atol/rtol；golden 从 `{op}_golden_cpu` 导入（CPU 更高精度），非 `{op}_golden`（NPU 同 dtype） |
-| 核心计算在单 kernel 内（含语义反作弊） | **`grep -c "@pl.jit" <file>` 必须返回 1**——确认文件中仅一个 kernel 函数（`@pl.jit` 装饰）。L1 路径同样如此：逐 Module 是在同一个 kernel 内增量追加，不是每 Module 新建 kernel。多个 `@pl.jit` → 严重违规，必须修为单 kernel。**所有的核心计算逻辑集中在单一 kernel 函数内**；host 端只做**不派发设备 kernel**的操作（纯 Python 标量运算、`torch.empty`、张量本就连续时的 `.reshape`/`.view` 纯视图），不做核心计算；**`.contiguous()`/`.to()`/非连续上的 `.permute()` 会派发真实 kernel，必须搬进 kernel**；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊）。**语义自检**：host 端无值依赖变换（输出依赖于输入数值大小关系的操作，如排序/选择/去重/索引重排）；kernel 输出是最终结果而非中间/候选（host 端不从中筛选/提取）；无 `assert`/`if` 砍算子定义声明的维度/dtype/参数支持范围到单点；**判定标准是计算实质不是命名**——"post-processing"/"extraction" 等措辞不改变 host 端做核心计算的事实 |
+| 核心计算在单 kernel 内（含语义反作弊） | **`grep -c "@pl.jit" <file>` 必须返回 1**——确认文件中仅一个 kernel 函数（`@pl.jit` 装饰）。L1 路径同样如此：逐 Module 是在同一个 kernel 内增量追加，不是每 Module 新建 kernel。多个 `@pl.jit` → 严重违规，必须修为单 kernel。**所有核心计算逻辑集中在单一 kernel 函数内**，host 端不做核心计算；`.contiguous()`/`.to()`/非连续上的 `.permute()` 会派发真实 kernel，默认必须搬进 kernel，仅 DESIGN.md 在 Stage 3 已裁定的 wrapper 例外可保留；**禁止在循环中调用 kernel**（host 端循环 launch kernel 分担计算视为作弊）。**语义自检**：host 端无值依赖变换（输出依赖于输入数值大小关系的操作，如排序/选择/去重/索引重排）；kernel 输出是最终结果而非中间/候选（host 端不从中筛选/提取）；无 `assert`/`if` 砍算子定义声明的维度/dtype/参数支持范围到单点；**判定标准是计算实质不是命名**——"post-processing"/"extraction" 等措辞不改变 host 端做核心计算的事实 |
 | ≥4 个独立 test 且与 §8 一致 | 确认 `def test_` 数量 ≥ 4，命名与覆盖对齐 DESIGN.md §8「目标测试 case」，非临时另造 |
-| Vector 实现层级有据 | 确认 tile-op 或 `vf.*` 的选择与 DESIGN.md 一致，目标 API 支持和正确性已验证；性能选择有同条件实测 |
-| **入口函数命名合规** | **L0 路径**：确认文件中暴露了名为 `{op_name}_wrapper` 的可调用入口函数（签名与算子 schema 一致）。**L1 路径**：确认文件中暴露了名为 `{op_name}_wrapper_module<suffix_k>` 的可调用入口函数（签名与 `primary_inputs` 一致，输出 Module k 的结果）。外部调用方按命名约定查找 `{op_name}_wrapper` 和 `{op_name}`，推荐 `_wrapper` 后缀以与 kernel `_kernel` 配对。wrapper **只调用一次 kernel**，host 端**不做任何会派发设备 kernel 的预处理**：`.contiguous()`/`.to()`/非连续上的 `.permute()`/`.transpose()` 全部搬进 kernel。**纯视图除外**——张量本就连续时的 `.reshape`/`.view` 只改元数据、不产生 `aclnn*` 条目，是允许的（判据见 `pypto-pro-op-kb/constraints/wrapper-boundary.md`），test 通过 wrapper 调 kernel 而非直接调 kernel。**optional 参数必须带默认值**：若 `cases.yaml` 中存在省略某个输入参数的 case（该参数的 `input_shape` 位置为 `null` 或列表更短），则 wrapper 签名中该参数必须设 `=None` 默认值，否则外部调用方省略该参数时会触发 `TypeError` |
+| Vector 实现合规 | 与 DESIGN.md 已冻结的 `vector_selection` 一致，不自行切换 VF/tile-op 层级 |
+| **入口函数命名合规** | **L0 路径**：确认文件中暴露了名为 `{op_name}_wrapper` 的可调用入口函数（签名与算子 schema 一致）。**L1 路径**：确认文件中暴露了名为 `{op_name}_wrapper_module<suffix_k>` 的可调用入口函数（签名与 `primary_inputs` 一致，输出 Module k 的结果）。外部调用方按命名约定查找 `{op_name}_wrapper` 和 `{op_name}`，推荐 `_wrapper` 后缀以与 kernel `_kernel` 配对。wrapper **只调用一次 kernel**；`.contiguous()`/`.to()`/非连续上的 `.permute()`/`.transpose()` 默认全部搬进 kernel，只有 DESIGN.md 在 Stage 3 已裁定的逐项例外可保留。**纯视图除外**——张量本就连续时的 `.reshape`/`.view` 只改元数据、不产生 `aclnn*` 条目，是允许的（判据见 `pypto-pro-op-kb/constraints/wrapper-boundary.md`）。test 通过 wrapper 调 kernel 而非直接调 kernel。**optional 参数必须带默认值**：若 `cases.yaml` 中存在省略某个输入参数的 case（该参数的 `input_shape` 位置为 `null` 或列表更短），则 wrapper 签名中该参数必须设 `=None` 默认值，否则外部调用方省略该参数时会触发 `TypeError` |
 | **实现偏差已声明** | 若实现与 DESIGN.md 任何关键常量、算法步骤、tile 布局有偏离，确认已在回复中显式列出偏离点 + 原因 + 是否需回退 Stage 3。**静默偏离视为违规** |
 | **测试输入与算子定义一致** | 确认 test 函数的输入 shape/dtype/value_range 取自 DESIGN.md §8「目标测试 case」，未偷换数据分布以规避算法弱点。若 SPEC/DESIGN 指定了 value_range 或数据分布，test 须沿用，不得自行替换 |
 
@@ -286,10 +276,10 @@ python custom/<op>/modules/test_<op>_module<suffix_k>.py
 
 ## 核心原则
 
-1. **DESIGN.md 是初步设计、运行验证是最终准则**：以 DESIGN.md 为初始依据，运行验证发现失误时据实修正（查阅方式见步骤 1-2）
+1. **DESIGN.md 是 Stage 4 的施工合同**：严格按已通过 Stage 3 门禁的设计实现；运行证据推翻设计时返回 `design_violation`，由编排器回退 Stage 3 修订和复核，coder 不直接改写 DESIGN.md
 2. **只写一个 .py 文件、只含一个 `@pl.jit` kernel**：kernel + 测试在同一文件中，**所有的核心计算逻辑集中在单一 kernel 函数内**（本工作流生成的 Pro 算子只需一个 `@pl.jit`，不需拆分为多个 kernel）。L0 路径产出 `test_{op}.py`；L1 路径每次 dispatch 产出一个 staged 文件 `modules/test_{op}_module<suffix_k>.py`（**同样单 kernel——逐 Module 是在同一个 kernel 内增量追加，不是每 Module 新建 kernel**），最终由编排器 cleanup 合并为 `test_{op}.py`
-3. **入口函数**：L0 路径命名为 `{op_name}_wrapper`；L1 路径命名为 `{op_name}_wrapper_module<suffix_k>`。参数和返回值与算子定义一致，内部只做本文「强制规则：wrapper 只做三件事」允许的三件事后调用 kernel——**不是「尽可能少的 host 适配」，而是「不派发设备 kernel」**。test 必须通过 wrapper 调 kernel，**wrapper 只能调用一次 kernel**，**禁止在循环中调用 kernel**（host 端循环多次 launch kernel 分担本应在单次 kernel 内完成的计算视为作弊）。
-4. **实现约束不可违背**：buffer 轮转用 `make_tile_group` + `auto_mutex`；Vector 部分按条件式选择并验证（见上方「实现约束」节）
+3. **入口函数**：L0 路径命名为 `{op_name}_wrapper`；L1 路径命名为 `{op_name}_wrapper_module<suffix_k>`。参数和返回值与算子定义一致，默认只做本文「强制规则：wrapper 只做三件事」允许的三件事；只有 DESIGN.md 在 Stage 3 已裁定的 wrapper 例外可额外保留，Stage 4 不得新增。test 必须通过 wrapper 调 kernel，**wrapper 只能调用一次 kernel**，**禁止在循环中调用 kernel**（host 端循环多次 launch kernel 分担本应在单次 kernel 内完成的计算视为作弊）。
+4. **实现约束不可违背**：buffer 轮转用 `make_tile_group` + `auto_mutex`；Vector 执行 DESIGN.md 的 `vector_selection`
 5. **官方指定算子是写法参考来源**：不确定时先查 EXPLORE_REPORT.md §4 可复用模式，不足时按 §B 定位官方指定算子原文
 6. **不确定时不猜**：先查 EXPLORE_REPORT.md §3 的 API 约束，不足时按 §A 定位 API 文档原文确认
 7. **测完整除 + 尾块两种 case**：泛化性验证
@@ -372,13 +362,16 @@ PASS verdict，不是实现者的自我声明。
 必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)；它属于
 `required_constraints`，不占可选 pattern 名额。
 
-wrapper 允许做的，只有这三件事：
+wrapper 默认只允许做这三件事：
 
 1. 参数校验与形状推导（纯 Python 标量运算；连续张量上的 `.reshape`/`.view` 纯视图不派发 kernel，允许）；
 2. 用 `torch.empty` 分配输出；
 3. 启动一次 `@pl.jit` kernel。
 
-### 禁止出现在 wrapper 里的调用
+唯一扩展是 DESIGN.md 的 wrapper 操作清单在 Stage 3 已逐项记录并通过门禁的例外；
+coder 只能原样实现并在 `KB_USAGE.json` 记录 `deviated`，不得在 Stage 4 新增或扩大范围。
+
+### 默认禁止出现在 wrapper 里的调用
 
 `.to()` / `.contiguous()` / `.permute()` / `.movedim()` / `.transpose()` /
 `.repeat_interleave()` / `.expand()` / `.broadcast_to()` / `torch.cat` /
@@ -426,10 +419,11 @@ for a_i, b_i in zip(a, b):
 - 名字以 `_Z` 开头的是你的 kernel；
 - 名字以 `aclnn` 开头的**全部**是 wrapper 开销。
 
-`aclnn*` 的总和应当为 0。不为 0 时，逐个说明为什么它不能进 kernel，并把说明
-写进 `KB_USAGE.json` 的对应不变量里（`implementation.status: deviated` +
-`justification`）。
-没有说明的 host 侧形状操作按缺陷处理。
+`aclnn*` 的总和应当为 0。不为 0 时，先逐项核对 DESIGN.md 的 wrapper 操作清单：
+只有 Stage 3 已裁定的例外才可保留，并须在 `KB_USAGE.json` 对应不变量中记录
+`implementation.status: deviated` + `justification`；实现自行新增的操作须移入 kernel，
+若新证据表明确实无法迁移则返回 `design_violation`，由编排器回退 Stage 3。不得在
+Stage 4 通过补写 DESIGN.md 或事后说明使其合规。
 
 典型反例是 wrapper 做成 cast→transpose→kernel→transpose→cast：一次 kernel 启动被四个计时算子包住，wrapper 可以占掉过半的 device 时间。
-完整的迁移对照表（host 做什么 → kernel 里怎么写）见 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)；确有无法迁移的变换时，按该文件要求在 DESIGN.md 记录原因与实测代价，并在 `KB_USAGE.json` 以 `implementation.status: deviated` + justification 说明。
+完整的迁移对照表（host 做什么 → kernel 里怎么写）见 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)；确有无法迁移的变换时，须由 Stage 3 在 DESIGN.md 预先记录原因、目标版本证据、适用条件、预期代价预算和测量方法；Stage 4 只负责实测核验，并在 `KB_USAGE.json` 以 `implementation.status: deviated` + justification 说明。

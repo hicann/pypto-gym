@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-environment-check
-description: PyPTO-Pro 环境检测与反馈技能。当 PyPTO-Pro 工作流（Stage 1–4）任意阶段遇到疑似环境问题（软件/硬件）时统一加载：torch_npu / pypto_pro 导入失败、npu-smi 无响应、NPU 设备不可见或不可用、CANN 未配置、kernel 编译/运行超时疑似设备 hang 等。采用「事实验证优先、脚本诊断兜底」两步法 + 设备 hang 三段式评定，只检测与反馈、不修复环境。触发词：环境检查、环境问题、环境验证、environment check、设备 hang、卡死、超时。
+description: PyPTO-Pro 环境检测与反馈技能。当 PyPTO-Pro 工作流（Stage 1–4）任意阶段遇到疑似环境问题（软件/硬件）时统一加载：torch_npu / pypto_pro 导入失败、npu-smi 无响应、NPU 设备不可见或不可用、CANN 未配置、kernel 编译/运行超时疑似设备 hang 等。采用「事实验证优先、脚本诊断兜底」两步法 + 设备 hang 三段式评定，用于区分环境故障与算子故障；只执行有界检测并返回结构化证据，不安装依赖、不修改环境。触发词：环境检查、环境问题、环境验证、environment check、设备 hang、卡死、超时。
 ---
 
 # PyPTO-Pro 环境检测（pypto-pro-environment-check）

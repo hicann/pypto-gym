@@ -1,10 +1,21 @@
 # 既有参考的 PyPTO-Pro 友好化（Reference Normalization Path）
 
+## Contents
+
+- [选择最强参考](#strongest-reference)
+- [审计参考实现的 PyPTO-Pro 不友好模式](#audit-reference)
+- [规范化 golden](#normalize-golden)
+- [Full vs Tiled 实现策略](#full-vs-tiled)
+- [构建 Golden function inventory（强制）](#golden-inventory)
+- [用原始 golden 验证规范化 golden](#validate-normalization)
+- [Freeze 规范化 golden](#freeze-golden)
+
+
 > **适用场景**：用户提供了已有的 PyTorch / NumPy 参考实现，需要将其规范化为
 > PyPTO-Pro 友好的 golden。当用户没有提供参考实现而是直接通过规格信息生成 golden
 > 时，走 SKILL.md §1-§12 的从规格生成路径即可，本文档不适用。
 
-## 选择最强参考
+## <a id="strongest-reference"></a>选择最强参考
 
 参考实现选择优先级：
 
@@ -18,7 +29,7 @@
 grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/
 ```
 
-## 审计参考实现的 PyPTO-Pro 不友好模式
+## <a id="audit-reference"></a>审计参考实现的 PyPTO-Pro 不友好模式
 
 主动扫描以下不友好模式：
 
@@ -32,7 +43,7 @@ grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypt
 
 对每个可疑模式，直接读取 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 下相应 op 文档：
 
-## 规范化 golden
+## <a id="normalize-golden"></a>规范化 golden
 
 将参考改写为 PyPTO-Pro 友好的 golden。规范化强度取决于 Stage 3（DESIGN.md §0）
 的 Module 划分：
@@ -64,7 +75,7 @@ grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypt
 - Module 边界标记**不要求**（kernel 是一个块）
 - golden 可以保留单个高层调用（例：`out = torch.softmax(x, dim=-1)`），**除非** Golden function inventory 因 shape 变换追踪需要而要求展开
 
-## Full vs Tiled 实现策略
+## <a id="full-vs-tiled"></a>Full vs Tiled 实现策略
 
 规范化 golden 可采用两种等价策略：
 
@@ -114,7 +125,7 @@ def attention_golden_tiled(q, k, v, window_size=None):
 **两种策略必须产生相同的数值结果**（在浮点容差范围内）。若两者都实现，在
 `{op}_golden.py` 中包含两者并在验证套件中验证等价性。
 
-## 构建 Golden function inventory（强制）
+## <a id="golden-inventory"></a>构建 Golden function inventory（强制）
 
 规范化 golden 写完后，在 `custom/<op>/MEMORY.md` → **Golden function inventory**
 中列出每个数学操作：
@@ -128,7 +139,7 @@ def attention_golden_tiled(q, k, v, window_size=None):
 
 **门禁**：inventory 不存在不得进入 Stage 3 设计阶段。
 
-## 用原始 golden 验证规范化 golden
+## <a id="validate-normalization"></a>用原始 golden 验证规范化 golden
 
 总是用以下条件验证：
 
@@ -142,7 +153,7 @@ def attention_golden_tiled(q, k, v, window_size=None):
 
 若规范化 golden 不匹配，**停止并修复**。不要开始 PyPTO-Pro 实现。
 
-## Freeze 规范化 golden
+## <a id="freeze-golden"></a>Freeze 规范化 golden
 
 规范化 golden 匹配后：
 

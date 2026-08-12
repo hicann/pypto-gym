@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-perf-tune
-description: 采集、比较和分析 PyPTO-Pro 算子在 NPU 上的性能。用于 kernel profiling、基准对比、瓶颈定位、优化前后回归和批量性能测试，并要求平台专属结论经过目标探测与当前 profiler 数据验证。
+description: 采集、比较和分析 PyPTO-Pro 算子在 NPU 上的性能。当已有可运行的 PyPTO/PyPTO-Pro kernel，需要 kernel profiling、基准对比、瓶颈定位、优化前后回归或批量性能测试时使用。平台专属结论必须先探测目标与 profiler，并由当前 profiler 数据验证；不要用历史数字替代本机测量。
 ---
 
 # PyPTO-pro 上板性能采集与分析

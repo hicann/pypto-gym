@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-design
-description: 设计 PyPTO-Pro 算子的 tile 级执行方案。用于确定 Module 与 API 数据流、Tile 和片上内存规划、循环与 Section、分核与同步、动态尾块和数值边界，并产出或审查有证据支撑的 DESIGN.md。
+description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产物齐全，且需要确定 Module 与 API 数据流、Tile 和片上内存规划、循环与 Section、分核与同步、动态尾块和数值边界，或产出、审查有证据支撑的 DESIGN.md 时使用；同时产出 module_interfaces.yaml。不要编写 kernel。
 ---
 
 # PyPTO-Pro Stage 3 — 迭代式方案设计
@@ -9,25 +9,15 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。用于确定 Modu
 
 **核心原则**：
 - 每个决策必须包含**结论 + 推导过程 + 证据来源**
-- 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威），运行验证暴露设计失误时可据实修正
+- 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）。Stage 3 门禁通过后 DESIGN.md 成为 Stage 4 施工合同；运行证据推翻设计时须返回 `design_violation`，由编排器回退 Stage 3 后再修订
 - 每轮发现的矛盾必须回溯修正前序决策，不允许累积到 R8 再处理
 - 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
 
 ## 两条实现约束（设计阶段须落实）
 
-> 完整定义见 `pypto-pro-material-explore` SKILL「实现选择规则」节。设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
+> 完整定义与证据门槛见 [PyPTO-Pro 两条性能强制](../../references/performance-constraints.md)。进入 R0 前必须读取；设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
 > 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限见 `pypto-pro-material-explore` SKILL「实现选择规则」节。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
-> 2. **Vector 数值计算首选 `vf.*` 手写**（在 `@pl.vector_function` 内）。这是默认，不是
->    两个对等选项之一——写 DESIGN.md 时不需要为选 `vf.*` 举证。
->
->    **tile-op 仅在特殊情况可用**，且只有下列两类：
->    - **`vf.*` 缺失该能力**：目标版本没有对应 vf 指令，或其 dtype/shape/layout 约束
->      使该步骤无法表达。
->    - **`vf.*` 在该步骤上不正确**：能写出来但结果错（精度、边界或语义不符）。
->
->    走 tile-op 必须在 §1 写明 **`tile_op_exception:` + 属于上述哪一类 + 证据**
->    （API 文档原文或实测报错）。**「实测更快」不是理由**——性能不构成例外，
->    否则每个步骤都要重新论证一遍，而 verifier 也无从判定。
+> 2. Vector 选择按该规范写入 DESIGN.md §1：已选 KB 模板明确要求当前步骤使用 `pl.*` 时按模板，否则使用 `vf.*`；本阶段不运行候选实验。
 
 ## 知识库
 
@@ -99,13 +89,6 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。用于确定 Modu
 
 **核心问题**：每个数学步骤具体用哪些 API？在 R0 的 Module 划分基础上，将 API 调用链细化到 Module 内部每一步操作。
 
-**Vector API 选择**：先确认 `vf.*` 在目标版本上的 dtype、shape、tail 和 layout 支持。
-**`vf.*` 是 Vector 数值计算的默认**，选它不需要举证。tile-op **仅**在两类情况可用：
-`capability_missing`（目标版本无对应 vf 指令，或其 dtype/shape/layout 约束使该步骤
-无法表达）与 `incorrect`（能写出但结果错）。走 tile-op 必须在 DESIGN.md §1 填
-`tile_op_exception:` 并附证据（API 文档原文或实测报错），**由 stage3-check #10 独立裁定**。
-**「实测更快」不构成例外**——性能不是理由，否则每一步都要重新论证，verifier 也无从判定。
-
 **流程**：
 
 1. **提取初步映射**：从 EXPLORE_REPORT.md §3 获取已确认的 API 映射。
@@ -119,7 +102,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。用于确定 Modu
      - **(b) 量级增长类运算处于窄 dtype（fp16/bf16）**：平方、同量级相乘、以及沿长轴的累加/归约。这类运算的**中间值**可以溢出，即使每个输入元素和最终数学结果都在范围内。判据是拿 case 声明的 `value_range` 与归约长度算出中间值量级上界，与该 dtype 的最大值相比——不要凭"输入没超范围"就跳过。防护措施是在**产生增长的那一步之前**用 `vf.astype` 升到 fp32（不是在归约之前），整条链保持 fp32，写回时再降回。机制、顺序陷阱与"缩放因子为何不能替代"见 [`pypto-pro-op-kb/constraints/precision.md`](../../pypto-pro-op-kb/constraints/precision.md) 的"Widening a narrow-dtype reduction"节
 3. 在每个 Module 内部，将计算步骤展开为具体的 API 序列
 4. 标注每个 API 的输入 tile、输出 tile（供 R2 tile 规划消费）
-5. 记录 Vector 实现层级的选择依据；若两种层级都不满足合同，标注 unsupported 并回退设计
+5. 按 DESIGN 模板为每个 Vector 步骤冻结唯一 `vector_selection`；`tile_op` 必须引用 `KB_SELECTION.json` 已选中模板的明确要求，否则冻结为 `vf`
 
 **注意**：本轮只确定计算 API，不涉及同步 API。
 
@@ -357,10 +340,10 @@ R8 评估通过后，将 R0-R7 各轮的分散产出串成一张全景图（填�
 ## 设计原则
 
 1. **每个决策必须有证据**：API 文档引用、官方指定算子路径、教学文档、数学推导至少占其一
-2. **Tile 数据流图是给 coder 的初步设计**：coder 拿到 DESIGN.md 应能确定 kernel 的完整结构与关键决策；API 签名等细节须以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）；运行验证暴露设计失误时 coder 可据实修正
+2. **Tile 数据流图是给 coder 的施工合同**：coder 拿到 DESIGN.md 应能确定 kernel 的完整结构与关键决策；API 签名等细节须以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）；运行验证暴露设计失误时返回 `design_violation`，由编排器回退 Stage 3 后修订并重新过门禁
 3. **地址分配精确到字节**：不写"大约"、"若干"
 4. **实现约束不可违背**（见上方「实现约束」节）
-5. **Vector 实现层级必须有证据**：记录 API 支持、正确性和必要的目标平台实测，不能用单个 benchmark 结论替代当前验证
+5. **Vector 选择必须可复核**：`vector_selection` 字段完整；`tile_op` 有已选 KB 模板的明确要求，否则为 `vf`
 6. **参考官方指定算子优先于自行设计，拥有最高优先级**：遇到同步策略、tile 尺寸、Vector 指令组合等决策时，优先查阅官方指定算子（PRO_MATERIAL_INDEX §B）中相似者，复用成熟模式；无相似时以 API 文档 / 教学文档为准
 
 ## 知识使用契约（architect）
@@ -399,8 +382,9 @@ verifier 裁定。
 等），和 kernel 本身一样计入耗时。
 
 > **cast、slice、transpose、pad、concat 以及任何数据形状/dtype 处理，
-> 必须放进 `@pl.jit` kernel 内部。
-> wrapper 只做参数校验、输出分配、一次 kernel 启动——不做别的。**
+> 默认必须放进 `@pl.jit` kernel 内部。
+> wrapper 只做参数校验、输出分配、一次 kernel 启动。只有目标框架确实无法迁移且
+> Stage 3 已记录原因、证据、预期代价预算和 Stage 4 测量方法的操作，才可作为明确例外。**
 
 必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)，
 它是 `required_constraints` 中的全局约束，不占用可选 pattern 名额。
@@ -409,8 +393,9 @@ verifier 裁定。
 
 1. **kernel 接口按真实输入定义**，不要为了 kernel 好写而要求 host 先归一化。
    kernel 应当直接接收原始 dtype、原始 layout、原始 rank。
-2. 在 `DESIGN.md` 中列出一张 **wrapper 操作清单**：wrapper 里每一个 host 张量
-   操作，以及它为什么不能进 kernel。清单为空是正常且期望的结果。
+2. 在 `DESIGN.md` 中列出一张 **wrapper 操作清单**：清单为空是正常且期望的结果；
+   若确有无法迁移的 host 张量操作，逐项记录 API、无法迁入 kernel 的目标版本证据、
+   适用条件、预期代价预算和 Stage 4 profile 测量方法，交 stage3-check 裁定，不能只写一句理由。
 3. 需要的轴变换用 **stride/offset 索引**在 tile 循环里表达，不要用
    `movedim` / `permute` / `contiguous`。
 4. dtype 转换在 **tile load / store 时**用 `pl.cast`（tile 级）或

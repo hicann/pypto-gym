@@ -1,10 +1,28 @@
 # A5 roofline workflow
 
+## Contents
+
+- [Evidence gate](#evidence-gate)
+- [Primary source paths](#primary-source-paths)
+- [Derive, do not transcribe](#derive-dont-transcribe)
+- [The scoring anchor is not the hardware roofline](#scoring-anchor)
+- [Calibration measurements](#calibration-measurements)
+- [The vector-only ceiling](#vector-only-ceiling)
+- [Symbolic roofline](#symbolic-roofline)
+- [Measurement loop](#measurement-loop)
+- [A5 原语代价表（每 64 lane 寄存器）](#a5-primitive-costs)
+- [Measured levers, ranked by what they actually returned](#measured-levers)
+- [Scope of retained examples](#example-scope)
+- [When the local levers plateau: structural levers](#structural-levers)
+- [When to stop](#when-to-stop)
+- [Provenance of the numbers on this page](#provenance)
+
+
 Load this reference only after the runtime or build configuration confirms an
 A5 target (`NpuArch=3510` / `dav-c310`). It must not supply constants or tuning
 rules to an unknown or non-A5 target.
 
-## Evidence gate
+## <a id="evidence-gate"></a>Evidence gate
 
 Before calculating a roofline:
 
@@ -16,7 +34,7 @@ Before calculating a roofline:
 If any input is unavailable, leave the numerical estimate unverified and use
 the profiler result as the only tuning basis.
 
-## Primary source paths
+## <a id="primary-source-paths"></a>Primary source paths
 
 Resolve these under the installed, version-recorded PyPTO/CANN tree; do not copy
 values from another checkout:
@@ -32,7 +50,7 @@ The files are primary evidence for the matching installed version only. If a
 path or key differs, search the installed source and record the replacement;
 do not infer a value.
 
-## Derive, do not transcribe
+## <a id="derive-dont-transcribe"></a>Derive, do not transcribe
 
 `tools/roofline_a5.py` parses whichever ini matches the detected SKU and derives
 the cube, HBM, UB, L1 and L0 figures from it, so no constant needs to live in
@@ -59,7 +77,7 @@ wrong one is wrong by that factor. `950DT` and `950PR` at the same core count ar
 not interchangeable, and `platform.py` reports only `DAV_3510` plus core counts,
 which narrows to two SKUs rather than one. Record which ini was used.
 
-## The scoring anchor is not the hardware roofline
+## <a id="scoring-anchor"></a>The scoring anchor is not the hardware roofline
 
 `cann-bench` scores each case with a saturating ratio, not a speedup
 (`kernel_eval/benches/cann_scoring.py`):
@@ -82,7 +100,7 @@ Two consequences:
 - **`T_HW` is theoretical peak and generally unreachable.** A score below 1.0 is
   the normal case; calibrate against measurement, not against the anchor.
 
-## Calibration measurements
+## <a id="calibration-measurements"></a>Calibration measurements
 
 Measured ratios, not platform constants, recorded with provenance because the
 evidence gate above requires it.
@@ -113,7 +131,7 @@ MTE2 read reaches ~1.7 TB/s, and a tuned vector-only Ascend-C
 authors describe as sitting at the memory roof. CANN's own kernel for that case
 manages 0.69 TB/s. The corresponding `t_hw_us` implies 2.80 TB/s.
 
-## The vector-only ceiling
+## <a id="vector-only-ceiling"></a>The vector-only ceiling
 
 If the per-core `ddr_rate` split is physical, a kernel using only
 `section_vector()` can reach at most the vector-core share — roughly half the
@@ -130,7 +148,7 @@ the one that reproduces the published anchors.
 versus cube+vector, nothing else varied, with a control variant in the same run.
 Design around the answer only afterwards.
 
-## Symbolic roofline
+## <a id="symbolic-roofline"></a>Symbolic roofline
 
 Use version- and SKU-specific values read from the source above:
 
@@ -145,7 +163,7 @@ This ranks hypotheses; it does not establish actual latency. Reload counts,
 launch overhead, dependencies, occupancy, and compiler scheduling can change
 the result.
 
-## Measurement loop
+## <a id="measurement-loop"></a>Measurement loop
 
 1. Freeze a passing correctness test.
 2. Capture a baseline with the same input, launch geometry, warm-up, and
@@ -164,7 +182,7 @@ Use [msprof-guide.md](msprof-guide.md) or
 [csv_fields_reference.md](csv_fields_reference.md) for the fields supported by
 the current parser.
 
-## A5 原语代价表（每 64 lane 寄存器）
+## <a id="a5-primitive-costs"></a>A5 原语代价表（每 64 lane 寄存器）
 
 这张表决定绝大多数 dataflow 决策，**设计阶段就要用**。它从 `pypto-pro-op-perf-tune/SKILL.md`
 移到本页，因为它是 target 相关的实测值，而核心 Skill 对任意目标都会加载。
@@ -193,7 +211,7 @@ the current parser.
   即使两种写法 op 数完全相同，**UB 寻址也会占到 83%、算术只占 17%**
   （证据：一个连续扫描算子，64 元素 13 op）。
 
-## Measured levers, ranked by what they actually returned
+## <a id="measured-levers"></a>Measured levers, ranked by what they actually returned
 
 From two attention-family operators taken from correct-but-slow to the
 bandwidth roof. Each was chosen from a per-kernel profile, never guessed, and
@@ -256,7 +274,7 @@ against a ~1.6 TB/s weight-anchored roof. At that point nothing further is
 available by making a kernel faster — only by making it move fewer bytes. Say so
 and stop, rather than continuing to tune.
 
-## Scope of retained examples
+## <a id="example-scope"></a>Scope of retained examples
 
 The KB's
 [BF16 operand-reuse implementation](../../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
@@ -264,7 +282,7 @@ demonstrates one reuse topology and embeds a correctness test. It does not prove
 that an operator is cube-bound or that the topology is faster on another shape
 or target. Profile the current kernel.
 
-## When the local levers plateau: structural levers
+## <a id="structural-levers"></a>When the local levers plateau: structural levers
 
 Every lever above preserves the algorithm — it re-times, de-duplicates, or
 re-lays-out work that already exists. When those plateau against a traffic or
@@ -305,7 +323,7 @@ numbers do not):
 These are larger edits that usually move reduction or cast order: apply one at
 a time and re-verify correctness at the new boundary before measuring.
 
-## When to stop
+## <a id="when-to-stop"></a>When to stop
 
 Stop at a wall proven with data: the moved bytes are irreducible — each read or
 written once, each feeding the contract — **and** occupancy is at the device
@@ -313,7 +331,7 @@ limit for the parallelism the algorithm exposes. Record the measurement that
 proves it. "`MTE2` is at 98%" alone does not; "`MTE2` is at 98% and every byte it
 moves is read exactly once" does.
 
-## Provenance of the numbers on this page
+## <a id="provenance"></a>Provenance of the numbers on this page
 
 The ratios in "Calibration measurements" are reproducible without hardware:
 `roofline_a5.py --selfcheck` recomputes them from the installed platform ini and
