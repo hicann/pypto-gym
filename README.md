@@ -145,6 +145,7 @@ pypto-gym/
 │       ├── gutenocr_3b/                     # GutenOCR-3B
 │       ├── llada2_moe/                      # LLaDA2-MoE
 │       ├── minimax_m27/                     # MiniMax M2.7
+│       ├── openpangu_v5_7b/                 # openPangu-Embedded-7B
 │       ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct
 │       ├── qwen3_1_7b/                      # Qwen3-1.7B
 │       ├── qwen3_5_9b/                      # Qwen3.5-9B
@@ -166,6 +167,7 @@ pypto-gym/
 │       │       ├── gutenocr_3b/             # GutenOCR-3B RMSNorm / SwiGLU MLP / MRoPE
 │       │       ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
 │       │       ├── minimax_m27/             # MiniMax M2.7 MoE Grouped GEMM
+│       │       ├── openpangu_v5_7b/         # openPangu-Embedded-7B 整层融合（单层 BSH）
 │       │       ├── phi_3_mini_4k_instruct/  # Phi-3-mini-4k-instruct RMSNorm
 │       │       ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
 │       │       ├── qwen3_1_7b/              # Qwen3-1.7B RMSNorm + RoPE
@@ -180,6 +182,7 @@ pypto-gym/
 │           ├── gutenocr_3b/
 │           ├── llada2_moe/
 │           ├── minimax_m27/
+│           ├── openpangu_v5_7b/
 │           ├── phi_3_mini_4k_instruct/
 │           ├── qwen3_1_7b/
 │           ├── qwen3_5_9b/
@@ -234,6 +237,7 @@ pypto-gym/
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
 | `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
+| `openpangu_v5_7b/` | pangu_fused_layer_v2_bsh | 整解码层融合（RMSNorm+QKV(+bias)+RoPE+KV-cache+GQA Attention+O proj(+bias)+RMSNorm+SwiGLU FFN）；单层 BSH 动态 kernel，仅 decode |
 | `phi_3_mini_4k_instruct/` | rms_norm | RMSNorm（D=3072），支持 ACLGraph |
 | `qat/` | symmetric_per_tensor, symmetric_per_channel, asymmetric_per_group | 量化感知训练三模式（前向 + 反向） |
 | `qwen3_1_7b/` | rms_norm_rope | RMSNorm + RoPE 融合 |
