@@ -79,7 +79,10 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
             nan_count += 1
             if abnormal_count <= max_prints:
                 _log_nan_error(multi_idx, cpu_val, npu_val)
+        # 检查是否超出容差
         elif _is_above_tolerance(cpu_val, npu_val, rtol, atol):
+            # CPU 有 NaN 但 NPU 没有，也是异常
+            abnormal_count += 1
             exceed_tolerance_count += 1
             if abnormal_count <= max_prints:
                 _log_tolerance_error(multi_idx, cpu_val, npu_val, rtol, atol)
@@ -87,7 +90,7 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
     _print_summary(abnormal_count, nan_count, exceed_tolerance_count, total_elements, name)
 
     # 检查是否通过 allclose 条件
-    is_allclose = (abnormal_count == 0)
+    is_allclose = abnormal_count == 0
     print(f"\nnp.allclose 等价结果: {is_allclose}")
 
     assert_allclose(cpu, npu, rtol, atol)
