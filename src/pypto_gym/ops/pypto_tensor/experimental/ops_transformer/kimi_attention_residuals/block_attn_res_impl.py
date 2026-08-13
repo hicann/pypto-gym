@@ -30,7 +30,6 @@ import torch
 import pypto
 
 
-@pypto.frontend.function
 def ai_infra_block_attn_res_forward_kernel(
     v_flat, proj_weight, gamma_fp32, h_out, rms_cache, alpha_cache_3d, scale, rms_norm_eps, enable_rmsnorm, l_max
 ):
@@ -504,7 +503,6 @@ def ai_infra_block_attn_res_backward_kernel_l_max_128(
     )
 
 
-@pypto.frontend.function
 def ai_infra_block_attn_res_backward_kernel(
     v_flat,
     grad_h_3d,

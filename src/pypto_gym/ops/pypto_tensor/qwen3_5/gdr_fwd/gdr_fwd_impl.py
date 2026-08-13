@@ -515,6 +515,7 @@ def _gdr_fwd_body(q, k, v, beta, gate, states, tril_incl, strict_low, eye_stack,
 # =============================================================================
 
 @pypto.frontend.jit(
+    new_ir=False,
     runtime_options={
         "run_mode": pypto.RunMode.NPU,
         "stitch_function_max_num": 256,

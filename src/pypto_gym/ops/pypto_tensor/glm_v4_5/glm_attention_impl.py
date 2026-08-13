@@ -384,6 +384,7 @@ def ifa_func_kernel_for_910_high_performance(
 
 
 @pypto.frontend.jit(
+    new_ir=False,
     runtime_options={
         "stitch_function_max_num": 512,
         "device_sched_mode": 2,

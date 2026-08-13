@@ -78,10 +78,12 @@ _BND = _BN * _D   # 32 * 128 = 4096 (constant)
 _INV_SQRT_D = 1.0 / (_D ** 0.5)
 
 
-@pypto.frontend.jit(runtime_options={
-    "stitch_function_max_num": 2,
-    "device_sched_parallelism": 8,
-})
+@pypto.frontend.jit(
+    runtime_options={
+        "stitch_function_max_num": 2,
+        "device_sched_parallelism": 8,
+    }
+)
 def _gdr_kernel(
     query: pypto.Tensor([pypto.DYNAMIC, _D], pypto.DT_BF16),
     key: pypto.Tensor([pypto.DYNAMIC, _D], pypto.DT_BF16),
