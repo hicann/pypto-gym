@@ -56,10 +56,10 @@ def _run_case(T, cu_seqlens, label, device):
     st = ref.full_pipeline(q.cpu(), k.cpu(), v.cpu(), g_log.cpu(),
                            beta_sig.cpu(), cu_seqlens, scale, CS)
 
-    A_fp16_hm = st.L.half().permute(0, 2, 1, 3).contiguous().to(device)
-    A_inv = inversion_kda_cube(A_fp16_hm, cu_seqlens)
+    A_fp32_hm = st.L.float().permute(0, 2, 1, 3).contiguous().to(device)
+    A_inv = inversion_kda_cube(A_fp32_hm, cu_seqlens)
 
-    golden = ref.inversion_kda(st.L.half().float(), CS, cu_seqlens).float().cpu()
+    golden = ref.inversion_kda(st.L.float(), CS, cu_seqlens).float().cpu()
     npu = A_inv.cpu().float().permute(0, 2, 1, 3)
 
     diff = (npu - golden).abs().max().item()

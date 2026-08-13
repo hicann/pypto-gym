@@ -101,13 +101,17 @@ def block_kda_pipeline(
     mask_strict = torch.tril(
         torch.ones(CHUNK_SIZE, CHUNK_SIZE, dtype=torch.float32),
         diagonal=-1).to(device)
+    mask_incl = torch.tril(
+        torch.ones(CHUNK_SIZE, CHUNK_SIZE, dtype=torch.float32),
+        diagonal=0).to(device)
     g_cs = torch.empty(1, HVd, T, K_DIM, device=DEVICE, dtype=torch.float32)
     L_out = torch.empty(1, HVd, T, CHUNK_SIZE,
                         device=DEVICE, dtype=torch.float16)
     b_bntd = b_d.permute(0, 2, 1).contiguous()
     tw = num_chunks * HVd
-    run_gate_kkt_kda(g_d, k_d, b_bntd, L_tril, mask_strict,
-                     g_cs, L_out, min(max_cores, tw), cu_seqlens_list)
+    ws_aqk = run_gate_kkt_kda(g_d, q_d, k_d, b_bntd, L_tril, mask_strict,
+                              mask_incl, g_cs, L_out,
+                              min(max_cores, tw), cu_seqlens_list)
 
     A_inv = inversion_kda_cube(L_out, cu_seqlens_list)
 
@@ -122,13 +126,10 @@ def block_kda_pipeline(
     run_chunk_h_kda(k_d, w_out, u_out, g_cs, s_snap, vcorr,
                     cu_seqlens_list, num_cores=max_cores)
 
-    mask_incl = torch.tril(torch.ones(CHUNK_SIZE, CHUNK_SIZE,
-                                      dtype=torch.float32),
-                           diagonal=0).to(device)
     o_npu = torch.empty(1, T, HVd, V_DIM,
                         device=DEVICE, dtype=torch.float16)
     tw6 = num_chunks * HVd
-    run_chunk_o_kda(q_d, k_d, vcorr, s_snap, g_cs, mask_incl, o_npu,
+    run_chunk_o_kda(q_d, vcorr, s_snap, g_cs, o_npu, ws_aqk,
                      num_chunks, min(max_cores, tw6),
                      cu_seqlens_list)
 

@@ -7,7 +7,11 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""gate_kkt_kda — fused gate_cumsum + kkt_kda test harness."""
+"""gate_kkt_kda — fused gate_cumsum + kkt_kda test harness.
+
+Also validates the newly-fused aqk output (pivot decomposition, fp16 ws_aqk)
+against the RefKDA golden implementation.
+"""
 
 import logging
 import os
@@ -39,6 +43,37 @@ from pypto_gym.ops.pypto_pro.experimental.ops_transformer.kda.gate_kkt_kda_impl 
 )
 
 
+def _seq_ranges(T, cu_seqlens):
+    if cu_seqlens is None:
+        return [(0, T)]
+    return [(cu_seqlens[i], cu_seqlens[i + 1]) for i in range(len(cu_seqlens) - 1)]
+
+
+def golden_aqk_workspace(qf, kf, g_cs, chunk_size, num_chunks, cu_seqlens):
+    """Golden masked aqk in ws_aqk layout [total_work*C, C] fp32.
+
+    work_id = chunk_id * HV + head_id, chunks enumerated in t-base order.
+    """
+    B, T, HVd, Kd = qf.shape
+    ws = torch.zeros(num_chunks * HVd * chunk_size, chunk_size, dtype=torch.float32)
+    wi = 0
+    for bos, eos in _seq_ranges(T, cu_seqlens):
+        for tb in range(bos, eos, chunk_size):
+            s, e = tb, min(tb + chunk_size, eos)
+            c_len = e - s
+            for h in range(HVd):
+                qc = qf[0, s:e, h].float()          # [c_len, K]
+                kc = kf[0, s:e, h].float()
+                gc = g_cs[0, s:e, h].float()
+                q_eff = qc * torch.exp(gc)
+                k_eff = kc * torch.exp(-gc)
+                aqk = torch.tril(q_eff @ k_eff.transpose(0, 1), diagonal=0)
+                ws[wi * chunk_size: wi * chunk_size + c_len,
+                   :c_len] = aqk
+                wi += 1
+    return ws
+
+
 def _run_case(T, cu_seqlens, label, device):
     require_a5(DEVICE)
 
@@ -49,6 +84,7 @@ def _run_case(T, cu_seqlens, label, device):
 
     L_tril = make_tril_mask(CHUNK_SIZE, device)
     mask_strict = make_tril_mask(CHUNK_SIZE, device, diagonal=-1)
+    mask_incl = make_tril_mask(CHUNK_SIZE, device, diagonal=0)
 
     if cu_seqlens is None:
         num_chunks = (T + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -61,9 +97,12 @@ def _run_case(T, cu_seqlens, label, device):
                         device=DEVICE, dtype=torch.float16)
 
     beta_bntd = beta_sig.half().permute(0, 2, 1).contiguous()
+    qf_h = st.qf.half()
     tw = num_chunks * HV
-    run_gate_kkt_kda(g_log.half(), k.half(), beta_bntd, L_tril, mask_strict,
-                     g_cs, L_out, min(torch.npu.get_device_properties(0).cube_core_num, tw), cu_seqlens)
+    nc = min(torch.npu.get_device_properties(0).cube_core_num, tw)
+    ws_aqk = run_gate_kkt_kda(g_log.half(), qf_h, k.half(), beta_bntd,
+                              L_tril, mask_strict, mask_incl,
+                              g_cs, L_out, nc, cu_seqlens)
 
     g_cs_npu = g_cs.cpu().float().permute(0, 2, 1, 3)
     npu = L_out.cpu().float().permute(0, 2, 1, 3)
@@ -71,13 +110,17 @@ def _run_case(T, cu_seqlens, label, device):
     g_cs_ref = st.g_cs.float().cpu()
     L_ref = st.L.float().cpu()
 
+    aqk_npu = ws_aqk.cpu().float()
+    aqk_ref = golden_aqk_workspace(st.qf, st.kf, st.g_cs, CHUNK_SIZE, num_chunks, cu_seqlens)
+
     g_cs_diff = (g_cs_npu - g_cs_ref).abs().max().item()
     diff = (npu - L_ref).abs().max().item()
-    logging.info("  [%s] cores=%d  g_cs diff: %.3e  L diff: %.3e",
-                 label, min(torch.npu.get_device_properties(0).cube_core_num, tw),
-                 g_cs_diff, diff)
+    aqk_diff = (aqk_npu - aqk_ref).abs().max().item()
+    logging.info("  [%s] cores=%d  g_cs diff: %.3e  L diff: %.3e  aqk diff: %.3e",
+                 label, nc, g_cs_diff, diff, aqk_diff)
     torch.testing.assert_close(g_cs_npu, g_cs_ref, rtol=5e-3, atol=5e-3)
     torch.testing.assert_close(npu, L_ref, rtol=5e-3, atol=5e-3)
+    torch.testing.assert_close(aqk_npu, aqk_ref, rtol=5e-3, atol=5e-3)
     logging.info("  [%s] PASS", label)
 
 

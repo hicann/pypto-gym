@@ -22,6 +22,7 @@ V = 128
 HC = C // 2
 K_DIM = K
 V_DIM = V
+HALF_K = K // 2
 
 _DEVICE_ID = os.environ.get('TILE_FWK_DEVICE_ID', '0')
 DEVICE = f"npu:{_DEVICE_ID}"

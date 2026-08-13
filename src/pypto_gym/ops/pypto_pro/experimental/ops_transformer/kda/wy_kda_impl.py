@@ -32,26 +32,23 @@ Supports variable-length packed sequences via cu_seqlens (tail chunks).
 import torch
 import pypto_pro.language as pl
 
-from .kda_common import C, K, V, DEVICE as _DEVICE, build_chunk_tables
+from .kda_common import C, K, V, HC, DEVICE as _DEVICE, build_chunk_tables
 
 
 TILE_N = 128
 
-# ---- UB (Vec) addresses ----
-UB_VH   = 0x00000   # [C, V] fp16  32 KB
-UB_VF   = 0x08000   # [C, V] fp32  64 KB
-UB_KH   = 0x00000   # [C, K] fp16  32 KB  (reuses UB_VH after V done)
-UB_KF   = 0x08000   # [C, K] fp32  64 KB  (reuses UB_VF after V done)
-UB_G    = 0x00000   # [C, K] fp32  64 KB  (reuses UB_KH)
-UB_E    = 0x18000   # [C, K] fp32  64 KB  exp scratch
+# ---- UB (Vec) addresses — HC per sub-block（sub_id=0 → rows [0,HC), sub_id=1 → [HC,C)）----
+UB_VH   = 0x00000   # [HC, V] fp16  16 KB
+UB_VF   = 0x04000   # [HC, V] fp32  32 KB
+UB_TV   = 0x0C000   # [HC, V] fp32  32 KB  (expand_mul result)
+UB_G    = 0x14000   # [HC, K] fp32  32 KB  (g_cs + exp)
 
-UB_BETA = 0x28000   # [1, C] fp16  256 B
-UB_BF   = 0x28200   # [1, C] fp32  512 B
-UB_BC   = 0x28400   # [C, 1] fp32  512 B  (beta transposed for expand_mul dim=0)
+UB_BETA = 0x1C000   # [1, HC] fp16  128 B
+UB_BF   = 0x1C080   # [1, HC] fp32  256 B  (beta fp32 + [HC,1] col view)
 
 # ---- L1 (Mat) addresses ----
-L1_A   = 0x00000   # [C, C]  fp32 NZ  64 KB  — A_inv (loaded once)
-L1_X   = 0x10000   # [C, N]  fp32 NZ  64 KB  — V_scaled / K_eff
+L1_A   = 0x00000   # [C, C]  fp16 NZ  32 KB  — A_inv (loaded once)
+L1_X   = 0x08000   # [C, N]  fp16 NZ  32 KB  — V_scaled / K_eff
 
 
 @pl.jit(auto_mutex=True)
@@ -60,11 +57,11 @@ def wy_kda_kernel(
     v: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     g_cs: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     beta: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
-    A_inv: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
+    A_inv: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     u_out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     w_out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    ws_vs: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    ws_ke: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
+    ws_vs: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
+    ws_ke: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     cu_seqlens: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32],
     chunk_tbase: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32],
     chunk_valid: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32],
@@ -77,8 +74,8 @@ def wy_kda_kernel(
         g_cs:        [B, HV, T, K]  fp32   (BNTD)
         beta:        [B, HV, T]     fp16   beta head-major (3D, BNTD)
         A_inv:       [B, HV, T, C]  fp32   (BNTD)
-        ws_vs:       [B, HV, T, V]  fp32   workspace for V_scaled (BNTD)
-        ws_ke:       [B, HV, T, K]  fp32   workspace for K_eff (BNTD)
+        ws_vs:       [n_cores * C, V]  fp16  per-core workspace for V_scaled
+        ws_ke:       [n_cores * C, K]  fp16  per-core workspace for K_eff
         cu_seqlens:  [num_seqs+1]   int32  cumulative sequence lengths
         chunk_tbase: [num_chunks]   int32  pre-computed t_base per chunk
         chunk_valid: [num_chunks]   int32  pre-computed valid_size per chunk
@@ -92,6 +89,8 @@ def wy_kda_kernel(
     num_seqs = cu_seqlens.shape[0] - 1
     num_cores = pl.get_block_num()
     core_id = pl.get_block_idx() // pl.get_subblock_num()
+    sub_id = pl.get_subblock_idx()
+    ro = sub_id * HC
 
     if num_seqs == 1:
         num_chunks = (T + C - 1) // C
@@ -101,59 +100,52 @@ def wy_kda_kernel(
 
     # ── Tile groups ──
 
-    # Vec tiles
+    # Vec tiles (HC per sub-block)
     t_vh = pl.make_tile_group(
-        type=pl.TileType(shape=[C, V], dtype=pl.DT_FP16,
+        type=pl.TileType(shape=[HC, V], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Vec),
         addrs=UB_VH, mutex_ids=[0])
     t_vf = pl.make_tile_group(
-        type=pl.TileType(shape=[C, V], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[HC, V], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Vec),
         addrs=UB_VF, mutex_ids=[1])
     t_tv = pl.make_tile_group(
-        type=pl.TileType(shape=[C, V], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[HC, V], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Vec),
-        addrs=UB_E, mutex_ids=[2])
-    t_kh = pl.make_tile_group(
-        type=pl.TileType(shape=[C, K], dtype=pl.DT_FP16,
-                         target_memory=pl.MemorySpace.Vec),
-        addrs=UB_KH, mutex_ids=[2])
-    t_kf = pl.make_tile_group(
-        type=pl.TileType(shape=[C, K], dtype=pl.DT_FP32,
-                         target_memory=pl.MemorySpace.Vec),
-        addrs=UB_KF, mutex_ids=[3])
+        addrs=UB_TV, mutex_ids=[2])
+
     t_g = pl.make_tile_group(
-        type=pl.TileType(shape=[C, K], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[HC, K], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Vec),
-        addrs=0x28400, mutex_ids=[4])
+        addrs=UB_G, mutex_ids=[4])
     t_beta = pl.make_tile_group(
-        type=pl.TileType(shape=[1, C], dtype=pl.DT_FP16,
+        type=pl.TileType(shape=[1, HC], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Vec),
         addrs=UB_BETA, mutex_ids=[6])
     t_bf = pl.make_tile_group(
-        type=pl.TileType(shape=[1, C], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[1, HC], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Vec),
         addrs=UB_BF, mutex_ids=[7])
     t_bf_col = pl.make_tile_group(
-        type=pl.TileType(shape=[C, 1], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[HC, 1], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Vec, layout=pl.DN),
-        addrs=UB_BF, mutex_ids=[8])
+        addrs=UB_BF, mutex_ids=[7])
 
     # Cube tiles
     a_l1 = pl.make_tile_group(
-        type=pl.TileType(shape=[C, C], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[C, C], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addrs=L1_A, mutex_ids=[9])
     x_l1 = pl.make_tile_group(
-        type=pl.TileType(shape=[C, TILE_N], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[C, TILE_N], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addrs=L1_X, mutex_ids=[10])
     a_l0a = pl.make_tile_group(
-        type=pl.TileType(shape=[C, C], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[C, C], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Left, layout=pl.NZ),
         addrs=0x0, mutex_ids=[11])
     x_l0b = pl.make_tile_group(
-        type=pl.TileType(shape=[C, TILE_N], dtype=pl.DT_FP32,
+        type=pl.TileType(shape=[C, TILE_N], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Right, layout=pl.ZN),
         addrs=0x0, mutex_ids=[12])
     acc = pl.make_tile_group(
@@ -166,8 +158,7 @@ def wy_kda_kernel(
     vh = t_vh.current()
     vf = t_vf.current()
     tv = t_tv.current()
-    kh = t_kh.current()
-    kf = t_kf.current()
+
     g  = t_g.current()
     bv = t_beta.current()
     bf = t_bf.current()
@@ -191,44 +182,52 @@ def wy_kda_kernel(
             valid_size = pl.getval(chunk_valid, chunk_id)
 
         # ================================================================
-        #  Vec 1: beta + V_scaled → GM, signal Cube
+        #  Vec 1: beta + V_scaled → GM, signal Cube  (HC per sub-block)
         # ================================================================
+        valid_rows = pl.max(0, pl.min(HC, valid_size - ro))
         with pl.section_vector():
-            pl.set_validshape(bv, [1, valid_size])
-            pl.load(bv, beta, [0, head_id, t_base], order=[0, 2])
-            pl.set_validshape(bv, [1, C])
+            pl.set_validshape(bv, [1, valid_rows])
+            pl.load(bv, beta, [0, head_id, t_base + ro], order=[0, 2])
+            pl.set_validshape(bv, [1, HC])
             pl.cast(bf, bv, mode=pl.RoundMode.CAST_NONE)
 
-            pl.set_validshape(vh, [valid_size, V])
-            pl.load(vh, v, [0, t_base, head_id, 0], order=[1, 3])
-            pl.set_validshape(vh, [C, V])
+            pl.set_validshape(vh, [valid_rows, V])
+            pl.load(vh, v, [0, t_base + ro, head_id, 0], order=[1, 3])
+            pl.set_validshape(vh, [HC, V])
             pl.cast(vf, vh, mode=pl.RoundMode.CAST_NONE)
             pl.expand_mul(tv, vf, bf_col, dim=0)
-            pl.set_validshape(tv, [valid_size, V])
-            pl.store(ws_vs, tv, [0, head_id, t_base, 0], order=[2, 3])
-            pl.set_validshape(tv, [C, V])
+            pl.set_validshape(vh, [HC, V])
+            pl.expands(vh, 0.0)
+            pl.set_validshape(vh, [valid_rows, V])
+            pl.cast(vh, tv, mode=pl.RoundMode.CAST_ROUND)
+            pl.set_validshape(vh, [HC, V])
+            pl.store(ws_vs, vh, [core_id * C + ro, 0])
 
             pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=0)
 
         # ================================================================
-        #  Vec 2: K_eff = k*exp(g_cs)*beta → GM  (overlaps Cube 1)
+        #  Vec 2: K_eff = k*exp(g_cs)*beta → GM  (HC per sub-block)
         # ================================================================
-        with pl.section_vector():
-            pl.set_validshape(kh, [valid_size, K])
-            pl.load(kh, k, [0, t_base, head_id, 0], order=[1, 3])
-            pl.set_validshape(kh, [C, K])
-            pl.cast(kf, kh, mode=pl.RoundMode.CAST_NONE)
-            pl.set_validshape(g, [valid_size, K])
-            pl.load(g, g_cs, [0, head_id, t_base, 0], order=[2, 3])
-            pl.set_validshape(g, [C, K])
+            pl.set_validshape(vh, [valid_rows, K])
+            pl.load(vh, k, [0, t_base + ro, head_id, 0], order=[1, 3])
+            pl.set_validshape(vh, [HC, K])
+            pl.cast(vf, vh, mode=pl.RoundMode.CAST_NONE)
+            pl.set_validshape(g, [valid_rows, K])
+            pl.load(g, g_cs, [0, head_id, t_base + ro, 0], order=[2, 3])
+            pl.set_validshape(g, [HC, K])
             pl.exp(g, g)
-            pl.mul(kf, kf, g)
-            pl.expand_mul(tv, kf, bf_col, dim=0)
-            pl.set_validshape(tv, [valid_size, K])
-            pl.store(ws_ke, tv, [0, head_id, t_base, 0], order=[2, 3])
-            pl.set_validshape(tv, [C, K])
+            pl.mul(vf, vf, g)
+            pl.expand_mul(tv, vf, bf_col, dim=0)
+            pl.set_validshape(vh, [HC, K])
+            pl.expands(vh, 0.0)
+            pl.set_validshape(vh, [valid_rows, K])
+            pl.cast(vh, tv, mode=pl.RoundMode.CAST_ROUND)
+            pl.set_validshape(vh, [HC, K])
+            pl.store(ws_ke, vh, [core_id * C + ro, 0])
 
             pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=2)
+            
+            pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=3)       
 
         # ================================================================
         #  Cube 1: load A_inv ONCE, u = A_inv @ V_scaled
@@ -239,9 +238,7 @@ def wy_kda_kernel(
             pl.load(cur_a, A_inv, [0, head_id, t_base, 0], order=[2, 3])
             pl.move(al, cur_a)
 
-            pl.set_validshape(cur_x, [valid_size, V])
-            pl.load(cur_x, ws_vs, [0, head_id, t_base, 0], order=[2, 3])
-            pl.set_validshape(cur_x, [C, V])
+            pl.load(cur_x, ws_vs, [core_id * C, 0])
             pl.move(xr, cur_x)
             pl.set_validshape(ac, [C, V])
             pl.matmul(ac, al, xr)
@@ -253,12 +250,9 @@ def wy_kda_kernel(
         # ================================================================
         #  Cube 2: w = A_inv @ K_eff  (A_inv already in L0A)
         # ================================================================
-        with pl.section_cube():
             pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=2)
 
-            pl.set_validshape(cur_x, [valid_size, K])
-            pl.load(cur_x, ws_ke, [0, head_id, t_base, 0], order=[2, 3])
-            pl.set_validshape(cur_x, [C, K])
+            pl.load(cur_x, ws_ke, [core_id * C, 0])
             pl.move(xr, cur_x)
             pl.set_validshape(ac, [C, K])
             pl.matmul(ac, al, xr)
@@ -266,13 +260,6 @@ def wy_kda_kernel(
             pl.store(w_out, ac, [0, head_id, t_base, 0], order=[2, 3])
 
             pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=3)
-
-        # ================================================================
-        #  Sync
-        # ================================================================
-        with pl.section_vector():
-            pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=3)
-            pl.system.bar_all()
 
 
 def wy_kda_block(
@@ -306,7 +293,7 @@ def wy_kda_block(
     v = v.to(_DEVICE)
     g_cs = g_cs.to(_DEVICE)
     beta_sig = beta_sig.to(_DEVICE)
-    A_inv = A_inv.to(_DEVICE)
+    A_inv = A_inv.to(_DEVICE).half()
 
     B, T, HV_dim, Kd = k.shape
     Vd = v.shape[-1]
@@ -320,8 +307,8 @@ def wy_kda_block(
 
     beta_t = beta_sig.permute(0, 2, 1).contiguous()
 
-    ws_vs = torch.empty(B, HV_dim, T, Vd, device=_DEVICE, dtype=torch.float32)
-    ws_ke = torch.empty(B, HV_dim, T, Kd, device=_DEVICE, dtype=torch.float32)
+    ws_vs = torch.empty(nc * C, Vd, device=_DEVICE, dtype=torch.float16)
+    ws_ke = torch.empty(nc * C, Kd, device=_DEVICE, dtype=torch.float16)
 
     u_out = torch.zeros(B, HV_dim, T, Vd, device=_DEVICE, dtype=torch.float32)
     w_out = torch.zeros(B, HV_dim, T, Kd, device=_DEVICE, dtype=torch.float32)

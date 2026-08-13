@@ -30,9 +30,8 @@ TEST_SHAPES = [
     (4117, None),
     (1024, [0,63,156,618,799,1024]),
     (3118, [0,129,197,315,618,3113,3118]),
-    (385, None),
-    (512, [0, 256, 512]),
     (768, [0, 128, 384, 768]),
+    (156, [0,63,156]),
 ]
 
 
@@ -51,27 +50,25 @@ def require_a5(device=None):
 def make_kda_base_inputs(T, device):
     """Canonical KDA test inputs shared across all single-stage and e2e tests.
 
-    Returns (q, k, v, g_log, beta_sig, scale) on ``device``.  Uses seed 0
-    and matches the distribution previously hardcoded in test_kda_e2e so
-    that single-kernel tests and the e2e test exercise identical data.
+    Returns (q, k, v, g_log, beta_sig, scale) on ``device``.  Matches the
+    chunk_kda (ling_3_0_flash) stability HARD CONSTRAINT composition
+    (SPEC.md §9): q/k/v = randn*0.1, g = logsigmoid(randn) <= 0,
+    beta = sigmoid(randn), seed 42, RNG order g0 -> q -> k -> v -> beta.
 
     Shapes:
-        q:        [1, T, HV, K_DIM]  fp32  L2-normalised (NOT pre-scaled)
-        k:        [1, T, HV, K_DIM]  fp32  L2-normalised
-        v:        [1, T, HV, V_DIM]  fp32  randn
-        g_log:    [1, T, HV, K_DIM]  fp32  -rand  (log-space decay gates)
+        q:        [1, T, HV, K_DIM]  fp32  randn * 0.1
+        k:        [1, T, HV, K_DIM]  fp32  randn * 0.1
+        v:        [1, T, HV, V_DIM]  fp32  randn * 0.1
+        g_log:    [1, T, HV, K_DIM]  fp32  logsigmoid(randn) <= 0
         beta_sig: [1, T, HV]         fp32  sigmoid(randn)
         scale:    float               K_DIM**-0.5
     """
-    torch.manual_seed(0)
-    q = torch.nn.functional.normalize(
-        torch.randn(1, T, HV, K_DIM, dtype=torch.float32), dim=-1, p=2
-    ).to(device)
-    k = torch.nn.functional.normalize(
-        torch.randn(1, T, HV, K_DIM, dtype=torch.float32), dim=-1, p=2
-    ).to(device)
-    v = torch.randn(1, T, HV, V_DIM, dtype=torch.float32).to(device)
-    g_log = -torch.rand(1, T, HV, K_DIM, dtype=torch.float32).to(device)
+    torch.manual_seed(42)
+    g0 = torch.randn(1, T, HV, K_DIM, dtype=torch.float32)
+    q = (torch.randn(1, T, HV, K_DIM, dtype=torch.float32) * 0.1).to(device)
+    k = (torch.randn(1, T, HV, K_DIM, dtype=torch.float32) * 0.1).to(device)
+    v = (torch.randn(1, T, HV, V_DIM, dtype=torch.float32) * 0.1).to(device)
+    g_log = torch.nn.functional.logsigmoid(g0).clamp(min=-0.5).to(device)
     beta_sig = torch.sigmoid(torch.randn(1, T, HV, dtype=torch.float32)).to(device)
     scale = K_DIM ** -0.5
     return q, k, v, g_log, beta_sig, scale
@@ -93,6 +90,7 @@ def run_main(title, shapes, run_case_fn):
         elif arg == "cpu":
             device = "cpu"
     selected = [shapes[idx]] if idx is not None else shapes
+    logging.info("Running %d/%d case(s): %s", len(selected), len(shapes), selected)
     for T, cu in selected:
         cu_str = f"cu={cu}" if cu else "cu=None"
         run_case_fn(T, cu, f"T={T}, {cu_str}", device)

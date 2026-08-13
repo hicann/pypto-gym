@@ -32,10 +32,13 @@ if _SRC_DIR not in sys.path:
 
 from ref_kda import RefKDA
 from kda_test_config import (TEST_SHAPES, CHUNK_SIZE, K_DIM, V_DIM, HV, C, K, V, HC, DEVICE,
-                              require_a5, make_kda_base_inputs, run_main)
+                              require_a5, make_kda_base_inputs, make_tril_mask, run_main)
 
 from pypto_gym.ops.pypto_pro.experimental.ops_transformer.kda.chunk_o_kda_impl import (
     run_chunk_o_kda,
+)
+from pypto_gym.ops.pypto_pro.experimental.ops_transformer.kda.gate_kkt_kda_impl import (
+    run_gate_kkt_kda,
 )
 
 
@@ -64,10 +67,20 @@ def _run_case(T, cu_seqlens, label, device, rtol=5e-3, atol=5e-3):
     vcorr_bntd = v_corr.half().permute(0, 2, 1, 3).contiguous().to(device)
     s_d = s_snapshots.half().to(device)
     g_bntd = st.g_cs.permute(0, 2, 1, 3).contiguous().to(device)
-    mask = torch.tril(torch.ones(C, C, dtype=torch.float32), diagonal=0).to(device)
     o_npu = torch.empty(1, T, HV, V_DIM, device=DEVICE, dtype=torch.float16)
 
-    run_chunk_o_kda(q_d, k_d, vcorr_bntd, s_d, g_bntd, mask, o_npu,
+    # gate_kkt 先算 aqk（共享 ki_a），chunk_o 只读 ws_aqk
+    L_tril = make_tril_mask(C, device)
+    mask_strict = make_tril_mask(C, device, diagonal=-1)
+    mask_incl = make_tril_mask(C, device, diagonal=0)
+    g_cs_buf = torch.empty(1, HV, T, K_DIM, device=DEVICE, dtype=torch.float32)
+    L_out_buf = torch.empty(1, HV, T, C, device=DEVICE, dtype=torch.float16)
+    beta_bntd = beta_sig.half().permute(0, 2, 1).contiguous()
+    ws_aqk = run_gate_kkt_kda(g_log.half(), q_d, k_d, beta_bntd,
+                              L_tril, mask_strict, mask_incl,
+                              g_cs_buf, L_out_buf, num_cores, cu_seqlens)
+
+    run_chunk_o_kda(q_d, vcorr_bntd, s_d, g_bntd, o_npu, ws_aqk,
                     num_chunks, num_cores, cu_seqlens)
 
     o_ref = ref.chunk_o_kda(
