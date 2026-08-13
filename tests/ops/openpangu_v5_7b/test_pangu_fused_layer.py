@@ -95,9 +95,9 @@ def fused_layer_golden(
     qkv = torch.matmul(hidden_normed.float(), qkv_weight.t().float())
     qkv = qkv + qkv_bias.float()
 
-    q = qkv[:, : NUM_HEADS * HEAD_DIM]
-    k = qkv[:, NUM_HEADS * HEAD_DIM: NUM_HEADS * HEAD_DIM + KV_SIZE]
-    v = qkv[:, NUM_HEADS * HEAD_DIM + KV_SIZE:]
+    q = qkv[:, :, : NUM_HEADS * HEAD_DIM]
+    k = qkv[:, :, NUM_HEADS * HEAD_DIM: NUM_HEADS * HEAD_DIM + KV_SIZE]
+    v = qkv[:, :, NUM_HEADS * HEAD_DIM + KV_SIZE:]
 
     q = q.view(NUM_HEADS, HEAD_DIM).float()
     k = k.view(NUM_KV_HEADS, HEAD_DIM).float()

@@ -641,8 +641,8 @@ def mla_prolog_quant_compute(
 
 @pypto.frontend.jit(
     pass_options={
-        "cube_l1_reuse_setting": {0: 1, 1: 1, 2: 3, 3: 4},
-        "cube_nbuffer_setting": {0: 1, 1: 1, 2: 1, 3: 4},
+        "cube_l1_reuse_setting": {-1: 4, 0: 1, 1: 3},
+        "cube_nbuffer_setting": {-1: 4, 0: 1, 1: 1},
     },
     runtime_options={
         "device_sched_mode": 2,
