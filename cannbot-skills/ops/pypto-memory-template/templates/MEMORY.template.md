@@ -36,8 +36,8 @@ blockers: []
 ## Validation (mandatory)
 
 - **Runner:** `custom/<operator_name>/test_<operator_name>.py`
-- **Command (repo root):** `python custom/<operator_name>/test_<operator_name>.py` — the test file's path-bootstrap preamble locates `detailed_tensor_compare` automatically; no `PYTHONPATH` env var needed. (Legacy fallback if the preamble is somehow stripped: `PYTHONPATH=../../pypto-op-verify/scripts python custom/<operator_name>/test_<operator_name>.py`.)
-- **Comparison:** `from detailed_tensor_compare import detailed_tensor_compare` (bundled: skill `pypto-op-verify`'s `scripts/detailed_tensor_compare.py`). **Do not** use `pytest` as the default for this golden vs PyPTO check unless documented under **blockers** as an exception.
+- **Command (any cwd):** `python custom/<operator_name>/test_<operator_name>.py` — the test file's path-bootstrap preamble resolves everything from `__file__`; no `PYTHONPATH` env var, and no dependency on the agent framework's skills directory. (If the preamble was stripped, regenerate the test with `gen_module_test.py` rather than patching `PYTHONPATH`.)
+- **Comparison:** `from detailed_tensor_compare import detailed_tensor_compare` — resolved from `custom/<operator_name>/detailed_tensor_compare.py`, a vendored copy that `gen_module_test.py` refreshes from skill `pypto-op-verify`'s `scripts/detailed_tensor_compare.py` on every generation. This keeps `custom/<operator_name>/` portable. **Do not** use `pytest` as the default for this golden vs PyPTO check unless documented under **blockers** as an exception.
 - **All outputs:** the runner must call **`detailed_tensor_compare`** on **every** leaf output tensor (tuple/list/dict/nested structures — **not** only `outputs[0]`). If any output is intentionally skipped, document under **blockers** with justification.
 
 ## Module decomposition (mandatory)

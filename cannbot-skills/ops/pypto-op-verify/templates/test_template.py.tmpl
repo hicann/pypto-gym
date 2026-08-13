@@ -46,35 +46,27 @@ import torch
 import_module("torch_npu")  # Register torch.npu on supported installations.
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# detailed_tensor_compare path bootstrap (self-contained — no PYTHONPATH needed)
+# detailed_tensor_compare bootstrap (self-contained — no PYTHONPATH needed)
 # ═══════════════════════════════════════════════════════════════════════════════
-# Walk up from this test file to locate
-# `../scripts/` and prepend it to sys.path. This
-# lets `python custom/<op>/test_<op>.py` work from any cwd without the user
-# having to set `PYTHONPATH=../scripts`. Keep the
-# helper symbol names underscore-prefixed and `del` them at the end so the
-# test file's public surface stays clean.
+# `scripts/gen_module_test.py` copies `detailed_tensor_compare.py` into
+# `custom/<op>/`, so this file resolves it from `__file__` rather than naming the
+# agent framework's skills directory — that directory is a symlink whose name
+# follows whichever framework the user runs, and it also left `custom/<op>/`
+# unable to be copied elsewhere. `custom/<op>/`, its `modules/` and its `eval/`
+# go on sys.path here so the kernel files import-resolve from any cwd. Keep the
+# helper symbol names underscore-prefixed and `del` them at the end so the test
+# file's public surface stays clean.
 _test_dir = os.path.dirname(os.path.abspath(__file__))
-_current = _test_dir
-_candidate = None
-for _ in range(8):  # bounded ascent — repo root is typically 2-5 levels up
-    _candidate = os.path.join(_current, ".opencode", "skills", "pypto-op-verify", "scripts")
-    if os.path.isdir(_candidate):
-        if _candidate not in sys.path:
-            sys.path.insert(0, _candidate)
-        break
-    _parent = os.path.dirname(_current)
-    if _parent == _current:
-        _candidate = None
-        break
-    _current = _parent
-if _candidate is None or not os.path.isdir(_candidate):
+_op_dir = os.path.dirname(_test_dir) if os.path.basename(_test_dir) == "modules" else _test_dir
+for _p in (_test_dir, _op_dir, os.path.join(_op_dir, "eval")):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+if not os.path.isfile(os.path.join(_op_dir, "detailed_tensor_compare.py")):
     raise ImportError(
-        "Could not locate detailed_tensor_compare. Expected "
-        "`../scripts/detailed_tensor_compare.py` "
-        f"reachable from {_test_dir} by walking up the directory tree."
+        "Vendored detailed_tensor_compare.py not found in " + _op_dir + ". "
+        "Regenerate this test with pypto-op-verify's gen_module_test.py, which copies it."
     )
-del _test_dir, _current, _candidate
+del _test_dir, _op_dir, _p
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Imports — exact filenames, exact symbol names. Do NOT alias. ──

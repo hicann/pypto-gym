@@ -10,6 +10,11 @@ functions. This script emits the whole file from the operator name, the scope
 (a phase suffix or the integrated E2E), and SPEC.md front matter, so
 `templates/test_template.py.tmpl` no longer needs hand-filling every phase.
 
+Generating a test also copies `detailed_tensor_compare.py` into `custom/<op>/`, so
+the generated tests resolve it from `__file__` instead of naming the agent
+framework's skills directory (that name varies by framework) — which also keeps
+`custom/<op>/` portable. The copy is refreshed on every generation.
+
 Inputs are built inline from SPEC `p0_shapes` (l1) and a small shape (l0); the
 primary-input names come from the golden signature. For multi-input ops with
 heterogeneous shapes, adjust the generated `make_case_inputs` body (it is
@@ -57,24 +62,21 @@ import sys
 import torch
 import_module("torch_npu")  # Register torch.npu on supported installations.'''
 
-_BOOTSTRAP = '''# detailed_tensor_compare path bootstrap (self-contained — no PYTHONPATH needed).
+_BOOTSTRAP = '''# detailed_tensor_compare bootstrap — self-contained: no PYTHONPATH, and no dependency
+# on the agent framework's skills directory (its name varies by framework). The helper is
+# vendored into custom/<op>/ by gen_module_test.py, so the whole custom/<op>/ tree is
+# portable: copy it anywhere and the tests still resolve their imports.
 _test_dir = os.path.dirname(os.path.abspath(__file__))
-_current = _test_dir
-_candidate = None
-for _ in range(8):
-    _candidate = os.path.join(_current, ".opencode", "skills", "pypto-op-verify", "scripts")
-    if os.path.isdir(_candidate):
-        if _candidate not in sys.path:
-            sys.path.insert(0, _candidate)
-        break
-    _parent = os.path.dirname(_current)
-    if _parent == _current:
-        _candidate = None
-        break
-    _current = _parent
-if _candidate is None or not os.path.isdir(_candidate):
-    raise ImportError("Could not locate detailed_tensor_compare under skills/pypto-op-verify/scripts")
-del _test_dir, _current, _candidate
+_op_dir = os.path.dirname(_test_dir) if os.path.basename(_test_dir) == "modules" else _test_dir
+for _p in (_test_dir, _op_dir, os.path.join(_op_dir, "eval")):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+if not os.path.isfile(os.path.join(_op_dir, "detailed_tensor_compare.py")):
+    raise ImportError(
+        "Vendored detailed_tensor_compare.py not found in " + _op_dir + ". "
+        "Regenerate this test with pypto-op-verify's gen_module_test.py, which copies it."
+    )
+del _test_dir, _op_dir, _p
 
 _compare_module = __import__(
     "detailed_tensor_compare",
@@ -84,6 +86,8 @@ detailed_tensor_compare = _compare_module.detailed_tensor_compare
 tensor_leaf_pairs = _compare_module.tensor_leaf_pairs
 del _compare_module
 '''
+
+_HELPER_FILENAME = "detailed_tensor_compare.py"
 
 
 def _parse_front_matter(content: str) -> dict:
@@ -256,13 +260,30 @@ def _gen_from_args(op: str, scope: str, is_e2e: bool, spec: Path | None,
                                atol, rtol, is_e2e))
 
 
+def vendor_compare_helper(op_dir: Path) -> Path:
+    """Copy the bundled `detailed_tensor_compare.py` into `op_dir`, overwriting.
+
+    The source is resolved from `__file__`, so it works under any skills-directory
+    name (they are all symlinks to this script's directory).
+    """
+    source = Path(__file__).resolve().parent / _HELPER_FILENAME
+    if not source.is_file():
+        raise FileNotFoundError(f"Canonical {_HELPER_FILENAME} missing next to {__file__}")
+    op_dir.mkdir(parents=True, exist_ok=True)
+    destination = op_dir / _HELPER_FILENAME
+    destination.write_bytes(source.read_bytes())
+    return destination
+
+
 def _self_test() -> int:
     txt = build_test(TestSpec("relu", "12", ["x"], "float16", [1024, 128],
                               [16, 16], 1e-3, 1e-3, is_e2e=False))
     ok = ("from relu_module12_impl import relu_module12_wrapper" in txt
           and "def test_module12_l0" in txt and "def test_module12_l1" in txt
           and "tensor_leaf_pairs" in txt and "torch.float16" in txt
-          and "TILE_FWK_DEVICE_ID" in txt)
+          and "TILE_FWK_DEVICE_ID" in txt
+          # Portability guard: generated tests must not name an agent-framework directory.
+          and ".opencode" not in txt and ".agents" not in txt)
     compile_ok = True
     try:
         compile(txt, "<gen>", "exec")
@@ -272,7 +293,8 @@ def _self_test() -> int:
     e2e = build_test(TestSpec("relu", "", ["x"], "float32", [1024, 128],
                               [16, 16], 1e-3, 1e-3, is_e2e=True))
     e2e_ok = ("from relu_impl import relu_wrapper" in e2e
-              and "[PRECISION_PASS]" in e2e and "__main__" in e2e)
+              and "[PRECISION_PASS]" in e2e and "__main__" in e2e
+              and ".opencode" not in e2e and ".agents" not in e2e)
     try:
         compile(e2e, "<gen-e2e>", "exec")
     except SyntaxError as exc:
@@ -290,6 +312,9 @@ def main() -> int:
     ap.add_argument("--e2e", action="store_true", help="generate the integrated test_<op>.py")
     ap.add_argument("--spec", type=Path)
     ap.add_argument("--golden", type=Path, help="golden file for primary-input names (optional)")
+    ap.add_argument("--op-dir", type=Path,
+                    help="operator directory receiving detailed_tensor_compare.py "
+                         "(default: custom/<op>)")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
@@ -299,6 +324,9 @@ def main() -> int:
         ap.error("--op required (or --self-test)")
     if not args.e2e and not args.suffix:
         ap.error("--suffix required for per-module test (or pass --e2e)")
+    # Copied silently: stdout carries the generated test file (callers redirect it into
+    # `test_<op>.py`), so no progress output may be emitted on either stream here.
+    vendor_compare_helper(args.op_dir or (Path("custom") / args.op))
     _LOGGER.info(_gen_from_args(args.op, args.suffix, args.e2e, args.spec, args.golden))
     return 0
 

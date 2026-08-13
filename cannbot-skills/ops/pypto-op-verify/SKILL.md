@@ -47,8 +47,9 @@ The same `detailed_tensor_compare` helper is used in both paths — only the **g
 |------|-------------|
 | **Path** | `custom/<operator_name>/test_<operator_name>.py` |
 | **CWD** | Repository root |
-| **Command** | `python custom/<operator_name>/test_<operator_name>.py` (the test file's bootstrap preamble locates `detailed_tensor_compare` automatically; no PYTHONPATH needed) |
-| **Import** | `from detailed_tensor_compare import detailed_tensor_compare` (provided by `PYTHONPATH`; must be the bundled implementation) |
+| **Command** | `python custom/<operator_name>/test_<operator_name>.py` (no PYTHONPATH; the bootstrap preamble puts `custom/<op>/`, `modules/` and `eval/` on `sys.path`) |
+| **Import** | `from detailed_tensor_compare import detailed_tensor_compare` — resolved from the vendored `custom/<operator_name>/detailed_tensor_compare.py` |
+| **Vendored helper** | `custom/<operator_name>/detailed_tensor_compare.py`, written by `scripts/gen_module_test.py` from the bundled implementation and refreshed on every generation (so it cannot drift). Generated tests must never name the agent framework's skills directory — that name changes with the framework — and `custom/<op>/` must remain copyable on its own. |
 
 ### What the runner must do
 

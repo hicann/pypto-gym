@@ -33,6 +33,8 @@ In L1 mode you own three families of artifacts in addition to the gate runner:
 
 In both L0 and L1, you own the E2E test `custom/<op>/test_<op>.py`, which is produced once the integrated `<op>_impl.py` is ready. It imports `<op>_impl` and `<op>_golden` directly and runs `detailed_tensor_compare` on every leaf output. **Both `test_<op>.py` and every `modules/test_<op>_module<suffix_k>.py` MUST start with the path-bootstrap preamble** from `skill pypto-op-verify`'s `templates/test_template.py.tmpl` so that `python custom/<op>/test_<op>.py` works directly without the user setting `PYTHONPATH`.
 
+`gen_module_test.py` also copies the comparison helper to **`custom/<op>/detailed_tensor_compare.py`**, which the preamble imports. Never write the skills directory's name into a generated file: that directory is a symlink whose name tracks the agent framework in use, and reaching into it would stop `custom/<op>/` from being copyable on its own.
+
 These artifacts implement the Joshua evaluator information barrier: you still never see private design rationale, staged files are composed through the runner, and reports are sanitized before they leave the eval workspace.
 
 ## Mandatory reads
@@ -277,45 +279,29 @@ python ../skills/pypto-op-verify/scripts/gen_module_test.py \
     > custom/<op>/modules/test_<op>_module<suffix_k>.py
 ```
 
-(For the integrated E2E test pass `--e2e` and `--golden custom/<op>/<op>_golden.py`, output to `custom/<op>/test_<op>.py`.) Then **run it** and report PASS/FAIL. The generator builds inputs from SPEC `p0_shapes` (l1) and a small shape (l0); only adjust the generated `make_case_inputs` body if the op needs heterogeneous per-input shapes. The canonical template (`templates/test_template.py.tmpl`) remains the reference for the structure the generator emits. The structure below documents what it produces:
+(For the integrated E2E test pass `--e2e` and `--golden custom/<op>/<op>_golden.py`, output to `custom/<op>/test_<op>.py`.) The generator also copies `detailed_tensor_compare.py` into `custom/<op>/` as a side effect. It does so silently — the generated test is the only thing written to **stdout**, so the `>` redirect above stays clean. Override the destination with `--op-dir` if the operator does not live at `custom/<op>`. Then **run it** and report PASS/FAIL. The generator builds inputs from SPEC `p0_shapes` (l1) and a small shape (l0); only adjust the generated `make_case_inputs` body if the op needs heterogeneous per-input shapes. The canonical template (`templates/test_template.py.tmpl`) remains the reference for the structure the generator emits. The structure below documents what it produces:
 
 ```python
 """Test for cumulative module M1..M_k. Imports module<suffix_k>_impl and module<suffix_k>_golden."""
 import os
 import sys
 
-# === detailed_tensor_compare path bootstrap (verbatim from template) ===
+# === detailed_tensor_compare bootstrap (verbatim from template) ===
+# Resolves the VENDORED helper at custom/<op>/detailed_tensor_compare.py from __file__
+# alone — no PYTHONPATH, and no reference to the agent framework's skills directory.
+# The same three dirs the kernel files need (custom/<op>/, modules/, eval/) go on sys.path.
 _test_dir = os.path.dirname(os.path.abspath(__file__))
-_current = _test_dir
-_candidate = None
-for _ in range(8):
-    _candidate = os.path.join(_current, ".agents", "skills", "pypto-op-verify", "scripts")
-    if os.path.isdir(_candidate):
-        if _candidate not in sys.path:
-            sys.path.insert(0, _candidate)
-        break
-    _parent = os.path.dirname(_current)
-    if _parent == _current:
-        _candidate = None
-        break
-    _current = _parent
-if _candidate is None or not os.path.isdir(_candidate):
-    raise ImportError(
-        "Could not locate detailed_tensor_compare. Expected "
-        "../skills/pypto-op-verify/scripts/detailed_tensor_compare.py "
-        f"reachable from {_test_dir} by walking up the tree."
-    )
-del _test_dir, _current, _candidate
-# === end bootstrap ===
-
-# Also expose the modules/ + custom/<op>/ + eval/ dirs so the kernel files import-resolve.
-_modules_dir = os.path.dirname(os.path.abspath(__file__))
-_op_dir = os.path.dirname(_modules_dir)
-_eval_dir = os.path.join(_op_dir, "eval")
-for _p in (_modules_dir, _op_dir, _eval_dir):
-    if _p not in sys.path:
+_op_dir = os.path.dirname(_test_dir) if os.path.basename(_test_dir) == "modules" else _test_dir
+for _p in (_test_dir, _op_dir, os.path.join(_op_dir, "eval")):
+    if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
-del _modules_dir, _op_dir, _eval_dir
+if not os.path.isfile(os.path.join(_op_dir, "detailed_tensor_compare.py")):
+    raise ImportError(
+        "Vendored detailed_tensor_compare.py not found in " + _op_dir + ". "
+        "Regenerate this test with pypto-op-verify's gen_module_test.py, which copies it."
+    )
+del _test_dir, _op_dir, _p
+# === end bootstrap ===
 
 import torch
 import torch_npu  # required for device init
@@ -365,7 +351,7 @@ Acceptance for the dispatched Phase M_k:
 - `custom/<op>/modules/test_<op>_module<suffix_k>.py` exists.
 - It imports the matching `<op>_module<suffix_k>_impl` and `<op>_module<suffix_k>_golden`.
 - It defines `test_module<suffix_k>_l0` and `test_module<suffix_k>_l1`.
-- The file syntactically parses and the imports resolve with `PYTHONPATH=custom/<op>/modules:.agents`.
+- The file syntactically parses and its imports resolve with **no `PYTHONPATH` at all** — the preamble puts `custom/<op>/`, `modules/` and `eval/` on `sys.path` and imports the vendored `custom/<op>/detailed_tensor_compare.py`.
 
 Then **run the test** (the impl is already on disk by the time
 Phase scaffolding is dispatched — that's the precondition the dispatch
@@ -385,8 +371,8 @@ verification (see "Verdict format" below):
 When MEMORY.md says `module_count == 1`, this is a single E2E precision verify on the `<op>_impl.py` — there are no per-Phase gates, no prefix evaluation, no module boundaries, and no cleanup. PASS → E2E done.
 
 1. Golden function inventory — every op marked ✅
-2. Write `custom/<op>/test_<op>.py` (imports `<op>_impl` and `<op>_golden`; compares all leaf outputs via `detailed_tensor_compare`, run on the NPU)
-3. Run `PYTHONPATH=../skills/pypto-op-verify python custom/<op>/test_<op>.py` — `all_close: true` on every output leaf
+2. Generate `custom/<op>/test_<op>.py` with `gen_module_test.py --e2e` (imports `<op>_impl` and `<op>_golden`; compares all leaf outputs via `detailed_tensor_compare`, run on the NPU). The same command vendors `custom/<op>/detailed_tensor_compare.py`.
+3. Run `python custom/<op>/test_<op>.py` — no `PYTHONPATH` needed — `all_close: true` on every output leaf
 4. Layout / structure rules (OL44 module trio, OL45/OL57 loops, OL48 cube-tile, OL52 view rank, OL19 compare helper) are enforced automatically by the pypto-op-lint hooks on file write and at the gate — confirm no lint FAIL remains
 5. Append one row to MEMORY.md → Per-module verification log (single row for the L0 E2E run; `Module = M1`, `Staged file = <op>_impl.py`).
 
