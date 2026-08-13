@@ -5,7 +5,6 @@ mode: subagent
 skills:
   - pypto-docs-search
   - pypto-pro-golden-generate
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 # pypto-pro-op-mathematician — Stage 2 Golden 生成

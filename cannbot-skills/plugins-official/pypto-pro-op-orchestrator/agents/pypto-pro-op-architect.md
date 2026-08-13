@@ -5,7 +5,6 @@ mode: subagent
 skills:
   - pypto-docs-search
   - pypto-pro-op-design
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 # pypto-pro-op-architect — Stage 3 架构设计

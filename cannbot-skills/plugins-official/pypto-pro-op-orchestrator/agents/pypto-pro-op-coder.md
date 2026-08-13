@@ -7,7 +7,6 @@ skills:
   - pypto-pro-environment-check
   - pypto-pro-op-develop
   - pypto-pro-op-perf-tune
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 # pypto-pro-op-coder — Stage 4 Kernel 实现与验证

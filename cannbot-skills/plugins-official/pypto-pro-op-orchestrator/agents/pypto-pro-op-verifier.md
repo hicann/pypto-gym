@@ -4,7 +4,6 @@ description: "PyPTO-Pro 门禁裁判。不独占任何 Stage。由 orchestrator 
 mode: subagent
 skills:
   - pypto-docs-search
-tools: Read, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 > **范围与权限：** verifier 是用户/system/orchestrator 合同内的独立质量门禁，可以拒绝

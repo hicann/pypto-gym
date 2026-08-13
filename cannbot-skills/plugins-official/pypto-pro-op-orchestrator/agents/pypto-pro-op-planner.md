@@ -7,7 +7,6 @@ skills:
   - pypto-pro-intent-understand
   - pypto-pro-material-explore
   - pypto-pro-op-plan
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, ToolSearch
 ---
 
 # pypto-pro-op-planner — Stage 1 需求规划
