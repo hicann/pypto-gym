@@ -44,7 +44,7 @@ def sign_sqrt_clamp(tensor, clamp_value):
         "vec_nbuffer_setting": {"DEFAULT": 4, "func11_3": 32, "func8_0": 32},
     },
     runtime_options={
-        "stitch_function_max_num": 32,
+        "stitch_function_max_num": 64,
     },
 )
 def engram_forward_kernel(

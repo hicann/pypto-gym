@@ -724,8 +724,8 @@ def engram_forward_wrapper(
     )
 
     value_out = value_out.reshape(b, s, m_dim, h_out)
-    score_back = score_back[:, :, 0:1].reshape(b, s, m_dim, 1).contiguous()
+    score_back = score_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
     key_back = key_back.reshape(b, s, m_dim, h_out)
     value_back = value_back.reshape(b, s, h_out)
-    gate_back = gate_back[:, :, 0:1].reshape(b, s, m_dim, 1).contiguous()
+    gate_back = gate_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
     return value_out, score_back, key_back, value_back, gate_back
