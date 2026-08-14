@@ -26,6 +26,7 @@ if str(LINT_ROOT) not in sys.path:
 
 from pypto_pro_op_lint import core  # noqa: E402
 from pypto_pro_op_lint import observability  # noqa: E402
+from pypto_pro_op_lint.checks import d2_artifact  # noqa: E402
 from pypto_pro_op_lint.cli import cmd_check_gate, cmd_check_module_gate  # noqa: E402
 from pypto_pro_op_lint.core import (  # noqa: E402
     HOOK_INPUT_ENV,
@@ -79,9 +80,31 @@ def _write_state(op_dir: Path, stage: int = 4, module_count: int | None = None) 
     _write(op_dir / ".orchestrator_state.json", json.dumps(state))
 
 
+def _valid_spec(op_name: str = "demo") -> str:
+    return f'''```json machine-contract
+{{
+  "schema_version": 1,
+  "op_name": "{op_name}",
+  "formula": "y = x",
+  "supported_dtypes": ["float32"],
+  "inputs": [{{"name": "x", "shape": [8, 16], "dtype": "float32", "value_range": [-4, 4]}}],
+  "outputs": [{{"name": "y", "shape": [8, 16], "dtype": "float32", "value_range": [-4, 4]}}],
+  "default_params": {{}},
+  "tolerance": {{"atol": 0.001, "rtol": 0.001}},
+  "dynamic_axes_ranges": {{}},
+  "shape_constraints": [],
+  "p0_cases": [{{"name": "p0", "params": {{}}, "input_shapes": {{"x": [8, 16]}}, "output_shapes": {{"y": [8, 16]}}}}]
+}}
+```
+
+## 语义说明
+y = x
+'''
+
+
 def _build_valid_operator(op_dir: Path) -> None:
     _write_state(op_dir)
-    _write(op_dir / "SPEC.md", "# SPEC\n")
+    _write(op_dir / "SPEC.md", _valid_spec())
     _write(op_dir / "DESIGN.md", "# DESIGN\n")
     _write(op_dir / "module_interfaces.yaml", "is_fusion: false\n")
     _write(op_dir / "demo_golden.py", "import torch\n\ndef demo_golden(x): return x\n")
@@ -107,6 +130,56 @@ def test_three(): pass
 def test_four(): pass
 """,
     )
+
+
+def test_pl03_accepts_canonical_contract_from_source_layout(tmp_path: Path) -> None:
+    _write(tmp_path / "SPEC.md", _valid_spec())
+    assert _run(tmp_path, "PL03", stage=1).status == "PASS"
+
+
+def test_pl03_rejects_invalid_contract_and_operator_mismatch(tmp_path: Path) -> None:
+    _write(tmp_path / "SPEC.md", _valid_spec().replace("demo", "{{OP_NAME}}"))
+    assert _run(tmp_path, "PL03", stage=1).status == "FAIL"
+
+    _write(tmp_path / "SPEC.md", _valid_spec("another_op"))
+    finding = _run(tmp_path, "PL03", stage=1)
+    assert finding.status == "FAIL"
+    assert "op_name" in finding.message
+
+
+def test_pl03_loads_canonical_contract_from_installed_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_root = tmp_path / "config"
+    installed_validator = (
+        config_root / "skills/pypto-pro-intent-understand/scripts/validate_spec.py"
+    )
+    source_validator = (
+        Path(__file__).resolve().parents[5]
+        / "ops/pypto-pro-intent-understand/scripts/validate_spec.py"
+    )
+    _write(installed_validator, source_validator.read_text(encoding="utf-8"))
+    fake_check = (
+        config_root
+        / "hooks/pypto-pro-op-lint/pypto_pro_op_lint/checks/d2_artifact.py"
+    )
+    monkeypatch.setattr(d2_artifact, "__file__", str(fake_check))
+    _write(tmp_path / "SPEC.md", _valid_spec())
+    assert _run(tmp_path, "PL03", stage=1).status == "PASS"
+
+
+def test_pl03_fails_closed_when_canonical_validator_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        d2_artifact,
+        "__file__",
+        str(tmp_path / "isolated/hooks/lint/package/checks/d2_artifact.py"),
+    )
+    _write(tmp_path / "SPEC.md", _valid_spec())
+    finding = _run(tmp_path, "PL03", stage=1)
+    assert finding.status == "FAIL"
+    assert "canonical SPEC validator" in finding.message
 
 
 def test_pl01_rejects_from_import_of_classic_pypto(tmp_path: Path) -> None:

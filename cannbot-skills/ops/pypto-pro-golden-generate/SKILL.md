@@ -38,7 +38,7 @@ description: 当需要从 PyPTO-Pro SPEC 生成、规范化或验证 golden 参�
 >     --template templates/golden-template.py.tmpl --out custom/<op>/<op>_golden.py
 > ```
 >
-> 脚本读取 SPEC.md front matter（`op_name` / `p0_shapes` / `default_params` …）与 §5 输入/参数表，缺少必须字段时非零退出（吸收下表检查），并生成已填好**函数签名、`_make_inputs` 张量构造（按 p0_shapes + 参数表 concrete shape）、`_validate` 骨架**的 `<op>_golden.py`；仅在数式本体、受约束输入、算子固有属性检查处留 `# TODO`。LLM 只需填这些 TODO。
+> 脚本通过 intent-understand 的 `load_spec_contract()` 读取并验证 SPEC.md 中唯一的 JSON machine-contract；把 `formula` 原样带入源码提示，并从全部 `p0_cases` 生成已填好**函数签名、`_make_inputs` 多 case 张量构造、`_validate` 遍历骨架**的 `<op>_golden.py`。缺少必须字段时非零退出；仅在数式本体、受约束输入、算子固有属性检查处留 `# TODO`。LLM 只需填这些 TODO。
 
 脚本退出码与下表分类一致；如需人工核对，按以下分类检查字段完整性：
 
@@ -198,8 +198,8 @@ def _make_inputs(device):
 - 所有 tensor 必须带 `device=device` 创建
 - `_validate()` 内部调用 `_make_inputs(device)` 获取输入，不重复构造
 - scalar 参数（如 `eps`、`d`、`ratio`）放在 `kwargs_dict` 中
-- 使用 SPEC.md 的 `p0_shapes` 和 `default_params` 确定 shape 和参数值
-- **SPEC.md 中有多个性能 P0 shape 时，必须为每个 shape 生成一组 case**，case_name 对应典型配置表中的名称
+- 通过 `load_spec_contract()` 读取 SPEC 的 `formula`、`p0_cases` 和 `default_params`；脚手架按合同顺序生成全部 P0 的 shape、参数和 case 名
+- `_validate()` 兼容单 case `(args, kwargs)` 和多 case `[(name, args, kwargs), ...]`，并遍历、检查全部合同 P0；不得删除或改名已生成的 case
 - 状态类 tensor（如 `kv_state`、`score_state`）使用 `torch.zeros` 初始化
 
 ---
@@ -333,7 +333,7 @@ python3 {op}_golden.py
 - `import torch` + `import torch_npu` + NPU 设备初始化
 - 文件级 docstring（算子名、公式、置信度）
 - `{op}_golden()` 函数：torch + torch_npu 参考实现，计算在 NPU 上执行（含示例注释）
-- `_make_inputs(device)` 函数：构造 P0 典型输入，返回 `(args_list, kwargs_dict)`，供验证使用，并在启用时供性能采集复用（详见 §4 `_make_inputs()` 节）
+- `_make_inputs(device)` 函数：构造全部 P0 典型输入；单 case 返回 `(args_list, kwargs_dict)`，多 case 返回 `[(case_name, args_list, kwargs_dict), ...]`，供验证使用，并在启用时供性能采集复用（详见 §4 `_make_inputs()` 节）
 - `_validate()` 函数：自动验证（典型 case、泛化 case、值域检查、数值稳定性、API 对比），内部调用 `_make_inputs()` 获取输入
 - `if __name__ == "__main__": _validate()` 入口
 

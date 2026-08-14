@@ -2,8 +2,8 @@
 
 ## Applies to
 
-Only a confirmed A5 target (`NpuArch=3510` / `dav-c310`). Do not use this page
-for an unknown target or for A2/A3.
+An explicit A5 target or the workflow default A5. If runtime/build identifies A2/A3,
+stop applying this page; numerical limits still require the exact device evidence below.
 
 ## Platform gate
 

@@ -1,7 +1,7 @@
 # PyPTO-Pro 全部资料索引
 
 > **自动生成时间**: {timestamp}
-> **说明**: 本索引 §A/§C 由扫描命令动态生成，§B 为官方指定算子固定清单。每次执行须重新扫描 §A/§C，§B 以官方最新指定清单为准。
+> **说明**: 本索引 §A/§C 由扫描命令动态生成，§B 为官方指定算子固定清单。§C 扫描 `tutorials/`。每次执行须重新扫描 §A/§C，§B 以官方最新指定清单为准。
 
 ---
 
@@ -47,7 +47,7 @@ find $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/ -name "*.md" | sort
 
 ```bash
 # 1. 核对缓存与清单一致性（生成 §B 前必做）
-python3 -c "
+python -c "
 import re, os
 from pathlib import Path
 cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
@@ -82,19 +82,19 @@ cat $CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_s
 
 ---
 
-## §C 教程文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）
+## §C 教程与设计指南（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）
 
 ### 扫描命令
 
 ```bash
-# 覆盖 $PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials 目录
-find $PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials -name "*.md" | sort
+find $PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials \
+     -name "*.md" 2>/dev/null | sort
 ```
 
 ### 按扫描结果填充
 
-<!-- 将扫描结果填入下表。以实际扫描结果为准，不预设固定文件列表。 -->
+<!-- 将 tutorials/ 扫描结果填入下表。以实际结果为准，不预设固定文件列表。 -->
 
-| # | 文档 | 路径 |
-|---|------|------|
-| {n} | {name} | `{relative_path}` |
+| # | 来源 | 文档 | 路径 |
+|---|------|------|------|
+| {n} | tutorials | {name} | `{relative_path}` |

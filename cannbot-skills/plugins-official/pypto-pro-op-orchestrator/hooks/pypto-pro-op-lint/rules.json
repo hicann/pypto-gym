@@ -37,8 +37,8 @@
       "stages": [1],
       "target": "gate",
       "triggers": ["gate:S1"],
-      "rule": "SPEC.md 存在且非空",
-      "fix_hint": "确保 custom/<op>/SPEC.md 已由 planner 产出且内容非空。"
+      "rule": "SPEC.md 必须通过 pypto-pro-intent-understand 的 canonical JSON machine-contract validator",
+      "fix_hint": "按 pypto-pro-intent-understand/templates/spec-template.md 填写唯一 JSON machine-contract，并运行 scripts/validate_spec.py。"
     },
     {
       "id": "PL04",

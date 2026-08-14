@@ -51,7 +51,8 @@ one K alignment or one fractal shape for all dtypes.
 - [single-block matmul](../examples/samples/matmul_float_mmad/matmul_float_mmad_impl.py)
 - [BF16 operand reuse](../examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
 - [dynamic row softmax](../examples/samples/softmax/softmax_impl.py)
-- platform discovery: [arch-a5.md](arch-a5.md) for confirmed A5 only
+- platform discovery: [arch-a5.md](arch-a5.md) for explicit or workflow-default A5;
+  numerical limits still require exact target confirmation
 
 The installed `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` pages and official
 examples are the primary source for the current version.

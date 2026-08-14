@@ -67,15 +67,15 @@ python3 ../scripts/profile_golden.py \
 **构造输入参数步骤**：
 
 1. **读取 golden 函数签名**：确定所有 tensor 参数名、scalar 参数名及其默认值
-2. **读取 SPEC.md `p0_shapes`**：获取 P0 典型 shape（按参数顺序对应 tensor 输入）
-3. **读取 SPEC.md `default_params`**：获取 scalar 参数的值
+2. **通过 `load_spec_contract()` 读取 `p0_cases`**：获取 P0 典型 shape（按参数顺序对应 tensor 输入）
+3. **从同一 contract 读取 `default_params`**：获取 scalar 参数的值
 4. **确定 dtype**：从 SPEC.md `supported_dtypes` 和 golden 函数注释中推断每个 tensor 的 dtype
 
 **示例**（多输入算子 `ds_v4_hc_pre`）：
 
 ```bash
 # golden 签名: ds_v4_hc_pre_golden(x, hc_fn, hc_scale, hc_base, hc=4, d=4096, ...)
-# SPEC p0_shapes: [[1024, 16384]]  (只有 x 的 shape，其余是 weights)
+# canonical contract 首个 P0 的 input_shapes 中，x 为 [1024, 16384]
 
 python3 ../scripts/profile_golden.py \
   custom/pto_case/ds_v4_hc_pre/ds_v4_hc_pre_golden.py \

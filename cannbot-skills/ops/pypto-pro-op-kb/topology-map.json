@@ -158,7 +158,7 @@
     }
   },
   "target_gated": {
-    "constraints/arch-a5.md": "Load only after the runtime or build configuration confirms an A5 target."
+    "constraints/arch-a5.md": "Load when runtime/build configuration selects A5, or when no target is specified and the workflow default A5 applies."
   },
   "mandatory_constraints": {
     "constraints/wrapper-boundary.md": {

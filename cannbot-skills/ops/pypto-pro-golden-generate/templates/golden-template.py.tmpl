@@ -44,6 +44,9 @@ def _get_device() -> torch.device:
 # Golden 参考实现（NPU torch）
 # ─────────────────────────────────────────────
 
+# Canonical mathematical semantics copied verbatim from the SPEC machine contract.
+_SPEC_FORMULA = {formula_literal}
+
 def {op}_golden(x: torch.Tensor) -> torch.Tensor:
     """PyTorch 参考实现。
 

@@ -64,7 +64,7 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 
 | # | 检查项 | 验证方式 |
 |---|--------|---------|
-| 1 | `custom/<op>/SPEC.md` 存在且非空 | `wc -l custom/<op>/SPEC.md` |
+| 1 | `custom/<op>/SPEC.md` 的 canonical machine-contract 与语义合规 | `python "$CANNBOT_CONFIG_ROOT/skills/pypto-pro-intent-understand/scripts/validate_spec.py" custom/<op>/SPEC.md` 必须 exit 0；随后独立对照用户事实/批准合同，确认 `formula` 确实定义全部公开输出。脚本只检查结构，不用措辞正则冒充数学审查 |
 | 2 | `custom/<op>/PRO_MATERIAL_INDEX.md` 存在且包含 §A/§B/§C 三个章节 | `grep "^## §[A-C]" custom/<op>/PRO_MATERIAL_INDEX.md` 确认 3 个章节标题 |
 | 3 | `custom/<op>/EXPLORE_REPORT.md` 存在且包含 10 个必要章节 | `grep -c "^## " custom/<op>/EXPLORE_REPORT.md` 确认为 10 个二级标题，且 `grep -e "^## 3\." -e "^## 4\." -e "^## 5\." -e "^## 10\." custom/<op>/EXPLORE_REPORT.md` 确认 §3/§4/§5/§10 缺一不可 |
 | 4 | `custom/<op>/MEMORY.md` 存在 | `cat custom/<op>/MEMORY.md` 确认包含任务摘要 |

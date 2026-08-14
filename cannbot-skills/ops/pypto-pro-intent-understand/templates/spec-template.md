@@ -1,117 +1,89 @@
----
-schema_version: 1
-op_name: {operator_name}
-supported_dtypes: [bfloat16]
-p0_shapes: [[1024, 128], [1024, 256], [1024, 512]]
-tolerance: {tolerance}
-dynamic_axes: {axes_list}
-dynamic_axes_ranges: {axes_ranges}
-shape_constraints: {shape_constraints}
-default_params: {'eps': 1e-4, 'min_v': -128.0, 'max_v': 127.0}
-perf_target: {performance_target}
----
+# 算子需求规范
 
-## 算子需求规范
+## 机器合同
 
-### 1. 基础信息
-- **算子名称**: {operator_name}
-- **算子分类**: {category}  <!-- element-wise / reduction / matmul / attention / custom -->
+> 下列 JSON 是公式、公开接口、验收配置的唯一机器事实源。正文只解释语义与证据，不复制字段值。
 
-### 1.1 功能描述
+```json machine-contract
+{
+  "schema_version": 1,
+  "op_name": "{{OP_NAME}}",
+  "formula": "{{FORMULA_OR_NUMBERED_STEPS}}",
+  "supported_dtypes": [],
+  "inputs": [],
+  "outputs": [],
+  "default_params": {},
+  "tolerance": {
+    "atol": null,
+    "rtol": null
+  },
+  "dynamic_axes_ranges": {},
+  "shape_constraints": [],
+  "p0_cases": [],
+  "perf_target": null
+}
+```
 
-{description}
+填写约束：
 
-### 1.2 算法参数
+- `op_name` 使用 lower_snake_case；`supported_dtypes` 按首次出现顺序列出本 SPEC 公开输入输出实际使用的全部 canonical dtype。同一接口的另一组 dtype 组合拆为独立 class/SPEC。
+- `formula` 用一个 JSON 字符串定义每个公开输出；简单算子写可审查的等式，复杂递推写编号伪代码步骤（换行转义为 `\n`），且每个输出都必须是赋值或箭头目标。不要只写自然语言标签。
+- `inputs` / `outputs` 按公开签名顺序填写，每项严格包含 `name`、`shape`、`dtype`、`value_range`；rank-0 shape 写 `[]`，闭区间值域写有限数值 `[min, max]`。
+- shape 维度只使用正整数，或由符号、整数、`+ - * //` 和括号构成的表达式；每个动态符号须在至少一个输入 shape 中作为独立维度出现，并在 `dynamic_axes_ranges` 中给出正整数闭区间。
+- `default_params` 只放公开签名中的标量默认参数，顺序与签名一致；无默认参数时写 `{}`。
+- `p0_cases` 至少一项，每项严格包含 `name`、`params`、`input_shapes`、`output_shapes`。所有映射均按合同声明顺序覆盖全量字段；首项 `params` 等于 `default_params`，每个 shape 都是公式代入后的具体整数数组。
+- 不适用的可选字段使用空数组、空对象或 `null`，不要保留示例值或另建第二份机器表格。
 
-{algorithm_params}  <!-- 如 epsilon, momentum, beta 等超参数，无则填写 "无" -->
+## 语义说明
 
-### 1.3 数学公式
+### 1. 功能与分类
 
-$$
-{formula}
-$$
+{{DESCRIPTION_AND_CATEGORY}}
 
-### 2. 关键特性
-<!-- 复杂算子必须填写，简单算子可省略 -->
+### 2. 公式符号与依据
 
-| 特性 | 是否需要 | 置信度 | 实现说明 | 优先级 |
-|------|----------|--------|----------|--------|
-| {feature_name} | {need_or_not} | {confidence} | {impl_note} | {priority} |
+{{FORMULA_NOTATION_AND_RATIONALE_WITHOUT_REPEATING_MACHINE_FIELD}}
 
 ### 3. 算法描述
-<!-- 当公式无法完整表述计算流程时填写，简单算子省略此节 -->
 
-```
-Algorithm: {algorithm_name}
-────────────────────────────────────
-{带编号的伪代码步骤，展示循环结构、分块策略、状态更新等流程}
-```
+{{ALGORITHM_OR_NOT_APPLICABLE}}
 
-### 4. 数据流图
+### 4. 数据流说明
 
-{ASCII数据流图}
+{{DATAFLOW}}
 
-### 5. 输入输出规格
+### 5. 接口语义
 
-**输入规格**:
+{{INTERFACE_SEMANTICS_WITHOUT_REPEATING_MACHINE_FIELDS}}
 
-| 变量 | Shape | Dtype | 动态轴 | 置信度 | 说明 |
-|------|-------|-------|--------|--------|------|
-| {name} | {shape} | {dtype} | {dynamic_axes} | {confidence} | {description} |
+### 6. 功能与可选参数依据
 
-**输出规格**:
+{{FEATURE_AND_OPTIONAL_PARAM_RATIONALE}}
 
-| 变量 | Shape | Dtype | 动态轴 | 置信度 | 说明 |
-|------|-------|-------|--------|--------|------|
-| {name} | {shape} | {dtype} | {dynamic_axes} | {confidence} | {description} |
+### 7. 精度语义
 
-### 6. 数据类型支持
+{{PRECISION_SEMANTICS_WITHOUT_REPEATING_TOLERANCE}}
 
-| Dtype | 支持 | atol | rtol | 备注 |
-|-------|------|------|------|------|
-| float32 |  | 0.001 | 0.001 | 默认 |
+### 8. 动态 Shape 与约束依据
 
-### 7. 精度要求
-- **atol**: {atol}
-- **rtol**: {rtol}
-
-### 8. 动态轴说明
-- **动态轴**: {axes_list}
-- **轴含义**: {axes_meanings}
-- **取值范围**: {axes_ranges}
+{{SHAPE_RATIONALE_WITHOUT_REPEATING_MACHINE_FIELDS}}
 
 ### 9. 边界条件处理
-- **零值**: {zero_handling}
-- **极值**: {inf_handling}
-- **NaN/Inf**: {nan_handling}
 
-### 10. 性能要求
-- **性能目标**: {performance_target}
+{{ZERO_EXTREME_NAN_INF_BEHAVIOR}}
 
-### 11. 参考信息
-- **参考实现**: {reference_impl}
-- **论文**: {paper}
-- **类似算子**: {similar_ops}
+### 10. P0 与性能目标依据
 
-### 12. 应用场景
-- **目标模型**: {model}
-- **使用位置**: {layer}
+{{P0_AND_PERF_RATIONALE_WITHOUT_REPEATING_MACHINE_FIELDS}}
 
-**典型配置**（建议至少提供一个，用于下游 golden 验证和设计方案生成）:
+### 11. 参考与来源
 
-| 配置名称 | 类型 | 优先级 | 参数 | 输入 Shape | 输出 Shape | 说明 |
-|----------|------|--------|------|------------|------------|------|
-| {config_name} | {type} | {priority} | {params} | {input_shapes} | {output_shapes} | {config_desc} |
+{{SOURCES_AND_CONFIDENCE}}
 
-### 13. 自动决策（仅无人值守/禁止提问时）
+### 12. 自动决策
 
-> 交互确认完成时填写“不适用”。无人值守或用户明确禁止提问时，逐项记录自动补全内容；不得把自动决策标成用户确认事实。
-
-| 决策项 | 采用值 | 来源 | 选择理由 | 可能影响 |
-|--------|--------|------|----------|----------|
-| {decision_item / 不适用} | {selected_value} | {用户材料 / 项目合同 / 目标版本官方默认 / 已披露默认值} | {reason} | {impact} |
+{{DECISIONS_OR_NOT_APPLICABLE}}
 
 ---
-*生成时间: {timestamp}*
-*确认状态: {已确认 / 无人值守自动决策}*
-*置信度说明: ✓ 高（用户明确陈述、目标版本官方资料或项目已批准合同） / ⚠ 中（原始论文、源码或用户代码分析） / ❓ 低（推断；须确认或按无人值守规则披露）*
+*生成时间: {{TIMESTAMP}}*
+*确认状态: {{CONFIRMATION_STATUS}}*

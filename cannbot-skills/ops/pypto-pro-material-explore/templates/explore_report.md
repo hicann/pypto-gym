@@ -149,9 +149,9 @@ feasibility: {feasibility}
 
 <!-- 遍历 PRO_MATERIAL_INDEX.md §C 中索引的全部教程文档（以索引实际扫描结果为准），逐行填写 -->
 
-| 教程文档（索引 §C） | 设计模式 | 适用性 |
-|---------------------|----------|--------|
-| `{tutorial_path}` | {模式} | {对本算子的指导意义} |
+| 指南/教程文档（索引 §C） | 来源目录 | 设计模式 | 适用性 |
+|---------------------------|----------|----------|--------|
+| `{tutorial_path}` | tutorials | {模式} | {对本算子的指导意义；不相关时写“不适用”} |
 
 ### 5.2 来自教程的关键约束与建议
 
@@ -162,15 +162,16 @@ feasibility: {feasibility}
 ---
 
 <!-- REQUIRED -->
-## 6. Tile / 同步策略建议
+## 6. Stage 3 设计事实输入
 
-> **综合来源**: §3 API 约束 + §4 样例参考 + §5 教程指导
+> **综合来源**: §3 API 约束 + §4 样例参考 + §5 教程指导。本节是 Stage 3 的消费入口，只汇总事实与待裁定项，
+> 不冻结 tile、Module、同步事件或 topology；这些由 Stage 3 决定。
 
-### 6.1 Tile 规格建议
+### 6.1 Tile / 同步约束证据
 
-| 维度 | 建议值 | 依据 |
-|------|--------|------|
-| {dim} | {value} | {来源章节} |
+| 设计问题 | 已证实约束 | 证据路径 | Stage 3 待裁定项 |
+|----------|------------|----------|------------------|
+| {tile_or_sync_question} | {documented_constraint} | {path + section} | {decision_needed} |
 
 ---
 
@@ -179,14 +180,14 @@ feasibility: {feasibility}
 
 > **来源**: 探索方向 1（API 文档约束）+ 探索方向 2（官方指定算子 assert）
 > 从当前仓库的 API 文档和官方指定算子中提取硬件/版本相关常量。下游 Stage 3/4 全部引用本节，不再各自写死。
-> ⚠️ 以上常量值来自模板预填的参考值，实际填充时须以本次文档遍历/样例扫描得到的值为准。若遍历结果与参考值不同，以遍历结果覆盖。
+> 禁止预填历史参考值。每个值都必须来自本次文档遍历或官方样例扫描；无法确认时写 `unknown` 并列入风险。
 
 | 常量 | 探测值 | 来源路径 | 备注 |
 |------|--------|----------|------|
-| UB 容量 | 248 KB | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md` §5.2 | A5/DAV_3510；官方指定算子 assert 可交叉验证 |
-| cross_core event_id 上限 | 16 | `set_cross_core_wait_cross_core.md` 参数范围表 | API 文档固定值，取值范围 `[0, 16)` |
-| 地址对齐要求 | 32 字节 | `load_tile.md` 参数范围表 | UB/L1 首地址须 32 字节对齐 |
-| Cube tile 对齐 | {N} | {教学/文档路径} | {tile 尺寸对齐要求} |
+| UB 容量 | {本次探测值/unknown} | {目标版本文档或官方样例路径} | {target/version/适用条件} |
+| cross_core event_id 上限 | {本次探测值/unknown} | {目标版本 API 文档路径} | {取值范围} |
+| 地址对齐要求 | {本次探测值/unknown} | {目标版本 API 文档路径} | {MemorySpace/适用条件} |
+| Cube tile 对齐 | {本次探测值/unknown} | {目标版本教学/文档路径} | {tile 尺寸对齐要求} |
 
 ---
 
@@ -224,11 +225,11 @@ feasibility: {feasibility}
 |------|------|
 | {样例} | `{path}` |
 
-### 9.3 教程文档证据
+### 9.3 指南与教程文档证据
 
-| 信息 | 路径 |
-|------|------|
-| {教程} | `{path}` |
+| 信息 | 来源目录 | 路径 |
+|------|----------|------|
+| {指南/教程} | tutorials | `{path}` |
 
 ---
 

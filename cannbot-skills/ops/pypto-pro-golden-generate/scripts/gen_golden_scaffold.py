@@ -3,75 +3,35 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2024-2026. All rights reserved.
 """Deterministic PyPTO-Pro Stage-2 golden scaffold generator (CPU-only).
 
-Reads a structured SPEC.md (YAML front matter + §5 input/output tables) and the
-golden template, then emits `<op>_golden.py` with the *deterministic* parts
-filled in:
+Reads the validated JSON machine contract in SPEC.md and the golden template,
+then emits `<op>_golden.py` with the *deterministic* parts filled in:
 
   - file/function names (`{op}` placeholders)
   - `def <op>_golden(<tensor args...>, <scalar kwargs from default_params>)`
-  - `_make_inputs(device)` constructing every tensor arg at its P0 concrete shape
-  - `_validate()` harness wired to `_make_inputs` (run + finite check)
+  - the canonical SPEC formula as an exact, reviewable source hint
+  - `_make_inputs(device)` constructing every tensor arg for every P0 case
+  - `_validate()` harness iterating single- and multi-case factory formats
 
 The op-specific math body, value/structure-constrained inputs, and op-specific
 property checks stay as `# TODO:` markers for the mathematician (LLM) to fill.
 
-Pure standard library (re / ast / json). No torch, no NPU — runs anywhere.
+Pure standard library. No torch, no NPU — runs anywhere.
 """
 from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import logging
 import os
-import re
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any
 
 _LOGGER = logging.getLogger("gen_golden_scaffold")
 
-
-# ---------------------------------------------------------------------------
-# Front matter parsing (minimal YAML subset: scalars, [lists], {dicts})
-# ---------------------------------------------------------------------------
-
-def _coerce(val: str) -> Any:
-    val = val.strip().strip("`")
-    if not val:
-        return None
-    try:
-        return ast.literal_eval(val)
-    except (ValueError, SyntaxError):
-        pass
-    # Quote bareword dict keys so `{eps: 1e-5}` and JSON `{"k": false}` both load.
-    fixed = re.sub(r'([{,]\s*)([A-Za-z_]\w*)\s*:', r'\1"\2":', val)
-    for loader in (lambda s: ast.literal_eval(s), json.loads):
-        try:
-            return loader(fixed)
-        except (ValueError, SyntaxError, TypeError):
-            continue
-    return val.strip('"\'')
-
-
-def parse_front_matter(text: str) -> dict:
-    m = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
-    if not m:
-        raise ValueError("SPEC.md has no YAML front matter (--- block).")
-    fm: dict = {}
-    for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        key, _, rest = line.partition(":")
-        if not _:
-            continue
-        fm[key.strip()] = _coerce(rest)
-    return fm
-
-
-# ---------------------------------------------------------------------------
-# Markdown table parsing for §5 input / nn.Parameter / output specs
-# ---------------------------------------------------------------------------
 
 _DTYPE_MAP = {
     "bfloat16": "torch.bfloat16", "bf16": "torch.bfloat16",
@@ -86,114 +46,29 @@ _INT_DTYPES = {"torch.int8", "torch.uint8", "torch.int16", "torch.int32",
                "torch.int64", "torch.bool"}
 
 
-def _norm_name(cell: str) -> str:
-    # "`x0`" -> "x0";  "`W` (weight)" -> "W";  "x (x0)" -> "x"
-    cell = cell.replace("`", "").strip()
-    return re.split(r"[\s(]", cell, 1)[0]
-
-
 def _norm_dtype(cell: str) -> str:
     key = cell.replace("`", "").strip().lower().split()[0] if cell.strip() else ""
     key = key.replace("torch.", "")           # torch.float32 -> float32
     return _DTYPE_MAP.get(key, "torch.float32")
 
-
-def _split_row(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
-
-
-# header cell -> logical column. Tolerates 变量 / 参数名, leading `#` index col,
-# and dtype/torch.dtype variants.
-_NAME_HEADERS = ("变量", "参数名", "参数", "name")
-_SHAPE_HEADERS = ("shape",)
-_DTYPE_HEADERS = ("dtype",)
-
-
-def _header_cols(header_cells: list[str]) -> dict | None:
-    cols: dict = {}
-    for idx, h in enumerate(header_cells):
-        hl = h.strip().lower()
-        if any(k in hl for k in _NAME_HEADERS) and "name" not in cols:
-            cols["name"] = idx
-        elif any(k == hl for k in _SHAPE_HEADERS) and "shape" not in cols:
-            cols["shape"] = idx
-        elif any(k in hl for k in _DTYPE_HEADERS) and "dtype" not in cols:
-            cols["dtype"] = idx
-    return cols if {"name", "shape", "dtype"} <= cols.keys() else None
-
-
-_TABLE_WINDOW = 20  # lines to scan after a heading for its Shape table
-
-
-def _table_rows(lines: list[str], header_index: int, cols: dict) -> list[dict]:
-    """Parse data rows that follow one markdown table header."""
-    rows: list[dict] = []
-    index = header_index + 2  # skip header + separator
-    while index < len(lines) and lines[index].lstrip().startswith("|"):
-        cells = _split_row(lines[index])
-        if len(cells) > max(cols.values()):
-            rows.append({
-                "name": _norm_name(cells[cols["name"]]),
-                "shape": cells[cols["shape"]].replace("`", "").strip(),
-                "dtype": _norm_dtype(cells[cols["dtype"]]),
-            })
-        index += 1
-    return rows
-
-
-def _table_after_heading(lines: list[str], heading_index: int) -> list[dict] | None:
-    """Return rows for the first Shape table in a heading's scan window."""
-    stop = min(heading_index + 1 + _TABLE_WINDOW, len(lines))
-    for index in range(heading_index + 1, stop):
-        line = lines[index]
-        if not (line.lstrip().startswith("|") and "shape" in line.lower()):
-            continue
-        cols = _header_cols(_split_row(line))
-        return None if cols is None else _table_rows(lines, index, cols)
-    return None
-
-
-def _parse_table_after(text: str, header_regex: str) -> list[dict]:
-    """Return name/shape/dtype rows of the first NON-EMPTY Shape table that
-    follows a heading matching header_regex.
-
-    For each heading match we scan a bounded window for a markdown table whose
-    header carries a Shape column; column positions are resolved from that
-    header row (so leading `#` index columns and 变量/参数名 naming both work).
-    Iterating over every heading match — and skipping matches whose window has
-    no table (e.g. a prose mention) — makes this robust to keyword collisions."""
-    lines = text.splitlines()
-    # A heading must be a real heading/label line — NOT a markdown table row.
-    # (e.g. an input row cell mentioning "nn.Parameter" must not be treated as
-    # a parameter-table heading, which would then capture the 输出规格 table.)
-    matches = [
-        index for index, line in enumerate(lines)
-        if re.search(header_regex, line) and not line.lstrip().startswith("|")
-    ]
-    for heading_index in matches:
-        rows = _table_after_heading(lines, heading_index)
-        if rows:
-            return rows
-        # An absent/empty table is not authoritative; try the next heading match.
-    return []
-
-
 # ---------------------------------------------------------------------------
 # Codegen helpers
 # ---------------------------------------------------------------------------
 
+
 def _ctor(shape: list[int], dtype: str) -> tuple[str, bool]:
     """Return (constructor_expr, needs_constraint_todo)."""
     shp = ", ".join(str(s) for s in shape)
+    size = f"({shp},)" if shape else "()"
     if dtype in _INT_DTYPES:
         if dtype == "torch.bool":
-            expr = f"torch.randint(0, 2, ({shp},), dtype={dtype}, device=device)"
+            expr = f"torch.randint(0, 2, {size}, dtype={dtype}, device=device)"
         elif dtype == "torch.uint8":
-            expr = f"torch.randint(0, 256, ({shp},), dtype={dtype}, device=device)"
+            expr = f"torch.randint(0, 256, {size}, dtype={dtype}, device=device)"
         else:
-            expr = f"torch.randint(0, 8, ({shp},), dtype={dtype}, device=device)"
+            expr = f"torch.randint(0, 8, {size}, dtype={dtype}, device=device)"
         return expr, True  # integer tensors are usually indices/quantized -> constrain
-    return f"torch.randn({shp}, dtype={dtype}, device=device)", False
+    return f"torch.randn({size}, dtype={dtype}, device=device)", False
 
 
 def _build_signature(op: str, tensors: list[dict], kwargs: dict) -> str:
@@ -209,39 +84,48 @@ def _build_signature(op: str, tensors: list[dict], kwargs: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_make_inputs(tensors: list[dict], kwargs: dict) -> str:
-    body = ["def _make_inputs(device):",
-            '    """Construct the P0 case. Tensor shapes are taken verbatim from',
-            "    SPEC.md front-matter p0_shapes / the §5 nn.Parameter table.",
-            "",
-            "    NOTE: integer tensors below are emitted as generic randint and are",
-            "    flagged `# TODO: constrain` — indices / quantized / cache tensors",
-            "    usually need legal values (see golden-generate SKILL §4).",
-            '    """']
-    names = []
-    for t in tensors:
-        shape = t.get("concrete")
-        if shape is None:
-            body.append(f"    # TODO: resolve concrete shape for "
-                        f"{t['name']} (symbolic {t['shape']})")
-            body.append(f"    {t['name']} = None  # TODO")
-            names.append(t["name"])
-            continue
-        expr, constrain = _ctor(shape, t["dtype"])
+def _case_input_lines(tensors: list[dict], case: dict) -> list[str]:
+    lines: list[str] = []
+    names: list[str] = []
+    for tensor in tensors:
+        name = tensor["name"]
+        expr, constrain = _ctor(case["input_shapes"][name], tensor["dtype"])
         tag = "  # TODO: constrain" if constrain else ""
-        body.append(f"    {t['name']} = {expr}{tag}")
-        names.append(t["name"])
-    kw = ", ".join(f'"{k}": {v!r}' for k, v in kwargs.items())
-    body.append(f"    args = [{', '.join(names)}]")
-    body.append(f"    kwargs = {{{kw}}}")
-    body.append("    return args, kwargs")
+        lines.append(f"    {name} = {expr}{tag}")
+        names.append(name)
+    kwargs = ", ".join(f'"{key}": {value!r}' for key, value in case["params"].items())
+    lines.append(f"    args = [{', '.join(names)}]")
+    lines.append(f"    kwargs = {{{kwargs}}}")
+    return lines
+
+
+def _build_make_inputs(tensors: list[dict], cases: list[dict]) -> str:
+    body = ["def _make_inputs(device):",
+            '    """Construct every P0 case from the validated machine contract.',
+            "",
+            "    Integer tensors are emitted as generic randint and flagged",
+            "    `# TODO: constrain`; replace those values with legal inputs.",
+            '    """']
+    if len(cases) == 1:
+        body.append(f"    # P0 case: {cases[0]['name']}")
+        body.extend(_case_input_lines(tensors, cases[0]))
+        body.append("    return args, kwargs")
+        return "\n".join(body)
+
+    body.append("    cases = []")
+    for case in cases:
+        body.append(f"    # P0 case: {case['name']}")
+        body.extend(_case_input_lines(tensors, case))
+        body.append(f'    cases.append(("{case["name"]}", args, kwargs))')
+    body.append("    return cases")
     return "\n".join(body)
 
 
-def _build_validate(op: str) -> str:
+def _build_validate(op: str, case_names: list[str]) -> str:
+    expected = repr(tuple(case_names))
     return "\n".join([
         "def _validate():",
-        '    """Deterministic harness: run golden on the P0 case + finiteness.',
+        '    """Run every contract P0 case and check output finiteness.',
         "    Fill op-specific property/range checks at the TODO markers below.",
         '    """',
         "    device = _get_device()",
@@ -250,21 +134,38 @@ def _build_validate(op: str) -> str:
         "    print('=' * 60)",
         "    print(f'Device: {device}')",
         "",
-        "    args, kwargs = _make_inputs(device)",
-        f"    outs = {op}_golden(*args, **kwargs)",
-        "    outs = outs if isinstance(outs, (tuple, list)) else (outs,)",
+        "    raw_cases = _make_inputs(device)",
+        "    if (isinstance(raw_cases, tuple) and len(raw_cases) == 2",
+        "            and isinstance(raw_cases[0], list) and isinstance(raw_cases[1], dict)):",
+        f"        cases = [({expected}[0], raw_cases[0], raw_cases[1])]",
+        "    else:",
+        "        cases = raw_cases",
+        "    assert isinstance(cases, list) and cases, '_make_inputs returned no cases'",
+        "    observed_names = [case[0] for case in cases]",
+        "    assert len(observed_names) == len(set(observed_names)), 'duplicate case names'",
+        f"    missing = [name for name in {expected} if name not in observed_names]",
+        "    assert not missing, f'missing contract P0 cases: {missing}'",
+        f"    unexpected = [name for name in observed_names if name not in {expected}]",
+        "    assert not unexpected, f'unexpected P0 cases: {unexpected}'",
         "",
-        "    print('\\n[finiteness]')",
-        "    for i, o in enumerate(outs):",
-        "        ok = torch.isfinite(o).all().item()",
-        "        print(f'  out[{i}] shape={tuple(o.shape)} finite={ok} '",
-        "              f'... {\"PASS\" if ok else \"FAIL\"}')",
-        "        assert ok, f'out[{i}] contains NaN/Inf'",
+        "    for case_name, args, kwargs in cases:",
+        "        assert isinstance(case_name, str) and case_name",
+        "        assert isinstance(args, list) and isinstance(kwargs, dict)",
+        "        print(f'\\n[case: {case_name}]')",
+        f"        outs = {op}_golden(*args, **kwargs)",
+        "        outs = outs if isinstance(outs, (tuple, list)) else (outs,)",
         "",
-        "    # TODO: output shape-equality vs SPEC §5 output table",
-        "    # TODO: value-range checks derived from the formula (§6)",
-        "    # TODO: math properties (monotonicity / symmetry / conservation)",
-        "    # TODO: generalization sampling over dynamic axes",
+        "        print('[finiteness]')",
+        "        for i, o in enumerate(outs):",
+        "            ok = torch.isfinite(o).all().item()",
+        "            print(f'  out[{i}] shape={tuple(o.shape)} finite={ok} '",
+        "                  f'... {\"PASS\" if ok else \"FAIL\"}')",
+        "            assert ok, f'{case_name} out[{i}] contains NaN/Inf'",
+        "",
+        "        # TODO: output shape equality vs the matching SPEC P0 case",
+        "        # TODO: value-range checks derived from _SPEC_FORMULA",
+        "        # TODO: math properties (monotonicity / symmetry / conservation)",
+        "        # TODO: generalization sampling over dynamic axes",
         "",
         "    print('\\n' + '=' * 60)",
         "    print('验证完成')",
@@ -272,44 +173,39 @@ def _build_validate(op: str) -> str:
     ])
 
 
-REQUIRED_FM = ["op_name", "p0_shapes"]
+def _load_spec_contract(path: Path) -> dict[str, Any]:
+    """Load Stage 1's canonical parser without copying its schema rules."""
+    parser_path = (
+        Path(__file__).resolve().parents[2]
+        / "pypto-pro-intent-understand" / "scripts" / "validate_spec.py"
+    )
+    module_spec = importlib.util.spec_from_file_location("pypto_spec_contract", parser_path)
+    if module_spec is None or module_spec.loader is None:
+        raise ValueError(f"cannot load canonical SPEC parser: {parser_path}")
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    return module.load_spec_contract(path)
 
 
 def generate(spec_path: str, template_path: str) -> str:
-    with open(spec_path, encoding="utf-8") as f:
-        text = f.read()
-    fm = parse_front_matter(text)
-    missing = [k for k in REQUIRED_FM if not fm.get(k)]
-    if missing:
-        raise ValueError(f"SPEC.md missing required front-matter fields: {missing}")
-    op = fm["op_name"]
-    p0 = fm["p0_shapes"]
-    kwargs = fm.get("default_params") or {}
-
-    # Input table heading varies: **输入规格** / ### 3.1 输入张量 (Wrapper 接口)
-    inputs = _parse_table_after(text, r"输入规格|输入张量")
-    # Parameter / weight table heading varies across SPECs:
-    #   nn.Parameter 参数 / 模型参数 (state_dict) / 权重规格
-    # (NOT "Init 参数" — those are scalars, captured via default_params.)
-    params = _parse_table_after(text, r"nn\.Parameter|模型参数|state_dict|权重规格")
-    if not inputs:
-        raise ValueError("could not locate §5 输入规格 table.")
-
-    # Zip p0_shapes with the input rows (p0_shapes describes the forward inputs).
-    for i, row in enumerate(inputs):
-        row["concrete"] = list(p0[i]) if i < len(p0) else None
-    # nn.Parameter rows carry concrete shapes in the table itself.
-    for row in params:
-        try:
-            row["concrete"] = ast.literal_eval(row["shape"])
-        except (ValueError, SyntaxError):
-            row["concrete"] = None
-
-    tensors = inputs + params
+    contract = _load_spec_contract(Path(spec_path))
+    op = contract["op_name"]
+    kwargs = contract.get("default_params") or {}
+    tensors = [
+        {
+            "name": item["name"],
+            "shape": json.dumps(item["shape"], ensure_ascii=False),
+            "dtype": _norm_dtype(item["dtype"]),
+        }
+        for item in contract["inputs"]
+    ]
+    cases = contract["p0_cases"]
 
     with open(template_path, encoding="utf-8") as f:
         template = f.read()
-    out = template.replace("{op}", op)
+    out = template.replace("{op}", op).replace(
+        "{formula_literal}", repr(contract["formula"]),
+    )
 
     # Replace the placeholder signature line (already {op}-substituted above).
     out = out.replace(f"def {op}_golden(x: torch.Tensor) -> torch.Tensor:",
@@ -318,8 +214,9 @@ def generate(spec_path: str, template_path: str) -> str:
     # Swap the default _make_inputs (lines from `def _make_inputs` to its
     # `return [x], {}`) with the generated one.
     out = _replace_block(out, "def _make_inputs(device):",
-                         _build_make_inputs(tensors, kwargs))
-    out = _replace_block(out, "def _validate():", _build_validate(op))
+                         _build_make_inputs(tensors, cases))
+    out = _replace_block(out, "def _validate():",
+                         _build_validate(op, [case["name"] for case in cases]))
     return out
 
 
@@ -341,31 +238,43 @@ def _replace_block(src: str, header: str, new_block: str) -> str:
 
 # ---------------------------------------------------------------------------
 
-_SELF_TEST_SPEC = """---
-schema_version: 1
-op_name: demo_add
-p0_shapes: [[8, 1024], [8, 1024]]
-default_params: {'eps': 1e-6}
-dynamic_axes: ['M']
-dynamic_axes_ranges: [[1, 128]]
-tolerance: {'rtol': 0.004, 'atol': 0.004}
----
+_SELF_TEST_SPEC = '''# demo_add specification
 
-### 5. 输入输出规格
-
-**输入规格**:
-
-| 变量 | Shape | Dtype | 动态轴 | 说明 |
-|------|-------|-------|--------|------|
-| a (x0) | [M, 1024] | float32 | M | left |
-| b (x1) | [M, 1024] | float32 | M | right |
-
-**输出规格**:
-
-| 变量 | Shape | Dtype | 动态轴 | 说明 |
-|------|-------|-------|--------|------|
-| y (y0) | [M, 1024] | float32 | M | sum |
-"""
+```json machine-contract
+{
+  "schema_version": 1,
+  "op_name": "demo_add",
+  "formula": "y = a + b",
+  "supported_dtypes": ["float32"],
+  "inputs": [
+    {"name": "a", "shape": ["M", 1024], "dtype": "float32", "value_range": [-1, 1]},
+    {"name": "b", "shape": ["M", 1024], "dtype": "float32", "value_range": [-1, 1]}
+  ],
+  "outputs": [
+    {"name": "y", "shape": ["M", 1024], "dtype": "float32", "value_range": [-2, 2]}
+  ],
+  "default_params": {"eps": 0.000001},
+  "tolerance": {"rtol": 0.004, "atol": 0.004},
+  "dynamic_axes_ranges": {"M": [1, 128]},
+  "shape_constraints": ["a and b have the same shape"],
+  "p0_cases": [
+    {
+      "name": "typical",
+      "params": {"eps": 0.000001},
+      "input_shapes": {"a": [8, 1024], "b": [8, 1024]},
+      "output_shapes": {"y": [8, 1024]}
+    },
+    {
+      "name": "large",
+      "params": {"eps": 0.000002},
+      "input_shapes": {"a": [32, 1024], "b": [32, 1024]},
+      "output_shapes": {"y": [32, 1024]}
+    }
+  ],
+  "perf_target": null
+}
+```
+'''
 
 
 def _self_test(template_path: str) -> int:
@@ -375,13 +284,29 @@ def _self_test(template_path: str) -> int:
         spec = f.name
     code = generate(spec, template_path)
     os.unlink(spec)
+    single_factory = _build_make_inputs(
+        [{"name": "x", "dtype": "torch.float32"}],
+        [{"name": "only", "params": {}, "input_shapes": {"x": [4]}}],
+    )
+    p0_case_tokens = (
+        'cases.append(("typical", args, kwargs))',
+        'cases.append(("large", args, kwargs))',
+        "torch.randn((8, 1024,), dtype=torch.float32",
+        "torch.randn((32, 1024,), dtype=torch.float32",
+        'kwargs = {"eps": 2e-06}',
+    )
     checks = {
         "signature": "def demo_add_golden(" in code and "a: torch.Tensor" in code
         and "eps: float = 1e-06" in code,
-        "make_inputs": "a = torch.randn(8, 1024, dtype=torch.float32" in code,
-        "validate_wired": "args, kwargs = _make_inputs(device)" in code,
+        "formula_hint": "_SPEC_FORMULA = 'y = a + b'" in code,
+        "all_p0_cases": all(token in code for token in p0_case_tokens),
+        "validate_wired": "raw_cases = _make_inputs(device)" in code
+        and "for case_name, args, kwargs in cases:" in code
+        and "missing contract P0 cases" in code,
+        "single_p0_compat": "return args, kwargs" in single_factory
+        and "return cases" not in single_factory,
         "compiles": _compiles(code),
-        "no_placeholder": "{op}" not in code,
+        "no_placeholder": "{op}" not in code and "{formula_literal}" not in code,
     }
     for k, v in checks.items():
         _LOGGER.info("  [%s] %s", "PASS" if v else "FAIL", k)

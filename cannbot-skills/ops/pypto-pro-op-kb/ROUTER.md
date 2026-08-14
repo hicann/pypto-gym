@@ -13,7 +13,7 @@ for signatures and platform-specific behavior.
 | Check vector authoring choices | `pypto-pro-op-develop` | [constraints/vec.md](constraints/vec.md) |
 | Check synchronization | `pypto-pro-op-design` / `pypto-pro-op-develop` | [constraints/sync-stitch.md](constraints/sync-stitch.md) |
 | Check dynamic tails | `pypto-pro-op-design` / `pypto-pro-op-develop` | [constraints/tail-validshape.md](constraints/tail-validshape.md) |
-| Use A5-specific limits | design/develop/perf skills, after target detection | [constraints/arch-a5.md](constraints/arch-a5.md) |
+| Select A5 constraints; use limits only after target detection | design/develop/perf skills | [constraints/arch-a5.md](constraints/arch-a5.md) |
 | Decide what may run on the host | `pypto-pro-op-design` / `pypto-pro-op-develop` | [constraints/wrapper-boundary.md](constraints/wrapper-boundary.md) |
 | Measure and tune a correct kernel | `pypto-pro-op-perf-tune` | [playbooks/benchmark-scoring.md](playbooks/benchmark-scoring.md) |
 | Localise a numerical error | `pypto-pro-op-develop` | [playbooks/numerical-error-localisation.md](playbooks/numerical-error-localisation.md) |
@@ -26,8 +26,8 @@ for signatures and platform-specific behavior.
 | Map a Chinese/English hardware, pipe, tiling, or layout term to its meaning | any | [references/terminology.md](references/terminology.md) |
 | A page carries a cross-DSL claim and you need its provenance, or you are about to re-derive something a sibling DSL already knew | any | [references/easyasc-port-ledger.md](references/easyasc-port-ledger.md) — provenance record, not a selected pattern or constraint |
 
-Do not load [constraints/arch-a5.md](constraints/arch-a5.md) until the runtime or build
-configuration confirms an A5 target.
+Load [constraints/arch-a5.md](constraints/arch-a5.md) when runtime/build selects A5 or when
+the workflow default A5 applies; do not use its numerical limits until the exact device and source are confirmed.
 
 ## Routing by topology
 
@@ -39,7 +39,7 @@ For the selected topology and the properties that actually hold:
 
 1. Collect every matching topology constraint.
 2. Collect every matching property constraint.
-3. Add any confirmed target-gated constraint.
+3. Add the target-gated constraint selected by the explicit target or workflow default.
 4. Add every `mandatory_constraints` entry whose `applies_to` roles participate.
 5. Deduplicate these into `required_constraints`; do not truncate them.
 6. Evaluate every matching pattern and retain it only when its preconditions hold and it

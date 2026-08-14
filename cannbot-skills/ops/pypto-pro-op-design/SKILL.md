@@ -252,7 +252,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/guide/编程指南/编程模型/AI-Core-SIMD编程/基于Tile的Python编程/尾块处理.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
+> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
 
 **本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的循环与 Section 结构（填入 §7 尾块处理方案）。
 

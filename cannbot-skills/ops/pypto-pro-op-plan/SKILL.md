@@ -1,181 +1,172 @@
 ---
 name: pypto-pro-op-plan
-description: 算子规划：串行组织需求理解与资料探索，在 PyPTO-Pro 算子进入设计前规划时，把已授权的自然语言需求与当前可用 API/官方样例整理成结构化依据。首先加载 pypto-pro-intent-understand 产出 SPEC.md，之后加载 pypto-pro-material-explore 构建 PRO_MATERIAL_INDEX.md 全量资料索引并产出 EXPLORE_REPORT.md，初始化 MEMORY.md，并完成知识选择。不要用于 Stage 2 之后的 golden、设计、实现或调优。
+description: 编排 PyPTO-Pro Stage 1 规划。用于依次完成需求规格化、目标版本资料探索、kernel 合同补充、MEMORY.md 初始化和 KB_SELECTION.json 冻结；输入是已授权算子需求，输出是 Stage 2/3 可直接消费的一组规划产物。不要用于 golden、Module/tile 设计、kernel 实现或性能调优。
 ---
 
-# PyPTO-Pro 复杂 Kernel — Stage 1 规划
+# PyPTO-Pro Stage 1 规划
 
-## 规划流程
+本 skill 只定义 Stage 1 的顺序、交接和完成条件。需求理解与资料探索的具体方法分别由
+`pypto-pro-intent-understand` 和 `pypto-pro-material-explore` 负责，不在这里重复。
 
-> 先需求、后探索：资料探索须基于 SPEC.md 中的算子公式、shape、dtype 等明确需求进行，确保探索具有目的性，避免盲目搜索。
->
-> **执行方式**：本 skill 由单个子代理在同一 session 内**串行加载** `pypto-pro-intent-understand` 和 `pypto-pro-material-explore`，非嵌套 dispatch 子子代理。先完成 intent-understand 产出 SPEC.md，再加载 material-explore 基于 SPEC.md 进行探索。
+## 输入与产物
 
-### Step 1：需求总结
+输入：用户已授权的算子需求，以及 orchestrator 已装配的 `$PYPTO_DEVKIT_DIR`。
 
-**必须**加载 skill `pypto-pro-intent-understand`，按其流程产出 `SPEC.md`。
+在 `custom/<op>/` 生成：
 
-> `pypto-pro-intent-understand` 是 PyPTO-Pro 专属的需求理解组件，产出的是**通用 SPEC**（公式、dtype、shape、关键特性、优先级等）。它不覆盖 kernel 层的若干契约字段——这些由下面的 Step 1.5 在其产物基础上补齐。
+| 产物 | 所有者 | 下游用途 |
+|------|--------|----------|
+| `SPEC.md` | intent-understand | 数学语义、公开接口、P0 cases |
+| `PRO_MATERIAL_INDEX.md` | material-explore | 本次目标版本资料目录 |
+| `EXPLORE_REPORT.md` | material-explore | API 可行性、约束和证据 |
+| `MEMORY.md` | plan | Stage 间的裁定摘要，不复制长篇规则 |
+| `KB_SELECTION.json` | plan | 冻结当前 class 的 KB 路由结果 |
 
-### Step 1.5：Pro kernel 契约补充
+## 串行流程
 
-在 Step 1 产出通用 SPEC.md **之后**，基于它补齐 kernel 层特有的契约信息。产物**追加到 SPEC.md 末尾的「## kernel 契约补充」节**（同时在 MEMORY.md 记一份裁定摘要），供 Step 2 探索与后续 design / develop 消费。
+### 1. 冻结需求语义
 
-#### 1. 字段归属裁定（三档）
+在同一 agent session 中加载 `pypto-pro-intent-understand`，生成并验证 `SPEC.md`。
+不要 dispatch 子代理，也不要在本 skill 中重做其确认流程。
 
-对每个契约字段判定「由谁定」，避免子代理在 Stage 1 凭空猜测本该由用户或 design 决定的事：
+### 2. 创建 MEMORY 并补充 kernel 交接合同
 
-| 档位 | 含义 | 处理 |
-|------|------|------|
-| **ASK** | 公式无法消解、须用户拍板 | 已由 Step 1 的 intent-understand 采集；此处只核对是否齐全 |
-| **MAY-DESIGN** | 既不猜也不问用户，交由 design 阶段设计 | 在补充节标注「留待 design」，**不在 Stage 1 定值** |
-| **MAY-ASSUME** | 可取仓库 / 对齐默认 | 取默认并注明 |
+语义冻结后立即创建或追加 `MEMORY.md`，先记录任务、确认状态与 `SPEC.md` 路径；后续每步
+只追加新裁定、阻塞、尝试与产物指针，探索完成后再按第 4 步收敛，避免到末尾才补写历史。
 
-逐字段归属：
+在 `SPEC.md` 末尾增加 `## kernel 契约补充`，只记录后续阶段必须知道、但通用需求模板
+不表达的边界：
 
-- **ASK**（Step 1 应已确认）：目标公式、输入/输出 dtype。
-- **MAY-DESIGN**（标注留待 design，不问用户）：输入张量 **shape**、**拓扑**（纯 vector / cube→vec / …，由 design R0 Module/Section 决定）、**尾块行为**（design R7/R7.5）、**tile 族 / 切分 / 片上地址**（design R2/R3）。
-- **MAY-ASSUME**（取默认并注明）：**设备**默认 a5；**matmul 累加 dtype** 默认 float（与 golden 的 `.float()` 累加对齐）。
+| 字段 | Stage 1 处理 |
+|------|--------------|
+| 辅助张量语义 | 确认是公开输入、模型参数还是内部临时量；实现位置交 Stage 3 |
+| cast 边界链 | 记录输入、累加、后处理、输出各段的语义 dtype |
+| 累加/写回语义 | 确认覆盖写、跨块累加或原子累加的数学要求 |
+| 目标设备 | 运行时或 build 配置已指定 target 时使用指定值；未指定时默认 A5，并在 SPEC/MEMORY 标注这是默认假设 |
+| topology/tile/同步 | 标记“由 Stage 3 设计”，不得在 Stage 1 猜测 |
 
-#### 2. 三个 kernel 契约字段（SPEC 通用模板未覆盖，此处必补）
+若该字段会改变数学语义或公开接口，必须回到 intent-understand；若只是硬件实现选择，留给
+Stage 3，不问用户。
 
-这三项直接影响 tile 规划、精度与多核写回，通用 SPEC 模板无对应字段，须在补充节显式写出（无则注明「不涉及」）：
+### 3. 探索目标版本资料
 
-| 字段 | 说明 | 缺省判断依据 |
-|------|------|-------------|
-| **辅助张量暂存策略** | bias / mask / scale 向量等：调用侧预展开成满 tensor，还是 kernel 内用 vf 广播指令实现 | 影响 tile 规划；歧义时归 ASK 向用户确认。|
-| **cast 边界链** | input → matmul 累加 → 后处理 → 输出 各段 dtype 及降精度时点 | 精度正确性关键；累加段默认 float |
-| **累加语义** | 跨多次启动 / 多核：覆盖写 vs 原子累加（后者需输出预清零） | 多核归约场景必判，默认覆盖写 |
+加载 `pypto-pro-material-explore`，以包含 kernel 交接合同的 `SPEC.md` 为输入，重新扫描资料
+索引并生成 `PRO_MATERIAL_INDEX.md` 与 `EXPLORE_REPORT.md`。探索不能反向静默改变 SPEC；
+若发现公式、接口或 P0 case 有问题，返回 intent-understand 修订并重新确认。
 
-#### 3. 无用户应答时（自动化运行）
+### 4. 收敛 MEMORY
 
-用户无法实时回复时，ASK 字段无法当场确认：仍按 intent-understand 写出该问的问题，再为每个未决字段取最佳推测默认值，并在 SPEC 补充节与 MEMORY.md **显式记录每个假设**，供后续追溯与用户事后复核。MAY-DESIGN 字段无需在此处理，正常流转到 design。
+整理持续追加的 `MEMORY.md`，只保留下游需要快速恢复的索引信息：
 
-### Step 2：资料探索
+- 任务和确认状态摘要；
+- kernel 契约补充的裁定及未决项；
+- 三个 Stage 1 产物路径；
+- 公式步骤到 API 候选的简短映射；
+- 已冻结事实、阻塞项和尝试历史。
 
-**必须**加载 skill `pypto-pro-material-explore`，先构建覆盖全流程的资料索引 `PRO_MATERIAL_INDEX.md`（后续所有 Stage 均以该索引为权威目录，不再依赖盲目 grep），再基于索引从三个方向依次探索：API 文档（公式分解、`pl.*`/`vf.*` API 映射、约束验证 dtype / layout / MemorySpace / tile shape）、官方指定算子（典型算子实现参考）、教学文档（设计模式与关键约束），产出 `EXPLORE_REPORT.md`。
+详细公式留在 SPEC，详细证据留在 EXPLORE_REPORT，KB 规则留在 KB；不要复制全文。
 
-### 必要规划文件
+### 5. 冻结知识选择
 
-`custom/<算子名称>/MEMORY.md` 最迟在 Step 1.5 创建（用于承接契约裁定摘要），全流程持续追加。Stage 1 结束时必须包含：
+阅读安装态 KB 根下的 `CONTRACT.md`、`ROUTER.md` 与 `topology-map.json`，为每个 class
+逐 class 生成 `KB_SELECTION.json`：flat 布局落在 `custom/<op>/KB_SELECTION.json`，此时
+`class_id` 必须为字面量 `"."`；split 布局逐一落在
+`custom/<op>/<class>/KB_SELECTION.json`，`class_id` 必须等于该 class 目录名。安装态路径为
+`$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/`；源码中
+skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 
-- 任务摘要
-- **契约裁定摘要**（来自 Step 1.5：三档归属结论 + 三个 kernel 契约字段的取值 / 假设）
-- 参考位置（包括 `PRO_MATERIAL_INDEX.md` 的路径及索引中的官方指定算子路径）
-- **PyPTO-Pro API 映射**（来自 Step 2）：每个数学步骤 → `pl.*` API 调用链
-- 规范化 golden 状态
-- 已冻结条目
-- 尝试历史
-- 阻塞列表
+执行规则：
 
-### Step 3：知识选择（产出 `KB_SELECTION.json`）
+1. 从公式的计算拓扑和已确认 properties 路由，禁止按算子名称猜选。
+2. `topology` 必须是 `topology-map.json.topologies` 的当前键；不维护本地枚举副本。
+3. 收集 topology、properties、已确认 target 和 mandatory 触发的全部 constraints。
+4. optional pattern 只保留适用前提成立且会产生独立、具体设计作用的条目，不限数量。
+5. 无适用 pattern 时设置 `no_matching_pattern: true`，但不得删除 required constraints。
+6. 每条引用使用 KB 根相对路径，记录 class-specific reason 与当前文件 SHA-256；不得记录
+   安装前缀、绝对路径或占位哈希。
+7. `properties` 只来自 SPEC、cases 或已确认环境事实。target 未指定时按默认 A5
+   触发 `constraints/arch-a5.md`；已明确为非 A5 时不触发。
 
-Stage 1 结束前，必须在该 class 的目录下写出 `KB_SELECTION.json`：
-cases 未切分时是 `custom/<算子名称>/`（此时 `class_id` 写字面量 `"."`），
-切分时是 `custom/<算子名称>/<class>/`。
+布局、`class_id` 与完整字段合同以 [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md) 为唯一规范，路由算法以
+[KB ROUTER](../../pypto-pro-op-kb/ROUTER.md) 和
+[`topology-map.json`](../../pypto-pro-op-kb/topology-map.json) 为唯一数据源。
 
-这是 contract v2 的必选产物。planner 负责产出和做格式预检，
-`pypto-pro-op-verifier` 在 `stage1-check` 中独立校验；verifier 未返回 PASS 时，
-orchestrator 不得宣布 Stage 1 完成。校验项与目录约定见
-[`pypto-pro-op-kb/CONTRACT.md`](../../pypto-pro-op-kb/CONTRACT.md)。
+### 6. 收尾自检
 
-按 [`pypto-pro-op-kb/ROUTER.md`](../../pypto-pro-op-kb/ROUTER.md) 的「Routing by topology」一节选择，
-数据源是 [`pypto-pro-op-kb/topology-map.json`](../../pypto-pro-op-kb/topology-map.json)。
-
-**按计算形状路由，不按算子名路由。** 算子名不能迁移到新算子；拓扑可以。
-
-```json
-{
-  "schema_version": 2,
-  "op": "<算子名>",
-  "class_id": "<class 子目录名>",
-  "topology": "row-reduction",
-  "properties": {
-    "dtypes": ["float16"], "ranks": [2],
-    "unaligned_shapes": true, "tail_blocks": true,
-    "long_axis": false, "mixed_precision": true,
-    "index_dtypes": [], "dynamic_dims": false
-  },
-  "optional_patterns": [
-    {"path": "patterns/vec-row-reduce-broadcast.md",
-     "sha256": "sha256:<该文件内容哈希>",
-     "reason": "每行归约成标量再广播回该行，与本 class 的数据流一致"}
-  ],
-  "required_constraints": [
-    {"path": "constraints/vec.md",
-     "sha256": "sha256:<该文件内容哈希>",
-     "reason": "row-reduction 拓扑要求使用 vector 约束"},
-    {"path": "constraints/wrapper-boundary.md",
-     "sha256": "sha256:<该文件内容哈希>",
-     "reason": "所有 class 都必须遵守公开 callable 的单 kernel 边界"}
-  ],
-  "failure_signatures": [
-    {"id": "bf16-cancellation", "reason": "本 class 存在相近量相减，需 fp32 累加"}
-  ],
-  "no_matching_pattern": false
-}
-```
-
-硬性约束：
-
-- `optional_patterns` **不设数量上限**，但只允许放入对当前 class 有明确、独立设计作用的
-  `patterns/` 复用模式。每条候选必须同时满足：适用前提与当前 topology/properties 一致；
-  `reason` 能指出具体数据流问题和预期设计影响；与已选 pattern 不重复。
-- `required_constraints` 收集 topology、property、target gate 和
-  `mandatory_constraints` 触发的**全部**约束，不限数量，不得截断。
-- 两类中的每条都必须写明 `reason`：为什么**这个 class** 需要它。
-- 以下候选必须丢弃，不得为了增加参考数量而选入：仅算子名相似；适用前提不成立；
-  只提供通用背景而不能改变设计；与已选 pattern 作用重复；与官方 API 或必需约束冲突。
-- 路径必须**相对于 KB 根**（源码树 `cannbot-skills/ops/pypto-pro-op-kb/`，安装后 `$CONFIG_ROOT/pypto-pro-op-kb`），
-  即以 `patterns/` / `constraints/` / `examples/` / `references/` 等 KB 一级目录开头。
-  下面这些都会被判为「路径不存在」而使该 class 不通过：
-  - 机器绝对路径：任何以 `/` 开头的完整路径（含用户目录、挂载点等）
-  - **带安装前缀的相对路径**：`.opencode/skills/<skill>/pypto-pro-op-kb/constraints/wrapper-boundary.md`
-    ——你读文件时用的是这个路径，但**写进 JSON 的必须是 `constraints/wrapper-boundary.md`**。
-    这是最常见的失败原因：把「我怎么打开它」当成了「它在契约里的名字」。
-  - 凭印象拼出的路径：`pro_ops/vf_api/test_softmax_tile_group.py` 之类并不存在的条目。
-- **每条路径必须真实存在**。写入前用 `ls` 逐条确认（相对 KB 根解析），
-  不确认就写等于让该 class 失败。宁可 `no_matching_pattern: true`，也不要写一条猜的路径。
-- 每条必须带 `sha256`，取所引用文件的内容哈希：校验器据此判定引用是否在选择之后被改动过。占位符（`sha256:...`）不算，会被判为 stale。
-- 确实没有匹配 pattern 时（**以 `topology-map.json` 当前内容为准，不要凭本文举例判断**——
-  该文件是唯一数据源，pattern 会随交付增补），
-  置 `no_matching_pattern: true` 并留空 `optional_patterns`，但仍须保留全部
-  `required_constraints`；**不要**为了填满而选一条勉强相关的 pattern。
-- `properties` 必须来自真实事实（`cases.yaml` 存在时以其为准，否则以 Step 1.5 的契约裁定为准），不得臆测。
-- `topology` 必须是 [`pypto-pro-op-kb/topology-map.json`](../../pypto-pro-op-kb/topology-map.json) 当前
-  `topologies` 对象中的键，**不能为 null、不能自造，也不得在本 skill 中维护枚举副本**。
-- `op`、`class_id`、`topology`、`properties` 四个字段**必填**；
-  `optional_patterns`、`required_constraints`、`failure_signatures` 必须是**列表**
-  （没有内容就写 `[]`，不能写 `null` 或对象）。文件必须是能被 `json.load` 读通的合法
-  JSON——写完自己读一遍。
-
-**收尾预检（Stage 1 子代理返回前必做）**：下面只负责尽早发现 JSON、字段和路径错误，
-不产生 PASS verdict，也不能代替随后由 orchestrator 调度的 `stage1-check` verifier。
+每个 class 在返回前执行下面的预检（将 `<selection>` 和 `<kb_root>` 替换为实际路径）。它只提前发现
+JSON、必填字段、pattern 标记、路径和哈希错误，不判断 pattern 是否适用，不产生 verifier PASS。
 
 ```bash
-python3 -c "
-import json, pathlib, sys
-op = pathlib.Path('custom/<op>')
-kb = pathlib.Path('<kb 根>')
-sel = json.loads((op / 'KB_SELECTION.json').read_text())
+python -c '
+import hashlib, json, pathlib, sys
+selection_path = pathlib.Path("<selection>")
+kb = pathlib.Path("<kb_root>")
+selection = json.loads(selection_path.read_text(encoding="utf-8"))
+mapping = json.loads((kb / "topology-map.json").read_text(encoding="utf-8"))
 bad = []
-for key in ('schema_version', 'op', 'class_id', 'topology', 'properties',
-            'optional_patterns', 'required_constraints', 'no_matching_pattern'):
-    if key not in sel:
-        bad.append(f'缺字段 {key}')
-patterns = sel.get('optional_patterns') or []
-constraints = sel.get('required_constraints') or []
-if patterns and sel.get('no_matching_pattern'):
-    bad.append('no_matching_pattern=true 时 optional_patterns 必须为空')
-refs = patterns + constraints
-for r in refs:
-    path = r['path'] if isinstance(r, dict) else r
-    if not (kb / path).is_file():
-        bad.append(f'引用不存在：{path}')
-print('OK' if not bad else 'FAIL: ' + '; '.join(bad))
+required = {"schema_version", "op", "class_id", "topology", "properties",
+            "optional_patterns", "required_constraints", "no_matching_pattern"}
+bad += [f"missing field: {key}" for key in sorted(required - set(selection))]
+if selection.get("schema_version") != mapping["contract"]["contract_version"]:
+    bad.append("schema_version does not match topology-map contract")
+if selection.get("topology") not in mapping["topologies"]:
+    bad.append("topology is not declared in topology-map")
+expected_class = "." if selection_path.parent.parent.name == "custom" else selection_path.parent.name
+if selection.get("class_id") != expected_class:
+    bad.append(f"class_id must be {expected_class}")
+properties = selection.get("properties")
+property_keys = set(mapping["contract"]["property_keys"])
+if not isinstance(properties, dict):
+    bad.append("properties must be an object")
+elif set(properties) - property_keys:
+    bad.append(f"unknown property keys: {sorted(set(properties) - property_keys)}")
+patterns = selection.get("optional_patterns")
+constraints = selection.get("required_constraints")
+if not isinstance(patterns, list) or not isinstance(constraints, list):
+    bad.append("optional_patterns and required_constraints must be lists")
+else:
+    if selection.get("no_matching_pattern") is not (not patterns):
+        bad.append("no_matching_pattern is inconsistent")
+    for refs, namespace in ((patterns, "patterns"), (constraints, "constraints")):
+        namespace_root = (kb / namespace).resolve()
+        for ref in refs:
+            if not isinstance(ref, dict):
+                bad.append("reference must be an object")
+                continue
+            if not isinstance(ref.get("reason"), str) or not ref["reason"].strip():
+                bad.append("reference reason must be non-empty")
+            path = ref.get("path")
+            target = (kb / path).resolve() if isinstance(path, str) else None
+            try:
+                if not isinstance(path, str) or not path.startswith(namespace + "/"):
+                    raise ValueError
+                target.relative_to(namespace_root)
+            except (TypeError, ValueError):
+                bad.append(f"path escapes {namespace}/ namespace: {path}")
+                continue
+            if not target.is_file():
+                bad.append(f"referenced file does not exist: {path}")
+                continue
+            expected = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+            if ref.get("sha256") != expected:
+                bad.append(f"stale sha256: {path}")
+
+print("OK" if not bad else "FAIL: " + "; ".join(bad))
 sys.exit(0 if not bad else 1)
-"
+'
 ```
 
-预检输出不是 `OK` 时就地修正；输出 `OK` 后把产物交给 verifier，只有 verifier PASS
-才能进入 Stage 2。
+对 flat 布局检查 `<op>/KB_SELECTION.json`；对 split 布局逐个检查
+`<op>/<class>/KB_SELECTION.json`。输出非 `OK` 时就地修正，然后再交 orchestrator 调度 `stage1-check`。
+
+## 完成条件
+
+- 五个 Stage 1 产物均存在；
+- SPEC 校验通过且没有被探索阶段静默改写；
+- INDEX 的 §A/§B/§C 与本次缓存一致；
+- EXPLORE_REPORT 没有未解决的 `unsupported` 阻断；
+- MEMORY 只记录摘要和指针，含 kernel 合同裁定；
+- KB_SELECTION 满足 contract v2，所有路径和哈希真实可复核；
+- 本 agent 只做预检，不得自称 verifier PASS。
+
+返回上述产物路径、未决风险和预检结果，交 orchestrator 调度 `stage1-check`。

@@ -13,8 +13,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+from pathlib import Path
 
 from ..core import (
     CheckContext,
@@ -25,6 +27,39 @@ from ..core import (
     STATE_FILE,
     register,
 )
+
+
+_SPEC_VALIDATOR_RELATIVE_PATHS = (
+    Path("skills/pypto-pro-intent-understand/scripts/validate_spec.py"),
+    Path("ops/pypto-pro-intent-understand/scripts/validate_spec.py"),
+)
+
+
+def _load_spec_contract_text(content: str):
+    """Load the canonical Stage-1 parser from an installed or source layout."""
+    validator_path = None
+    for ancestor in Path(__file__).resolve().parents:
+        for relative in _SPEC_VALIDATOR_RELATIVE_PATHS:
+            candidate = ancestor / relative
+            if candidate.is_file():
+                validator_path = candidate
+                break
+        if validator_path is not None:
+            break
+    if validator_path is None:
+        raise RuntimeError("找不到 pypto-pro-intent-understand 的 canonical SPEC validator")
+
+    spec = importlib.util.spec_from_file_location(
+        "_pypto_pro_canonical_spec_validator", validator_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载 canonical SPEC validator: {validator_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    loader = getattr(module, "load_spec_contract_text", None)
+    if not callable(loader):
+        raise RuntimeError("canonical SPEC validator 缺少 load_spec_contract_text()")
+    return loader(content)
 
 
 def _check_file_exists(ctx: CheckContext, rule_id: str, filename: str) -> Finding:
@@ -39,13 +74,27 @@ def _check_file_exists(ctx: CheckContext, rule_id: str, filename: str) -> Findin
 
 @register("PL03")
 def check_pl03(ctx: CheckContext) -> Finding:
-    """SPEC.md 存在且非空."""
+    """SPEC.md satisfies the canonical Stage-1 JSON contract."""
     if not ctx.file_exists(SPEC_FILE):
         return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} 不存在", file=SPEC_FILE)
     content = ctx.read_file(SPEC_FILE)
     if not content.strip():
         return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} 为空", file=SPEC_FILE)
-    return ctx.make_finding("PL03", "PASS", f"{SPEC_FILE} 存在且非空", file=SPEC_FILE)
+    try:
+        contract = _load_spec_contract_text(content)
+    except Exception as exc:
+        return ctx.make_finding(
+            "PL03", "FAIL", f"SPEC.md JSON machine-contract 无效: {exc}", file=SPEC_FILE
+        )
+    if contract.get("op_name") != ctx.op_name:
+        return ctx.make_finding(
+            "PL03", "FAIL",
+            f"SPEC.md op_name={contract.get('op_name')!r}，期望 {ctx.op_name!r}",
+            file=SPEC_FILE,
+        )
+    return ctx.make_finding(
+        "PL03", "PASS", "SPEC.md JSON machine-contract 通过 canonical validator", file=SPEC_FILE
+    )
 
 
 @register("PL04")
