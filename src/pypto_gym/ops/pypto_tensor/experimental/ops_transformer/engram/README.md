@@ -1,252 +1,331 @@
-# Engram 算子（PyPTO Kernel）
+# Engram 算子接口文档
 
-基于 PyPTO 框架实现的 Engram 前向与反向算子，运行于 Ascend NPU。
-Engram 是一种单头记忆检索注意力机制，支持 Key/Value 投影 + RMSNorm + sign-sqrt gate + 门控融合输出。
+本文档包含 Engram 门控记忆检索（Gated Memory）算子的接口说明，涵盖正向和反向两个算子。基于 PyPTO 框架实现，BF16 计算，运行于 Ascend NPU。
 
-## 产品支持情况
+Engram 是一种多头门控记忆机制：对每个 token 做 Key/Value 投影，对 Key 与 Query 分别 RMSNorm 后点积得到 score，经 sign-sqrt 门控后输出门控后的 value。
 
-- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+## 目录
 
-> **约束**：当前实现仅支持 `num_heads=1`（单头），通过 `combine_axis=True` 和 `batch_size*seq_len` 轴合并优化访存。
-
-## 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `engram_forward_impl.py` | 前向 Kernel 实现（线性投影、RMSNorm、sign-sqrt gate、Host 封装） |
-| `engram_backward_impl.py` | 反向 Kernel 实现（RMSNorm/Linear 子模块、主 kernel、Host 封装） |
-
-测试文件位于 `tests/ops/experimental/ops_transformer/engram/`：
-
-| 文件 | 说明 |
-|------|------|
-| `engram_forward_golden.py` | 前向 PyTorch Golden 参考实现 |
-| `test_engram_forward.py` | 前向精度测试 |
-| `test_engram_backward.py` | 反向精度测试 + Golden 参考实现 |
+1. [engram_forward_wrapper](#engram_forward_wrapper) - 多头门控记忆前向算子
+2. [engram_backward_wrapper](#engram_backward_wrapper) - 多头门控记忆反向算子
 
 ---
 
-## 前向算子
+# engram_forward_wrapper
 
-### 算法概述
+多头门控记忆检索（Engram）正向算子。对权重/输入进行 Key/Value 投影、RMSNorm、sign-sqrt 门控，输出门控后的 value 及若干中间结果（供反向使用）。
 
-对每个 token 计算 Key/Value 投影，对 Key 做 RMSNorm 后与 query（即 `hidden_states`）
-点积得到 score，再用 `sigmoid(sign_sqrt(score))` 生成 gate，最终输出门控后的 value
-以及若干中间结果（供反向使用）。
+适用于 Transformer 中的门控记忆层场景，支持任意头数 M，BF16 输入、FP32 中间计算。
 
-### 计算公式
+## 功能描述
 
-```
-key       = embeddings @ Wk.T + bk                          # [total_seq, hidden_dim]
-value     = embeddings @ Wv.T + bv                          # [total_seq, hidden_dim]
-normed_key = rms_norm(key, key_gamma, eps=1e-6)             # [total_seq, hidden_dim]
-score     = sum(normed_key * hidden_states, dim=-1) / sqrt(hidden_dim)  # [total_seq]
-gate      = sigmoid(sign(score) * sqrt(|score| + 1e-4))     # [total_seq]
-value_out = gate * value                                     # [total_seq, hidden_dim]
-```
+正向算子逐头计算 Key/Value 投影与门控输出。输入/输出为 BF16，matmul 走 FP32 累加，score/gate 等中间量以 FP32 输出。`batch_size*seq_len` 在 kernel 内部合轴（BL）以优化访存。
 
-其中 `sign_sqrt(x) = sign(x) * sqrt(|x| + eps)`，`rms_norm` 与 `pypto.rms_norm` 对齐。
-
-### 前向输入参数
-
-| 参数名 | 形状 | 数据类型 | 说明 |
-|--------|------|----------|------|
-| hidden_states | (batch_size, seq_len, num_heads=1, hidden_dim) | FP32 | Query 输入 |
-| embeddings | (batch_size, seq_len, hidden_dim) | FP32 | Key/Value 线性层共同输入 |
-| key_proj_weights | (num_heads=1, hidden_dim, hidden_dim) | FP32 | Key 投影权重 |
-| key_proj_bias | (num_heads=1, hidden_dim) | FP32 | Key 投影偏置 |
-| value_proj_weights | (hidden_dim, hidden_dim) | FP32 | Value 投影权重 |
-| value_proj_bias | (hidden_dim,) | FP32 | Value 投影偏置 |
-| key_gamma | (num_heads=1, hidden_dim) | FP32 | Key RMSNorm gamma |
-
-### 前向输出参数
-
-| 参数名 | 形状 | 数据类型 | 说明 |
-|--------|------|----------|------|
-| value_out | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | 主输出：门控后的 value |
-| score_back | (batch_size, seq_len, num_heads, 1) | FP32 | 中间结果 score（供反向使用） |
-| key_back | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | 中间结果 key（投影后、归一化前） |
-| value_back | (batch_size, seq_len, hidden_dim) | FP32 | 中间结果 value（投影后、门控前） |
-| gate_back | (batch_size, seq_len, num_heads, 1) | FP32 | 中间结果 gate |
-
-### 前向 Kernel 概览
-
-| 函数 | 功能 |
-|------|------|
-| `linear(tensor, weight, bias)` | `tensor @ weight.T + bias`，cube tile [128,128],[64,256],[128,128] |
-| `sign_sqrt(tensor, eps)` | `sign(x) * sqrt(\|x\| + eps)`，用 ge/where/neg/sqrt 组合实现 |
-| `engram_forward_kernel(...)` | 主 NPU kernel，batch/seq 双层循环，tile=256 |
-| `pypto_engram_forward(...)` | Host 封装：reshape → kernel → reshape 回原始 shape |
-
-### 前向 Pass 配置
+## 接口定义
 
 ```python
-_PASS_OPTIONS = {
-    "cube_l1_reuse_setting": {"DEFAULT": 1},
-    "vec_nbuffer_setting": {"DEFAULT": 1},
-    "auto_mix_partition": 1,
-}
-_RUNTIME_OPTIONS = {
-    "stitch_function_max_num": 128,
-    "max_workspace_kb": 1048907,
-}
+from pypto_gym.ops.pypto_tensor.experimental.ops_transformer.engram.engram_forward_impl import engram_forward_wrapper
+
+def engram_forward_wrapper(
+    hidden_states: Tensor,      # BF16, shape: (B, L, M, Hh)
+    embeddings: Tensor,         # BF16, shape: (B, L, De)
+    key_proj_weights: Tensor,   # BF16, shape: (M, De, Hh)
+    value_proj_weights: Tensor, # BF16, shape: (De, Hh)
+    key_gamma: Tensor,          # BF16, shape: (M, Hh)
+    query_gamma: Tensor,        # BF16, shape: (M, Hh)
+    clamp_value: float = 1e-6,  # sign-sqrt 门控的 clamp 下界
+    eps: float = 1e-6,          # RMSNorm 的 ε
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    # (value_out, score_back, key_back, value_back, gate_back)
 ```
 
----
+## 参数说明
 
-## 反向算子
+### 输入参数
 
-### 算法概述
+| 参数名 | 类型 | 形状 | 说明 |
+|-------|------|------|------|
+| hidden_states | Tensor(BF16) | (B, L, M, Hh) | Query 输入，B=batch，L=seq_len，M=头数，Hh=隐藏维度 |
+| embeddings | Tensor(BF16) | (B, L, De) | Key/Value 线性层共同输入，De=embedding 维度 |
+| key_proj_weights | Tensor(BF16) | (M, De, Hh) | Key 投影权重（逐头） |
+| value_proj_weights | Tensor(BF16) | (De, Hh) | Value 投影权重（所有头共享） |
+| key_gamma | Tensor(BF16) | (M, Hh) | Key RMSNorm 缩放系数（逐头） |
+| query_gamma | Tensor(BF16) | (M, Hh) | Query RMSNorm 缩放系数（逐头） |
 
-反向传播分为两条主路径：
+### 输出参数
 
-1. **Value 路径**：`d_value → value_linear_backward → d_embeddings`
-2. **Key/Query 路径**：
-   - `d_gate → dz → d_score`（sigmoid + sign_sqrt 激活的链式法则）
-   - `d_score → d_query_normed, d_key_normed`（点积反传）
-   - `d_key_normed → rms_norm_backward → d_key_lineared`
-   - `d_key_lineared → key_linear_backward → d_embeddings`（累加）
+| 参数名 | 类型 | 形状 | 说明 |
+|-------|------|------|------|
+| value_out | Tensor(BF16) | (B, L, M, Hh) | 主输出：门控后的 value |
+| score_back | Tensor(FP32) | (B, L, M) | 中间量 score（供反向） |
+| key_back | Tensor(BF16) | (B, L, M, Hh) | 中间量 key（投影后、归一化前） |
+| value_back | Tensor(BF16) | (B, L, Hh) | 中间量 value（投影后、门控前） |
+| gate_back | Tensor(FP32) | (B, L, M) | 中间量 gate（供反向） |
 
-### 反向计算公式
+## 算法原理
 
-$$d\_value = \text{grad\_out} \cdot gate$$
+逐头 $m \in [0, M)$ 计算（BL = B*L，下式对单个 token）：
 
-$$d\_gate = \text{grad\_out} \cdot \text{value\_lineared}$$
+### Step 1: Key / Value 投影
 
-$$d\_score = \left(\sum_d d\_gate \cdot gate(1-gate)\right) \cdot \frac{0.5}{\sqrt{|score|+\varepsilon}}$$
+$$K^{(m)} = E \cdot W_k^{(m)}, \quad V = E \cdot W_v$$
 
-$$d\_query\_normed = \frac{d\_score \cdot \text{key\_normed}}{\sqrt{\text{feat\_dim}}}, \quad
-d\_key\_normed = \frac{d\_score \cdot \text{query\_normed}}{\sqrt{\text{feat\_dim}}}$$
+matmul 操作数为 BF16，FP32 累加；$K$ 落 BF16，$V$ 落 BF16。
 
-### 反向输入参数
+### Step 2: RMSNorm 中间量
 
-| 参数 | 形状 | 数据类型 | 说明 |
-|------|------|----------|------|
-| grad_out | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | 上游梯度 |
-| hidden_states | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | Query（前向输入） |
-| embeddings | (batch_size, seq_len, hidden_dim) | FP32 | Key/Value 线性层输入 |
-| key_w | (num_heads, hidden_dim, hidden_dim) | FP32 | Key 投影权重 |
-| value_w | (hidden_dim, hidden_dim) | FP32 | Value 投影权重 |
-| key_gamma | (num_heads, hidden_dim) | FP32 | Key RMSNorm gamma |
-| query_gamma | (num_heads, hidden_dim) | FP32 | Query RMSNorm gamma |
-| key_lineared | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | Key 线性层输出（前向保存） |
-| value_lineared | (batch_size, seq_len, hidden_dim) | FP32 | Value 线性层输出（前向保存） |
-| gate | (batch_size, seq_len, num_heads, 1) | FP32 | Gate 激活值（前向保存） |
-| score | (batch_size, seq_len, num_heads, 1) | FP32 | 点积 score（前向保存） |
+$$rms_k = \sqrt{\text{mean}(K^2) + \varepsilon}, \quad rms_q = \sqrt{\text{mean}(Q^2) + \varepsilon}$$
 
-### 反向输出参数
+其中 $Q$ = `hidden_states`，$\varepsilon = 10^{-6}$。
 
-| 参数 | 形状 | 数据类型 | 初始化要求 | 说明 |
-|------|------|----------|-----------|------|
-| d_hidden | (batch_size, seq_len, num_heads, hidden_dim) | FP32 | zeros | Query 梯度 |
-| d_embeddings | (batch_size, seq_len, hidden_dim) | FP32 | zeros | Embeddings 梯度（key + value 路径之和） |
-| d_key_w | (num_heads, hidden_dim, hidden_dim) | FP32 | zeros | Key 权重梯度 |
-| d_key_b | (num_heads, hidden_dim) | FP32 | zeros | Key bias 梯度 |
-| d_value_w | (hidden_dim, hidden_dim) | FP32 | zeros | Value 权重梯度 |
-| d_value_b | (hidden_dim,) | FP32 | zeros | Value bias 梯度 |
-| d_key_gamma | (num_heads, hidden_dim) | FP32 | zeros | Key RMSNorm gamma 梯度 |
+### Step 3: 缩放点积 score
 
-### 反向 Kernel 概览
+$$s = \frac{\sum_h \big(K_h \cdot Q_h \cdot \gamma_k \cdot \gamma_q\big)}{rms_k \cdot rms_q \cdot \sqrt{Hh}}$$
 
-| 函数 | 功能 |
-|------|------|
-| `rms_norm_backward_module(dy, x, gamma, eps)` | RMSNorm 反向，输出 dx [tile, hidden_dim] 和 d_gamma [hidden_dim] |
-| `linear_backward_module(dy, x, weight)` | 线性层反向，输出 dx、d_weight、db |
-| `engram_backward_kernel(...)` | 主 NPU kernel，flatten 为 [total_seq, hidden_dim] 后处理 |
-| `engram_backward_pto(...)` | Host 封装：reshape → kernel → reshape 回原始 shape |
+> 注：把 RMSNorm 归一化“吸收”进分母 $rms_k \cdot rms_q$，与 $\text{sum}\big(\text{rmsNorm}(K,\gamma_k) \cdot \text{rmsNorm}(Q,\gamma_q)\big)/\sqrt{Hh}$ 数学等价。
 
-### 反向 Pass 配置
+### Step 4: sign-sqrt 门控
+
+$$g = \sigma\Big(\text{sign}(s) \cdot \sqrt{\text{clamp}(|s|,\, c)}\Big)$$
+
+其中 $\sigma$ 为 sigmoid，$c = 10^{-6}$（clamp 形式，非加性 eps）。
+
+### Step 5: 门控输出
+
+$$O = g \cdot V$$
+
+$O$ 即 `value_out`（BF16）；同时输出 $s$→`score_back`、$K$→`key_back`、$V$→`value_back`、$g$→`gate_back`。
+
+## 约束条件
+
+1. 所有 Tensor 输入为 BF16；`score_back`/`gate_back` 输出为 FP32。
+2. Key/Value 投影**无 bias**。
+3. 头数 `M` 任意；`B*L` 在 kernel 内合轴，无固定上限。
+4. `Hh`、`De` 建议为 128 的倍数（对齐 cube/vec tile，性能最佳），非硬性限制。
+5. 同一头内 `key_gamma`、`query_gamma` 形状必须为 (M, Hh)。
+
+## 支持规格
+
+- 数据类型：BF16（输入/输出），FP32（内部计算与 score/gate 输出）
+- 芯片平台：A2 / A3
+
+## 使用示例
 
 ```python
-pass_options = {
-    "cube_l1_reuse_setting": {-1: 16},
-    "vec_nbuffer_setting": {-2: 1, -1: 4},
-}
-runtime_options = {
-    "stitch_function_max_num": 12,
-    "max_workspace_kb": 5469824,
-}
+import torch
+import torch_npu  # noqa: F401
+
+torch.npu.set_device(0)
+
+B, L, M, Hh, De = 1, 4096, 4, 1536, 640
+hidden_states     = torch.randn(B, L, M, Hh, dtype=torch.bfloat16, device="npu:0")
+embeddings        = torch.randn(B, L, De,    dtype=torch.bfloat16, device="npu:0")
+key_proj_weights  = torch.randn(M, De, Hh,  dtype=torch.bfloat16, device="npu:0") * 0.5
+value_proj_weights= torch.randn(De, Hh,     dtype=torch.bfloat16, device="npu:0") * 0.5
+key_gamma         = torch.ones(M, Hh, dtype=torch.bfloat16, device="npu:0")
+query_gamma       = torch.ones(M, Hh, dtype=torch.bfloat16, device="npu:0")
+
+value_out, score_back, key_back, value_back, gate_back = engram_forward_wrapper(
+    hidden_states, embeddings, key_proj_weights, value_proj_weights, key_gamma, query_gamma,
+)
+
+print(f"value_out: {value_out.shape}, {value_out.dtype}")   # (1,4096,4,1536) BF16
+print(f"score_back: {score_back.shape}, {score_back.dtype}")# (1,4096,4) FP32
 ```
 
 ---
 
-## 维度说明
+# engram_backward_wrapper
 
-| 符号 | 含义 |
-|------|------|
-| batch_size | Batch 数量（动态） |
-| seq_len | 序列长度（动态） |
-| num_heads | 注意力头数，当前固定为 1 |
-| hidden_dim | 隐藏维度（静态） |
-| total_seq | `batch_size * seq_len`，kernel 内 flatten 后的序列总长度 |
+多头门控记忆检索（Engram）反向算子。计算门控记忆操作对权重、embeddings、gamma 的梯度，对应正向算子 `engram_forward_wrapper` 的反向传播。
 
-## 分块配置
+## 功能描述
 
-| 操作 | tile shape |
-|------|-----------|
-| 主循环 tile（seq_len 轴） | 256（`unroll_list=[256]`） |
-| Vec tile（2D） | [64, 256] 或 [64, 512] |
-| Vec tile（reduce） | [16, 1024] 或 [1024] |
-| Cube tile | [128, 128], [64, 256], [128, 128] |
+反向算子沿 Step5→Step1 逆向求导，分两条主路径：Value 路径（grad_out·gate → value_linear_backward → d_embeddings）与 Key/Query 路径（d_gate → d_score → rms_norm_backward → key_linear_backward → d_embeddings 累加）。输入/输出 BF16，score/gate 走 FP32，跨头/跨 tile 梯度用 FP32 累加器保精度。
+
+## 接口定义
+
+```python
+from pypto_gym.ops.pypto_tensor.experimental.ops_transformer.engram.engram_backward_impl import engram_backward_wrapper
+
+def engram_backward_wrapper(
+    grad_out: Tensor,       # BF16, shape: (B, L, M, Hh)
+    hidden_states: Tensor,  # BF16, shape: (B, L, M, Hh)
+    embeddings: Tensor,     # BF16, shape: (B, L, De)
+    weight_key: Tensor,     # BF16, shape: (M, De, Hh)
+    weight_value: Tensor,   # BF16, shape: (De, Hh)
+    gamma_key: Tensor,      # BF16, shape: (M, Hh)
+    gamma_query: Tensor,    # BF16, shape: (M, Hh)
+    score: Tensor,          # FP32, shape: (B, L, M)
+    gate: Tensor,           # FP32, shape: (B, L, M)
+    key_lineared: Tensor,   # BF16, shape: (B, L, M, Hh)
+    value_lineared: Tensor, # BF16, shape: (B, L, Hh)
+    clamp_value: float = 1e-6,
+    eps: float = 1e-6,
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+    # (d_hidden, d_embeddings, d_weight_key, d_weight_value, d_gamma_key, d_gamma_query)
+```
+
+## 参数说明
+
+### 输入参数
+
+| 参数名 | 类型 | 形状 | 默认值 | 说明 |
+|-------|------|------|--------|------|
+| grad_out | Tensor(BF16) | (B, L, M, Hh) | 必填 | 上游梯度 ∂L/∂O |
+| hidden_states | Tensor(BF16) | (B, L, M, Hh) | 必填 | 前向 Query 输入 |
+| embeddings | Tensor(BF16) | (B, L, De) | 必填 | 前向 Key/Value 线性层输入 |
+| weight_key | Tensor(BF16) | (M, De, Hh) | 必填 | Key 投影权重 |
+| weight_value | Tensor(BF16) | (De, Hh) | 必填 | Value 投影权重 |
+| gamma_key | Tensor(BF16) | (M, Hh) | 必填 | Key RMSNorm gamma |
+| gamma_query | Tensor(BF16) | (M, Hh) | 必填 | Query RMSNorm gamma |
+| score | Tensor(FP32) | (B, L, M) | 必填 | 前向 `score_back` |
+| gate | Tensor(FP32) | (B, L, M) | 必填 | 前向 `gate_back` |
+| key_lineared | Tensor(BF16) | (B, L, M, Hh) | 必填 | 前向 `key_back` |
+| value_lineared | Tensor(BF16) | (B, L, Hh) | 必填 | 前向 `value_back` |
+| clamp_value | float | - | 1e-6 | sign-sqrt 门控的 clamp 下界 |
+| eps | float | - | 1e-6 | RMSNorm 的 ε |
+
+### 输出参数
+
+| 参数名 | 类型 | 形状 | 说明 |
+|-------|------|------|------|
+| d_hidden | Tensor(BF16) | (B, L, M, Hh) | 对 hidden_states 的梯度 |
+| d_embeddings | Tensor(BF16) | (B, L, De) | 对 embeddings 的梯度（key + value 路径之和） |
+| d_weight_key | Tensor(BF16) | (M, De, Hh) | 对 weight_key 的梯度 |
+| d_weight_value | Tensor(BF16) | (De, Hh) | 对 weight_value 的梯度 |
+| d_gamma_key | Tensor(BF16) | (M, Hh) | 对 gamma_key 的梯度 |
+| d_gamma_query | Tensor(BF16) | (M, Hh) | 对 gamma_query 的梯度 |
+
+## 算法原理
+
+记 $\hat{K}=\text{rmsNorm}(K,\gamma_k)$、$\hat{Q}=\text{rmsNorm}(Q,\gamma_q)$。逐头反向：
+
+### Step 1: 反门控（O = g · V）
+
+$$\frac{\partial L}{\partial V} = \sum_m \frac{\partial L}{\partial O} \odot g, \qquad \frac{\partial L}{\partial g} = \sum_h \frac{\partial L}{\partial O} \odot V$$
+
+### Step 2: 门控反传（STE 近似）
+
+$$\frac{\partial L}{\partial s} = \frac{\partial L}{\partial g} \cdot g(1-g) \cdot \frac{\text{mask}}{2\sqrt{|s|}}, \qquad \text{mask} = \mathbf{1}_{|s| > c}$$
+
+平坦区 $|s| \le c$ 梯度置 0（detach round 的 STE）。
+
+### Step 3: 点积反传
+
+$$\frac{\partial L}{\partial \hat{K}} = \frac{\partial L}{\partial s} \cdot \frac{\hat{Q}}{\sqrt{Hh}}, \qquad \frac{\partial L}{\partial \hat{Q}} = \frac{\partial L}{\partial s} \cdot \frac{\hat{K}}{\sqrt{Hh}}$$
+
+### Step 4: RMSNorm 反传
+
+$$\frac{\partial L}{\partial K} = \frac{1}{rms_k}\left(\frac{\partial L}{\partial \hat{K}}\gamma_k - \hat{K}\cdot\text{mean}\big(\frac{\partial L}{\partial \hat{K}}\gamma_k \odot \hat{K}\big)\right)$$
+
+$$\frac{\partial L}{\partial \gamma_k} = \sum_{B,L} \frac{\partial L}{\partial \hat{K}} \odot \hat{K}$$
+
+对 Query 路径同理，得到 $\frac{\partial L}{\partial Q}$（即 `d_hidden`）与 $\frac{\partial L}{\partial \gamma_q}$（即 `d_gamma_query`）。
+
+### Step 5: 线性反传
+
+$$\frac{\partial L}{\partial E} \mathrel{+}= \frac{\partial L}{\partial K}\cdot W_k^{(m)T} + \frac{\partial L}{\partial V}\cdot W_v^{T}$$
+
+$$\frac{\partial L}{\partial W_k^{(m)}} = E^T \cdot \frac{\partial L}{\partial K}, \qquad \frac{\partial L}{\partial W_v} = E^T \cdot \frac{\partial L}{\partial V}$$
+
+跨头/跨 tile 的 `d_embeddings`、`d_value` 用 FP32 累加器累加，末尾降 BF16。
+
+## 约束条件
+
+1. `grad_out`、`hidden_states`、`weight_key`、`weight_value`、`gamma_key`、`gamma_query`、`key_lineared`、`value_lineared` 为 BF16。
+2. `score`、`gate` 必须为 **FP32**（与前向 `score_back`/`gate_back` 直传，不可降 BF16）。
+3. `grad_out` 与 `hidden_states` 形状相同 (B, L, M, Hh)。
+4. 无 bias；头数 M 任意。
+5. `clamp_value`、`eps` 默认 1e-6，应大于 0。
+
+## 支持规格
+
+- 数据类型：BF16（输入/输出），FP32（内部计算、score/gate 通路、跨头累加器）
+- 芯片平台：A2 / A3
+
+## 使用示例
+
+```python
+import torch
+import torch_npu  # noqa: F401
+
+torch.npu.set_device(0)
+
+# 前向（同上）得到 cache
+value_out, score_back, key_back, value_back, gate_back = engram_forward_wrapper(
+    hidden_states, embeddings, key_proj_weights, value_proj_weights, key_gamma, query_gamma,
+)
+
+grad_out = torch.randn_like(value_out)
+
+d_hidden, d_embeddings, d_weight_key, d_weight_value, d_gamma_key, d_gamma_query = engram_backward_wrapper(
+    grad_out, hidden_states, embeddings,
+    key_proj_weights, value_proj_weights, key_gamma, query_gamma,
+    score_back, gate_back, key_back, value_back,   # 前向中间量直传
+)
+
+print(f"d_hidden:       {d_hidden.shape}")        # (1,4096,4,1536)
+print(f"d_embeddings:   {d_embeddings.shape}")    # (1,4096,640)
+print(f"d_weight_key:   {d_weight_key.shape}")    # (4,640,1536)
+```
 
 ---
+
+## engram_autograd（自动求导封装）
+
+`engram_autograd.py`（位于 tests 目录）把 `engram_forward_wrapper` 与 `engram_backward_wrapper` 封装成
+`torch.autograd.Function`（`EngramFunc`），使调用方只需 forward + loss + `.backward()` 即可自动反传，
+无需手动衔接前向 cache 与反向输入。
+
+**推荐接口**：`engram_autograd(...)`（等价于 `EngramFunc.apply(...)`）。
+
+```python
+from engram_autograd import engram_autograd
+
+# 输入设 requires_grad_(True), autograd 自动算 6 个输入梯度
+leaves = [t.clone().requires_grad_(True) for t in (
+    hidden_states, embeddings, key_proj_weights, value_proj_weights, key_gamma, query_gamma)]
+value_out, score_back, key_back, value_back, gate_back = engram_autograd(*leaves)
+
+loss = value_out.sum()          # 或任意 loss
+loss.backward()                 # 自动反传; leaves[i].grad 即对应输入梯度
+
+# leaves[0]->d_hidden  leaves[1]->d_embeddings  leaves[2]->d_weight_key
+# leaves[3]->d_weight_value  leaves[4]->d_gamma_key  leaves[5]->d_gamma_query
+```
+
+要点：
+- `forward` 调 `engram_forward_wrapper`，`save_for_backward` 保存 6 个输入与前向中间激活（score/key/value/gate）。
+- `backward` 只对 `value_out` 的梯度求导（其余 4 个中间输出的梯度视为 `None`），调
+  `engram_backward_wrapper` 输出 6 个输入梯度（顺序与 forward 输入一致）。
+- 适合把 npu kernel 接入 autograd 图的场景（如 cascade 三方比对里 npu 路径走自动反向）。
+
+---
+
+## 前向 → 反向衔接
+
+反向算子的 `score`/`gate`/`key_lineared`/`value_lineared` 直接来自前向输出，对应关系：
+
+| 反向输入 | 来源（前向输出） | 形状 | dtype |
+|----------|------------------|------|-------|
+| score | score_back | (B, L, M) | FP32 |
+| gate | gate_back | (B, L, M) | FP32 |
+| key_lineared | key_back | (B, L, M, Hh) | BF16 |
+| value_lineared | value_back | (B, L, Hh) | BF16 |
 
 ## 运行测试
 
 ```bash
-# 设置设备 ID
+export PTO_TILE_LIB_CODE_PATH=<pto-isa 路径>   # 必需，否则 kernel JIT 编译失败
 export TILE_FWK_DEVICE_ID=0
-
-# 前向测试
-python tests/ops/experimental/ops_transformer/engram/test_engram_forward.py
-
-# 反向测试
-python tests/ops/experimental/ops_transformer/engram/test_engram_backward.py
-
-# 使用 pytest
-pytest tests/ops/experimental/ops_transformer/engram/ -v
+cd tests/ops/experimental/ops_transformer/engram
+python3 test_engram_forward.py     # 或 test_engram_backward.py / test_engram_cascade.py
 ```
 
-### 测试用例
+精度：三方比对（Precision Standard 2.1），`ratio = npu误差/benchmark误差`，阈值 MARE≤2.0 / MERE≤1.2 / RMSE≤1.2。默认用例 `b1_s4096_mhc4_h1536_de640`。
 
-**前向：**
+## 文件
 
-| 用例 | batch_size | seq_len | hidden_dim | num_heads | 说明 |
-|------|-----------|---------|----------|-----------|------|
-| 默认 | 1 | 1024 | 1024 | 1 | 256 对齐，单头 |
-
-**反向：**
-
-| 用例 | batch_size | seq_len | hidden_dim | num_heads | 说明 |
-|------|-----------|---------|----------|-----------|------|
-| 默认 | 1 | 8192 | 1024 | 1 | 标准序列长度 |
-| pytest param 1 | 1 | 8192 | 1024 | 1 | 标准 |
-| pytest param 2 | 1 | 1024 | 512 | 1 | 小规模 |
-| pytest param 3 | 1 | 2048 | 768 | 1 | 中规模 |
-
-### 精度校验
-
-**前向**（与 `engram_forward_golden.py` 对比）：
-
-```python
-# value_out / score_back / key_back / value_back
-atol = 5e-2, rtol = 1e-2
-# gate_back
-atol = 1e-3, rtol = 1e-3
-```
-
-**反向**（与 PyTorch golden 对比，校验全部 7 个输出）：
-
-```python
-atol = 1e-3, rtol = 1e-3
-```
-
----
-
-## 依赖
-
-- Python 3.x
-- PyTorch + torch_npu
-- PyPTO (`pypto` 包)
-- NumPy
+- src：`engram_forward_impl.py`、`engram_backward_impl.py`
+- tests：`engram_golden.py`（golden 参考）、`compare.py`（精度比对）、`engram_autograd.py`（autograd 封装）、`test_engram_{forward,backward,cascade}.py`

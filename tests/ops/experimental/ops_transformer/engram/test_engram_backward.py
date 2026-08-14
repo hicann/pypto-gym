@@ -8,304 +8,314 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+"""Pytest harness for engram_backward kernel.
+
+Precision Standard 2.1 three-way comparison for all 6 gradient outputs:
+  * NPU PyPTO kernel output;
+  * NPU benchmark from the small torch implementation at kernel dtype;
+  * FP64 golden output from the same small implementation on CPU.
+
+Run on NPU (直接调用):
+    pytest test_engram_backward.py -v
+    python test_engram_backward.py
+    python test_engram_backward.py -k pypto      # 仅直接调用 pytest
+
+ACLGraph 入图 (PyPTO + npugraph_ex):
+    python test_engram_backward.py --acl
+    pytest test_engram_backward.py -k acl
 """
-Engram Backward Operator Test
-"""
+
 import logging
-import math
 import os
 import sys
 
 import torch
-import torch_npu
-
-_p = os.path.dirname(__file__)
-while not os.path.isdir(os.path.join(_p, 'src')):
-    _p = os.path.dirname(_p)
-sys.path.insert(0, os.path.join(_p, 'src'))
-sys.path.insert(0, os.path.join(_p, 'src', 'pypto_gym', 'ops', 'pypto_tensor'))
-
-import numpy as np
 import pytest
-from numpy.testing import assert_allclose
+import torch_npu
+from torch._subclasses.fake_tensor import FakeTensor
 
-import pypto
+try:
+    from torch._dynamo import allow_in_graph
+except Exception:
+
+    def allow_in_graph(fn):
+        return fn
+
+# Ensure we can import the golden reference that ships next to this test.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+# Locate the repo root (the directory containing 'src') and add it to sys.path
+# so the kernel impl under src/pypto_gym/.../engram/ is importable as a package.
+_REPO_ROOT = _THIS_DIR
+while not os.path.isdir(os.path.join(_REPO_ROOT, "src")):
+    _REPO_ROOT = os.path.dirname(_REPO_ROOT)
+    if _REPO_ROOT == os.path.dirname(_REPO_ROOT):
+        break
+_SRC_DIR = os.path.join(_REPO_ROOT, "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from engram_golden import (
+    engram_backward_golden,
+    engram_forward_with_cache,
+    _get_device,
+)
+from compare import _compare
+from pypto_gym.ops.pypto_tensor.experimental.ops_transformer.engram.engram_backward_impl import (
+    engram_backward_wrapper,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger(__name__)
 
 
-def get_device_id():
-    return int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
+GRAD_NAMES = [
+    "grad_hidden_states",
+    "grad_embeddings",
+    "grad_key_proj_weights",
+    "grad_value_proj_weights",
+    "grad_key_gamma",
+    "grad_query_gamma",
+]
 
 
-# ---------------------------------------------------------------------------
-# Helper: RMS-norm + linear backward reference implementations
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════
+# Input construction
+# ═══════════════════════════════════════════════════════════════════
 
-def _rms_norm_torch(x, gamma, epsilon=1e-6):
-    rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + epsilon)
-    x_norm = x / rms
-    if gamma is not None:
-        x_norm = x_norm * gamma
-    return x_norm
+def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=42):
+    """Construct backward inputs: forward inputs → forward_with_cache → grad_output."""
+    torch.manual_seed(seed)
+    hidden_states = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
+    embeddings = torch.randn(b, s, de, dtype=dtype, device=device)
+    key_proj_weights = torch.randn(m_h, de, h, dtype=dtype, device=device) * 0.5
+    value_proj_weights = torch.randn(de, h, dtype=dtype, device=device) * 0.5
+    key_gamma = torch.ones(m_h, h, dtype=dtype, device=device)
+    query_gamma = torch.ones(m_h, h, dtype=dtype, device=device)
 
-
-def _rms_norm_backward_golden(dy, x, gamma, eps=1e-6):
-    rms = torch.sqrt(x.pow(2).mean(-1, keepdim=True) + eps)
-    x_hat = x / rms
-    d_gamma = (dy * x_hat).sum(dim=(0, 1))
-    dx = (gamma / rms) * (dy - x_hat * (dy * x_hat).mean(-1, keepdim=True))
-    return dx, d_gamma
-
-
-def _linear_backward_golden(dy, x, weight):
-    dx = dy @ weight.T
-    batch_size, seq_len, dim_in = x.shape
-    dim_out = dy.shape[2]
-    x_flat = x.reshape(batch_size * seq_len, dim_in)
-    dy_flat = dy.reshape(batch_size * seq_len, dim_out)
-    d_weight = x_flat.T @ dy_flat
-    db = dy.sum(dim=(0, 1))
-    return dx, d_weight, db
-
-
-# ---------------------------------------------------------------------------
-# Golden reference for the full engram backward pass
-# ---------------------------------------------------------------------------
-
-# Note: engram_backward_golden has 11 parameters and 7 return values to match
-# the Engram operator's tensor interface; grouping is not applicable (G.FNM.03/05 waived).
-def engram_backward_golden(
-    grad_out,            # [batch_size, seq_len, num_heads, hidden_dim]
-    hidden_states,       # [batch_size, seq_len, num_heads, hidden_dim]
-    embeddings,          # [batch_size, seq_len, hidden_dim]
-    key_proj_weights,    # [num_heads, hidden_dim, hidden_dim]
-    value_proj_weights,  # [hidden_dim, hidden_dim]
-    key_gamma,           # [num_heads, hidden_dim]
-    query_gamma,         # [num_heads, hidden_dim]
-    key_lineared,        # [batch_size, seq_len, num_heads, hidden_dim]
-    value_lineared,      # [batch_size, seq_len, hidden_dim]
-    gate_back,           # [batch_size, seq_len, num_heads, 1]
-    score_output,        # [batch_size, seq_len, num_heads, 1]
-):
-    batch_size, seq_len, num_heads, hidden_dim = hidden_states.shape
-    sqrt_hidden_dim = math.sqrt(hidden_dim)
-    sqrt_eps = 1e-4
-
-    d_hidden = torch.zeros_like(hidden_states)
-    d_embeddings = torch.zeros_like(embeddings)
-    d_key_w = torch.zeros_like(key_proj_weights)
-    d_key_b = torch.zeros(num_heads, hidden_dim, device=embeddings.device)
-    d_val_w = torch.zeros_like(value_proj_weights)
-    d_val_b = torch.zeros(hidden_dim, device=embeddings.device)
-    d_key_gamma = torch.zeros_like(key_gamma)
-
-    gates = gate_back                    # [batch_size, seq_len, num_heads, 1]
-    scores = score_output.squeeze(-1)   # [batch_size, seq_len, num_heads]
-
-    # Step 1: value / gate split
-    d_value = (grad_out * gates).sum(dim=2)          # [batch_size, seq_len, hidden_dim]
-    d_gates = grad_out * value_lineared.unsqueeze(2)  # [batch_size, seq_len, num_heads, hidden_dim]
-
-    dx_val, d_weight_val, db_val = _linear_backward_golden(d_value, embeddings, value_proj_weights)
-    d_embeddings += dx_val
-    d_val_w += d_weight_val
-    d_val_b += db_val
-
-    # Step 2: per-head backward
-    for hc_idx in range(num_heads):
-        key = key_lineared[:, :, hc_idx, :]     # [batch_size, seq_len, hidden_dim]
-        query = hidden_states[:, :, hc_idx, :]  # [batch_size, seq_len, hidden_dim]
-        gate = gates[:, :, hc_idx, :]           # [batch_size, seq_len, 1]
-        score = scores[:, :, hc_idx]            # [batch_size, seq_len]
-
-        d_gate = d_gates[:, :, hc_idx, :]       # [batch_size, seq_len, hidden_dim]
-        dz = d_gate * gate * (1 - gate)
-        dz_sum = dz.sum(dim=-1)                 # [batch_size, seq_len]
-        abs_score = score.abs() + sqrt_eps
-        df_ds = 0.5 / torch.sqrt(abs_score)
-        d_score = dz_sum * df_ds                # [batch_size, seq_len]
-
-        normed_key = _rms_norm_torch(key, gamma=key_gamma[hc_idx])
-        normed_query = _rms_norm_torch(query, gamma=query_gamma[hc_idx])
-
-        d_query_normed = d_score.unsqueeze(-1) * normed_key / sqrt_hidden_dim
-        d_key_normed = d_score.unsqueeze(-1) * normed_query / sqrt_hidden_dim
-
-        d_key, dk_gamma = _rms_norm_backward_golden(d_key_normed, key, key_gamma[hc_idx])
-        d_hidden[:, :, hc_idx, :] += d_query_normed
-        d_key_gamma[hc_idx] += dk_gamma
-
-        dx_key, d_weight_key, db_key = _linear_backward_golden(
-            d_key, embeddings, key_proj_weights[hc_idx])
-        d_embeddings += dx_key
-        d_key_w[hc_idx] += d_weight_key
-        d_key_b[hc_idx] += db_key
-
-    return d_hidden, d_embeddings, d_key_w, d_key_b, d_val_w, d_val_b, d_key_gamma
-
-
-# ---------------------------------------------------------------------------
-# Precision comparison utility
-# ---------------------------------------------------------------------------
-
-def _log_outlier_rows(idx, v1, v2, od, ord_, n_show):
-    logging.info("-" * 80)
-    logging.info(f"{'Index':<20} {'Actual':<15} {'Golden':<15} {'AbsDiff':<12} {'RelDiff':<12}")
-    logging.info("-" * 80)
-    for i in range(n_show):
-        idx_str = str(tuple(idx[j][i].item() for j in range(len(idx))))
-        logging.info(
-            f"{idx_str:<20} {v1[i].item():<15.6f} {v2[i].item():<15.6f} "
-            f"{od[i].item():<12.6f} {ord_[i].item():<12.6f}"
+    clamp_value, eps = 1e-6, 1e-6
+    with torch.no_grad():
+        _, cache = engram_forward_with_cache(
+            hidden_states, embeddings, key_proj_weights, value_proj_weights,
+            key_gamma, query_gamma, clamp_value, eps,
         )
 
+    grad_output = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
 
-# Note: detailed_tensor_compare has 6 parameters for full control over comparison behavior;
-# grouping tolerance params into a dataclass is not warranted here (G.FNM.03 waived).
-def detailed_tensor_compare(tensor1, tensor2, rtol=1e-3, atol=1e-3,
-                             verbose=True, max_outliers_display=20):
-    t1, t2 = tensor1.cpu().float(), tensor2.cpu().float()
-    diff = torch.abs(t1 - t2)
-    relative_diff = diff / (torch.abs(t2) + 1e-8)
-    tolerance_mask = diff <= atol + rtol * torch.abs(t2)
-    out_mask = ~tolerance_mask
-
-    total = t1.numel()
-    n_out = out_mask.sum().item()
-    ratio = n_out / total
-
-    max_diff = diff.max().item()
-    mean_diff = diff.mean().item()
-    std_diff = diff.std().item()
-
-    if n_out > 0:
-        out_diff = diff[out_mask]
-        max_out = out_diff.max().item()
-        mean_out = out_diff.mean().item()
-        idx = torch.nonzero(out_mask, as_tuple=True)
-        v1 = t1[out_mask]
-        v2 = t2[out_mask]
-        od = diff[out_mask]
-        ord_ = relative_diff[out_mask]
-        sort_idx = torch.argsort(od, descending=True)
-        idx = tuple(i[sort_idx] for i in idx)
-        v1, v2, od, ord_ = v1[sort_idx], v2[sort_idx], od[sort_idx], ord_[sort_idx]
-    else:
-        max_out = mean_out = 0.0
-        idx = v1 = v2 = od = ord_ = None
-
-    all_close = n_out == 0
-
-    if verbose:
-        logging.info("\n" + "=" * 60)
-        logging.info("Detailed tensor comparison report")
-        logging.info("=" * 60)
-        logging.info(f"Total elements: {total:,}")
-        logging.info(f"Out of tolerance: {n_out:,} ({ratio * 100:.4f}%)")
-        logging.info(f"Max diff: {max_diff:.6f}  Mean diff: {mean_diff:.6f}  Std: {std_diff:.6f}")
-        logging.info(f"rtol={rtol}, atol={atol}")
-        if n_out > 0:
-            logging.info(f"Max out-of-tol diff: {max_out:.6f}  Mean: {mean_out:.6f}")
-            n_show = min(max_outliers_display, n_out)
-            logging.info(f"\nTop-{n_show} outliers:")
-            _log_outlier_rows(idx, v1, v2, od, ord_, n_show)
-            if n_out > max_outliers_display:
-                logging.info(f"... {n_out - max_outliers_display} more not shown.")
-        logging.info(f"\nTensor match: {all_close}")
-        logging.info("=" * 60)
-
-    return all_close
-
-
-# ---------------------------------------------------------------------------
-# Test function
-# ---------------------------------------------------------------------------
-
-def test_engram_backward(device_id, batch_size=1, seq_len=8192, hidden_dim=1024, num_heads=1):
-    from experimental.ops_transformer.engram.engram_backward_impl import engram_backward_pto
-
-    torch.npu.set_device(device_id)
-    device = f'npu:{device_id}'
-    torch.manual_seed(42)
-    np.random.seed(42)
-
-    logging.info(
-        f"\n=== Engram Backward Test batch_size={batch_size} seq_len={seq_len} "
-        f"hidden_dim={hidden_dim} num_heads={num_heads} ==="
+    # Args in engram_backward_wrapper signature order
+    kernel_args = (
+        grad_output,
+        hidden_states, embeddings, key_proj_weights, value_proj_weights,
+        key_gamma, query_gamma,
+        cache["scores"].float(), cache["gates"].float(),
+        cache["keys"], cache["value"],
     )
+    kwargs = {"clamp_value": clamp_value, "eps": eps}
+    return kernel_args, kwargs
 
-    grad_out = torch.randn(batch_size, seq_len, num_heads, hidden_dim,
-                           dtype=torch.float32, device=device)
-    hidden_states = torch.randn(batch_size, seq_len, num_heads, hidden_dim,
-                                dtype=torch.float32, device=device)
-    embeddings = torch.randn(batch_size, seq_len, hidden_dim, dtype=torch.float32, device=device)
-    key_w = torch.rand(num_heads, hidden_dim, hidden_dim, dtype=torch.float32, device=device)
-    value_w = torch.rand(hidden_dim, hidden_dim, dtype=torch.float32, device=device)
-    key_gamma = torch.rand(num_heads, hidden_dim, dtype=torch.float32, device=device)
-    query_gamma = torch.rand(num_heads, hidden_dim, dtype=torch.float32, device=device)
-    key_lineared = torch.randn(batch_size, seq_len, num_heads, hidden_dim,
-                               dtype=torch.float32, device=device)
-    value_lineared = torch.randn(batch_size, seq_len, hidden_dim, dtype=torch.float32, device=device)
-    gate_back = torch.rand(batch_size, seq_len, num_heads, 1, dtype=torch.float32, device=device)
-    score_output = torch.randn(batch_size, seq_len, num_heads, 1,
-                               dtype=torch.float32, device=device)
 
-    inputs = [
-        grad_out, hidden_states, embeddings,
-        key_w, value_w, key_gamma, query_gamma,
-        key_lineared, value_lineared, gate_back, score_output,
-    ]
-    inputs_cloned = [t.clone() for t in inputs]
+# ═══════════════════════════════════════════════════════════════════
+# Core case runner: kernel vs benchmark vs FP64 golden
+# ═══════════════════════════════════════════════════════════════════
 
-    golden_outputs = engram_backward_golden(*inputs_cloned)
-    logging.info("golden done")
+def run_engram_backward_case(b, s, m_h=4, h=1280, de=512):
+    """Run one case. Returns dict of per-gradient PASS/FAIL booleans."""
+    device = _get_device()
 
-    goldens_cpu = [None] * len(inputs) + [g.cpu() for g in golden_outputs]
-    pypto.set_verify_golden_data(goldens=goldens_cpu)
+    kernel_args, kwargs = _make_case(device, b, s, m_h, h, de)
 
-    pto_outputs = engram_backward_pto(*inputs)
+    # Run kernel wrapper (scores / gates widened to FP32)
+    npu_grads = engram_backward_wrapper(*kernel_args, **kwargs)
 
-    output_names = [
-        "d_hidden", "d_embeddings", "d_key_w", "d_key_b",
-        "d_value_w", "d_value_b", "d_key_gamma",
-    ]
-    all_pass = True
-    for name, golden, pto in zip(output_names, golden_outputs, pto_outputs):
-        logging.info(f"--- {name}")
-        ok = detailed_tensor_compare(pto, golden, rtol=1e-3, atol=1e-3)
-        assert_allclose(
-            pto.cpu().float().numpy(),
-            golden.cpu().float().numpy(),
-            rtol=1e-3, atol=1e-3,
-            err_msg=f"Mismatch in {name}",
+    # Benchmark: same inputs at low-precision dtype
+    with torch.no_grad():
+        benchmark_grads = engram_backward_golden(*kernel_args, **kwargs)
+
+    # CPU FP64 golden: all tensor inputs widened
+    golden_args = tuple(arg.detach().cpu().to(torch.float64) for arg in kernel_args)
+    with torch.no_grad():
+        golden_grads = engram_backward_golden(*golden_args, **kwargs)
+
+    results = {}
+    for name, nt, bt, gt in zip(GRAD_NAMES, npu_grads, benchmark_grads, golden_grads):
+        result, mare, mere, rmse, small_value = _compare(nt, bt, gt)
+        log.info(
+            f"  {name:30s} MARE={mare:.4f} MERE={mere:.4f} "
+            f"RMSE={rmse:.4f} SmallVal={small_value:.4f} [{result}]"
         )
-        if not ok:
-            all_pass = False
-
-    assert all_pass, "One or more outputs failed precision check"
-    logging.info("=== PASSED ===")
+        results[name] = result == "PASS"
+    return results
 
 
-@pytest.mark.parametrize("batch_size,seq_len,hidden_dim,num_heads", [
-    (1, 8192, 1024, 1),
-    (1, 1024, 512, 1),
-    (1, 2048, 768, 1),
-])
-def test_engram_backward_pytest(batch_size, seq_len, hidden_dim, num_heads):
-    device_id = get_device_id()
-    test_engram_backward(device_id,
-                         batch_size=batch_size,
-                         seq_len=seq_len,
-                         hidden_dim=hidden_dim,
-                         num_heads=num_heads)
+# ═══════════════════════════════════════════════════════════════════
+# Test case matrix: (b, s, m_h, h, de)
+# ═══════════════════════════════════════════════════════════════════
 
+CASES = [
+    pytest.param(1, 4096, 4, 1536, 640, id="b1_s4096_mhc4_h1536_de640"),
+    pytest.param(1, 4099, 4, 2048, 1280, id="b1_s4099_mhc4_h2048_de1280"),
+]
+
+
+@pytest.mark.soc("910")
+@pytest.mark.parametrize("b,s,m_h,h,de", CASES)
+def test_engram_backward_pypto(b, s, m_h, h, de):
+    """Precision Standard 2.1 three-way comparison for all 6 gradients."""
+    results = run_engram_backward_case(b, s, m_h, h, de)
+    failed = [n for n, ok in results.items() if not ok]
+    assert not failed, f"Precision check failed for: {failed}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Direct execution entry point (no pytest needed)
+# ═══════════════════════════════════════════════════════════════════
 
 def main():
-    device_id = get_device_id()
-    torch.npu.set_device(device_id)
-    test_engram_backward(device_id, batch_size=1, seq_len=8192, hidden_dim=1024, num_heads=1)
+    is_acl = "--acl" in sys.argv
+    log.info(f"=== Running {'ACLGRAPH' if is_acl else 'DIRECT'} mode ===")
+    all_pass = True
+    for case in CASES:
+        b, s, m_h, h, de = case.values
+        name = case.id
+        try:
+            if is_acl:
+                results = run_engram_backward_acl_case(b, s, m_h, h, de)
+            else:
+                results = run_engram_backward_case(b, s, m_h, h, de)
+            ok = all(results.values())
+        except Exception as exc:
+            log.info("  EXCEPTION in %s: %s", name, exc)
+            ok = False
+        log.info("  %-30s %s", name, "PASS" if ok else "FAIL")
+        all_pass = all_pass and ok
+
+    return 0 if all_pass else 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ACLGraph 入图测试 (PyPTO + npugraph_ex)
+# 参考 pypto/python/tests/st/operator/pg/test_pg_lightning_indexer_prolog_quant_hif8.py
+# op 签名顺序对齐 engram_backward_wrapper:
+#   grad_out, hidden_states, embeddings, weight_key, weight_value,
+#   gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+#   clamp_value, eps
+# ═══════════════════════════════════════════════════════════════════
+pyptolib = torch.library.Library("pypto", "FRAGMENT")
+pyptolib.define(
+    "engram_backward_graph("
+    "Tensor grad_out, Tensor hidden_states, Tensor embeddings, "
+    "Tensor weight_key, Tensor weight_value, Tensor gamma_key, Tensor gamma_query, "
+    "Tensor score_cache, Tensor gate_cache, Tensor key_cache, Tensor value_cache, "
+    "float clamp_value, float eps"
+    ") -> (Tensor grad_hidden, Tensor grad_embeddings, Tensor grad_weight_key, "
+    "Tensor grad_weight_value, Tensor grad_gamma_key, Tensor grad_gamma_query)"
+)
+
+
+class EngramBackwardModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, *args):
+        (
+            grad_out, hidden_states, embeddings, weight_key, weight_value,
+            gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+            clamp_value, eps,
+        ) = args
+        return torch.ops.pypto.engram_backward_graph(
+            grad_out, hidden_states, embeddings, weight_key, weight_value,
+            gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+            clamp_value, eps,
+        )
+
+
+@torch.library.impl(pyptolib, "engram_backward_graph", "Meta")
+def _engram_backward_graph_meta(
+    grad_out, hidden_states, embeddings, weight_key, weight_value,
+    gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+    clamp_value, eps,
+):
+    b, s, m, h = hidden_states.shape
+    de = embeddings.shape[-1]
+    grad_hidden = torch.empty((b, s, m, h), dtype=hidden_states.dtype, device="meta")
+    grad_embeddings = torch.empty((b, s, de), dtype=hidden_states.dtype, device="meta")
+    grad_weight_key = torch.empty_like(weight_key, memory_format=torch.preserve_format)
+    grad_weight_value = torch.empty_like(weight_value, memory_format=torch.preserve_format)
+    grad_gamma_key = torch.empty_like(gamma_key, memory_format=torch.preserve_format)
+    grad_gamma_query = torch.empty_like(gamma_query, memory_format=torch.preserve_format)
+    return (grad_hidden, grad_embeddings, grad_weight_key,
+            grad_weight_value, grad_gamma_key, grad_gamma_query)
+
+
+def _engram_backward_graph_pypto(
+    grad_out, hidden_states, embeddings, weight_key, weight_value,
+    gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+    clamp_value, eps,
+):
+    """直接复用 engram_backward_wrapper (内部分配 output+workspace + 调 kernel + reshape)."""
+    if isinstance(grad_out, FakeTensor):
+        return _engram_backward_graph_meta(
+            grad_out, hidden_states, embeddings, weight_key, weight_value,
+            gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+            clamp_value, eps,
+        )
+    return engram_backward_wrapper(
+        grad_out, hidden_states, embeddings, weight_key, weight_value,
+        gamma_key, gamma_query, score_cache, gate_cache, key_cache, value_cache,
+        clamp_value, eps,
+    )
+
+
+try:
+    _engram_backward_graph_pypto = allow_in_graph(_engram_backward_graph_pypto)
+    torch.library.impl(pyptolib, "engram_backward_graph", "NPU")(_engram_backward_graph_pypto)
+except Exception as _e:
+    if "could not parse dispatch key: NPU" in str(_e):
+        log.warning("Skip NPU registration: torchair not installed")
+    else:
+        log.warning(f"Skip: Unexpected error: {_e}")
+
+
+def run_engram_backward_acl_case(b, s, m_h=4, h=1280, de=512):
+    """ACLGraph 入图: torch.compile(npugraph_ex), 同样三方精度对比 6 个梯度."""
+    device = _get_device()
+    torch_npu.npu.config.allow_internal_format = True
+
+    kernel_args, kwargs = _make_case(device, b, s, m_h, h, de)
+
+    # Benchmark + FP64 golden (与 run_engram_backward_case 同源)
+    with torch.no_grad():
+        benchmark_grads = engram_backward_golden(*kernel_args, **kwargs)
+    golden_args = tuple(arg.detach().cpu().to(torch.float64) for arg in kernel_args)
+    with torch.no_grad():
+        golden_grads = engram_backward_golden(*golden_args, **kwargs)
+
+    model = EngramBackwardModel()
+    compile_forward = torch.compile(model, fullgraph=True, backend="npugraph_ex", dynamic=False)
+    npu_grads = compile_forward(*kernel_args, kwargs["clamp_value"], kwargs["eps"])
+
+    results = {}
+    for name, nt, bt, gt in zip(GRAD_NAMES, npu_grads, benchmark_grads, golden_grads):
+        result, mare, mere, rmse, small_value = _compare(nt, bt, gt)
+        log.info(
+            f"  [ACL] {name:26s} MARE={mare:.4f} MERE={mere:.4f} "
+            f"RMSE={rmse:.4f} SmallVal={small_value:.4f} [{result}]"
+        )
+        results[name] = result == "PASS"
+    return results
+
+
+@pytest.mark.soc("910")
+@pytest.mark.parametrize("b,s,m_h,h,de", CASES)
+def test_engram_backward_acl(b, s, m_h, h, de):
+    """ACLGraph 入图精度测试 (三方对比)."""
+    results = run_engram_backward_acl_case(b, s, m_h, h, de)
+    failed = [n for n, ok in results.items() if not ok]
+    assert not failed, f"[ACL] Precision check failed for: {failed}"
+    log.info("[ACL_PRECISION_PASS]")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

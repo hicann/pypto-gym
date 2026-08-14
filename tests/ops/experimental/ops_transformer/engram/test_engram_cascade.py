@@ -8,17 +8,20 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Pytest harness for engram_backward kernel.
+"""Pytest harness for engram cascade kernel (forward → backward).
 
-Precision Standard 2.1 three-way comparison for all 6 gradient outputs:
-  * NPU PyPTO-Pro kernel output;
-  * NPU benchmark from the small torch implementation at kernel dtype;
-  * FP64 golden output from the same small implementation on CPU.
+Precision Standard 2.1 three-way comparison for all 6 gradients over the full
+forward → backward cascade. 三条路径全部走 torch.autograd 自动反向:
+  * NPU PyPTO kernel: EngramFunc (wrapper fwd + bwd) → autograd backward (被测);
+  * NPU benchmark / CPU golden: forward_with_cache + autograd backward.
+
+Three paths share the same BF16 inputs (no FP64 master), so the npu kernel and
+the golden see identical input values; 三路径都只写 forward, 反向由 autograd 触发.
 
 Run on NPU:
-    pytest test_engram_backward.py -v
+    pytest test_engram_cascade.py -v
 or direct:
-    python test_engram_backward.py
+    python test_engram_cascade.py
 """
 
 import logging
@@ -27,6 +30,9 @@ import sys
 
 import torch
 import pytest
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger(__name__)
 
 # Ensure we can import the golden reference that ships next to this test.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,24 +49,13 @@ while not os.path.isdir(os.path.join(_REPO_ROOT, "src")):
 _SRC_DIR = os.path.join(_REPO_ROOT, "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
-_GOLDEN_DIR = os.path.join(_REPO_ROOT, "tests", "ops", "experimental",
-"ops_transformer", "engram")
-if _GOLDEN_DIR not in sys.path:
-    sys.path.insert(0, _GOLDEN_DIR)
 
 from engram_golden import (
-    engram_backward_golden,
     engram_forward_with_cache,
     _get_device,
 )
 from compare import _compare
-from pypto_gym.ops.pypto_pro.experimental.ops_transformer.engram.engram_backward_impl import (
-    engram_backward_wrapper,
-)
-
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-log = logging.getLogger(__name__)
-
+from engram_autograd import engram_autograd
 
 GRAD_NAMES = [
     "grad_hidden_states",
@@ -77,7 +72,12 @@ GRAD_NAMES = [
 # ═══════════════════════════════════════════════════════════════════
 
 def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=42):
-    """Construct backward inputs: forward inputs → forward_with_cache → grad_output."""
+    """Construct cascade inputs: 6 forward inputs + grad_output, all BF16.
+
+    Three paths (npu / benchmark / golden) share this single BF16 draw — no
+    FP64 master — so the npu kernel and the golden see identical values.
+    gamma = 1; weights ×0.5 to prevent BF16 matmul overflow.
+    """
     torch.manual_seed(seed)
     hidden_states = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
     embeddings = torch.randn(b, s, de, dtype=dtype, device=device)
@@ -85,52 +85,43 @@ def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=4
     value_proj_weights = torch.randn(de, h, dtype=dtype, device=device) * 0.5
     key_gamma = torch.ones(m_h, h, dtype=dtype, device=device)
     query_gamma = torch.ones(m_h, h, dtype=dtype, device=device)
-
-    clamp_value, eps = 1e-6, 1e-6
-    with torch.no_grad():
-        _, cache = engram_forward_with_cache(
-            hidden_states, embeddings, key_proj_weights, value_proj_weights,
-            key_gamma, query_gamma, clamp_value, eps,
-        )
-
     grad_output = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
-
-    # Args in engram_backward_wrapper signature order
-    kernel_args = (
-        grad_output,
-        hidden_states, embeddings, key_proj_weights, value_proj_weights,
-        key_gamma, query_gamma,
-        cache["scores"].float(), cache["gates"].float(),
-        cache["keys"], cache["value"],
-    )
-    kwargs = {"clamp_value": clamp_value, "eps": eps}
-    return kernel_args, kwargs
+    return (hidden_states, embeddings, key_proj_weights, value_proj_weights,
+            key_gamma, query_gamma, grad_output)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Core case runner: kernel vs benchmark vs FP64 golden
+# Core case runner: kernel cascade vs autograd benchmark vs FP32 golden
 # ═══════════════════════════════════════════════════════════════════
 
-def run_engram_backward_case(b, s, m_h=4, h=1280, de=512):
-    """Run one case. Returns dict of per-gradient PASS/FAIL booleans."""
+def run_engram_cascade_case(b, s, m_h=4, h=1280, de=512):
+    """Run one cascade case. Returns dict of per-gradient PASS/FAIL booleans."""
     device = _get_device()
+    clamp_value, eps = 1e-6, 1e-6
 
-    kernel_args, kwargs = _make_case(device, b, s, m_h, h, de)
+    hidden, emb, kpw, vpw, kg, qg, grad_output = _make_case(device, b, s, m_h, h, de)
+    leaves = (hidden, emb, kpw, vpw, kg, qg)  # 顺序与 GRAD_NAMES 一一对应
 
-    # Run kernel wrapper (scores / gates widened to FP32)
-    npu_grads = engram_backward_wrapper(*kernel_args, **kwargs)
+    # npu: EngramFunc forward → autograd backward (被测级联, 自动微分)
+    npu_leaves = [t.clone().requires_grad_(True) for t in leaves]
+    npu_value_out = engram_autograd(*npu_leaves)[0]
+    npu_value_out.backward(grad_output.to(npu_value_out.dtype))
+    npu_grads = [t.grad for t in npu_leaves]
 
-    # Benchmark: same inputs at low-precision dtype
-    with torch.no_grad():
-        benchmark_grads = engram_backward_golden(*kernel_args, **kwargs)
+    # benchmark: forward_with_cache + autograd backward (NPU BF16)
+    bm_leaves = [t.clone().requires_grad_(True) for t in leaves]
+    bm_value_out, _ = engram_forward_with_cache(*bm_leaves, clamp_value, eps)
+    bm_value_out.backward(grad_output.to(bm_value_out.dtype))
+    bm_grads = [t.grad for t in bm_leaves]
 
-    # CPU FP64 golden: all tensor inputs widened
-    golden_args = tuple(arg.detach().cpu().to(torch.float64) for arg in kernel_args)
-    with torch.no_grad():
-        golden_grads = engram_backward_golden(*golden_args, **kwargs)
+    # golden: forward_with_cache + autograd backward (CPU FP32; 输入数值=同一份 BF16 升 FP32 表示)
+    g_leaves = [t.detach().cpu().to(torch.float32).requires_grad_(True) for t in leaves]
+    g_value_out, _ = engram_forward_with_cache(*g_leaves, clamp_value, eps)
+    g_value_out.backward(grad_output.detach().cpu().to(torch.float32))
+    g_grads = [t.grad for t in g_leaves]
 
     results = {}
-    for name, nt, bt, gt in zip(GRAD_NAMES, npu_grads, benchmark_grads, golden_grads):
+    for name, nt, bt, gt in zip(GRAD_NAMES, npu_grads, bm_grads, g_grads):
         result, mare, mere, rmse, small_value = _compare(nt, bt, gt)
         log.info(
             f"  {name:30s} MARE={mare:.4f} MERE={mere:.4f} "
@@ -141,23 +132,20 @@ def run_engram_backward_case(b, s, m_h=4, h=1280, de=512):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Test case matrix: (id, b, s, m_h, h, de)
+# Test case matrix: (b, s, m_h, h, de)
 # ═══════════════════════════════════════════════════════════════════
 
 CASES = [
-    pytest.param(1, 512, 4, 1280, 512, id="b1_s512_mhc4_hiddensize1280_dime512"),
-    pytest.param(16, 512, 4, 2560, 512, id="b16_s512_mhc4_hiddensize2560_dime512"),
-    pytest.param(1, 127, 4, 1280, 1024, id="b1_s127_mhc4_hiddensize1280_dime1024"),
-    pytest.param(1, 1023, 4, 2560, 1024, id="b1_s1023_mhc4_hiddensize2560_dime1024"),
-    pytest.param(5, 513, 16, 2560, 512, id="b5_s513_mhc16_hiddensize2560_dime512"),
+    pytest.param(1, 4096, 4, 1536, 640, id="b1_s4096_mhc4_h1536_de640"),
+    pytest.param(1, 4096, 4, 2048, 1280, id="b1_s4096_mhc4_h2048_de1280"),
 ]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("910")
 @pytest.mark.parametrize("b,s,m_h,h,de", CASES)
-def test_engram_backward_pypto_pro(b, s, m_h, h, de):
-    """Precision Standard 2.1 three-way comparison for all 6 gradients."""
-    results = run_engram_backward_case(b, s, m_h, h, de)
+def test_engram_cascade_pypto(b, s, m_h, h, de):
+    """Precision Standard 2.1 three-way comparison for all 6 gradients over the cascade."""
+    results = run_engram_cascade_case(b, s, m_h, h, de)
     failed = [n for n, ok in results.items() if not ok]
     assert not failed, f"Precision check failed for: {failed}"
 
@@ -172,7 +160,7 @@ def main():
         b, s, m_h, h, de = case.values
         name = case.id
         try:
-            results = run_engram_backward_case(b, s, m_h, h, de)
+            results = run_engram_cascade_case(b, s, m_h, h, de)
             ok = all(results.values())
         except Exception as exc:
             log.info("  EXCEPTION in %s: %s", name, exc)

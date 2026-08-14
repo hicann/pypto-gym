@@ -46,6 +46,10 @@ while not os.path.isdir(os.path.join(_REPO_ROOT, "src")):
 _SRC_DIR = os.path.join(_REPO_ROOT, "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
+_GOLDEN_DIR = os.path.join(_REPO_ROOT, "tests", "ops", "experimental",
+"ops_transformer", "engram")
+if _GOLDEN_DIR not in sys.path:
+    sys.path.insert(0, _GOLDEN_DIR)
 
 from engram_golden import (
     _get_device,
@@ -81,8 +85,7 @@ def _forward_outputs(hs, emb, kpw, vpw, kg, qg):
 # Input construction
 # ═══════════════════════════════════════════════════════════════════
 
-def _make_case(device, b, s, m_h=16, h=1280, de=512,
-               dtype=torch.bfloat16, seed=42):
+def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=42):
     """Construct forward inputs at the kernel input dtype."""
     torch.manual_seed(seed)
     hidden_states = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
@@ -102,10 +105,10 @@ def _make_case(device, b, s, m_h=16, h=1280, de=512,
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Core case runner: kernel vs benchmark vs FP32 golden
+# Core case runner: kernel vs benchmark vs FP64 golden
 # ═══════════════════════════════════════════════════════════════════
 
-def run_engram_forward_case(b, s, m_h=16, h=1280, de=512, seed=42):
+def run_engram_forward_case(b, s, m_h=4, h=1280, de=512, seed=42):
     """Run one case. Returns dict of per-output PASS/FAIL booleans."""
     device = _get_device()
 
@@ -120,7 +123,7 @@ def run_engram_forward_case(b, s, m_h=16, h=1280, de=512, seed=42):
 
     # CPU FP32 golden: all tensor inputs widened
     golden_args = tuple(
-        arg.detach().cpu().to(torch.float32)
+        arg.detach().cpu().to(torch.float64)
         for arg in inputs
     )
     with torch.no_grad():
