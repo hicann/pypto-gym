@@ -15,14 +15,14 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 ## 两条实现约束（设计阶段须落实）
 
-> 完整定义与证据门槛见 [PyPTO-Pro 两条性能强制](../../references/performance-constraints.md)。进入 R0 前必须读取；设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
+> 完整定义与证据门槛见`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`。进入 R0 前必须读取；设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
 > 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限见 `pypto-pro-material-explore` SKILL「实现选择规则」节。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
 > 2. Vector 选择按该规范写入 DESIGN.md §1：已选 KB 模板明确要求当前步骤使用 `pl.*` 时按模板，否则使用 `vf.*`；本阶段不运行候选实验。
 
 ## 知识库
 
-按 [`pypto-pro-op-kb/ROUTER.md`](../../pypto-pro-op-kb/ROUTER.md) 每次只读取一个与当前决策相关的
-参考。只有 [pattern selector](../../pypto-pro-op-kb/patterns/pattern-index.md) 标为
+按 [`pypto-pro-op-kb/ROUTER.md`](../pypto-pro-op-kb/ROUTER.md) 每次只读取一个与当前决策相关的
+参考。只有 [pattern selector](../pypto-pro-op-kb/patterns/pattern-index.md) 标为
 `validated skeleton` 的条目可作为代码起点；`conceptual only` 只能用于推导。
 
 >
@@ -64,14 +64,11 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：整体计算流可以分解为几个 Module？每个 Module 做什么？
 
-**流程**（按优先级）：
-
-1. **数据依赖**：需要前面 Module 的完整结果才能开始计算的，必须划分为不同 Module。例如跨 N-tile 的 softmax：必须先遍历所有 tile 算全局 max（Pass1），才能算 exp(x-max) 并累加全局 sum（Pass2），最后做除法（Pass3）。⚠️ **归约轴可能超单 tile 时，须采用多 Module/多 tile 归约（online/两遍法）以保证泛化性——归约轴超出单 tile 时仍须正确工作**。多 tile 归约的具体状态更新方式随算子而异（softmax 的 running max/sum、layernorm 的 running mean/var 等），以对应 golden 与官方指定算子为准
-2. **Section 分隔**：Cube 和 Vector 使用不同引擎，必须划分到不同 Module。Section 间需明确数据传递方式（via GM workspace）
+> 📌 **权威依据（必读，官方标准）**：读取[Module划分](references/module_partitioning.md)。Module划分分两步：先按数据依赖确定边界，再按Section边界继续拆分。
 
 **输出**：
 
-- Module 列表（Phase1/2/3...），每个标注：目的、输入依赖、输出、涉及的 Section
+- Module 列表（Module 1/2/3...），每个标注：目的、输入依赖、输出、涉及的 Section
 - 如果只有一个 Module，标注"单 Module"并说明为什么不需要拆分
 - **`module_interfaces.yaml` 契约**（机器可读，single source of truth）——产出到 `custom/<op>/module_interfaces.yaml`，包含以下字段：
   - `module_count`：Module 总数
@@ -89,24 +86,17 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：每个数学步骤具体用哪些 API？在 R0 的 Module 划分基础上，将 API 调用链细化到 Module 内部每一步操作。
 
-**流程**：
+> 📌 **权威依据（必读，官方标准）**：读取[API映射与Tile规划](references/api_mapping_and_tile_planning.md)中的“API映射”一节。数学步骤拆分、Cube/Vector执行域、完整调用链和数值安全边界按该节执行；单个接口的签名和约束以对应API参考页为准。Vector实现层级按本Skill“两条实现约束”中的KB模板选择规则确定。
 
-1. **提取初步映射**：从 EXPLORE_REPORT.md §3 获取已确认的 API 映射。
-2. **逐个核实 API 文档**（通过 `PRO_MATERIAL_INDEX.md` §A 定位路径），确认并记录：
-   - **功能**：API 做什么、语义是否与数学步骤完全匹配
-   - **签名**：参数顺序、位置参数 vs 关键字参数（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
-   - **使用约束**：dtype 限制、shape 要求、layout 要求、MemorySpace 要求、tmp tile 是否可与输入重叠等（以 API 文档原文为准，EXPLORE_REPORT §3.3 已汇总部分）
-   - **特性特点**：in-place 支持、尾块行为、与 `set_validshape` 的交互等
-   - **数值安全边界**（下列两类之一成立时强制）：分析该 API 在目标 dtype 下的溢出边界，并在 §1 数值安全边界栏记录"输入范围 → 是否溢出 → 防护措施"。具体行为以所选 tile-op 或 vf API 文档为准
-     - **(a) 超越/非线性函数**：API 链含 `exp`/`log`/`sqrt`/`reciprocal`/`tanh` 等。例如 fp16 max≈65504，exp(11.09)≈65504，输入 >11 即溢出为 +inf，后续 inf/inf → NaN 传播。防护措施通常是代数变换（如在 exp 前减去行最大值）
-     - **(b) 量级增长类运算处于窄 dtype（fp16/bf16）**：平方、同量级相乘、以及沿长轴的累加/归约。这类运算的**中间值**可以溢出，即使每个输入元素和最终数学结果都在范围内。判据是拿 case 声明的 `value_range` 与归约长度算出中间值量级上界，与该 dtype 的最大值相比——不要凭"输入没超范围"就跳过。防护措施是在**产生增长的那一步之前**用 `vf.astype` 升到 fp32（不是在归约之前），整条链保持 fp32，写回时再降回。机制、顺序陷阱与"缩放因子为何不能替代"见 [`pypto-pro-op-kb/constraints/precision.md`](../../pypto-pro-op-kb/constraints/precision.md) 的"Widening a narrow-dtype reduction"节
-3. 在每个 Module 内部，将计算步骤展开为具体的 API 序列
-4. 标注每个 API 的输入 tile、输出 tile（供 R2 tile 规划消费）
-5. 按 DESIGN 模板为每个 Vector 步骤冻结唯一 `vector_selection`；`tile_op` 必须引用 `KB_SELECTION.json` 已选中模板的明确要求，否则冻结为 `vf`
+**DESIGN.md §1须记录的设计内容**：
+- 按R0 Module划分展开的完整API调用链，包括数据搬运、dtype/layout转换、广播、临时空间和尾块操作
+- 每个API的输入、输出及临时Tile，以及dtype、shape、MemorySpace、layout和地址重叠限制
+- 每个Vector步骤唯一的`vector_selection`；已选KB模板明确要求使用`pl.*`时选择`tile_op`，否则选择`vf`
+- 涉及非线性函数、窄dtype量级增长或长轴归约时的数值安全边界和处理方案
 
-**注意**：本轮只确定计算 API，不涉及同步 API。
+EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后再确定调用链；接口无法满足算子语义时，回退本轮重新选择API。同步API在R6设计。
 
-**输出**：Module 级 API 调用序列（伪代码形式）
+**输出**：DESIGN.md §1（引用`api_mapping_and_tile_planning.md`，给出Module级API调用序列和逻辑Tile清单）
 
 ---
 
@@ -114,25 +104,16 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：需要哪些 tile？每个 tile 的 shape、dtype、layout 是什么？
 
-**流程**：
+> 📌 **权威依据（必读，官方标准）**：读取[API映射与Tile规划](references/api_mapping_and_tile_planning.md)中的“Tile规划”一节。Tile的shape、dtype、MemorySpace、layout、有效形状、缓冲深度以及`make_tile`/`make_tile_group`的使用范围全部照该节执行，与经验推断冲突时以该节为准。
 
-0. 按模板 §2.1 的格式填写关键常量。列出所有 tile 尺寸（TS、TD 等）和派生常量（SCALE 等）。tile 尺寸是编译期对齐值，运行时通过 R7 设计的策略处理尾块场景（维度 < tile、整除、N+1 块且尾块不满）。公式常量若依赖实际维度值而非 tile 尺寸，应使用实际值
-1. 根据 R1 的 API 序列，列出所有涉及的 tile
-2. 对每个 tile，确定：
-   - **shape**：由 API 操作数要求决定
-   - **dtype**：由用户需求决定
-   - **内存空间（`target_memory`）**：由该 tile 所参与的 API 决定，此列直接决定 R3 的分节归属
-   - **layout**：默认按内存空间取，具体约束以 EXPLORE_REPORT §3.3 / API 文档为准。
-   - **大小**：`prod(shape) × dtype_bytes`
+**DESIGN.md §2须记录的设计内容**：
+- 关键常量表，包括所有Tile尺寸和公式使用的派生常量
+- R1调用链中全部输入、输出、跨迭代状态和临时Tile的属性表：变量名、用途、shape、dtype、MemorySpace、layout、`valid_shape`、缓冲数和单槽字节数
+- 每个Tile使用`make_tile`或`make_tile_group`的结论；缓冲槽位数量按流水重叠关系确定
+- TileGroup的`depth`、逐Tile mutex配置和访问方式；采用多ID时写清每个Tile对应的ID组，不配置`mutex_ids`时记录需要手工插入的核内跨Pipe同步；采用`group[i]`时记录下标表达式和`[0, depth)`有界依据
+- Tile总占用的初步估算；容量不足时回查Tile尺寸、缓冲数量和API临时空间，实际地址与逐空间容量在R3确认
 
-**输出**：Tile 属性表：
-
-| 用途 | 变量名 | shape | dtype | 内存空间 | layout | 大小 | 备注 |
-|------|--------|-------|-------|---------|--------|------|------|
-| 输入暂存 | `tile_a` | `[64,128]` | FP32 | UB(Vec) | `—` | 32768 | ... |
-| ... | ... | ... | ... | ... | ... | ... | ... |
-
-> 内存空间取 `Vec`(UB)/`Mat`(L1)/`Left`(L0A)/`Right`(L0B)/`Acc`(L0C)；`—` 表示 layout 列留空即用该内存空间的默认布局。
+**输出**：DESIGN.md §2（引用`api_mapping_and_tile_planning.md`，填写关键常量和Tile属性表）
 
 ---
 
@@ -173,20 +154,14 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 ### R4：循环与 Section 结构
 
-**核心问题**：本算子的循环嵌套、section 划分、SPMD 原语获取应如何组织？
+**核心问题**：R0确定的Module如何放入Section，循环嵌套、跨Tile状态和分核信息应如何组织？
 
-> 各算子在循环与 Section 结构上差异极大（单/多 section、单/多 Module、是否含 cross_core 流水、SPMD 原语位置等），不存在通用设计方法。**必须**以官方指定算子的实际写法为主要参考，不自行臆造。
-
-**流程**：
-
-1. **首选参考 EXPLORE_REPORT.md §4 定位的有参考价值的样例推荐**：研读该样例的循环嵌套、section 声明、SPMD 原语获取位置等写法，作为本算子结构的主要参考
-2. **参考范围扩展**：若 §4 定位的样例与本算子结构差异较大或细节不足，可在 `../pypto-pro-material-explore/references/official_samples.md` 清单中的其他官方指定算子中寻找结构更相似的样例参考
-3. **基于样例确定本算子结构**：综合 R0 Module 划分、R1 API 序列、R3 空间规划，参照样例写法确定本算子的 section 划分、循环嵌套、SPMD 原语位置
-4. 编译期常量块（TS、TD、SCALE 等）须置于 `@pl.jit` 装饰器之前（模块级）；具体声明位置的编码规范由 develop skill 负责
+> 📌 **权威依据（必读）**：读取[循环与Section结构设计](references/loop_design.md)。R4不重新划分Module，负责把R0的Module落到具体Section代码结构，并确定结果单元、循环层次、跨Tile状态生命周期、动态循环上界和分核信息的获取位置。
 
 **输出**：填入模板 §4：
 - 参考样例路径与可复用结构点
-- 本算子的 section 划分、循环嵌套、SPMD 原语位置
+- 本算子的Section代码结构、结果单元、跨Tile状态生命周期、动态循环上界、各Module内的循环嵌套和分核信息的获取位置
+- 引用`loop_design.md`，说明采用的Section和循环组织方式
 
 ---
 
@@ -194,7 +169,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：work item 如何分配到各物理核？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
 
 **本轮须在 DESIGN.md §5 落实的产出**：
 - 分核方案
@@ -220,31 +195,21 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 ### R6：核间同步（cross_core）
 
-**核心问题**：若算子含 Cube↔Vector 跨核数据传递，需手动插入哪些 `set_cross_core`/`wait_cross_core` 同步点？
+**核心问题**：Cube与Vector之间，或不同Block/subblock之间存在数据依赖时，是否需要cross_core，事件应如何成对放置？
 
-> 当前 PyPTO-Pro 框架下，核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，**无需设计阶段关心**。**唯一需要手动插入同步的是 cross_core**——即同物理核的 Cube↔Vector sub-block 间通过片上共享 buffer（L1/Mat 或 UB/Vec）传递数据时的 `set_cross_core`/`wait_cross_core`。同步分工与命名空间（`mutex_id` vs `event_id` 独立）见 `../../references/performance-constraints.md`「强制 1」的同步分工表。
->
-> **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时才需要 cross_core 同步。单 section 算子（纯 vec / 纯 cube）无跨核数据传递，本节填"不涉及 cross_core"即可。
+> 📌 **权威依据（必读，官方标准）**：读取[跨核同步](references/cross_core_synchronization.md)。是否需要cross_core、pipe与`sync_mode`、`event_id`规划、正反向事件和set/wait配对全部照该文档执行，与经验推断或样例片段冲突时以该文档为准。
 
-**⚠️ cross_core 同步关键规则（必读，违反将导致编译失败或运行错误）**：
+**DESIGN.md §6须记录的设计内容**：
+- 是否涉及cross_core；Cube与Vector之间无数据依赖，并且不存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`或`UNICAST_BLOCK`处理的依赖时，填写“不涉及cross_core”。不能仅凭Section数量判定
+- 生产者、消费者和共享数据；共享数据是多槽TileGroup时，补充缓冲深度和两侧的槽位访问表达式
+- 手动同步方案的同步点表：方向、共享缓冲、槽位表达式、set/wait位置、pipe、`sync_mode`和`event_id`
+- 循环复用缓冲时的正向与反向同步，以及最后一次消费完成后生产者侧的等待位置
 
-> **必读参考样例**：`$PYPTO_DEVKIT_DIR/pro_ops/` 中的 `lightning_indexer` 系列（如 `test_quant_lightning_indexer_vf.py`）是 cube↔vec 双向跨核同步的官方验证样例，包含完整的 `set_cross_core`/`wait_cross_core` 用法。设计 cross_core 同步时**必须**参照该样例。
+**完成设计后校验**：先核对生产者、消费者和READY/RELEASE是否按同一表达式选择物理槽位，再逐槽位、逐轮次核对set/wait是否一一对应。检查动态下标是否始终落在`[0, depth)`，以及零次、一次、整除和尾块分支中的事件是否都能配对，并确认生产者结束前已经等待最后一次消费完成。任一项不满足时，重新设计本轮同步方案。
 
-1. **pipe 类型规则**：cube section 使用 `pipe=pl.PipeType.FIX`，vector section 使用 `pipe=pl.PipeType.V`。
-2. **`set_cross_core`/`wait_cross_core` 与 `set_intra_block`/`wait_intra_block` 的关系**：`set_cross_core`/`wait_cross_core` 是用户编写的 API；在 a5 平台上，编译器会自动将 cube↔vector 的 `set_cross_core`/`wait_cross_core` 编译为底层的 `set_intra_block`/`wait_intra_block`（因为 cube↔vector 在同一 AI core block 内）。**用户不需要也不应该直接调用 `set_intra_block`/`wait_intra_block`**——始终使用 `set_cross_core`/`wait_cross_core`
-3. **event_id 管理**：`auto_mutex` 的 `mutex_id` 与 `cross_core` 的 `event_id` 是**独立的命名空间**，可以共存（部分数值重叠不影响正确性——框架会正确区分）。`event_id` 取值范围 `[0, 16)`，多组流水各占不重叠区段
+EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不能代替权威文档中的同步规则。
 
-**流程**：
-
-1. **确认是否涉及 cross_core**：由 R0 Module 划分判断。无跨 section 数据流 → 填"不涉及"，结束本轮
-2. **参照官方指定算子确定同步方案**：涉及 cross_core 时，研读 EXPLORE_REPORT §4 定位的官方指定算子（如 FA、lightning_indexer 类）中 `set_cross_core`/`wait_cross_core` 的实际插入位置、pipe 类型、event_id 分配，参照其写法确定本算子的同步方案。
-3. **event_id 隔离**：多组流水各占一段不重叠的 event_id 范围（`[0, 16)`），具体隔离方案以官方指定算子的实际用法为准
-
-**输出**：填入模板 §6：
-- 是否涉及 cross_core（不涉及则填"不涉及"并结束）
-- 涉及时：cross_core 同步点表（位置 / set 或 wait / event_id）+ event_id 分配表
-
-> 同步点的具体插入位置与参数以官方指定算子原文为准，不臆造。
+**输出**：DESIGN.md §6（引用`cross_core_synchronization.md`，填写同步点表和event_id分配表）
 
 ---
 
@@ -252,9 +217,9 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
-> 📌 **权威依据（必读，一切以此为准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**物理形状固定（永远满块可复用），有效形状随位置变化**。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**Tile的物理shape固定，有效shape随当前块变化**。
 
-**本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的循环与 Section 结构（填入 §7 尾块处理方案）。
+**本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的循环与Section结构中（填入 §7 尾块处理方案）。
 
 **输出**：DESIGN.md §7（引用 tail_block_handling.md 落地尾块代码）
 
@@ -296,7 +261,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 | 维度 | 检查项 | 结果 | 不通过时的处理 |
 |------|--------|------|----------------|
 | **准确性** | API 调用链是否完整实现了数学公式的每一步 | 回到 R1 补充 |
-| | §4 已参照官方样例确定循环与 Section 结构（含参考样例路径与结构说明） | 回到 R4 补充 |
+| | §4 已参照官方样例确定循环结构（含参考样例路径与结构说明） | 回到 R4 补充 |
 | | 数据依赖是否正确（Module 顺序、sync 位置） | 回到 R0 或 R4 调整 |
 | | dtype 选择是否能保证精度（如 matmul 累加用 FP32） | 回到 R2 调整 |
 | | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设合适的 `layout` | 回到 R2 补 layout |
@@ -306,11 +271,11 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 | | 超越函数（exp/log/sqrt 等）在目标 dtype 范围内无溢出（§1 数值安全边界已分析） | 回到 R1 补溢出防护 |
 | | 窄 dtype（fp16/bf16）下的平方、同量级相乘、长轴累加，其**中间值**量级上界在该 dtype 范围内；若不在，升位宽的 `vf.astype` 已落在产生增长的那一步之前而非归约之前（§1 数值安全边界已分析） | 回到 R1 调整 cast 位置 / 回到 R2 改累加 dtype |
 | | 跨 tile 状态是否正确初始化和持久化 | 回到 R0 或 R1 修正 |
-| | cross_core 同步方案是否正确（涉及跨 section 时）：同步点位置与 event_id 隔离是否参照官方指定算子 | 回到 R6 修正 |
+| | cross_core 同步方案是否正确（存在跨执行域或跨Block/subblock依赖时）：共享TileGroup槽位访问、同步点位置与 event_id 隔离是否参照权威文档和官方指定算子 | 回到 R6 修正 |
 | **一致性** | R0-R7 各轮输出是否存在矛盾（如 API 需要的 tile 在 R2 中缺失） | 回溯到矛盾产生的轮次修正 |
 | | 证据链是否完整（每个决策都有来源） | 补充缺失的文档引用或官方指定算子路径 |
 | | 每个内存空间（UB/L1/L0A/L0B/L0C）的 tile 总用量分别不超过各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | 回到 R3 重排地址 / R2 缩 tile |
-| **条件性检查** | 若 §6 填"不涉及 cross_core"，确认该算子确实无跨 section 数据传递 | 回到 R0 重新评估 |
+| **条件性检查** | 若 §6 填“不涉及cross_core”，确认不存在Cube↔Vector或跨Block/subblock的数据依赖 | 回到 R0 重新评估 |
 
 **迭代规则**：
 - 发现问题数 ≤ 3，修复后重新走 R8
@@ -386,7 +351,7 @@ verifier 裁定。
 > wrapper 只做参数校验、输出分配、一次 kernel 启动。只有目标框架确实无法迁移且
 > Stage 3 已记录原因、证据、预期代价预算和 Stage 4 测量方法的操作，才可作为明确例外。**
 
-必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)，
+必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md)，
 它是 `required_constraints` 中的全局约束，不占用可选 pattern 名额。
 
 ### 设计阶段必须完成的事

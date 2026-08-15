@@ -21,6 +21,8 @@
 
 ## §0 Module 划分（R0 输出）
 
+> 依据[Module划分](../references/module_partitioning.md)，先按数据依赖确定Module边界，再按Section边界继续拆分。R0记录每个Module的Section归属，具体Section代码结构在§4确定。
+
 ### 维度契约
 
 - **kernel 处理维度**：{如 2D [M,N]}
@@ -41,14 +43,14 @@
 
 ### 划分依据
 
-{数据依赖分析 + Section 分隔判断}
+{数据依赖边界 + 各步骤的Section归属 + 按Section边界继续拆分的结果；量化场景写明使用V流水还是FIX路径，以及Scaling参数缓冲的准备位置；若因UB等片上空间不足继续拆分，写明超限对象和拆分位置}
 
 ### Module 列表
 
 | Module | 目的 | 输入依赖 | 输出 | Section |
 |-------|------|---------|------|---------|
-| Phase1 | {purpose} | {dependency} | {output} | {section_vector / section_cube} |
-| Phase2 | ... | ... | ... | ... |
+| Module 1 | {purpose} | {dependency} | {output} | {section_vector / section_cube} |
+| Module 2 | ... | ... | ... | ... |
 
 > 若只有一个 Module，标注"单 Module"并说明为什么不需要拆分。
 
@@ -57,19 +59,19 @@
 > 含归约算子时必填；无归约时填"不涉及归约"。
 
 - **归约轴是否可能超单 tile**：{是 / 否，依据 SPEC 动态轴范围}
-- **是否采用多 tile 归约（online / 两遍法）**：{是，方案=... / 否，单 tile 装得下，依据=...}
+- **多Tile归约方案**：{常规多遍 / 在线统计加输出两遍 / 其他；逐遍写明遍历范围、状态和依据；单Tile装得下则写“不涉及”}
 
 ### Module 级数据流
 
 ```
-{Module 间的数据流向示意，标注 via GM workspace}
+{Module 间的数据流向示意；标注中间数据所在空间、传递API，以及Cube/Vector之间的同步方式}
 ```
 
 ---
 
 ## §1 API 映射（R1 输出）
 
-> 按 [Vector 选择规范](../../../references/performance-constraints.md#强制-2vector-数值计算用-vf-手写)填写。每个 Vector 步骤冻结唯一实现：
+> 按`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`中的“强制2：Vector默认使用VF”填写。每个Vector步骤冻结唯一实现：
 >
 > ```
 > vector_selection:
@@ -82,7 +84,7 @@
 >   applicable_conditions: <dtype/shape/layout/算子条件>
 > ```
 >
-### Phase1 API 调用序列
+### Module 1 API 调用序列
 
 ```
 Module 1 — {名称}:
@@ -93,7 +95,7 @@ Module 1 — {名称}:
 
 {每个 API 标注来源（API 文档路径或 EXPLORE_REPORT §4 定位的官方指定算子）}
 
-### Phase2 API 调用序列
+### Module 2 API 调用序列
 
 ```
 ...
@@ -134,7 +136,15 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 | 输入暂存 | `tile_a` | `[64,128]` | FP32 | UB(Vec) | `—` | 32768 | ... |
 | ... | ... | ... | ... | {Vec/Mat/Left/Right/Acc} | {— 或具体 layout} | ... | {...} |
 
-> 内存空间取 `Vec`(UB)/`Mat`(L1)/`Left`(L0A)/`Right`(L0B)/`Acc`(L0C)；`—` 表示默认布局（`Vec` 为行优先 ND，无需显式指定）；具体 layout 值以 API 文档和 EXPLORE_REPORT §3.3 为准。
+> 内存空间取 `Vec`(UB)/`Mat`(L1)/`Left`(L0A)/`Right`(L0B)/`Acc`(L0C)；`—` 表示未显式指定layout。`Vec`没有统一的默认layout，是否需要填写以及允许哪些值由具体API决定；其他空间的默认值也要按目标架构核对`TileType.md`。
+
+### TileGroup槽位访问表
+
+> 所有TileGroup都记录`depth`和逐Tile mutex配置，避免漏掉单Tile多ID以及不配置mutex元数据的情况。运行时下标不会自动取模，采用`group[i]`时必须给出`i`始终位于`[0, depth)`的依据。
+
+| TileGroup | depth | 每个Tile的mutex ID | 访问方式 | 槽位表达式 | 同步及有界/游标说明 |
+|---|---:|---|---|---|---|
+| `{group_name}` | {1/2/N} | {如 `[[0, 1], [2, 3]]` / 不配置} | {`current()` / `next()` / `group[i]`} | {如 `task_idx % 2`} | {多ID用途；不配置时的手工同步；下标范围；与`next()`混用时的游标状态} |
 
 ### tile_dims stride 注意事项
 
@@ -178,25 +188,29 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 |------|------|-----------------|
 | buffer 数 | {1 / 2 / ...} | {tile 名单} |
 | PONG 地址 | {无 / 预留} | {地址范围} |
+| 槽位访问 | {`next()` / `group[slot_idx]`} | {`slot_idx`的定义与范围} |
 
 ---
 
 ## §4 循环与 Section 结构（R4 输出）
 
-> 各算子在循环与 Section 结构上差异极大（单/多 section、单/多 Module、是否含 cross_core 流水、SPMD 原语位置等），不存在通用设计方法。**必须**参照官方指定算子的实际写法确定本算子结构，不自行臆造。
+> 依据[循环与Section结构设计](../references/loop_design.md)，把§0确定的Module放入具体Section代码结构，再组织循环和跨Tile状态，并确定分核信息的获取位置。若API数据通路与§0记录的Section归属冲突，回到R0修正Module划分。
 
 ### 参考样例
 
 - **主要参考样例**: {EXPLORE_REPORT.md §4 定位的官方指定算子路径}
-- **可复用结构点**: {该样例中可复用的循环 / section / SPMD 写法}
+- **可复用结构点**: {该样例中可复用的Section / 循环 / 分核信息获取方式}
 - **补充参考**（如有）: {`../pypto-pro-material-explore/references/official_samples.md` 清单中其他参考样例路径及参考点}
 
 ### 本算子结构说明
 
-- **section 划分**: {section_vector / section_cube / 多 section 及位置关系}
+- **Module / Section对应关系**: {每个Module放在哪个Section；相邻同域Module是否共用一个Section}
+- **结果单元**: {一次完整计算产出的输出范围；如一个输出Tile、一个Softmax行块或一个Matmul `[M_tile, N_tile]`块}
+- **跨Tile状态生命周期**: {状态名称、初始化位置、更新方式和使用位置；不涉及则填“不涉及”}
+- **Section结构**: {section_vector / section_cube的数量、顺序，以及循环相对Section的位置}
 - **循环嵌套**: {参照样例说明 M-tile / N-tile 等循环嵌套关系}
-- **SPMD 原语位置**: {pl.get_block_idx() / pl.get_block_num() 获取位置}
-- **编译期常量位置**: {TS、TD、SCALE 等置于 @pl.jit 装饰器前模块级}
+- **动态循环上界**: {如 `n_tiles = (N + TILE_N - 1) // TILE_N`；静态shape则写固定值及来源}
+- **分核信息**: {核编号、核数及其获取位置；混合Kernel的Vector Section还要写明AIV核数的计算方式}
 
 > 同步点见 §6（R6），尾块处理见 §7（R7）。
 
@@ -204,51 +218,60 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ## §5 分核策略（R5 输出）
 
-> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`（分核方式 / 负载均衡 / 核数设置 / tiling 传参一切以此为准）。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`（分核方式、负载均衡、核数设置和tiling传参以此为准）。
 
 ### 分核方式
 
 - **方案**: strided loop —— {扁平切 `pl.range(core_id, m_tiles*n_tiles, num_cores)` / 二维切 外 `range(core_id, m_tiles, num_cores)`+内 `range(0, n_tiles, 1)`} + {选择理由}
-- **host 侧核数**: `num_cores = min(get_platform_info().core_num, total_tiles)`
+- **host 侧 block_dim**: {仅Vector Kernel使用`vector_core_num`，Cube或混合Kernel使用`core_num`}，`block_dim = min(max_blocks, total_tasks)`
 
 ---
 
 ## §6 核间同步（R6 输出）
 
-> 核内同步（pipe 间依赖、buffer 互斥等）由 `auto_mutex` 自动管理，无需在此记录。**仅 cross_core**（Cube↔Vector sub-block 间跨核数据传递）需手动插入 `set_cross_core`/`wait_cross_core`。同步分工见 `../../../references/performance-constraints.md`「强制 1」同步分工表。
+> 带非空`mutex_ids`的TileGroup由`auto_mutex`管理核内跨Pipe依赖；未配置`mutex_ids`时，按§2记录的数据路径手工插入核内同步。两种方式都不能替代Cube与Vector之间的cross_core同步。跨执行域依赖使用`set_cross_core`/`wait_cross_core`，具体规则见[跨核同步](../references/cross_core_synchronization.md)。
 >
-> **条件性**：仅当 R0 Module 划分含多 section 且 section 间有数据流时填写。单 section 算子（纯 vec / 纯 cube）填"不涉及 cross_core"即可。
+> **条件性**：Cube与Vector之间有数据依赖，或存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`、`UNICAST_BLOCK`处理的依赖时填写；否则填“不涉及cross_core”。Section数量本身不是判断依据。
 
 ### cross_core 涉及判定
 
-- **是否涉及 cross_core**: {是 / 不涉及（单 section 算子）}
-- **依据**: {R0 Module 划分中是否含跨 section 数据流}
+- **是否涉及 cross_core**: {是 / 不涉及}
+- **依据**: {依赖是否跨Cube/Vector执行域或跨Block/subblock；若跨Block/subblock，说明为何不能用普通核内同步或算法重构处理}
 
 > 若"不涉及"，以下各表填"不涉及"或省略。
 
-### cross_core 同步点
+### 共享数据与槽位映射
 
-> 同步点的插入位置与参数以官方指定算子（EXPLORE_REPORT §4 定位）的实际写法为准，不臆造。
+| 共享数据/TileGroup | depth或槽位数 | 生产者/Section | 消费者/Section | 生产者访问 | 消费者访问 | 槽位一致性依据 |
+|---|---:|---|---|---|---|---|
+| `{group_name}` | {2/N} | {Cube/...} | {Vector/...} | {`group[slot_idx]`} | {`group[slot_idx]`} | {`slot_idx = task_idx % depth`及范围证明} |
+| `{workspace_name}` | {1/N} | {Cube/...} | {Vector/...} | {地址/offset表达式} | {地址/offset表达式} | {同一逻辑块映射到同一地址} |
 
-| 位置 | 同步 API | 参数 | produce/consume | 参考来源 |
-|------|---------|------|----------------|---------|
-| {数据产生后} | `pl.system.set_cross_core(...)` | `pipe=..., event_id=...` | produce | {EXPLORE_REPORT §4 定位的官方指定算子} |
-| {数据使用前} | `pl.system.wait_cross_core(...)` | `pipe=..., event_id=...` | consume | {EXPLORE_REPORT §4 定位的官方指定算子} |
+> `group[i]`不读取也不推进轮转游标。若一侧或两侧使用`next()`，必须说明初始游标、调用次数和分支路径为何仍选中同一物理槽位。
+
+### 同步点
+
+> 逐方向、逐槽位记录READY/RELEASE；同步点规则以参考文档为准，官方指定算子用于核对完整调用方式。
+
+| 事件组 | 共享缓冲/槽位表达式 | 方向 | set位置/pipe | wait位置/pipe | `sync_mode` | `event_id` | 复用条件 |
+|---|---|---|---|---|---|---:|---|
+| `{READY}` | `{group[slot_idx]}` | {生产者→消费者} | {最后一次写后；pipe按紧邻的写操作确定} | {第一次读前；pipe按紧邻的读操作确定} | {INTRA_BLOCK/...} | {ID或表达式} | {旧信号已被wait消费} |
+| `{RELEASE}` | `{group[slot_idx]}` | {消费者→生产者} | {最后一次读后；pipe按紧邻的读操作确定} | {下一次覆盖前；pipe按紧邻的写操作确定} | {INTRA_BLOCK/...} | {ID或表达式} | {旧信号已被wait消费} |
 
 ### event_id 分配表
 
-> event_id 取值范围为 `[0, 16)`。各流水组占不重叠区段，隔离方案以官方指定算子实际用法为准。
+> event_id取值范围为`[0, 16)`。记录ID对应的数据方向和物理槽位，动态表达式的全部运行时取值也必须在该范围内。
 
-| 流水组 | event_id 范围 | 用途 | 参考来源 |
-|--------|--------------|------|---------|
-| {流水组1} | {如 [0, 4)} | {说明} | {EXPLORE_REPORT §4 定位的官方指定算子} |
-| {流水组2} | {如 [4, 8)} | ... | ... |
+| 流水组 | 方向 | Tile槽位 | event_id范围或表达式 | 复用条件 |
+|---|---|---|---|---|
+| {流水组1} | {Cube→Vector} | {`slot_idx`} | {`READY_BASE + slot_idx`} | {对应wait已消费} |
+| {流水组1} | {Vector→Cube} | {`slot_idx`} | {`RELEASE_BASE + slot_idx`} | {对应wait已消费} |
 
 ---
 
 ## §7 尾块处理（R7 输出）
 
-> 📌 权威依据：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/programming_guide/programming_model/AI_Core_SIMD_programming/tile_based_python_programming/tail_block_handling.md`（尾块的完整机制——一切以此为准）。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`（尾块处理以此为准）。
 
 ### 尾块处理方案
 
@@ -265,7 +288,8 @@ valid_n = pl.min(N - n_off, TD)
 pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 ```
 
-- **是否需要尾块填充**: {逐元素→否 / 归约或 matmul→是，具体填充方式见 tail_block_handling.md}
+- **compact**: {`None`/`1`/`2`，按数据通路和API约束说明依据；普通Vec ND尾块通常不需要`compact`}
+- **无效区域是否会被读取**: {否→不填充；是→按计算语义选择`pad`并执行`fillpad`；矩阵尾块是否填充由具体数据路径和API约束决定}
 
 ---
 
@@ -292,7 +316,7 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 | 检查项 | 结果 | 证据 |
 |--------|------|------|
 | API 调用链完整覆盖数学公式 | ✅ / ❌ | {映射验证} |
-| §4 已参照官方样例确定循环与 Section 结构（含参考样例路径与结构说明） | ✅ / ❌ | {回 R4 补充} |
+| §4 已参照官方样例确定循环与Section结构（含参考样例路径与结构说明） | ✅ / ❌ | {回 R4 补充} |
 | 数据依赖正确（Module 顺序 + sync 点） | ✅ / ❌ | {依赖分析} |
 | dtype 精度满足要求 | ✅ / ❌ | {FP32 matmul 累加 / ...} |
 | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设 `layout` | ✅ / ❌ | {回 R2 补 layout} |
@@ -304,11 +328,11 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 |--------|------|------|
 | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（见 §8「目标测试 case」表） | ✅ / ❌ | {回 R7.5 补充 / 回溯适配不了的轮次} |
 | 是否正确处理了尾块（M/N 尾块） | ✅ / ❌ | {ceiling division + set_validshape 设计} |
-| 归约轴可能超单 tile 时已采用 online/两遍法（保证泛化性，R0 已判断） | ✅ / ❌ | {回 R0 重设归约方案} |
+| 归约轴可能超单Tile时，已给出覆盖完整归约轴的方案，并说明遍历次数、跨Tile状态及依据 | ✅ / ❌ | {回R0重设归约方案} |
 | 循环边界正确 | ✅ / ❌ | {valid_m/valid_n 计算验证} |
 | 超越函数在 dtype 范围内无溢出 | ✅ / ❌ | {引用 §1 数值安全边界} |
 | 跨 tile 状态初始化/持久化正确 | ✅ / ❌ | {expands 恒等值 / muls 拷贝；回 R0 或 R1 修正} |
-| cross_core 同步方案正确（涉及跨 section 时：同步点位置与 event_id 隔离参照官方指定算子） | ✅ / ❌ | {回 R6 修正} |
+| cross_core 同步方案正确（存在跨执行域或跨Block/subblock依赖时：同步点位置与 event_id 隔离参照权威文档和官方指定算子） | ✅ / ❌ | {回 R6 修正} |
 
 ### 一致性检查
 
@@ -318,7 +342,7 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 | 所有决策有证据支撑 | ✅ / ❌ | {证据链检查} |
 | 各内存空间（UB/L1/L0A/L0B/L0C）tile 总用量分别不超各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | ✅ / ❌ | {回 R3 重排地址 / R2 缩 tile} |
 | `tile_dims` 使用时已关注大 stride 对性能的影响 | ✅ / ❌ | {回 R2 调整布局} |
-| 条件性检查（若 §6 填"不涉及 cross_core"，确认该算子确实无跨 section 数据传递） | ✅ / ❌ | {R0 重新评估} |
+| 条件性检查（若 §6 填“不涉及cross_core”，确认不存在Cube↔Vector或跨Block/subblock的数据依赖） | ✅ / ❌ | {R0 重新评估} |
 
 ### 评估结论
 
