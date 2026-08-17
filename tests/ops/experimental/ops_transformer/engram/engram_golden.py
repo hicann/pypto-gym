@@ -121,29 +121,44 @@ def engram_forward_with_cache(
 
     Returns:
         value_out: [b, s, m, h]  主输出（Step7: O = g · V）
-        cache:     {keys [b,s,m,h], scores [b,s,m], gates [b,s,m], value [b,s,h]}
+        cache:     {keys [b,s,m,h], scores [b,s,m], gates [b,s,m], value [b,s,h],
+                    key_rms [b,s,m,1], query_rms [b,s,m,1]}
+                   key_rms/query_rms 为 forward 算出的 inv_rms = 1/rms（FP32），
+                   供 backward 与 kernel forward-cache 复用路径对齐。
     """
     b, s, m, h = hidden_states.shape
     scale = h ** -0.5
 
     keys_list, scores_list, gates_list = [], [], []
+    key_inv_rms_list, query_inv_rms_list = [], []
     for m_i in range(m):
         key = linear_torch(embeddings, key_proj_weights[m_i])                       # Step1
-        normed_key = rms_norm_torch(key, key_gamma[m_i], eps)                       # Step2
-        normed_query = rms_norm_torch(hidden_states[:, :, m_i, :], query_gamma[m_i], eps)  # Step3
+        # 复用 _rms_norm_fwd 顺便拿到 inv_rms，与 backward 同源（避免正反向不同算法）
+        normed_key, key_rms, _ = _rms_norm_fwd(key, key_gamma[m_i], eps)            # Step2
+        hidden_m = hidden_states[:, :, m_i, :]
+        normed_query, query_rms, _ = _rms_norm_fwd(hidden_m, query_gamma[m_i], eps)  # Step3
         score = (normed_key * normed_query).sum(dim=-1) * scale                     # Step4
         gate = signed_sqrt_gate(score, clamp_value)                                 # Step5
         keys_list.append(key)
         scores_list.append(score)
         gates_list.append(gate)
+        key_inv_rms_list.append((1.0 / key_rms))
+        query_inv_rms_list.append((1.0 / query_rms))
 
     keys = torch.stack(keys_list, dim=2)                  # [b, s, m, h]
     scores = torch.stack(scores_list, dim=2)              # [b, s, m]
     gates = torch.stack(gates_list, dim=2).squeeze(-1)    # [b, s, m]
+    # inv_rms: 每个 head 的 [b, s, 1] → stack 成 [b, s, m, 1]
+    key_rms_stacked = torch.stack(key_inv_rms_list, dim=2)
+    query_rms_stacked = torch.stack(query_inv_rms_list, dim=2)
     value = linear_torch(embeddings, value_proj_weights)  # Step6 [b, s, h]
     value_out = gates.unsqueeze(-1) * value.unsqueeze(2)  # Step7 [b, s, m, h]
 
-    return value_out, {"keys": keys, "scores": scores, "gates": gates, "value": value}
+    return value_out, {
+        "keys": keys, "scores": scores, "gates": gates, "value": value,
+        "key_rms": key_rms_stacked,      # inv_rms of keys, FP32 [b, s, m, 1]
+        "query_rms": query_rms_stacked,  # inv_rms of hidden, FP32 [b, s, m, 1]
+    }
 
 
 # ==========================================================================
@@ -162,9 +177,18 @@ def linear_backward(grad_output: torch.Tensor, x: torch.Tensor, weight: torch.Te
     return grad_x, grad_weight
 
 
-def _rms_norm_fwd(x, gamma, eps=1e-6):
-    """RMSNorm forward，返回 (normed, rms, n) — rms/n 供 backward 复用，避免重算。"""
+def _rms_norm_fwd(x, gamma, eps=1e-6, inv_rms=None):
+    """RMSNorm forward，返回 (normed, rms, n) — rms/n 供 backward 复用，避免重算。
+
+    inv_rms（可选）: forward cache 的 1/rms。提供时直接 n = x·inv_rms、rms = 1/inv_rms，
+    不再重算 sq+rms（与 kernel 的 forward-cache 复用路径对齐）。
+    """
     x, gamma = _v(x, gamma)
+    if inv_rms is not None:
+        inv_rms = _v(inv_rms)
+        rms = 1.0 / inv_rms
+        n = x * inv_rms
+        return n * gamma, rms, n
     d = x.shape[-1]
     rms = torch.sqrt(x.pow(2).sum(dim=-1, keepdim=True) / d + eps)
     n = x / rms
@@ -205,6 +229,8 @@ def engram_backward_golden(
     gates: torch.Tensor,            # [b, s, m]
     keys: torch.Tensor,             # [b, s, m, h]
     value: torch.Tensor,            # [b, s, h]
+    key_rms: torch.Tensor = None,   # [b, s, m, 1] FP32 inv_rms of keys (forward cache)
+    query_rms: torch.Tensor = None, # [b, s, m, 1] FP32 inv_rms of hidden (forward cache)
     clamp_value: float = 1e-6,
     eps: float = 1e-6,
 ):
@@ -234,21 +260,24 @@ def engram_backward_golden(
         grad_score_m = signed_sqrt_gate_backward(
             grad_gates[:, :, m_i, :], scores[:, :, m_i], gates[:, :, m_i], clamp_value)
         # ---- Step4/3/2: RMSNorm forward + backward ----
+        # 若提供了 forward cache 的 inv_rms（key_rms/query_rms），复用它替代重算
         hidden_m = hidden_states[:, :, m_i, :]
         key_m = keys[:, :, m_i, :]
-        normed_key_m, key_rms, key_n = _rms_norm_fwd(key_m, key_gamma[m_i], eps)
-        normed_query_m, query_rms, query_n = _rms_norm_fwd(hidden_m, query_gamma[m_i], eps)
+        key_inv_rms_m = key_rms[:, :, m_i, :] if key_rms is not None else None
+        query_inv_rms_m = query_rms[:, :, m_i, :] if query_rms is not None else None
+        normed_key_m, key_rms_m, key_n = _rms_norm_fwd(key_m, key_gamma[m_i], eps, inv_rms=key_inv_rms_m)
+        normed_query_m, query_rms_m, query_n = _rms_norm_fwd(hidden_m, query_gamma[m_i], eps, inv_rms=query_inv_rms_m)
         gsf = grad_score_m.unsqueeze(-1)
         grad_normed_key_m = gsf * scale * normed_query_m
         grad_normed_query_m = gsf * scale * normed_key_m
         # Step3: query RMSNorm backward（复用 query_rms/query_n）
         grad_hidden_m, grad_query_gamma_m = _rms_norm_bwd(
-            grad_normed_query_m, query_gamma[m_i], query_rms, query_n, out_dt)
+            grad_normed_query_m, query_gamma[m_i], query_rms_m, query_n, out_dt)
         grad_hidden_states[:, :, m_i, :] = grad_hidden_m
         grad_query_gamma[m_i] = grad_query_gamma_m
         # Step2: key RMSNorm backward（复用 key_rms/key_n）
         grad_key_m, grad_key_gamma_m = _rms_norm_bwd(
-            grad_normed_key_m, key_gamma[m_i], key_rms, key_n, out_dt)
+            grad_normed_key_m, key_gamma[m_i], key_rms_m, key_n, out_dt)
         grad_key_gamma[m_i] = grad_key_gamma_m
         # ---- Step1 逆向: K = E @ W_k ----
         grad_emb_from_k, grad_wk_m = linear_backward(

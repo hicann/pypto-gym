@@ -61,6 +61,11 @@ from pypto_gym.ops.pypto_pro.experimental.ops_transformer.engram.engram_backward
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
+# CPU golden 基准：FP64（torch 高层归约 + NPU 分支 kernel-style 归约拓扑）
+_GOLDEN_TORCH_DTYPE = torch.float64
+_GOLDEN_FN = engram_backward_golden
+log.info(f"[golden] dtype=fp64 fn={_GOLDEN_FN.__name__}")
+
 
 GRAD_NAMES = [
     "grad_hidden_states",
@@ -77,7 +82,10 @@ GRAD_NAMES = [
 # ═══════════════════════════════════════════════════════════════════
 
 def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=42):
-    """Construct backward inputs: forward inputs → forward_with_cache → grad_output."""
+    """
+    Construct backward inputs: forward inputs → forward_with_cache → grad_output.
+    gamma initialized to 1; weights ×0.5 to prevent BF16 matmul overflow.
+    """
     torch.manual_seed(seed)
     hidden_states = torch.randn(b, s, m_h, h, dtype=dtype, device=device)
     embeddings = torch.randn(b, s, de, dtype=dtype, device=device)
@@ -102,6 +110,7 @@ def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=4
         key_gamma, query_gamma,
         cache["scores"].float(), cache["gates"].float(),
         cache["keys"], cache["value"],
+        cache["key_rms"], cache["query_rms"],
     )
     kwargs = {"clamp_value": clamp_value, "eps": eps}
     return kernel_args, kwargs
@@ -124,10 +133,10 @@ def run_engram_backward_case(b, s, m_h=4, h=1280, de=512):
     with torch.no_grad():
         benchmark_grads = engram_backward_golden(*kernel_args, **kwargs)
 
-    # CPU FP64 golden: all tensor inputs widened
-    golden_args = tuple(arg.detach().cpu().to(torch.float64) for arg in kernel_args)
+    # CPU golden: all tensor inputs widened to FP64
+    golden_args = tuple(arg.detach().cpu().to(_GOLDEN_TORCH_DTYPE) for arg in kernel_args)
     with torch.no_grad():
-        golden_grads = engram_backward_golden(*golden_args, **kwargs)
+        golden_grads = _GOLDEN_FN(*golden_args, **kwargs)
 
     results = {}
     for name, nt, bt, gt in zip(GRAD_NAMES, npu_grads, benchmark_grads, golden_grads):
