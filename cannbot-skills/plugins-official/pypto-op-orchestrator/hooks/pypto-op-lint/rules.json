@@ -48,7 +48,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "kernel 函数必须有且仅有一个 @pypto.frontend.jit 装饰器"
@@ -60,7 +61,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "输出写回必须用 [:]/move()/assemble()，禁止 out = expr"
@@ -72,7 +74,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "kernel 函数不能有 return 语句"
@@ -84,7 +87,8 @@
       "fix_effort": "E2",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "@pypto.frontend.jit 入口及其同文件可达的 Layer I/H helper 中必须调用 set_vec_tile_shapes 或 set_cube_tile_shapes；允许 JIT 入口保持一行委托"
@@ -96,7 +100,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "kernel 张量参数必须有 pypto.Tensor 类型注解"
@@ -108,7 +113,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "kernel 内禁用 Python 原生 min()/max()"
@@ -120,7 +126,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "impl 文件必须且只能使用正规 `import pypto` 作为 PyPTO 导入；禁止 alias、import pypto.frontend as ... 与 from-import"
@@ -132,7 +139,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "wrapper 函数必须导出且以 _wrapper 结尾"
@@ -238,7 +246,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "impl 文件不应导入 golden 模块"
@@ -339,7 +348,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "Tensor 注解禁止空注解：pypto.Tensor() / pypto.Tensor([], dtype) 一律 FAIL；只缺 dtype 时 WARN"
@@ -351,7 +361,8 @@
       "fix_effort": "E2",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "JIT 函数中张量参数必须在非张量参数之前"
@@ -530,7 +541,8 @@
       "fix_effort": "E3",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "Layer K (host wrapper / host_wrapper / *_wrapper) must NOT contain `for ... in range(...)` calling the kernel per chunk; chunking belongs inside _kernel_impl as pypto.loop(N) + pypto.view offsets"
@@ -566,7 +578,8 @@
       "fix_effort": "E2",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "set_vec_tile_shapes / set_cube_tile_shapes 的所有 tile 参数（含 list 元素）必须是编译期可知的 Python int 字面量，或解析到字面量的模块级 / 函数局部常量 Assign；禁止使用 kernel 入参、tensor.shape[i]、SymbolicScalar、运行时计算等动态值。此外 set_cube_tile_shapes 的 m/k/n 每轴必须是 2 元素 list [L0, L1]（不能是单元素 [L0] 或 3+ 元素），且 L0/L1 为字面量时须满足 0 < L0 <= L1 且 L1 % L0 == 0（见 docs/zh/api/config/pypto-set_cube_tile_shapes.md）"
@@ -578,7 +591,8 @@
       "fix_effort": "E2",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "unroll_list 只能出现在最内层 pypto.loop（即其 body 内不再嵌套其他 pypto.loop）；外层 pypto.loop 携带 unroll_list 会触发编译路径爆炸或寄存器拷贝 pass 引起的精度异常"
@@ -603,7 +617,8 @@
       "fix_effort": "E3",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "@pypto.frontend.jit 图代码（kernel 本体 + 其调用到的所有函数 / 含 pypto 算子的函数）内允许 pypto.loop / pypto.loop_unroll / for...in range(...) 循环；禁止 while 和非 range 的 Python for（及含 pypto 算子的推导式）。迭代可用 pypto.loop（迭代间有依赖时加 submit_before_loop=True）或 for...in range(...)（编译期全展开）。Layer K host wrapper 的 kernel 驱动循环由 OL45 管辖"
@@ -615,7 +630,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "Layer K host wrapper 内禁止调用 pypto.zeros / pypto.empty / pypto.ones / pypto.full —— 这些是 JIT-context creation API, 在 host 上下文调用会 runtime crash (`device=` kwarg 不接受, 或 `F21003 INVALID_TYPE`)。output buffer 必须用 torch.empty / torch.zeros / torch.empty_like 等 torch allocation API (显式 dtype= 与 device=) 预先分配, 再作为参数传给 @pypto.frontend.jit 入口。每个传入 JIT 入口的 Name 参数必须解析到 wrapper 参数, 或 torch.* allocation, 或对 wrapper 参数的 torch 变换 (例 .reshape / .contiguous)——此处只解析参数来源，不表示这些变换是推荐做法；会 materialize 的变换应移入 kernel，见 pypto-pro-op-kb/constraints/wrapper-boundary.md"
@@ -627,7 +643,8 @@
       "fix_effort": "E1",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "pypto.view(t, shape=[...], offsets=[...], valid_shape=[...]) 的 shape/offsets/valid_shape 必须同 rank（list 长度一致）。pypto.view 是同 rank 的 sub-view 抽取 API，不是 reshape"
@@ -639,7 +656,8 @@
       "fix_effort": "E2",
       "stages": [
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "Layer K wrapper 的显式参数必须与 eval/module_interfaces.yaml 的 primary_inputs 声明顺序（以及对应 module 的 inputs[*].name source=primary）完全一致；生产 ABI 不暴露 runtime/debug 参数，调试扩展走 **kwargs 或 _debug/ 产物"
@@ -701,7 +719,8 @@
       "stages": [
         4,
         5,
-        6
+        6,
+        7
       ],
       "target": "impl",
       "rule": "禁止使用 PyPTO 中不存在的 `pypto.<attr>` — 通过对比 AST 中的属性访问与 `dir(pypto)` 校验, 在 DESIGN.md (代码块内) 与 `<op>_impl.py` / `modules/<op>_module*_impl.py` 上 post-edit 即时拒绝, 防止 typo (如 `pypto.empty` / `pypto.empty_like`) 走到 runtime"
