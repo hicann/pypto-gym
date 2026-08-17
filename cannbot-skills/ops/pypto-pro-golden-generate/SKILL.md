@@ -1,454 +1,160 @@
 ---
 name: pypto-pro-golden-generate
-description: 当需要从 PyPTO-Pro SPEC 生成、规范化或验证 golden 参考实现时使用。基于算子规格信息，生成 torch + torch_npu NPU 参考实现 `{op}_golden.py` 与 CPU FP32 参考实现 `{op}_golden_cpu.py`；仅在调用方显式传入 `collect_golden_perf=true` 时采集 NPU golden 性能。NPU 计算使用 torch 标准操作；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件时回退 CPU。不要用于 kernel 实现或性能调优。触发词：生成 golden、生成参考实现、写 golden 函数、golden script、golden reference、reference implementation、generate golden、torch 参考、验证基准、baseline implementation、写验证代码、'帮我写 golden'、golden.py、参考代码。
+description: 为 PyPTO-Pro 算子生成、规范化和验证 golden 参考实现。根据已校验 SPEC 产出 NPU torch/torch_npu `{op}_golden.py` 与 CPU FP32 `{op}_golden_cpu.py`；仅在调用方显式传入 `collect_golden_perf=true` 时采集 NPU 性能。既可由编排器调用，也可直接响应自然语言或既有参考，适用于“生成 golden / 参考实现 / 验证基准 / golden.py / normalize PyTorch 或 NumPy reference”等请求；不用于架构设计、kernel 实现或性能调优。
 ---
 
-# PyPTO-Pro Golden 参考实现生成（NPU）
+# PyPTO-Pro Golden 参考实现
 
-基于算子规格信息，自动生成 torch + torch_npu NPU golden 参考实现及完整验证代码。计算的 golden 脚本用于开发阶段快速验证算子实现的正确性，可以作为独立模块被 `test_{op}.py` 等其他脚本导入调用。基于固定模板 [templates/golden-template.py.tmpl](templates/golden-template.py.tmpl) 生成（在§9 生成文件结构阶段读取该模板）。使用 torch 标准操作在 NPU 上执行；torch_npu 未安装时直接报错引导安装，仅无 NPU 硬件（`device_count() == 0`）时回退 CPU。禁止引入 pypto / pypto_pro。NPU 性能采集默认关闭；仅调用方传入 `collect_golden_perf=true` 时，才使用通用脚本 [scripts/profile_golden.py](scripts/profile_golden.py) 执行，profiling 代码始终不写入 golden 文件。
+负责 Stage 2 的数学参考实现，不决定 Module 划分、kernel 写法或优化策略。
 
-**调用约定**：`collect_golden_perf` 缺失或为 `false` 时不得运行 profiling，也不要求 `GOLDEN_PERF_REPORT.md`；只有 orchestrator 根据用户明确要求传入 `true` 时才采集。SPEC.md 中存在性能 P0 shape、任务要求高性能实现等信息本身不能开启采集。
+## 输入、路径与交付
 
-1. 从用户输入提取算子名称、公式、输入输出规格等必要信息
-2. 如果信息不足，向用户逐步提问补充
-3. 按工作流执行 golden 函数生成和验证
-4. 输出 `{op}_golden.py` 与 `{op}_golden_cpu.py` 到当前目录或用户指定位置；按开关决定是否额外输出性能报告
+支持两种入口：
 
-## 1. 所需信息
+- 编排模式：接收已经通过 canonical validator 的 `custom/<op>/SPEC.md`，交付目录固定为 `custom/<op>/`。
+- 单独使用：可接收已校验 SPEC、自然语言需求或既有 PyTorch/NumPy 参考。没有已校验 SPEC 时，先加载 `pypto-pro-intent-understand` 创建并校验 SPEC；信息不足时由该 skill 澄清或返回 `blocked`，本 skill 不猜测合同。
 
-| 项目 | 说明 |
-|------|------|
-| **输入** | 算子规格信息（如结构化规格内容、自然语言描述等） |
-| **输出** | 必选：`{op}_golden.py` 与 `{op}_golden_cpu.py`；可选：`GOLDEN_PERF_REPORT.md`（仅 `collect_golden_perf=true`） |
+下文以 `<spec-path>` 表示已校验 SPEC，以 `<op-dir>` 表示交付目录。编排模式下二者分别为 `custom/<op>/SPEC.md` 和 `custom/<op>/`；单独使用时 `<op-dir>` 可由用户指定，否则取 `<spec-path>` 的父目录，不存在时先创建该目录。
 
----
+SPEC 中唯一的 JSON machine-contract 是 Stage 2 的机器事实源。至少确认：
 
-## 2. 算子信息获取
+- 算子名称和数学公式；
+- 全部输入、输出、参数及默认值；
+- dtype、shape、边界条件和动态轴范围；
+- 全部 P0 配置。
 
-从输入中提取算子名称，或由调用者指定。如果信息不足，向用户逐步提问补充。
+machine-contract 缺字段、类型错误或 P0 不完整时停止并退回修正 SPEC；不要从正文、动态范围或经验补造数学语义、参数、shape 或 P0。
 
----
+Stage 2 必须交付并验证：
 
-## 3. 规格字段检查
+| 文件 | 职责 |
+|---|---|
+| `<op-dir>/<op>_golden.py` | torch + torch_npu 的 NPU 数学参考、输入工厂和自验证 |
+| `<op-dir>/<op>_golden_cpu.py` | 纯 torch 的 CPU FP32 高精度参考和自验证 |
 
-> **脚本化（确定性，零思考 token）**：字段校验与文件骨架生成由 [`scripts/gen_golden_scaffold.py`](scripts/gen_golden_scaffold.py) 一步完成，不要靠对话逐字段推断：
->
-> ```bash
-> python3 scripts/gen_golden_scaffold.py --spec custom/<op>/SPEC.md \
->     --template templates/golden-template.py.tmpl --out custom/<op>/<op>_golden.py
-> ```
->
-> 脚本通过 intent-understand 的 `load_spec_contract()` 读取并验证 SPEC.md 中唯一的 JSON machine-contract；把 `formula` 原样带入源码提示，并从全部 `p0_cases` 生成已填好**函数签名、`_make_inputs` 多 case 张量构造、`_validate` 遍历骨架**的 `<op>_golden.py`。缺少必须字段时非零退出；仅在数式本体、受约束输入、算子固有属性检查处留 `# TODO`。LLM 只需填这些 TODO。
+`GOLDEN_PERF_REPORT.md` 仅在 `collect_golden_perf=true` 时交付。单独使用时，只有用户明确要求采集 NPU golden 性能才将该开关视为 `true`。开关缺失或为 `false` 时不得运行 profiling，也不得把报告列为门禁；SPEC 中存在性能 P0 或用户要求高性能实现本身不能开启该开关。
 
-脚本退出码与下表分类一致；如需人工核对，按以下分类检查字段完整性：
+## 工作流
 
-### 必须字段（缺失则报错退出）
+### 1. 选择生成路径
 
-| 字段 | 位置 | 用途 |
-|------|------|------|
-| 算子名称 | §1 基础信息 | 文件名、函数名 |
-| 数学公式 | §1 基础信息 | 生成 PyTorch 实现 |
-| 输入规格 | §4 数据规格 | 函数参数、验证 shape |
-| 输出规格 | §4 数据规格 | 返回类型、验证 shape |
+- 只有 SPEC：执行下方脚手架命令生成 NPU golden 骨架，再填充数学逻辑、受约束输入和算子属性检查 TODO。
+- 用户提供 PyTorch/NumPy 参考：先阅读 [references/reference-normalization.md](references/reference-normalization.md) 并保留原参考作为只读 oracle，再生成骨架。若参考源正是任一目标交付文件，先在临时目录生成候选；等价验证通过并取得覆盖确认后才替换目标。
 
-### 建议字段（缺失时引导补充）
-
-| 字段 | 位置 | 用途 | 缺失时处理 |
-|------|------|------|------------|
-| 典型配置 | §11 应用场景 | 典型 case 验证 | 引导用户补充到规格信息中 |
-| 动态轴范围 | §7 动态轴说明 | 泛化 case 采样 | 使用默认范围 (1-1024) |
-
-### 典型配置缺失时的处理
-
-```
-检查规格信息中是否包含典型配置
-    │
-    ├── 有 → 直接使用
-    │
-    └── 无 → 引导用户提供
-            │
-            ├── 用户提供 → 补充到规格信息中，继续生成
-            │
-            └── 用户跳过 → 根据动态轴范围生成默认配置
-                          │
-                          ├── 有动态轴范围 → 按范围推荐
-                          │   └── 补充到规格信息中，继续生成
-                          └── 无动态轴范围 → 使用通用默认值
-                              └── 补充到规格信息中，继续生成
-```
-
-典型配置采用 7 列格式：
-
-| 配置名称 | 类型 | 优先级 | 参数 | 输入 Shape | 输出 Shape | 说明 |
-|----------|------|--------|------|------------|------------|------|
-
----
-
-## 4. Golden 函数生成规范
-
-### 实现方式
-
-使用 **PyTorch + torch_npu** 实现 golden 函数，计算在 NPU 上执行。优先使用 PyTorch 内置 API，在没有直接对应 API 时由 LLM 基于公式生成实现。输入自动转移到 NPU device，返回 NPU tensor。torch_npu 未安装时直接报错引导安装；仅无 NPU 硬件（`device_count() == 0`）时回退 CPU。
-
-**设备卡号（device ID）**：设备卡号统一通过环境变量 `TILE_FWK_DEVICE_ID` 读取（运行前 `export TILE_FWK_DEVICE_ID=<id>` 设置），未设置时默认使用卡 0。模板中 `_get_device()` 已内置该机制，生成 golden 时不要修改设备读取逻辑，不要硬编码为 `torch.device("npu")` 或 `torch.device("npu:0")`。
-
-### 函数签名
-
-```python
-# 单输入
-def silu_golden(x: torch.Tensor) -> torch.Tensor:
-
-# 多输入
-def swiglu_golden(x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
-
-# 带可选参数
-def layer_norm_golden(
-    x: torch.Tensor,
-    normalized_shape: List[int],
-    weight: Optional[torch.Tensor] = None,
-    bias: Optional[torch.Tensor] = None,
-    eps: float = 1e-5,
-) -> torch.Tensor:
-```
-
-**规则**：
-- 函数名：`{算子名}_golden`
-- 参数顺序：必要张量参数在前，可选参数在后
-- 所有 spec 中定义的参数都要实现，包括可选参数
-- dtype 不作为参数，计算精度跟随输入张量
-- **matmul 精度对齐**：所有 `torch.matmul` 输入必须先 `.float()`，与 `pypto_pro.language.matmul` 在 NPU Cube L0C 上的 FP32 累加路径对齐。
-
-  | 写法 | 累加精度 | 正确 |
-  |------|---------|------|
-  | `torch.matmul(a_bf16, b_bf16).float()` | BF16 | ❌ |
-  | `torch.matmul(a.float(), b.float())` | FP32 | ✅ |
-  | `torch.matmul(a.float(), b.float()).to(torch.bfloat16)` | FP32 累加 + BF16 输出 | ✅ |
-
-### 边界条件映射
-
-根据规格信息中的边界条件定义生成对应代码逻辑：
-
-```python
-# spec 定义：零值返回 1
-def safe_div_golden(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    result = x / y
-    result[y == 0] = 1.0  # 映射边界条件
-    return result
-```
-
-### `_make_inputs()` 输入工厂函数（强制导出）
-
-每个 golden 文件**必须**导出 `_make_inputs(device)` 函数，构造 P0 典型输入。该函数始终供 `_validate()` 验证使用；启用性能采集时再与 `profile_golden.py --factory` **共用**，确保验证和可选 profiling 使用完全一致的输入。
-
-**函数签名与返回值**：
-
-SPEC.md 中每个性能 P0 shape 都必须有对应的 case。返回值格式：
-
-```python
-# 单 P0 shape（向后兼容）
-def _make_inputs(device):
-    """构造 P0 典型输入。
-
-    Returns:
-        (args_list, kwargs_dict):
-          - args_list: 位置参数列表（tensor，按 golden 函数签名顺序）
-          - kwargs_dict: 关键字参数字典（scalar / 非 tensor 参数）
-    """
-    x = torch.randn(8, 1024, dtype=torch.bfloat16, device=device)
-    return [x], {}
-
-# 多 P0 shape（每个性能 P0 配置一组）
-def _make_inputs(device):
-    """构造所有 P0 典型输入。
-
-    Returns:
-        [(case_name, args_list, kwargs_dict), ...]:
-          - case_name: 配置名称（对应 SPEC.md 典型配置表中的名称）
-          - args_list: 位置参数列表（tensor，按 golden 函数签名顺序）
-          - kwargs_dict: 关键字参数字典（scalar / 非 tensor 参数）
-    """
-    cases = []
-    # 性能_P0 case 1: [2, 8, 512, 64]
-    q = torch.randn(2, 8, 512, 64, dtype=torch.bfloat16, device=device)
-    k = torch.randn(2, 8, 512, 64, dtype=torch.bfloat16, device=device)
-    v = torch.randn(2, 8, 512, 64, dtype=torch.bfloat16, device=device)
-    cases.append(("perf_p0_small", [q, k, v], {}))
-    # 性能_P0 case 2: [4, 16, 1024, 128]
-    q = torch.randn(4, 16, 1024, 128, dtype=torch.bfloat16, device=device)
-    k = torch.randn(4, 16, 1024, 128, dtype=torch.bfloat16, device=device)
-    v = torch.randn(4, 16, 1024, 128, dtype=torch.bfloat16, device=device)
-    cases.append(("perf_p0_large", [q, k, v], {}))
-    return cases
-```
-
-`profile_golden.py` 自动检测返回格式：`list[tuple[str, list, dict]]` 视为多 case，`tuple[list, dict]` 视为单 case。
-
-**语义约束分类与处理**：
-
-根据算子输入对随机值的容忍度，分为三类：
-
-| 类别 | 特征 | 示例 | `_make_inputs()` 要求 |
-|------|------|------|----------------------|
-| **无约束** | 所有 tensor 接受任意随机值 | silu, gelu, matmul, softmax | `torch.randn` 即可 |
-| **值域约束** | 部分 tensor 需要特定值域 | log（正数）、div（非零）、block_table（非负索引） | 对受限 tensor 使用 `torch.rand` / `torch.abs` / `torch.randint(low=0, ...)` |
-| **结构约束** | tensor 之间存在依赖关系，或需要特定初始化 | 状态缓存（需合法 block 索引）、位置编码（需匹配序列长度）、压缩比参数（需整除关系） | 必须手动构造所有关联 tensor，确保结构一致性 |
-
-**关键规则**：
-
-- 所有 tensor 必须带 `device=device` 创建
-- `_validate()` 内部调用 `_make_inputs(device)` 获取输入，不重复构造
-- scalar 参数（如 `eps`、`d`、`ratio`）放在 `kwargs_dict` 中
-- 通过 `load_spec_contract()` 读取 SPEC 的 `formula`、`p0_cases` 和 `default_params`；脚手架按合同顺序生成全部 P0 的 shape、参数和 case 名
-- `_validate()` 兼容单 case `(args, kwargs)` 和多 case `[(name, args, kwargs), ...]`，并遍历、检查全部合同 P0；不得删除或改名已生成的 case
-- 状态类 tensor（如 `kv_state`、`score_state`）使用 `torch.zeros` 初始化
-
----
-
-## 5. 置信度系统
-
-根据实现方式评估置信度，影响最终输出的标注和提示强度：
-
-```
-1. 是否有等效 PyTorch API？
-   ├─ 有 → 直接调用 → ⭐⭐⭐⭐⭐
-   │
-   └─ 无 → 2. 是否为已知论文算子？
-            ├─ 是 → 搜索第三方实现 → ⭐⭐⭐⭐
-            │
-            └─ 否 → 3. LLM 智能转换
-                     ├─ 简单公式转换 → ⭐⭐⭐⭐
-                     └─ 复杂公式转换 → ⭐⭐⭐
-```
-
-**低置信度加强提示**（⭐⭐⭐ 及以下）：
-
-在输出文件的 docstring 中添加醒目警告，提醒人工审查代码逻辑、与论文对比验证、使用多组数据验证边界情况。
-
-置信度和验证是独立机制——置信度只影响标注和提示强度，验证标准对所有算子一致。自动修复后根据最终代码更新置信度。
-
----
-
-## 6. 验证机制
-
-### 验证执行方式
-
-生成文件后，**必须通过直接执行脚本完成验证**（在 NPU 上运行）：
+使用 skill 目录中的固定模板和脚手架，不手工重建文件骨架：
 
 ```bash
-python3 {op}_golden.py
+python <skill-dir>/scripts/gen_golden_scaffold.py \
+  --spec <spec-path> \
+  --template <skill-dir>/templates/golden-template.py.tmpl \
+  --out <op-dir>/<op>_golden.py
 ```
 
-脚本内含 `if __name__ == "__main__": _validate()` 入口，会自动运行全部检查项（典型 case、泛化 case、值域、数值稳定性等）并输出验证报告。验证在 NPU 上执行；torch_npu 未安装时报错引导安装，仅无 NPU 硬件时回退 CPU。
+脚手架通过 Intent Understand 的 `load_spec_contract()` 读取并验证该合同，将校验后的 `formula` 内容写入生成源码的 `_SPEC_FORMULA`，并按合同顺序生成全部 `p0_cases` 的签名、shape、参数和 case 名。合同无效或字段缺失时会非零退出；先修正 SPEC，再继续。
 
-**禁止**使用以下方式替代直接执行：
-- `exec(open(...).read())` — 绕过脚本的独立执行环境
-- 手动构造测试数据单独调用 golden 函数 — 与脚本内置验证逻辑重复且不完整
+任一目标交付文件已存在时不得静默覆盖：先让用户确认；未确认则保留原文件并停止，确认后才执行脚手架或其他覆盖写入。无人值守且无法取得确认时返回 `blocked`。
 
-**门禁判定依据**：以 `python3 {op}_golden.py` 的 exit code（0 = 通过）和验证报告输出为准。
+### 2. 实现 NPU golden
 
-**device 约定**：golden 函数内部对输入执行 `.to(device)` 做设备迁移。为避免跨设备 mismatch，验证代码创建张量时必须直接指定 `device=device`（如 `torch.randn(..., device=device)`），不要依赖 golden 内部的隐式 `.to()`。
+在 `<op>_golden.py` 中遵守以下合同：
 
-**device ID 指定**：若用户明确要求在特定 NPU 卡号上运行验证，必须通过环境变量 `TILE_FWK_DEVICE_ID=<id>` 传入（运行前 `export`）。禁止在代码中硬编码 `torch.device("npu:<id>")`。
+- 只用 `torch` 和 `torch_npu` 表达数学计算；禁止 import `pypto` 或 `pypto_pro`。
+- 函数名为 `<op>_golden`；参数顺序、可选性、默认值和返回值与 SPEC 一致，SPEC 中的每个参数都必须实现。dtype 跟随输入，不新增 dtype 参数。
+- 优先采用语义等价的稳定 PyTorch API；没有等价 API 时严格按 `formula` 实现，不添加 SPEC 未定义的修正项。
+- 每次 `torch.matmul` 都先把两个输入转为 FP32，例如 `torch.matmul(a.float(), b.float())`；如输出合同要求低精度，再转换输出 dtype。
+- 将 SPEC 的零值、边界值、mask、索引、整除关系等语义写进数学实现或输入前置条件。
 
-### 验证 shape 来源
+保留模板的设备逻辑：
 
-**两层来源**：
+- 通过 `TILE_FWK_DEVICE_ID` 选择卡号，未设置时使用 0；禁止硬编码 `npu:0` 或其他卡号。
+- `torch_npu` 未安装时直接报错并提示安装。
+- NPU 不可用或 `torch.npu.device_count() == 0` 时回退 CPU。
+- 输入由 golden 函数迁移到目标 device；测试输入直接创建在同一 device 上。
 
-```
-├── 典型 case（来自算子规格中的典型配置）
-│   ├── 性能类型：按优先级验证，P0 必须通过
-│   └── 功能类型：按优先级验证，P0 必须通过
-│
-└── 泛化 case（来自算子规格中的动态轴取值范围）
-    └── 每个动态轴采样：最小值、中间值、最大值
-        如 b: 1-128 → [1, 64, 128]
-           s: 64-2048 → [64, 1024, 2048]
-        组合生成 shape
-```
+### 3. 实现 `_make_inputs(device)`
 
-### 验证顺序（按重要性）
+每个 NPU golden 必须导出 `_make_inputs(device)`，且 `_validate()` 必须复用它。函数签名顺序决定位置参数；标量和非 tensor 参数放入 `kwargs`。
 
-1. 性能类型 P0 配置（最高优先级，必须通过）
-2. 性能类型 P1 配置
-3. 功能类型 P0 配置（必须通过）
-4. 功能类型 P1 配置
-5. 泛化 case（边界+中间采样）
-6. 其他低优先级配置
+单 case 返回：
 
-### 验证检查项
-
-| 检查项 | 说明 | 级别 |
-|--------|------|------|
-| 语法检查 | 代码能正常 import | 🔴 严重 |
-| 形状一致性 | 输出 shape 与 spec 定义一致 | 🔴 严重 |
-| 函数签名 | 参数与 spec 定义匹配 | 🔴 严重 |
-| 值域检查 | 从公式推导值域约束 | 🟡 警告 |
-| 特殊点验证 | 边界值、零值等 | 🟡 警告 |
-| 数值稳定性 | 无 NaN/Inf | 🟡 警告 |
-| 数学属性 | 单调性、对称性、守恒量等 | 🟡 警告 |
-| API 对比 | 与 PyTorch API 对比（如适用） | 🟢 信息 |
-
-### 从公式推导的验证属性
-
-**值域约束**：根据公式特性推导输出值域。例如 sigmoid 的输出在 (0, 1)、ReLU 的输出 >= 0、softmax 的输出在 (0, 1) 且沿归约轴和为 1。
-
-**数学属性**：检查奇偶性（tanh 是奇函数）、单调性（sigmoid 单调增）、守恒量（softmax 和为 1）等。
-
-**特殊点验证**：验证关键输入值的输出，如 sigmoid(0) = 0.5、tanh(0) = 0、relu(0) = 0。
-
----
-
-## 7. 自动修复策略
-
-验证失败时，按优先级自动尝试修复：
-
-1. **使用 PyTorch 稳定 API** — 将手写实现替换为 PyTorch 内置 API
-   - `x / (1 + torch.exp(-x))` → `torch.sigmoid(x)`
-   - `torch.exp(x) / torch.exp(x).sum()` → `torch.softmax(x, dim=-1)`
-
-2. **添加数值稳定性保护** — 防止除零、log 负数等
-   - `a / b` → `a / (b + 1e-8)`
-   - `torch.log(x)` → `torch.log(torch.clamp(x, min=1e-8))`
-
-3. **使用更稳定的等价形式** — 数学等价但数值更稳定的替代
-
-**限制**：最多 3 次修复尝试。修复后根据最终代码更新置信度。
-
----
-
-## 8. 错误分级与输出控制
-
-| 级别 | 含义 | 修复失败后处理 |
-|------|------|----------------|
-| 🔴 严重 | 语法错误、shape 不匹配、签名错误 | **阻止输出**，报告错误原因 |
-| 🟡 警告 | 值域检查失败、数值不稳定 | 输出文件 + 在 docstring 中标注警告 |
-| 🟢 通过 | 所有检查通过 | 正常输出 |
-
----
-
-## 9. 生成文件结构
-
-文件骨架由 [`scripts/gen_golden_scaffold.py`](scripts/gen_golden_scaffold.py)（见 §3）**确定性生成**：脚本读取固定模板 [`templates/golden-template.py.tmpl`](templates/golden-template.py.tmpl)，机械替换 `{op}` 占位符、写入函数签名与 `_make_inputs` 张量构造，**不需要 LLM 手工拼骨架**。LLM 只填脚本留下的 `# TODO`（数式本体、受约束输入、固有属性检查）。生成文件包含以下结构：
-
-- `import torch` + `import torch_npu` + NPU 设备初始化
-- 文件级 docstring（算子名、公式、置信度）
-- `{op}_golden()` 函数：torch + torch_npu 参考实现，计算在 NPU 上执行（含示例注释）
-- `_make_inputs(device)` 函数：构造全部 P0 典型输入；单 case 返回 `(args_list, kwargs_dict)`，多 case 返回 `[(case_name, args_list, kwargs_dict), ...]`，供验证使用，并在启用时供性能采集复用（详见 §4 `_make_inputs()` 节）
-- `_validate()` 函数：自动验证（典型 case、泛化 case、值域检查、数值稳定性、API 对比），内部调用 `_make_inputs()` 获取输入
-- `if __name__ == "__main__": _validate()` 入口
-
-性能采集相关代码不进入 `{op}_golden.py`。启用采集时统一使用 [scripts/profile_golden.py](scripts/profile_golden.py)，保证 golden 文件只包含可在 NPU 上运行的 PyTorch 参考实现和验证逻辑。
-
----
-
-## 10. 用户交互
-
-全自动生成与验证，仅在以下场景需要用户参与：
-
-| 场景 | 交互方式 |
-|------|----------|
-| 生成代码、验证、修复 | 全自动，无需用户参与 |
-| 典型配置缺失 | 引导用户提供或确认推荐配置 |
-| 覆盖已有文件 | 通过 `AskUserQuestion` 询问确认 |
-
----
-
-## 11. 异常处理
-
-| 场景 | 处理方式 |
-|------|----------|
-| 缺少算子规格信息 | 报错退出，提示先补齐需求信息 |
-| 规格信息解析失败 | 报错退出，提示输入格式不正确 |
-| 规格信息缺少必须字段 | 列出缺失字段，引导用户补充 |
-| 多个算子未指定 | 列出所有可用算子，要求用户指定 |
-| golden 文件已存在 | 通过 `AskUserQuestion` 询问是否覆盖 |
-
----
-
-## 12. 验证报告（必须执行）
-
-文件生成完成后，向用户展示验证结果，示例：
-
-```
-✅ Golden 参考实现已生成:
-  • {name}_golden.py
-
-============================================================
-attention_golden 验证报告
-============================================================
-
-[典型 case 验证]
-  性能_P0: b=2,h=8,s=512,d=64,w=128 ... ✓ PASS
-  功能_P0: b=1,h=4,s=256,d=64,w=128 ... ✓ PASS
-
-[泛化 case 验证]
-  b=1,h=4,s=128,d=32,w=64 ... ✓ PASS
-  b=64,h=8,s=1024,d=64,w=128 ... ✓ PASS
-
-[值域检查]
-  检查 softmax 归一化 ... ✓ PASS
-
-[数值稳定性检查]
-  大值输入 (x=100) ... ✓ PASS
-  小窗口 (w=4) ... ✓ PASS
-
-[功能正确性检查]
-  验证窗口边界 ... ✓ PASS
-
-============================================================
-✅ 所有验证通过
-============================================================
+```python
+return [tensor_arg_1, tensor_arg_2], {"scalar_arg": value}
 ```
 
----
+多 case 返回：
 
-## 13. 既有参考的规范化（用户提供参考实现时适用）
+```python
+return [
+    ("perf_p0_small", [tensor_arg_1, tensor_arg_2], {"scalar_arg": value}),
+    ("perf_p0_large", [tensor_arg_1_b, tensor_arg_2_b], {"scalar_arg": value_b}),
+]
+```
 
-> 当用户提供了已有的 PyTorch / NumPy 参考实现时，需将其规范化为 PyPTO-Pro 友好的 golden。完整流程见 [references/reference-normalization.md](references/reference-normalization.md)，包括：选择最强参考、审计不友好模式、按 Module 划分规范化、Full vs Tiled 策略、Golden function inventory、验证与 Freeze。
->
-> 当用户没有提供参考实现而是直接通过规格信息生成 golden 时，走 §1-§12 的从规格生成路径即可，本节不适用。
+构造输入时：
 
----
+- 保留脚手架生成的全部合同 P0；不得删除、改名、重复或跳过 case，`_validate()` 必须拒绝缺失、额外或重名 case。单个 P0 可使用单 case 格式。
+- 所有 tensor 创建时带 `device=device`，shape、dtype 和标量值来自同一 machine-contract。
+- 普通数值可用 `torch.randn`；正值、非零值、合法索引等按值域使用 `torch.rand`、变换或带有效上下界的 `torch.randint`。
+- 多 tensor 依赖、状态缓存、位置编码和整除关系必须联合构造；状态 tensor 按语义初始化，不以任意随机值代替。
+- 不让 `_validate()` 和 profiling 各自构造另一套 P0 输入。
 
-## 14. NPU 性能 Profiling（可选，默认不执行）
+### 4. 验证 NPU golden
 
-> **开关规则**：默认 `collect_golden_perf=false`，NPU golden 验证通过后直接生成 CPU golden，不运行 profiling，`GOLDEN_PERF_REPORT.md` 也不是 Stage 2 门禁。仅当调用方明确传入 `collect_golden_perf=true` 时，才使用 `scripts/profile_golden.py` 采集 NPU 性能并生成报告。启用后若 SPEC.md 中有多个性能 P0 shape，必须对每个 shape 分别 profiling 并在报告中注明对应关系。
+按“全部合同 P0 → 已确认的性能/功能 P1 与可选分支 → 动态轴泛化 case”的顺序验证。在 `_validate()` 中覆盖：
 
-### 执行指引（必读）
+1. machine-contract 中的全部 P0；
+2. SPEC 已冻结的每项性能/功能 P1 和每个可选参数分支至少一个合法 case；这些是 `_validate()` 的额外检查，不得加入 `_make_inputs()` 的 exact-P0 返回列表；
+3. 每个动态轴的 low/mid/high（其余轴固定为已确认的合法代表值），并覆盖 all-low、all-high 和跨轴约束所需的合法组合；约束使边界组合非法时改用对应边界上的合法组合并说明，不生成无意义的完整笛卡尔积；
+4. 输出 shape、dtype/接口合同和 NaN/Inf；
+5. 公式可推导的值域、边界/特殊点和数学属性；
+6. 存在独立 PyTorch 等价 API 或既有参考时的数值对比。
 
-> **⚠️ 当 `collect_golden_perf=true` 时，执行 profiling 前必须先阅读** [references/profiling.md](references/profiling.md)。该文档包含输入模式决策树、多 case `_make_inputs()` 返回格式、参数构造步骤、约束类型表（6 种崩溃场景）、E2E 双路径提取逻辑、故障排查决策树等**不可跳过的操作步骤**。
+P1 或可选分支缺少可执行的已确认值时，先退回 `pypto-pro-intent-understand` 补全 SPEC，不自行填值。容差必须与 dtype 和算子数值特性一致。验证失败时定位数学、输入或合同根因并修复；不要用放宽容差、吞掉异常或加入未定义 epsilon 掩盖失败。同一根因连续 3 次失败且没有新证据时停止重试，报告失败命令、原始错误和已尝试修复。
 
----
+复杂公式没有独立 PyTorch API 或既有参考作为 oracle 时，在交付结果中标记 `semantic_review_required` 并说明缺少何种对照；该标记不替代自验证，也不使用星级置信度。
 
-## 15. CPU Golden 生成（精度校验用）
-
-> **强制步骤**：NPU golden 验证通过后，**必须**生成 CPU 更高精度 golden `{op}_golden_cpu.py`，供 Stage 4 test 精度校验使用（方案A混合容差标准，见 `../pypto-pro-op-develop/scripts/precision_compare.py`）。CPU golden 的生成不依赖可选性能采集。
->
-> **golden 职责边界**：`{op}_golden.py`（NPU）用于 Stage 2 NPU 参考实现验证、可选性能采集，并提供 `_get_device()` 给 Stage 4 test 选设备；Stage 4 精度对比的参考实现**必须**是 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比。
-
-### 生成方式
-
-基于固定模板 [templates/golden_cpu_template.py.tmpl](templates/golden_cpu_template.py.tmpl) 生成。从 NPU golden `{op}_golden.py` 复制数学逻辑，做以下适配：
-
-1. **移除 NPU 设备逻辑**：删除 `_get_device()`、`import torch_npu`、`.to(device)`
-2. **不降回原 dtype**：FP16/BF16 输入提升至 FP32 计算，**返回 FP32**（不执行末尾 `.to(out_dtype)`）
-3. **数学逻辑一致**：函数签名、计算公式与 NPU golden 完全相同
-4. **纯 CPU + torch**：不使用任何 `torch.npu.*` 特定操作
-
-### 验证方式
+必须直接执行脚本：
 
 ```bash
-python3 {op}_golden_cpu.py
+TILE_FWK_DEVICE_ID=<id> python <op-dir>/<op>_golden.py
 ```
 
-exit code 0 = 通过。验证内容：基本功能（FP32/FP16 输入可运行、输出 dtype 为 FP32、无 NaN/Inf）。
+未指定卡号时省略环境变量。不得以 `exec(open(...).read())` 或零散调用替代自验证。只有进程 exit code 为 0 且全部检查通过，NPU golden 才通过门禁。
 
-### 文件结构
+### 5. 生成并验证 CPU golden
 
-- `{op}_golden_cpu()` 函数：CPU FP32 更高精度参考实现
-- `_validate()` 函数：简单验证
-- `if __name__ == "__main__": _validate()` 入口
+使用 [templates/golden_cpu_template.py.tmpl](templates/golden_cpu_template.py.tmpl)，从已验证的 NPU golden 复制相同数学逻辑并进行以下适配：
 
-### 交付物
+- 函数名为 `<op>_golden_cpu`，签名、参数语义和计算公式与 NPU golden 一致。
+- 只 import `torch`；移除 `torch_npu`、NPU device 选择和 `.to(npu)`。
+- FP16/BF16 浮点输入提升到 FP32 计算并返回 FP32，不在末尾降回输入 dtype。
+- 保留整数、布尔和索引参数的语义及 dtype。
 
-`custom/<op>/{op}_golden.py` 与 `custom/<op>/{op}_golden_cpu.py` 是 Stage 2 的强制交付物。`GOLDEN_PERF_REPORT.md` 仅在 `collect_golden_perf=true` 时生成并验收。
+直接执行：
+
+```bash
+python <op-dir>/<op>_golden_cpu.py
+```
+
+CPU 自验证至少覆盖 FP32/低精度浮点输入可运行、输出为 FP32、shape 正确且无 NaN/Inf。exit code 非 0 时不得交付。
+
+### 6. 按开关处理 profiling
+
+- `collect_golden_perf=false` 或缺失：跳过，继续完成 Stage 2。
+- `collect_golden_perf=true`：先保证 NPU golden 自验证通过，再阅读并执行 [references/profiling.md](references/profiling.md)。单独使用时沿用本 skill 的显式开关定义，并把 reference 命令中的 `custom/<op>/` 换成实际 `<op-dir>/`；采集流程和判定不变。多个 P0 必须逐 case 采集。
+
+Profiling 是 Stage 2 对 NPU golden 的独立可选能力；采集逻辑只存在于 `scripts/profile_golden.py`，不得写入 golden 文件，也不绑定任何下游阶段的协议。
+
+## 完成条件
+
+交回上层前确认：
+
+- 两份 golden 均存在，数学公式、函数签名和全部参数一致；
+- NPU golden 仅使用 torch/torch_npu，CPU golden 仅使用 torch；
+- `_make_inputs()` 覆盖全部合同 P0，并满足所有输入约束；
+- `_validate()` 额外覆盖已冻结的性能/功能 P1、可选参数分支和必要的动态轴组合；
+- 两个文件均通过直接执行，exit code 为 0；
+- 验证覆盖 shape、finite、适用的 API 对比、边界和数学属性；
+- 只有 `collect_golden_perf=true` 时才存在有效性能报告。
+
+只报告实际产物、执行命令、exit code 和未解决的证据；不要用主观置信度替代验证结果。

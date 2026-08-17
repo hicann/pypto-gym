@@ -1,162 +1,72 @@
-# 既有参考的 PyPTO-Pro 友好化（Reference Normalization Path）
+# 既有参考规范化
 
-## Contents
+当用户提供 PyTorch 或 NumPy 参考实现时使用本流程。先确认参考源路径并保持原文件只读，再按 [../SKILL.md](../SKILL.md) 生成 NPU golden 骨架，把经等价核对的数学逻辑填入骨架保留的 TODO。若参考源正是任一目标交付文件，候选骨架必须生成到临时目录；等价验证通过并取得覆盖确认后才替换目标，不能先覆盖 oracle。目标是得到语义等价、可验证且便于后续实现对照的 golden；不在此阶段预测 Module 数量、划分 Module 边界或设计 kernel。
 
-- [选择最强参考](#strongest-reference)
-- [审计参考实现的 PyPTO-Pro 不友好模式](#audit-reference)
-- [规范化 golden](#normalize-golden)
-- [Full vs Tiled 实现策略](#full-vs-tiled)
-- [构建 Golden function inventory（强制）](#golden-inventory)
-- [用原始 golden 验证规范化 golden](#validate-normalization)
-- [Freeze 规范化 golden](#freeze-golden)
+## 1. 选择参考源
 
+按以下顺序选择可执行且语义最完整的参考：
 
-> **适用场景**：用户提供了已有的 PyTorch / NumPy 参考实现，需要将其规范化为
-> PyPTO-Pro 友好的 golden。当用户没有提供参考实现而是直接通过规格信息生成 golden
-> 时，走 SKILL.md §1-§12 的从规格生成路径即可，本文档不适用。
+1. PyTorch forward/backward 参考；
+2. NumPy 参考；
+3. 没有可用参考时，才根据 SPEC 数学公式自行实现。
 
-## <a id="strongest-reference"></a>选择最强参考
-
-参考实现选择优先级：
-
-1. PyTorch forward/backward 参考
-2. NumPy 参考
-3. 仅当无任何已有参考时，自行编写数学参考
-
-在编写新参考前，优先搜索现有实现：
+在新写数学逻辑前，先搜索仓内已有实现和 PyPTO-Pro API 文档：
 
 ```bash
-grep -rn "<operator name>" examples/ custom/ models/ $PYPTO_DEVKIT_DIR/docs/pypto_pro/api/
+rg -n "<operator name>" examples/ custom/ models/ "$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/"
 ```
 
-## <a id="audit-reference"></a>审计参考实现的 PyPTO-Pro 不友好模式
+记录最终参考文件、入口函数和选择理由。多个来源冲突时，以 SPEC 为合同并保留冲突证据；不要静默拼接不同语义。
 
-主动扫描以下不友好模式：
+## 2. 审计并规范化
 
-- 隐式多轴广播
-- 不透明的库操作
-- 复杂的复合调用
-- 隐藏的 layout 变化
-- 必须显式化的控制流
-- 4D/5D 操作（PyPTO-Pro 中可能脆弱）
-- 不能干净映射到 tile_fwk IR 的 host-side 便利
+逐项检查：
 
-对每个可疑模式，直接读取 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` 下相应 op 文档：
+- 隐式多轴 broadcast、隐藏的 reshape/transpose/layout 变化；
+- 不透明库调用和难以核对的复合调用；
+- host-side 便利逻辑、复杂控制流和高维操作；
+- 未显式说明的 dtype 提升、降精度或 accumulator 精度；
+- shape、索引范围和 tensor 间依赖未写清的中间值。
 
-## <a id="normalize-golden"></a>规范化 golden
+对不明确的操作读取对应 PyPTO-Pro API 文档。规范化时：
 
-将参考改写为 PyPTO-Pro 友好的 golden。规范化强度取决于 Stage 3（DESIGN.md §0）
-的 Module 划分：
+- 保留数学语义，不机械保留源代码语法；
+- 显式写出关键 shape、dtype 转换、broadcast 轴和 layout 变化；
+- 将多步隐式操作拆为可单独核对的中间 tensor，并使用有意义的名称；
+- 使用 `torch.transpose(t, dim0, dim1)` 或 `tensor.transpose(dim0, dim1)`，不使用 `.T` / `.t()` 隐藏转置轴；
+- 所有 matmul 输入先转 FP32 累加；
+- 不因后续 kernel 可能采用某种结构而改变 golden 的数学结果。
 
-> Module 划分在该步骤之后由 architect 在 DESIGN.md §0 R0 中决定。但可以基于算法类型预判：
-> - 纯逐元素 / 单 Module 简单归约 → 可能**少量 Module**（轻量规范化）
-> - 多状态递归（gated_delta_rule / mamba）/ 跨 tile 归约（softmax / layernorm）/ Cube+Vector 混合 → 可能**多 Module**（完整规范化）
->
-> 不确定时，默认**完整规范化**——它是严格超集，在 Stage 3 落到少量 Module 时可以忽略边界标记。
+默认采用一次性处理完整输入的 full computation。只有 SPEC 本身定义分块、窗口、递归状态或 partial accumulation，且需要验证 tile 边界语义时，才增加 tiled 版本。若同时保留 full 与 tiled，两者必须在 dtype 对应容差内等价。
 
-**通用规则（所有 Module 数均适用）**：
+## 3. 在 golden 头部记录数学清单
 
-- 保留语义，不保留源码语法
-- 显式化所有 shape
-- 显式化 dtype 转换
-- 隐式 broadcast 链改写为单轴形式
-- 窄向量 / 奇怪 layout 改写为对齐友好的表示
-- **禁用 `.T` / `.t()`**：使用 `torch.transpose(t, dim0, dim1)`。对 matmul `a @ b.T`，
-  写为 `torch.matmul(a, b.transpose(-2, -1))` 并注释 `# a @ b^T → pl: b_trans=True`
-- 在每个中间 tensor 上加 shape 注释 `# [B, H, T, K]`
+在规范化后的 `{op}_golden.py` 文件级 docstring 或紧随其后的注释中维护一份简短清单，使数学步骤和 shape 变化可追溯：
 
-**多 Module 算子专用（Module 数 ≥ 2）**：
-
-- 在每个未来 Module 边界处给中间 tensor 起有意义的命名
-- 标记 Module 边界（用 `# --- Module 1: <role> ---` 注释）——这些对应 DESIGN.md §0 R0 中的 Module 划分，便于 Stage 4 增量模式下逐 Module 比对中间量
-
-**单 Module 算子专用（Module 数 == 1）**：
-
-- Module 边界标记**不要求**（kernel 是一个块）
-- golden 可以保留单个高层调用（例：`out = torch.softmax(x, dim=-1)`），**除非** Golden function inventory 因 shape 变换追踪需要而要求展开
-
-## <a id="full-vs-tiled"></a>Full vs Tiled 实现策略
-
-规范化 golden 可采用两种等价策略：
-
-**策略 1: Full computation（默认）**
-
-一次性处理整个 input tensor。最简单直接。
-
-```python
-def attention_golden(q, k, v):
-    scores = torch.matmul(q, k.transpose(-2, -1))
-    probs = torch.softmax(scores, dim=-1)
-    return torch.matmul(probs, v)
+```text
+Golden operation inventory:
+1. matmul(q, k^T): [B,H,T,K] x [B,H,K,T] -> [B,H,T,T]
+2. softmax(scores, dim=-1): [B,H,T,T] -> [B,H,T,T]
+3. matmul(probs, v): [B,H,T,T] x [B,H,T,K] -> [B,H,T,K]
 ```
 
-**策略 2: Tiled computation（可选，复杂 kernel 推荐）**
+清单只描述当前 golden 的数学操作和 shape/dtype 变化，不包含未来 Module、PyPTO-Pro 实现行号或状态字段。CPU golden 保持同一数学步骤。
 
-将输入切成小 tile，每个 tile 独立计算，然后拼接 / 累积。该模式：
+## 4. 证明与原始参考等价
 
-- 映射 PyPTO-Pro kernel 的实际执行方式（tile-by-tile）
-- 允许早期验证边界处理、padding、accumulator 逻辑
-- 在 PyPTO-Pro 实现前暴露 tile-size 对数值精度的影响
-- 对有 tiling 结构的 kernel（window attention、blockwise matmul、FlashAttention）是必要的
+保留原始参考作为独立 oracle，使用相同输入分别执行原始与规范化实现。至少覆盖：
 
-例（按 batch tiled）：
+- 固定 random seed；
+- 小 shape、代表性/P0 shape 和边界 shape；
+- SPEC 支持的 dtype；
+- 输出 shape、NaN/Inf；
+- dtype-aware 的 `assert_allclose`；
+- full/tiled 两种实现同时存在时的逐 case 等价性。
 
-```python
-def attention_golden_tiled(q, k, v, window_size=None):
-    """Tiled attention golden (matches PyPTO-Pro kernel tile-by-tile execution)."""
-    outputs = []
-    for b in range(q.shape[0]):
-        q_tile = q[b:b+1, ...]
-        k_tile = k[b:b+1, ...]
-        v_tile = v[b:b+1, ...]
-        scores = torch.matmul(q_tile, k_tile.transpose(-2, -1))
-        probs = torch.softmax(scores, dim=-1)
-        out_tile = torch.matmul(probs, v_tile)
-        outputs.append(out_tile)
-    return torch.cat(outputs, dim=0)
-```
+输入具有索引、状态或多 tensor 依赖时，复用同一组合法输入，不为两侧分别随机生成。任何不匹配都必须先定位并修复；不得通过改 SPEC、放宽到无意义容差或跳过 case 继续。
 
-**何时选 Tiled**：
+## 5. Freeze 并进入标准交付
 
-- Kernel spec 明确描述 tiling 或 loop-based 计算
-- 算法涉及 split / partial results / state accumulation
-- 需要在完整 PyPTO-Pro 实现前验证 tile 边界的 edge case
+将规范化逻辑填入已生成骨架并完成等价验证后，在 golden 文件头部记录参考源、验证命令和 `frozen` 状态。此后把规范化实现作为唯一 golden 来源；除非有可复现证据证明其语义错误，否则不要改动。
 
-**两种策略必须产生相同的数值结果**（在浮点容差范围内）。若两者都实现，在
-`{op}_golden.py` 中包含两者并在验证套件中验证等价性。
-
-## <a id="golden-inventory"></a>构建 Golden function inventory（强制）
-
-规范化 golden 写完后，在 `custom/<op>/MEMORY.md` → **Golden function inventory**
-中列出每个数学操作：
-
-```
-| # | Golden operation          | Shape transformation              | PyPTO-Pro implementation | Line | Status |
-|---|---------------------------|-----------------------------------|--------------------------|------|--------|
-| 1 | matmul(q, k^T)            | [B,H,T,K]@[B,H,K,T]->[B,H,T,T]    | pl.matmul(...)           | L.42 | ✅     |
-| 2 | softmax(scores, dim=-1)   | [B,H,T,T]->[B,H,T,T]              |                          |      | ❌     |
-```
-
-**门禁**：inventory 不存在不得进入 Stage 3 设计阶段。
-
-## <a id="validate-normalization"></a>用原始 golden 验证规范化 golden
-
-总是用以下条件验证：
-
-- 同一 random seed
-- 小 shape
-- 代表性 shape
-- 边界 / edge shape
-- dtype-aware 比较
-- NaN / Inf 检查
-- `assert_allclose` 使用要求的 tolerance policy
-
-若规范化 golden 不匹配，**停止并修复**。不要开始 PyPTO-Pro 实现。
-
-## <a id="freeze-golden"></a>Freeze 规范化 golden
-
-规范化 golden 匹配后：
-
-- 在 memory 中标记 frozen
-- 作为后续单一参考
-- 除非有证据表明规范化本身错误，否则**不**改动
+随后返回 [../SKILL.md](../SKILL.md) 的 NPU/CPU 生成与直接执行流程，交付并验证两份 golden。Freeze 不替代这两份文件各自的 exit-code 门禁。
