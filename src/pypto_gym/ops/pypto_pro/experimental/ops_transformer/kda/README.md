@@ -38,6 +38,6 @@ gate_kkt_kda → inversion_kda → wy_kda → chunk_h_kda → chunk_o_kda
 - `test_wy_kda.py` — Stage 4 单 kernel 测试
 - `test_chunk_h_kda.py` — Stage 5 单 kernel 测试
 - `test_chunk_o_kda.py` — Stage 6 单 kernel 测试
-- `test_kda_e2e.py` — 端到端 pipeline 测试
+- `test_kda_pro_e2e.py` — 端到端 pipeline 测试
 - `ref_kda.py` — CPU golden 参考实现 (RefKDA 类)
 - `kda_test_config.py` — 共享测试配置
