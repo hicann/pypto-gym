@@ -456,7 +456,7 @@ def test_kernel(
 ## 调用示例
 
 - 算子实现详见 [gated_delta_rule_impl.py](./gated_delta_rule_impl.py)
-- 测试用例详见 [tests/ops/qwen3_next/test_gated_delta_rule.py](../../../../../tests/ops/qwen3_next/test_gated_delta_rule.py)
+- 测试用例详见 [tests/ops/qwen3_next/test_gated_delta_rule_qwen3_next.py](../../../../../tests/ops/qwen3_next/test_gated_delta_rule_qwen3_next.py)
 
 ## 性能测试结果
 
