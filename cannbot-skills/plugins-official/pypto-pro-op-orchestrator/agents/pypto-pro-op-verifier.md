@@ -20,6 +20,7 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 | `stage3-check` | `pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 无 |
 | `module-check` | `pypto-pro-op-develop`、`pypto-pro-golden-generate` | 环境归因时加载 `pypto-pro-environment-check` |
 | `stage4-check` | `pypto-pro-op-develop`、`pypto-pro-golden-generate`、`pypto-docs-search` | profiling 时加载 `pypto-pro-op-perf-tune`；环境归因时加载 `pypto-pro-environment-check` |
+| `stage5-check` | `pypto-pro-op-develop`、`pypto-docs-search`、`pypto-pro-op-perf-tune` | 环境归因时加载 `pypto-pro-environment-check` |
 | `capability_gap_check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 涉及环境能力时加载 `pypto-pro-environment-check` |
 
 `stage1-check`、`stage3-check` 和 `capability_gap_check` 还必须读取 `$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`；该文件是 Vector 选择与证据门槛的唯一规范源。
@@ -57,6 +58,7 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 | `module-check` | L1 路径 Module k impl 产完后 | 6 | 是（`python custom/<op>/modules/test_{op}_module<suffix_k>.py`） |
 | `capability_gap_check` | coder 报告 capability_gap 后 | 见下方 | 按需（查文档/样例；证据不足时运行最小 probe） |
 | `stage4-check` | coder 返回后（L0）或 cleanup 后（L1） | 15 | 是（`python custom/<op>/test_{op}.py`） |
+| `stage5-check` | optimizer 返回后 | Stage 4 的 15 项 + P1–P6/P8 必选性能门禁；P7 条件审计 | 是（完整正确性 + skill 规定的证据读取/比较） |
 
 ---
 
@@ -206,6 +208,25 @@ Suggested action: <编排器应补充的具体证据；不得按 false_gap/confi
 
 ---
 
+## Stage 5 检查清单（`stage5-check`）
+
+Stage 5 必须先完整重跑 Stage 4 的 15 项门禁；任何正确性、交付态、知识使用、wrapper 边界或反作弊退化都直接 FAIL。随后加载 `pypto-pro-op-perf-tune`，仅用其定义的字段与计时口径核查 P1–P8。P1–P6 与 P8 是完成门禁，P7 只在未通过且准备声明穷尽时审计。verifier 不重新优化、不修报告，也不把 optimizer 的口头声明当成证据。
+
+| # | 类别 | 检查项 | 验证方式 |
+|---|------|--------|---------|
+| P1 | 文件完整性 | 四件套均存在且非空：`PERFORMANCE_REPORT.md`、`performance.json`、`performance.log`、`perf_report.md` | 逐一检查文件存在、大小非零、可读取；任何缺失报 `performance_evidence_invalid` |
+| P2 | 基线一致 | `PERFORMANCE_CASES.json` 与 `PERFORMANCE_REPORT.md` 覆盖 SPEC 的每个性能 P0 case，manifest case 与 Stage 4 既有测试一一对应；报告逐 case 给出 baseline/final，shape、dtype、device、warm-up、repeats、目标 `Op Name` 和计时口径一致 | 按 perf skill schema 解析 manifest，再对照 `SPEC.md`、Stage 4 测试与报告逐字段检查；缺 case、修改 case 语义或用聚合结果冒充逐 case 结果均 FAIL |
+| P3 | 采集证据 | 最终 `performance.json` 来自正式 compare（非 quick），baseline/final 是两次独立 formal compare，逐 case 原始 CSV 与 `measurement.json` 存在且能和报告对应；final compare、timeline 与最终正确性针对同一份最终实现 | 从 `PERFORMANCE_REPORT.md` 取出不同的 `baseline_collection_id`/round 与 `final_collection_id`/round，分别加载两轮 `collection.json`、逐 case `measurement.json`/CSV，核对 manifest、Op Name、样本和报告数字；确认 final collection 完整后才允许挂接 timeline，并对照当前代码、实际命令和报告，拒绝把修改前的旧轮次证据拼到后续实现。根目录四件套只表示最近 final，不可代替 baseline 轮；孤立手填、已删除路径或互相矛盾均报 `performance_evidence_invalid` |
+| P4 | 数值可比且可复算 | baseline/final duration 为有限正数；每个 case 的同协议 PyPTO `speedup = baseline_duration / final_duration` 可复算且与报告一致 | 逐 case 独立复算（允许合理展示舍入误差）；禁止把单一聚合时延复制给多个 case。默认目标时，`performance.json` 的 `golden_reference_ratio` 必须等于冻结 Golden 每迭代 E2E / 最终 PyPTO target-kernel，并标明它不是 optimization speedup |
+| P5 | 正确性无退化 | 最终 `python custom/<op>/test_{op}.py` exit code=0，所有 P0 case 精度指标满足 Stage 4 标准 | 必须使用最终代码实际执行并捕获 stdout/stderr；不能复用 baseline 或中间轮次的 PASS |
+| P6 | 性能目标 | `PERFORMANCE_REPORT.md` 明确引用 SPEC 中用户提供的数值目标；未提供时采用每个 P0 case `golden_reference_ratio >= 1.0`。报告给出逐 case 结论与总 `target_met: true|false` | 默认目标时，检查 Golden 合同由 perf skill 的 Stage 5 专用 `collect_golden_reference.py` 在 baseline 前冻结，不得把 Stage 2 可选 Markdown 报告当作机器合同；case id/shape/dtype 与 manifest 一致，device、seed=42、warm-up/repeats、固定 `iterations=1`、原始样本与每迭代值齐全。逐 case 复算 `golden_per_iteration_npu_e2e_us / final_pypto_target_kernel_us`，所有 P0 均 >=1.0 才能 PASS，不得用 geomean 掩盖慢 case。Stage 4 单 kernel/单次调用门禁必须仍通过；wrapper 若有未计入分母的额外 device kernel，默认目标证据无效。证据有效但任一 case 未达到报 `performance_target_miss` |
+| P7 | 未通过时的搜索完备性 | 当 P6 与 P8 都已通过时无需继续穷举；当 P6 或 P8 未通过且 optimizer/orchestrator 准备声明已穷尽或调用 `fail_stage(5)` 时，候选覆盖账本必须闭合 | 逐项核查 SPEC、当前实现与生成物、正式 profiling、Stage 5 实战指南、适用平台资料及重新采集后新瓶颈所产生的候选；所有适用原子项、要求的兼容/enable 两两组合、累积组合和负候选重开均须有实验或可复核的 `unsupported`/冲突/`dominated` 证据。`dominated` 必须有全部 P0 case 与资源约束上的实测支配或等价子情形证明；连续少数候选无收益、理论预估或单 case 更差均不能关闭搜索 |
+| P8 | Roofline、Scalar 与流水终态 | 每个 P0 case 均有结构化 `roofline_terminal`、`pipeline_evidence`、`scalar_evidence`，并证明关键路径是有效计算或必要搬运、Scalar/等待不主导、所有合法可重叠搬算已流水 | 逐 case核对 workload/必要字节、平台峰值及来源、Roofline 推导、final collection 的 CSV/A-B，以及 final case 下 `instruction_timeline/timeline_evidence.json`、原始 timeline/DB 和当前 Tile DAG/slot/stage 映射；先确认 P3 的 final compare 与 timeline 确实对应当前最终代码。终态只接受 `compute_bound`、`data_movement_bound`、`balanced_compute_movement`；pipeline 的 `proven` 必须同时满足唯一 exact target task 归属、同一 BIU lane 的稳态搬算区间重叠及相邻 Tile 映射；脚本原始状态 `requires_tile_dag_correlation` 不能直接放行。不同 lane 并行、只有 ratio 同时高、无 Tile 映射的区间相交、受 instrumentation 扰动的时延或代表 lane 外推都不是证明。也可接受附完整依赖 DAG 且确无两个 work item/合法重叠边的 `not_applicable_with_dag`；Scalar 必须 `dominant=false`。`scalar_bound`、`wait_bound`、`insufficient_evidence`、`unverified`、仅引用旧轮次或路径不可读均 FAIL，报 `performance_pipeline_invalid` |
+
+只有 Stage 4 的 15 项与 P1–P6、P8 全部通过，`stage5-check` 才能 PASS；数值目标已达但 P8 未通过仍不得完成。P7 在完成门禁已通过后不要求继续穷举，只用于审计未通过时能否诚实声明穷尽。性能证据有效但未达目标或未形成健康流水终态也是 FAIL，不过必须与伪造/不可比/缺失证据区分。
+
+---
+
 ## Verdict 格式
 
 ### PASS
@@ -215,6 +236,8 @@ Stage N verification PASSED.
 All <M> checks passed.
 Evidence: <逐项检查结果摘要>
 ```
+
+当 `N=5` 时，返回 P1–P8 的检查摘要；P7 标明 `not_required` 或实际审计结论。编排者只有在 P1–P6/P8 全部 PASS 后才调用普通 `state_transition(action="complete_stage", stage=5)`。
 
 ### FAIL
 
@@ -240,6 +263,9 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 | `perf_violation` | buffer 轮转或 Vector 最终实现偏离已冻结选择 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
 | `precision_failure` | test 运行无 PASS | 回退 Stage 4 修复 |
 | `runtime_failure` | test 运行报错（非环境） | 回退 Stage 4 修复 |
+| `performance_evidence_invalid` | Stage 5 四件套缺失、不可比、不可复算或彼此矛盾 | Stage 5 保持 in_progress，反馈 optimizer 补采或纠正报告 |
+| `performance_target_miss` | 证据有效、正确性通过，但 SPEC 的性能目标未达到 | Stage 5 保持 in_progress，反馈 optimizer 继续优化；穷尽方案后由编排器 fail_stage(5) 诚实上报 |
+| `performance_pipeline_invalid` | 数值证据可读，但任一 P0 case 的 Roofline 终态、Scalar 排除或搬算重叠证据不满足 P8 | Stage 5 保持 in_progress，反馈 optimizer 继续分析/优化/重采；不得用 ratio 标签或数值目标已达替代终态证据 |
 | `env_error` | torch_npu/pypto_pro 导入失败/npu-smi 无响应 | orchestrator 分流：硬件→换卡；软件→停机反馈用户 |
 | `false_gap` | capability_gap_check 结论为虚假——coder 的"框架限制"声称不成立 | orchestrator 将 verifier 分析结果原样告知 coder，让其继续开发（不调 state_transition，不回退） |
 | `confirmed_gap` | capability_gap_check 结论为成立——框架限制确实存在 | orchestrator 调 rollback_to_stage(3) 回退 Stage 3 重新设计 |
@@ -253,7 +279,7 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 
 ---
 
-## 环境异常检测（仅 Stage 4）
+## 环境异常检测（Stage 4 / Stage 5）
 
 运行 `python custom/<op>/test_{op}.py` 时，若遇导入失败（torch_npu / pypto_pro 未安装或初始化失败）、npu-smi 无响应、CANN 未配置等环境问题，**不归入 FAIL**，而是报告 `failure_category: env_error` + 证据（错误输出原文）。**分流决策权保留在 orchestrator**（换卡/停机/引导用户）。
 

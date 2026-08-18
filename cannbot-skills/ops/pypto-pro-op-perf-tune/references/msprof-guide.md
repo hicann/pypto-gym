@@ -52,8 +52,8 @@ bash build.sh --run_example {operator_name} eager cust --vendor_name=custom
 一键脚本：
 
 ```bash
-# 位于 {skill_path}/scripts/msprof_profile_run.sh
-bash {skill_path}/scripts/msprof_profile_run.sh \
+# 位于 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_profile_run.sh
+bash $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_profile_run.sh \
      --warm-up=3 \
      --output=./msprof_output \
      -- ./demo arg1 arg2 ...
@@ -72,7 +72,7 @@ GROUP_DIR=$(ls -td <output_dir>/PROF_GROUP_* | head -1)
 CSV=$(ls $GROUP_DIR/PROF_PipeUtilization/*/mindstudio_profiler_output/op_summary_*.csv | head -1)
 grep -i {kernel_func} "$CSV"        # {kernel_func} = @pl.jit 装饰的函数名
 
-python3 {skill_path}/scripts/msprof_perf_summary.py $GROUP_DIR ops/{operator_name} --op-name=<Op Name>
+python3 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_perf_summary.py $GROUP_DIR ops/{operator_name} --op-name=<Op Name>
 ```
 
 > **重要**：PyPTO 测试脚本（`test_{op}.py`）通常包含多个 case + `torch.randn`，`op_summary` 中会有大量非目标 op（如 `StatelessNormal` 噪声注入）。**必须指定 `--op-name`** 选中目标 kernel，否则会选到非目标 op 导致结果完全错误。`--op-name` 取同名 kernel 中 Task Duration 最大的行（即最大 workload 的 case）。

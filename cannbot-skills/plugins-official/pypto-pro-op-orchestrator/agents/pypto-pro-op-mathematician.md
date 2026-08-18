@@ -31,9 +31,9 @@ orchestrator 会传入 `collect_golden_perf=true|false`。未传入时必须按 
 - `false`（默认）：生成并验证两份 golden，不运行 `profile_golden.py`
 - `true`：两份 golden 验证通过后，额外运行 `profile_golden.py` 并生成性能报告
 
-不得因为 SPEC.md 含性能 shape、任务要求高性能实现或本 agent 自行判断而开启采集；只有 orchestrator 根据用户明确要求传入 `true` 才能执行。
+不得因为 SPEC.md 含性能 shape、任务要求高性能实现或本 agent 自行判断而开启采集；只有 orchestrator 根据用户明确要求传入 `true` 时才能执行。
 
-若 dispatch 同时声明 `profile-only`，说明 Stage 2 已完成：不得重写两份 golden；先直接验证现有 `{op}_golden.py`，再按 `collect_golden_perf=true` 执行 profiling 并返回报告。
+若 dispatch 同时声明 `profile-only`，说明用户在 Stage 2 完成后才明确要求补采现有 Golden 的性能：不得重写两份 golden；先直接验证现有 `{op}_golden.py`，再按 `collect_golden_perf=true` 执行 profiling 并返回报告。Stage 5 默认目标不使用此模式。
 
 ## Deliverables
 

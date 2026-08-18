@@ -1,10 +1,10 @@
 # PyPTO-Pro 两条性能强制
 
-> **用途**：PyPTO-Pro 工作流的性能约束。被 `pypto-pro-material-explore`（探索阶段 API 映射）、`pypto-pro-op-design`（设计阶段落实）、`pypto-pro-op-develop`（实现阶段遵守）三个 skill 共同引用。各 skill 不重复定义，统一指向本文件。
+> **用途**：PyPTO-Pro 工作流的性能约束。被 `pypto-pro-material-explore`（探索阶段 API 映射）、`pypto-pro-op-design`（设计阶段落实）、`pypto-pro-op-develop`（实现阶段遵守）和 `pypto-pro-op-perf-tune`（性能优化阶段保持铁律）共同引用。各 skill 不重复定义，统一指向本文件。
 >
 > **安装路径**：源码位于 `plugins-official/pypto-pro-op-orchestrator/references/`，由 `init.sh` 软链到 `.opencode/references/`。各 skill 引用时写「见 `.opencode/references/performance-constraints.md`」。
 
-以下两条是性能约定，探索阶段的 API 映射与样例参考、设计阶段的 tile 规划、实现阶段的 kernel 编码均须遵守。否则产出的算子性能可能不可接受。
+以下两条是性能约定，探索阶段的 API 映射与样例参考、设计阶段的 tile 规划、实现阶段的 kernel 编码以及 Stage 5 优化均须遵守。否则产出的算子性能可能不可接受。
 
 ---
 

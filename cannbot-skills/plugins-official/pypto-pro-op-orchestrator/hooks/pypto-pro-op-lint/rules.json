@@ -103,8 +103,8 @@
       "stages": [1, 2, 3, 4],
       "target": "gate",
       "triggers": ["gate:S1", "gate:S2", "gate:S3", "gate:S4"],
-      "rule": ".orchestrator_state.json 是合法 JSON 且 max_stage == 4",
-      "fix_hint": "检查 custom/<op>/.orchestrator_state.json 是否存在且为合法 JSON，max_stage 字段应为 4。如需重置，通过 state_transition(init) 初始化。"
+      "rule": ".orchestrator_state.json 是合法 JSON，且 max_stage 为严格整数 5",
+      "fix_hint": "检查 custom/<op>/.orchestrator_state.json 是否存在且为合法 JSON；max_stage 必须为严格整数 5。"
     },
     {
       "id": "PL11",

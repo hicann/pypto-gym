@@ -2,7 +2,7 @@
 
 ## 概述
 
-CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。采用 4 阶段工作流驱动，覆盖从需求理解到代码实现的完整流程，通过独立 verifier 在每个 Stage 结束时执行检查清单，确保各阶段产出符合质量要求。
+CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。采用 5 阶段工作流驱动，覆盖从需求理解、代码实现到证据化性能优化的完整流程，通过独立 verifier 在每个 Stage 结束时执行检查清单，确保各阶段产出符合质量要求。
 
 ### 与 PyPTO 开发的区别
 
@@ -11,9 +11,9 @@ CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 
 | 适用场景 | PyPTO-Pro 框架算子开发 | PyPTO 框架算子开发 |
 | 编程语言 | Python（PyPTO-Pro API） | Python（PyPTO API） |
 | 开发内容 | PyPTO-Pro kernel + golden + test | PyPTO kernel + golden + test |
-| 阶段数 | 4 阶段工作流 | 7 阶段状态机驱动 |
+| 阶段数 | 5 阶段工作流 | 7 阶段状态机驱动 |
 | 状态管理 | `.orchestrator_state.json`（`state_transition` 工具 + lint 机械门禁 + verifier 语义门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
-| 性能调优 | 按需参考 | Stage 7 独立调优阶段 |
+| 性能调优 | Stage 5：可比基线、优化循环与证据验收 | Stage 7 独立调优阶段 |
 
 ## 一、环境搭建
 
@@ -35,7 +35,7 @@ bash init.sh global opencode    # 全局级
 
 ### 其他工具（资源安装，不含自动状态机/硬门禁）
 
-> **自动门禁支持边界**：`state_transition` 工具、写入后 lint 和 Stage/Module 自动硬门禁目前通过 OpenCode 插件提供。下列其他工具的 `init.sh` 适配仅安装 skills、agents 与提示词资源，不会获得同等的 OpenCode 自动门禁能力。需要完整 4 阶段状态机和 fail-closed lint 流程时，请使用 OpenCode。
+> **自动门禁支持边界**：`state_transition` 工具、写入前 lint 和 Stage/Module 自动硬门禁目前通过 OpenCode 插件提供。下列其他工具的 `init.sh` 适配仅安装 skills、agents 与提示词资源，不会获得同等的 OpenCode 自动门禁能力。需要完整 5 阶段状态机和 fail-closed lint 流程时，请使用 OpenCode。
 
 <details>
 <summary>Claude Code</summary>
@@ -122,7 +122,7 @@ bash /path/to/pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrato
 ```bash
 # OpenCode
 opencode agent list
-# 应看到 pypto-pro-op-planner / pypto-pro-op-mathematician / pypto-pro-op-architect / pypto-pro-op-coder / pypto-pro-op-verifier
+# 应看到 pypto-pro-op-planner / pypto-pro-op-mathematician / pypto-pro-op-architect / pypto-pro-op-coder / pypto-pro-op-optimizer / pypto-pro-op-verifier
 
 # Claude Code
 ls .claude/
@@ -159,7 +159,7 @@ claude
 
 ### 开发算子示例
 
-在交互界面中输入算子开发需求，CANNBot 会自动启动 4 阶段流程：
+在交互界面中输入算子开发需求，CANNBot 会自动启动 5 阶段流程：
 
 ```
 使用 PyPTO-Pro 开发 softmax 算子，支持 [1, 128]、[4, 2048] 和 [32, 4096] 的 float16 输入。
@@ -167,16 +167,23 @@ claude
 
 ### 核心工作流
 
-采用 4 阶段流程，每个 Stage 由独立 verifier 执行检查清单，确保各阶段产出符合质量要求：
+采用 5 阶段流程，每个 Stage 由独立 verifier 执行检查清单，确保各阶段产出符合质量要求：
 
 ```
 Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集可选）
     → Stage 3: Tile 数据流设计 → Stage 4: Kernel 实现与精度验证
+    → Stage 5: 可比基线驱动的性能优化与证据验收
 ```
 
 每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Pro 流程**使用** `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具，随 OpenCode 插件安装；其他工具下按 AGENTS.md 降级协议手工维护同一账本）。详见 AGENTS.md「共享状态与 state_transition 工具」。
 
-Stage 2 默认只生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），不采集 NPU golden 性能。若需要性能报告，请在需求中明确说明“采集 NPU golden 性能”或“生成 GOLDEN_PERF_REPORT.md”；编排器才会启用 profiling。
+Stage 2 默认只生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），不采集 NPU golden 性能。用户在需求中明确说明“采集 NPU golden 性能”时，可额外生成一份可选的 `GOLDEN_PERF_REPORT.md`；Stage 2 不负责 Stage 5 机器合同。若 SPEC 未记录用户数值目标，Stage 5 optimizer 会使用 `pypto-pro-op-perf-tune` 自带的 `collect_golden_reference.py`，基于现有 Golden 和冻结 case 清单生成一次 Stage 5 专用报告，不回滚或重跑 Stage 2。
+
+Stage 5 优先采用用户在 SPEC 中明确给出的可复算性能目标。用户未给数值目标时，默认要求 `PERFORMANCE_CASES.json` 中每个 P0 case 的 `Golden 每迭代 NPU E2E / PyPTO 最终 target-kernel >= 1.0`。该比值是明确定义的 Golden 跨实现参考目标，不是 PyPTO baseline→final 同口径加速比。
+
+性能提取顺序固定为：先重跑 Stage 4 正确性并完成 JIT/编译预热；用一个受控 case 做 discovery profile，读取真实完整 lowering `Op Name`；再按 manifest 逐 case formal compare，逐 repeat 采集七组 msprof 指标并归档；据此做 Roofline、PyPTO-Pro Tile 依赖和 Scalar/流水分析；经过单变量 A/B 与兼容组合后，对最终版本独立重采，并为 final 每个 P0 case 补采 instruction timeline。补充时间线只计算唯一 target task 窗口内同一监控 lane 的 pipe 区间重叠，还需与当前 Tile DAG/slot/stage 映射联合验证，不能用其受扰动时延替代 formal compare。Stage 4 runner 没有逐 case selector时，多 case manifest 必须逐 case 用 `test_function` 指向既有无参测试函数，由 Stage 5 适配器选择；单 case 可直接运行整个 runner，但必须只有一次可唯一归属的 target launch。均不修改 Stage 1–4 模板。
+
+数值目标达到后还要过健康终态门禁：每个 P0 case 的关键路径必须是有效计算、必要数据搬运或二者平衡，Scalar/等待不能主导；合法可重叠的搬算必须由可归属 target kernel 的 timeline 与当前 Tile DAG 共同证明。`op_summary` 中多个 pipe ratio 同时高、不同核/lane 并行或没有 Tile 映射的区间相交都只用于诊断，不能证明 overlap 或 Roofline。optimizer 会建立候选覆盖账本：数值目标或健康终态未通过时，须继续尝试全部适用原子思路、有意义的兼容/协同组合，并在瓶颈变化后重开受影响的旧候选；不能因少数实验无收益提前结束。
 
 ### 产出物示例
 
@@ -190,9 +197,16 @@ custom/<op>/
 ├── MEMORY.md                  # 任务摘要与协作记录
 ├── {op}_golden.py             # NPU Golden 参考实现
 ├── {op}_golden_cpu.py         # CPU 更高精度 Golden（供精度校验）
-├── GOLDEN_PERF_REPORT.md      # 可选：用户明确要求时生成的 Golden 基准性能报告
+├── GOLDEN_PERF_REPORT.md      # Stage 2 用户按需报告，或 Stage 5 默认目标人读报告
+├── GOLDEN_PERF_REPORT.json    # 仅 Stage 5 默认目标分支生成的机器合同
 ├── DESIGN.md                  # Tile 数据流设计文档
-└── test_{op}.py               # kernel 与测试单文件
+├── test_{op}.py               # Stage 4 kernel；Stage 5 原地保留最快正确版本
+├── PERFORMANCE_CASES.json     # Stage 5 执行 case 清单（SPEC P0 与既有测试一一对应）
+├── PERFORMANCE_REPORT.md      # Stage 5 逐 case baseline/final、Golden 参考比值、候选覆盖与优化记录
+├── performance.json           # Stage 5 结构化性能结果
+├── performance.log            # Stage 5 采集日志
+├── perf_report.md             # Stage 5 脚本分析报告
+└── docs/perf/round_NNN/       # Stage 5 七指标与逐 case instruction timeline 归档
 ```
 
 ## 三、可用技能
@@ -203,10 +217,10 @@ custom/<op>/
 | `pypto-pro-intent-understand` | 需求意图理解与规格生成 | Stage 1 |
 | `pypto-pro-material-explore` | 资料索引与可行性探索 | Stage 1 |
 | `pypto-pro-environment-check` | 环境检查与 smoke 测试 | 按需 |
-| `pypto-pro-golden-generate` | Golden 参考实现生成 | Stage 2 |
+| `pypto-pro-golden-generate` | Golden 参考实现生成与用户按需 NPU 性能采集 | Stage 2 |
 | `pypto-pro-op-design` | Tile 数据流设计 | Stage 3 |
 | `pypto-pro-op-develop` | Kernel 实现与精度验证 | Stage 4 |
-| `pypto-pro-op-perf-tune` | 性能约束与调优参考 | 按需 |
+| `pypto-pro-op-perf-tune` | 默认 Golden 目标采集、性能分析与优化闭环 | Stage 5 |
 | `pypto-docs-search` | 算子 API 文档与参考实现检索 | 按需 |
 
 | Agent | 用途 | 负责阶段 |
@@ -215,7 +229,8 @@ custom/<op>/
 | `pypto-pro-op-mathematician` | NPU/CPU Golden；按需采集基准性能 | Stage 2 |
 | `pypto-pro-op-architect` | Tile 数据流设计 | Stage 3 |
 | `pypto-pro-op-coder` | Kernel 实现与精度验证 | Stage 4 |
-| `pypto-pro-op-verifier` | 每个 Stage 的独立检查 | Stage 1–4 |
+| `pypto-pro-op-optimizer` | 可比证据驱动的性能优化 | Stage 5 |
+| `pypto-pro-op-verifier` | 每个 Stage 的独立检查 | Stage 1–5 |
 
 ## 四、常见问题
 
@@ -241,14 +256,14 @@ cd pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator && bash i
 | 场景 | 推荐模式 |
 |------|---------|
 | 使用 PyPTO 框架开发算子 | PyPTO |
-| 使用 PyPTO-Pro API，并按 4 阶段逐项检查 | PyPTO-Pro |
+| 使用 PyPTO-Pro API，并按 5 阶段逐项检查 | PyPTO-Pro |
 
 ---
 
 ## 总结
 
-1. PyPTO-Pro 通过 4 阶段工作流覆盖从需求规划到 Kernel 实现的完整流程：需求规划与资料索引→NPU/CPU Golden（性能采集可选）→Tile 数据流设计→Kernel 实现与精度验证
+1. PyPTO-Pro 通过 5 阶段工作流覆盖从需求规划到性能优化的完整流程：需求规划与资料索引→NPU/CPU Golden（性能采集可选）→Tile 数据流设计→Kernel 实现与精度验证→证据化性能优化
 2. 使用 `init.sh` 一键安装（OpenCode 推荐），支持项目级和全局级
 3. `opencode` / `claude` 是核心交互指令
 4. 每个 Stage 由独立 verifier 执行检查清单，确保质量门禁
-5. 产物全部写入 `custom/<op>/`，含 SPEC、资料报告、Golden、设计文档与 Kernel 实现
+5. 产物全部写入 `custom/<op>/`，含 SPEC、资料报告、Golden、设计文档、Kernel 实现与可复算性能证据

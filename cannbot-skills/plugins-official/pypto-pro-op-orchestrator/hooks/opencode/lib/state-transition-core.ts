@@ -1,7 +1,7 @@
-// state-transition-core.ts — schema v2.1 (PyPTO-Pro)
+// state-transition-core.ts — schema v2.2 (PyPTO-Pro)
 //
-// Pro workflow is 4 stages (1=planner, 2=mathematician, 3=architect,
-// 4=coder). Stage 4 has two dispatch paths:
+// Pro workflow is 5 stages (1=planner, 2=mathematician, 3=architect,
+// 4=coder, 5=optimizer). Stage 4 has two dispatch paths:
 //   - L0 (is_fusion=false): single coder dispatch → stage4-check
 //   - L1 (is_fusion=true):  per-Module loop with module-check gates
 // The L1 path is driven by plan_stage4 + start_module / submit_for_verify /
@@ -61,7 +61,7 @@ export type Stage4Modules = {
 export type OrchestratorState = {
   operator_name?: string;
   schema_version?: string;
-  max_stage: number;
+  max_stage: 5;
   current_stage: number;
   stage_status: Record<string, StageStatus | string>;
   stage_retry_count: Record<string, number>;
@@ -74,7 +74,7 @@ export type OrchestratorState = {
 };
 
 export type TransitionInput =
-  | { action: "init"; stage?: number; max_stage?: number }
+  | { action: "init"; stage?: number }
   | { action: "start_stage"; stage: number; reason?: string }
   | { action: "complete_stage"; stage: number }
   | { action: "fail_stage"; stage: number; reason?: string }
@@ -97,7 +97,8 @@ export type TransitionInput =
       last_error?: string;
     };
 
-const DEFAULT_MAX_STAGE = 4;
+const WORKFLOW_STAGE_COUNT = 5;
+const CURRENT_SCHEMA_VERSION = "2.2";
 const DEFAULT_MAX_CYCLES_PER_PHASE = 10;
 
 function cloneState(prev: OrchestratorState): OrchestratorState {
@@ -157,24 +158,15 @@ export function applyTransition(
   input: TransitionInput,
 ): OrchestratorState {
   const next = cloneState(prev);
-  // `init` establishes how many stages there are; every other action inherits whatever
-  // the ledger already says. Reading it only from the previous state meant a caller
-  // passing max_stage to init was ignored the moment a state file existed.
-  const maxStage =
-    input.action === "init"
-      ? (input.max_stage ?? next.max_stage ?? DEFAULT_MAX_STAGE)
-      : (next.max_stage ?? DEFAULT_MAX_STAGE);
-  next.max_stage = maxStage;
+  const maxStage = WORKFLOW_STAGE_COUNT;
+  if (next.max_stage !== maxStage) {
+    throw new Error(
+      `invalid workflow state: max_stage must be ${maxStage}, got ${next.max_stage}`,
+    );
+  }
 
-  // Fill in any stage the ledger is missing rather than only replacing an absent map:
-  // `{}` is truthy, so a partially written or older-schema file kept its gaps, and then
-  // `nextKey in statusMap` was false and complete_stage stopped advancing in silence.
-  // Fill gaps below maxStage AND drop keys above it. The spread alone only filled gaps:
-  // the classic 7-stage orchestrator and this 4-stage one write the same
-  // `custom/<op>/.orchestrator_state.json`, so keys '5'..'7' survived an init(max_stage: 4)
-  // and complete_stage's auto-advance then found '5' `in` the map and moved current_stage
-  // past the final stage. Every later action throws at ensureStageNumber(5, 4), so only
-  // rollback_to_stage escapes.
+  // Fill missing entries and discard malformed/out-of-range keys so transitions always
+  // operate on the fixed five-stage schema.
   const prune = <T,>(base: Record<string, T>, carried: Record<string, T> | undefined) => {
     const merged = { ...base, ...(carried ?? {}) };
     for (const key of Object.keys(merged)) {
@@ -183,11 +175,7 @@ export function applyTransition(
     }
     return merged;
   };
-  // Snapshot BEFORE pruning. init's `hasInProgress` guard reads stage_status, and pruning
-  // first deleted the very keys it needs to see: a live 7-stage ledger in progress at stage
-  // 6 was silently accepted and overwritten instead of refused, losing stages 5-7 and their
-  // retry counts with no rollback_history entry. Pruning is right; doing it before the
-  // guard reads is not.
+  // Snapshot before normalization so init still detects any active stage in the input.
   const carriedStatus = { ...(next.stage_status ?? {}) };
   next.stage_status = prune(emptyStageStatus(maxStage), next.stage_status);
   next.stage_retry_count = prune(emptyRetryCount(maxStage), next.stage_retry_count);
@@ -208,7 +196,7 @@ export function applyTransition(
       }
       next.current_stage = stage;
       statusMap[String(stage)] = "in_progress";
-      next.schema_version = next.schema_version ?? "2.1";
+      next.schema_version = CURRENT_SCHEMA_VERSION;
       // Clear residual state from any previous run so a re-init cannot
       // leak stale rollback history, artifact hashes, or Stage 4 path state.
       next.rollback_history = undefined;

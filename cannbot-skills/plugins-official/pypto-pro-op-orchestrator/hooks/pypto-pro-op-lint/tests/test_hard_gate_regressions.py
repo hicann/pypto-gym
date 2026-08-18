@@ -69,10 +69,15 @@ def _python_comment(content: str) -> str:
     return f"# {content}"
 
 
-def _write_state(op_dir: Path, stage: int = 4, module_count: int | None = None) -> None:
+def _write_state(
+    op_dir: Path,
+    stage: int = 4,
+    module_count: int | None = None,
+    max_stage: int = 5,
+) -> None:
     state: dict[str, object] = {
         "operator_name": "demo",
-        "max_stage": 4,
+        "max_stage": max_stage,
         "current_stage": stage,
     }
     if module_count is not None:
@@ -180,6 +185,24 @@ def test_pl03_fails_closed_when_canonical_validator_is_missing(
     finding = _run(tmp_path, "PL03", stage=1)
     assert finding.status == "FAIL"
     assert "canonical SPEC validator" in finding.message
+
+
+def test_pl10_accepts_max_stage_five(tmp_path: Path) -> None:
+    _write_state(tmp_path, max_stage=5)
+    finding = _run(tmp_path, "PL10")
+    assert finding.status == "PASS"
+    assert "max_stage=5" in finding.message
+
+
+@pytest.mark.parametrize("max_stage", [3, 6, None, "5"])
+def test_pl10_rejects_invalid_max_stage(
+    tmp_path: Path, max_stage: object,
+) -> None:
+    _write(
+        tmp_path / ".orchestrator_state.json",
+        json.dumps({"operator_name": "demo", "max_stage": max_stage}),
+    )
+    assert _run(tmp_path, "PL10").status == "FAIL"
 
 
 def test_pl01_rejects_from_import_of_classic_pypto(tmp_path: Path) -> None:

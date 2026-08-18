@@ -9,9 +9,7 @@
 /**
  * The PyPTO-Pro state machine had no tests at all.
  *
- * It is not the classic one with a test file next to it -- it is a rewrite: schema 2.0,
- * four stages instead of seven, a different action set, and a SPEC freeze that exists
- * only here. So nothing covered it, and two defects below survived because of that.
+ * This suite covers the schema 2.2 five-stage state machine and its SPEC freeze.
  *
  * Run with Node's built-in runner, which strips the types natively:
  *
@@ -33,17 +31,17 @@ import { applyTransition } from "../lib/state-transition-core.ts";
 const OP = "custom/demo";
 
 /** A freshly initialised state, built the way the hook builds one. */
-function initial(maxStage = 4) {
+function initial() {
   const status: Record<string, string> = {};
   const retry: Record<string, number> = {};
-  for (let i = 1; i <= maxStage; i += 1) {
+  for (let i = 1; i <= 5; i += 1) {
     status[String(i)] = "pending";
     retry[String(i)] = 0;
   }
   return {
     operator_name: "demo",
-    schema_version: "2.0",
-    max_stage: maxStage,
+    schema_version: "2.2",
+    max_stage: 5,
     current_stage: 1,
     stage_status: status,
     stage_retry_count: retry,
@@ -51,7 +49,7 @@ function initial(maxStage = 4) {
 }
 
 function init(state = initial()) {
-  return applyTransition(state, { action: "init", stage: 1, max_stage: 4, opDir: OP } as any);
+  return applyTransition(state, { action: "init", stage: 1, opDir: OP } as any);
 }
 
 function advanceTo(stage: number) {
@@ -68,14 +66,25 @@ function advanceTo(stage: number) {
 
 test("init starts stage 1 in progress", () => {
   const s = init();
+  assert.equal(s.max_stage, 5);
   assert.equal(s.current_stage, 1);
   assert.equal(s.stage_status["1"], "in_progress");
+  assert.deepEqual(Object.keys(s.stage_status).sort(), ["1", "2", "3", "4", "5"]);
+  assert.equal(s.schema_version, "2.2");
 });
 
 test("init must target stage 1", () => {
   assert.throws(
     () => applyTransition(initial(), { action: "init", stage: 2, opDir: OP } as any),
     /must target stage 1/,
+  );
+});
+
+test("a state with a non-five stage count is rejected", () => {
+  const invalid = { ...initial(), max_stage: 6 };
+  assert.throws(
+    () => applyTransition(invalid as any, { action: "init", stage: 1, opDir: OP } as any),
+    /max_stage must be 5/,
   );
 });
 
@@ -118,10 +127,19 @@ test("a stage that is not in progress cannot be completed", () => {
   );
 });
 
-test("completing the last stage does not advance past it", () => {
+test("completing Stage 4 advances to Stage 5", () => {
   const s = applyTransition(advanceTo(4), { action: "complete_stage", stage: 4, opDir: OP } as any);
   assert.equal(s.stage_status["4"], "completed");
-  assert.equal(s.current_stage, 4);
+  assert.equal(s.current_stage, 5);
+  assert.equal(s.stage_status["5"], "in_progress");
+});
+
+test("Stage 5 uses ordinary complete_stage and is terminal", () => {
+  const s = applyTransition(advanceTo(5), { action: "complete_stage", stage: 5, opDir: OP } as any);
+  assert.equal(s.max_stage, 5);
+  assert.equal(s.stage_status["5"], "completed");
+  assert.equal(s.current_stage, 5);
+  assert.deepEqual(Object.keys(s.stage_status).sort(), ["1", "2", "3", "4", "5"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -259,14 +277,15 @@ test("an artifact hash can be recorded", () => {
 
 test("an under-populated stage map is repaired rather than silently obeyed", () => {
   // `if (!next.stage_status)` treats {} as present, so a partially written or
-  // older-schema file kept its gaps -- and then `nextKey in statusMap` was false and
-  // complete_stage stopped auto-advancing without saying anything.
+  // incomplete five-stage file kept its gaps -- and then `nextKey in statusMap` was
+  // false and complete_stage stopped auto-advancing without saying anything.
   const partial = initial();
   partial.stage_status = { "1": "in_progress" };
   const s = applyTransition(partial, { action: "complete_stage", stage: 1, opDir: OP } as any);
   assert.equal(s.stage_status["1"], "completed");
   assert.equal(s.current_stage, 2, "auto-advance must not depend on the file being complete");
   assert.equal(s.stage_status["4"], "pending", "missing stages are filled in");
+  assert.equal(s.stage_status["5"], "pending", "the fixed final stage is filled in");
 });
 
 test("an empty stage map is repaired too", () => {
@@ -275,21 +294,7 @@ test("an empty stage map is repaired too", () => {
   empty.stage_retry_count = {};
   const s = init(empty);
   assert.equal(s.stage_status["1"], "in_progress");
-  assert.equal(Object.keys(s.stage_status).length, 4);
-});
-
-test("init honours the max_stage it is given", () => {
-  // max_stage was read from the previous state and never from the input, so a caller
-  // passing one to init was ignored whenever a state file already existed.
-  const existing = initial(4);
-  const s = applyTransition(existing, {
-    action: "init",
-    stage: 1,
-    max_stage: 6,
-    opDir: OP,
-  } as any);
-  assert.equal(s.max_stage, 6);
-  assert.equal(s.stage_status["6"], "pending");
+  assert.equal(Object.keys(s.stage_status).length, 5);
 });
 
 test("an unknown action is rejected", () => {
@@ -299,38 +304,7 @@ test("an unknown action is rejected", () => {
   );
 });
 
-// --- regressions for three defects found by review, each verified to fail before its fix ---
-
-test("init drops stage keys above the max_stage it is given", () => {
-  // The classic 7-stage orchestrator and this 4-stage one write the same
-  // custom/<op>/.orchestrator_state.json. The spread-merge filled gaps below max_stage but
-  // never pruned above it, so '5'..'7' survived.
-  const carried: any = {
-    op_dir: OP, max_stage: 7, current_stage: 1,
-    stage_status: { "1": "pending", "2": "pending", "3": "pending", "4": "pending",
-                    "5": "pending", "6": "pending", "7": "pending" },
-    stage_retry_count: {},
-  };
-  const s = applyTransition(carried, { action: "init", opDir: OP, stage: 1, max_stage: 4 } as any);
-  assert.deepEqual(Object.keys(s.stage_status).sort(), ["1", "2", "3", "4"]);
-});
-
-test("complete_stage does not advance current_stage past the final stage", () => {
-  // The symptom of the above: auto-advance tests `nextKey in statusMap`, which was true for
-  // '5' on a 4-stage workflow. Every later action then throws at ensureStageNumber(5, 4),
-  // so only rollback_to_stage escapes.
-  const carried: any = {
-    op_dir: OP, max_stage: 7, current_stage: 1,
-    stage_status: { "1": "pending", "2": "pending", "3": "pending", "4": "pending",
-                    "5": "pending", "6": "pending", "7": "pending" },
-    stage_retry_count: {},
-  };
-  let s = applyTransition(carried, { action: "init", opDir: OP, stage: 1, max_stage: 4 } as any);
-  for (const stage of [1, 2, 3, 4]) {
-    s = applyTransition(s, { action: "complete_stage", opDir: OP, stage } as any);
-  }
-  assert.equal(s.current_stage, 4);
-});
+// --- regressions for defects found by review ---
 
 test("an L1 plan with zero modules is refused", () => {
   // The wrapper coerces a missing module_count to 0, which built an empty module map --
@@ -346,29 +320,15 @@ test("an L1 plan with zero modules is refused", () => {
   );
 });
 
-test("init still refuses a live ledger whose in-progress stage is above max_stage", () => {
-  // Regression: pruning stale keys ran BEFORE init's hasInProgress guard read them, so a
-  // live 7-stage ledger in progress at stage 6 was accepted and overwritten -- stages 5-7
-  // and their retry counts gone, no rollback_history entry.
-  const live: any = {
-    op_dir: OP, max_stage: 7, current_stage: 6,
-    stage_status: { "1": "completed", "2": "completed", "3": "completed", "4": "completed",
-                    "5": "completed", "6": "in_progress", "7": "pending" },
-    stage_retry_count: { "6": 3 },
-  };
-  assert.throws(
-    () => applyTransition(live, { action: "init", opDir: OP, stage: 1, max_stage: 4 } as any),
-    /already in_progress/,
-  );
-});
-
 test("complete_stage(4) refuses an L1 ledger with no modules", () => {
   // The producer guard (plan_stage4 module_count >= 1) does not cover a hand-maintained
   // ledger, which CLAUDE.md sanctions; `if (phases)` short-circuited the precondition.
   const hand: any = {
-    op_dir: OP, max_stage: 4, current_stage: 4,
-    stage_status: { "1": "completed", "2": "completed", "3": "completed", "4": "in_progress" },
-    stage_retry_count: {}, stage4_path: "L1",
+    op_dir: OP, max_stage: 5, current_stage: 4,
+    stage_status: {
+      "1": "completed", "2": "completed", "3": "completed", "4": "in_progress", "5": "pending",
+    },
+    stage_retry_count: { "5": 0 }, stage4_path: "L1",
   };
   assert.throws(
     () => applyTransition(hand, { action: "complete_stage", opDir: OP, stage: 4 } as any),
@@ -445,9 +405,11 @@ test("complete_stage(4) refuses an L1 ledger whose module map is present but emp
   // module_count >= 1 is the reviewer-requested half of the guard: a hand-maintained
   // ledger can carry a stage4_modules object with a zeroed count and an empty map.
   const hand: any = {
-    op_dir: OP, max_stage: 4, current_stage: 4,
-    stage_status: { "1": "completed", "2": "completed", "3": "completed", "4": "in_progress" },
-    stage_retry_count: {}, stage4_path: "L1",
+    op_dir: OP, max_stage: 5, current_stage: 4,
+    stage_status: {
+      "1": "completed", "2": "completed", "3": "completed", "4": "in_progress", "5": "pending",
+    },
+    stage_retry_count: { "5": 0 }, stage4_path: "L1",
     stage4_modules: { module_count: 0, module_status: {}, modules_verified: [], module_retry_count: {} },
   };
   assert.throws(
@@ -462,9 +424,11 @@ test("complete_stage(4) refuses an L1 ledger whose module_count is zero but map 
   // deleting `moduleCount >= 1` left all tests green. This is the state that isolates it:
   // a populated map with a zeroed count, where `for (i = 1; i <= 0; i++)` never runs.
   const hand: any = {
-    op_dir: OP, max_stage: 4, current_stage: 4,
-    stage_status: { "1": "completed", "2": "completed", "3": "completed", "4": "in_progress" },
-    stage_retry_count: {}, stage4_path: "L1",
+    op_dir: OP, max_stage: 5, current_stage: 4,
+    stage_status: {
+      "1": "completed", "2": "completed", "3": "completed", "4": "in_progress", "5": "pending",
+    },
+    stage_retry_count: { "5": 0 }, stage4_path: "L1",
     stage4_modules: {
       module_count: 0, module_status: { "1": "verified" },
       modules_verified: ["1"], module_retry_count: {},
@@ -481,9 +445,11 @@ test("complete_stage(4) refuses an L1 ledger whose module_count is not a number"
   // false so the all-verified loop never ran -- certifying a fusion operator with an
   // unverified module. Both halves have to be NaN-safe for this to throw.
   const hand: any = {
-    op_dir: OP, max_stage: 4, current_stage: 4,
-    stage_status: { "1": "completed", "2": "completed", "3": "completed", "4": "in_progress" },
-    stage_retry_count: {}, stage4_path: "L1",
+    op_dir: OP, max_stage: 5, current_stage: 4,
+    stage_status: {
+      "1": "completed", "2": "completed", "3": "completed", "4": "in_progress", "5": "pending",
+    },
+    stage_retry_count: { "5": 0 }, stage4_path: "L1",
     stage4_modules: {
       module_count: "many", module_status: { "1": "pending" },
       modules_verified: [], module_retry_count: {},

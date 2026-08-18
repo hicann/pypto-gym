@@ -11,9 +11,9 @@ CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。�
 | 适用场景 | PyPTO 框架算子开发 | PyPTO-Pro 框架算子开发 |
 | 编程语言 | Python（PyPTO API） | Python（PyPTO-Pro API） |
 | 开发内容 | PyPTO kernel + golden + test | PyPTO-Pro kernel + golden + test |
-| 阶段数 | 7 阶段状态机驱动 | 4 阶段工作流 |
+| 阶段数 | 7 阶段状态机驱动 | 5 阶段工作流 |
 | 状态管理 | `.orchestrator_state.json` 状态文件 | 调度顺序隐式管理 |
-| 性能调优 | Stage 7 独立调优阶段 | 按需参考 |
+| 性能调优 | Stage 7 独立调优阶段 | Stage 5：可比基线、优化循环与证据验收 |
 
 ## 一、环境搭建
 

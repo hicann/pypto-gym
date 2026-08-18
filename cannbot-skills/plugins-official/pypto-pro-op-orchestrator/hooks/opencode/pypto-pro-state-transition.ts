@@ -34,7 +34,7 @@ const ALLOWED_AGENTS = new Set<string>([
   "pypto-pro-op-orchestrator",
 ]);
 
-const DEFAULT_MAX_STAGE = 4;
+const WORKFLOW_STAGE_COUNT = 5;
 
 function parseState(content: string): OrchestratorState {
   const parsed = JSON.parse(content);
@@ -44,17 +44,17 @@ function parseState(content: string): OrchestratorState {
   return parsed as OrchestratorState;
 }
 
-function buildInitialState(opDir: string, maxStage: number): OrchestratorState {
+function buildInitialState(opDir: string): OrchestratorState {
   const stageStatus: Record<string, string> = {};
   const stageRetry: Record<string, number> = {};
-  for (let i = 1; i <= maxStage; i++) {
+  for (let i = 1; i <= WORKFLOW_STAGE_COUNT; i++) {
     stageStatus[String(i)] = "pending";
     stageRetry[String(i)] = 0;
   }
   return {
     operator_name: path.basename(opDir),
-    schema_version: "2.0",
-    max_stage: maxStage,
+    schema_version: "2.2",
+    max_stage: WORKFLOW_STAGE_COUNT,
     current_stage: 1,
     stage_status: stageStatus,
     stage_retry_count: stageRetry,
@@ -64,9 +64,9 @@ function buildInitialState(opDir: string, maxStage: number): OrchestratorState {
   };
 }
 
-function readStateOrInit(statePath: string, maxStage: number): OrchestratorState {
+function readStateOrInit(statePath: string): OrchestratorState {
   if (!fs.existsSync(statePath)) {
-    return buildInitialState(path.dirname(statePath), maxStage);
+    return buildInitialState(path.dirname(statePath));
   }
   const raw = fs.readFileSync(statePath, "utf8");
   return parseState(raw);
@@ -94,7 +94,6 @@ function buildTransitionInput(action: TransitionAction, args: Record<string, unk
       return {
         action,
         stage: args.stage !== undefined ? Number(args.stage) : 1,
-        max_stage: args.max_stage !== undefined ? Number(args.max_stage) : undefined,
       };
     case "start_stage":
       return { action, stage: Number(args.stage), reason: args.reason as string | undefined };
@@ -157,7 +156,7 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
     module: string | undefined,
   ): Promise<GateSummary> {
     let lintCmd;
-    if (action === "complete_stage" && stage !== undefined) {
+    if (action === "complete_stage" && stage !== undefined && stage <= 4) {
       lintCmd = $`python3 ${lintScript} --check-gate --op-dir ${opDir} --stage ${stage}`;
     } else if (
       (action === "submit_for_verify" || action === "complete_module") &&
@@ -206,7 +205,7 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
     tool: {
       state_transition: tool({
         description:
-          "Safely transition .orchestrator_state.json for the PyPTO-Pro workflow (schema v2.1, 4 stages). " +
+          "Safely transition .orchestrator_state.json for the PyPTO-Pro workflow (schema v2.2, 5 stages). " +
           "Stage actions: init (stage=1 only, first call), start_stage (set stage to in_progress for retry), " +
           "complete_stage (mark done + auto-advance to next stage), fail_stage (mark failed + increment retry). " +
           "Other actions: record_artifact_hash (snapshot SPEC.md/golden/DESIGN.md hashes), " +
@@ -222,7 +221,6 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           action: tool.schema.string(),
           // Stage actions
           stage: tool.schema.number().optional(),
-          max_stage: tool.schema.number().optional(),
           reason: tool.schema.string().optional(),
           // Artifact hash
           name: tool.schema.string().optional(),
@@ -274,8 +272,7 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           if (action === "init") {
             fs.mkdirSync(opDir, { recursive: true });
           }
-          const desiredMaxStage = args.max_stage !== undefined ? Number(args.max_stage) : DEFAULT_MAX_STAGE;
-          const prevState = readStateOrInit(statePath, desiredMaxStage);
+          const prevState = readStateOrInit(statePath);
 
           // ── Lint gate ──
           // Fires on complete_stage / submit_for_verify / complete_module as a side effect.

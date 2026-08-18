@@ -11,13 +11,18 @@
 # ----------------------------------------------------------------------------------------------------------
 # msprof runner - 统一性能采集入口
 #
-# 支持三种模式：
-#   1. 标准模式 (默认): 对单个可执行文件采集 7 组 aic-metrics + sample-based
-#   2. --compare 模式:  从 GOLDEN_PERF_REPORT.md 读 golden 数据 + msprof 采集 PyPTO 算子，计算加速比
-#   3. --batch 模式:    批量扫描目录下的多个算子子目录，并行执行对比测试
+# 支持四种模式：
+#   1. 标准模式 (默认): 对单个可执行文件/PyPTO-Pro Python runner 采集 7 组 aic-metrics + sample-based
+#   2. --compare 模式:  未传 --case-manifest：从 GOLDEN_PERF_REPORT.md 读 golden 数据 + msprof
+#                       采集 PyPTO 算子计算加速比（既有行为）；传 --case-manifest：Stage 5
+#                       manifest 证据协议（Golden JSON exact-id join、逐 case/逐 repeat、seed=42）
+#   3. --quick 模式:    每次 repeat 只采集 kernel 时间（既有行为）；传 manifest 时逐 case 严格归属
+#   4. --batch 模式:    批量扫描目录下的多个算子子目录，并行执行对比测试；算子目录提供
+#                       PERFORMANCE_CASES.json 或传入 map 时启用 Stage 5 证据批，否则保持
+#                       既有 batch（flock 锁 + ASCEND_RT_VISIBLE_DEVICES）
 #
 # Usage (标准模式):
-#   bash msprof_profile_run.sh [--warm-up=N] [--output=<dir>] -- <executable> [args...]
+#   bash msprof_profile_run.sh [--warm-up=N] [--output=<dir>] -- python3 test_op.py
 #
 # Usage (--compare 模式):
 #   bash msprof_profile_run.sh --compare --output-dir=/path/to/op_dir [--warm-up=N] [--device=N]
@@ -30,7 +35,7 @@
 #
 # Example (标准):
 #   bash msprof_profile_run.sh --warm-up=3 --output=./msprof_output -- \
-#        ./matmul_tutorial_mxfp4_pingpong 8448 4096 4096
+#        python3 test_matmul.py
 #
 # Example (对比):
 #   bash msprof_profile_run.sh --compare --output-dir=./output/GELU --warm-up=3 --device=0
@@ -46,6 +51,7 @@
 #   对比模式: <output_dir>/performance.json + performance.log + perf_report.md
 #   快速模式: <output_dir>/performance.json + performance.log + perf_report.md
 #   批量模式: <base_dir>/batch_performance.log + 各子目录 performance.json
+#   Stage 5（传 --case-manifest）: quick 产物为 quick_* 三件套；逐 case 证据在 docs/perf/round_NNN/
 # ----------------------------------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -94,6 +100,11 @@ BASE_DIR=""
 MAX_JOBS=7
 DEVICE_START=1
 OP_NAME=""
+OP_NAME_MAP_FILE=""
+CASE_ARG=""
+CASE_ENV=""
+CASE_MANIFEST=""
+CASE_MANIFEST_MAP_FILE=""
 REPEATS=1
 RETRY=2
 KEEP_PROF=0
@@ -101,7 +112,7 @@ SEED=0
 
 usage() {
     cat <<'EOF'
-Usage: bash msprof_profile_run.sh [OPTIONS] -- <executable> [args...]
+Usage: bash msprof_profile_run.sh [OPTIONS] -- python3 test_op.py [args...]
        bash msprof_profile_run.sh --compare --output-dir=<dir> [OPTIONS]
        bash msprof_profile_run.sh --quick --output-dir=<dir> [OPTIONS]
        bash msprof_profile_run.sh --batch --base-dir=<dir> [OPTIONS]
@@ -113,32 +124,50 @@ Usage: bash msprof_profile_run.sh [OPTIONS] -- <executable> [args...]
 
 标准模式 (默认):
   bash msprof_profile_run.sh [通用选项] -- <executable> [args...]
+  （Stage 5 协议）首次 discovery 采集后先用 msprof_perf_summary.py <PROF_GROUP> --list-op-names
+  列出 lowering 后的完整 Op Name；选定目标后再用
+  msprof_perf_summary.py <PROF_GROUP> <ops_dir> --op-name=<exact> 正式解析。
 
  对比模式 (--compare):
-  --compare              启用对比模式：从 GOLDEN_PERF_REPORT.md 读 golden + msprof 采集 PyPTO 算子
-  --output-dir=<dir>     算子目录（包含 test_{op}.py, GOLDEN_PERF_REPORT.md）
+  --compare              启用对比模式：未传 --case-manifest 时从 GOLDEN_PERF_REPORT.md 读 golden
+                         + msprof 采集 PyPTO 算子计算加速比（既有行为）
+  --output-dir=<dir>     算子目录（包含 test_{op}.py；既有模式还需 GOLDEN_PERF_REPORT.md）
   --device=N             指定 NPU 设备 ID；未指定时自动选择空闲卡
   --op-name=<name>       目标 kernel 的 Op Name（多 case 场景必须指定，否则会选到非目标 op）
   --repeats=N            重复采集次数（默认 1）
   --seed=N               传递给测试脚本的 PYPTO_PERF_SEED（默认 0）
   --retry=N              单 case 解析失败重试次数（默认 2）
   --keep-prof            保留 msprof 原始 PROF 目录（用于深度分析）
+  （Stage 5 协议，传 --case-manifest 时启用）
+  --case-arg=<flag>      逐 case CLI 选择器，例如 --case-id；脚本依次追加 <flag> <case-id>
+  --case-env=<name>      逐 case 环境变量选择器，例如 PYPTO_PERF_CASE；与 --case-arg 二选一
+  --case-manifest=<path> 可选；传后启用 Stage 5 证据协议（exact Op Name、逐 case/逐 repeat、
+                         seed=42、Golden JSON exact-id join）。selector 精确命中时须输出唯一
+                         一行 PYPTO_PERF_SELECTED_CASE=<case-id>，未知 id 非零退出。
 
  快速模式 (--quick):
   --quick                启用快速模式：每次 repeat 只采集 kernel 时间，不采集 7 个 aic-metrics
-  --output-dir=<dir>     算子目录（包含 test_{op}.py, GOLDEN_PERF_REPORT.md）
+  --output-dir=<dir>     算子目录（包含 test_{op}.py；既有模式还需 GOLDEN_PERF_REPORT.md）
   --device=N             指定 NPU 设备 ID；未指定时自动选择空闲卡
   --op-name=<name>       目标 kernel 的 Op Name（多 case 场景必须指定，否则会选到非目标 op）
   --repeats=N            重复采集次数（默认 1）
   --seed=N               传递给测试脚本的 PYPTO_PERF_SEED（默认 0）
   --retry=N              单 case 解析失败重试次数（默认 2）
   --keep-prof            保留 msprof 原始 PROF 目录
+  （Stage 5 协议，传 --case-manifest 时启用）--case-arg/--case-env/--case-manifest 同 compare 模式
 
-批量模式 (--batch):
+ 批量模式 (--batch):
   --batch                启用批量模式：扫描 base-dir 下所有子目录并行测试
   --base-dir=<dir>       包含多个算子输出子目录的根目录
-  --max-jobs=N           最大并发数（默认 7）
-  --device-start=N       起始 NPU 设备 ID（默认 1）
+  --max-jobs=N           最大并发数（默认 7；Stage 5 批限制 1..8）
+  --device-start=N       起始 NPU 设备 ID（默认 1；既有流程按 1..7 轮转）
+  （Stage 5 证据批：任一下属算子目录存在 PERFORMANCE_CASES.json，或传入下列参数时启用证据批）
+  --op-name-map=<file>   异构 batch 专用 TSV：每行 <operator-directory><TAB><exact Op Name>
+  --case-manifest-map=<file> 可选 TSV：每行 <operator-directory><TAB><manifest path>
+  默认读取每个算子目录必需的 PERFORMANCE_CASES.json。
+  同构 batch 可传全局 --op-name；异构 batch 必须传 --op-name-map。
+  同时接受对比模式的 --case-arg/--case-env、--repeats、可选 --seed 以及 --retry、--keep-prof，
+  并原样透传到每个算子。未启用证据批时保持既有行为（flock 锁 + ASCEND_RT_VISIBLE_DEVICES）。
 
 脚本会按顺序用 msprof 采集 7 个 aic-metrics:
   PipeUtilization, ArithmeticUtilization, Memory, MemoryL0, MemoryUB,
@@ -161,6 +190,11 @@ while [[ $# -gt 0 ]]; do
         --retry=*)   RETRY="${1#*=}"; shift ;;
         --keep-prof) KEEP_PROF=1; shift ;;
         --op-name=*) OP_NAME="${1#*=}"; shift ;;
+        --op-name-map=*) OP_NAME_MAP_FILE="${1#*=}"; shift ;;
+        --case-arg=*) CASE_ARG="${1#*=}"; shift ;;
+        --case-env=*) CASE_ENV="${1#*=}"; shift ;;
+        --case-manifest=*) CASE_MANIFEST="${1#*=}"; shift ;;
+        --case-manifest-map=*) CASE_MANIFEST_MAP_FILE="${1#*=}"; shift ;;
         --compare)   MODE="compare"; shift ;;
         --quick)     MODE="quick"; shift ;;
         --batch)     MODE="batch"; shift ;;
@@ -248,15 +282,20 @@ run_standard() {
     echo "=== Done. PROF group = ${GROUP_DIR} ==="
     echo "Next:"
     echo "  python3 ${SCRIPT_DIR}/msprof_perf_summary.py ${GROUP_DIR} <ops_dir>"
+    echo "  # Stage 5 协议：discovery 后可用 --list-op-names 列出精确 lowering 名称，再带 --op-name 解析"
 }
 
 # ============================================================================
-# 对比模式：GOLDEN_PERF_REPORT.md (golden) vs test_{op}.py (PyPTO 算子)
+# compare：case manifest 驱动 PyPTO target-kernel 采集；Golden 完整覆盖时计算默认目标
 # ============================================================================
 run_compare() {
     if [[ -z "$OUTPUT_DIR_ARG" ]]; then
         echo "ERROR: --compare 模式必须指定 --output-dir=<dir>" >&2
         usage
+        exit 1
+    fi
+    if [[ -n "$CASE_MANIFEST" && ! -f "$CASE_MANIFEST" ]]; then
+        echo "ERROR: --case-manifest 文件不存在: $CASE_MANIFEST" >&2
         exit 1
     fi
 
@@ -266,6 +305,9 @@ run_compare() {
     local extra_args=()
     [[ -n "$DEVICE_ID" ]] && extra_args+=("--device" "$DEVICE_ID")
     [[ -n "$OP_NAME" ]] && extra_args+=("--op-name" "$OP_NAME")
+    [[ -n "$CASE_ARG" ]] && extra_args+=("--case-arg=${CASE_ARG}")
+    [[ -n "$CASE_ENV" ]] && extra_args+=("--case-env=${CASE_ENV}")
+    [[ -n "$CASE_MANIFEST" ]] && extra_args+=("--case-manifest=${CASE_MANIFEST}")
     [[ -n "${REPEATS:-}" ]] && extra_args+=("--repeats" "$REPEATS")
     extra_args+=("--seed" "$SEED")
     [[ -n "${RETRY:-}" ]] && extra_args+=("--retry" "$RETRY")
@@ -288,6 +330,10 @@ run_quick() {
         usage
         exit 1
     fi
+    if [[ -n "$CASE_MANIFEST" && ! -f "$CASE_MANIFEST" ]]; then
+        echo "ERROR: --case-manifest 文件不存在: $CASE_MANIFEST" >&2
+        exit 1
+    fi
 
     OUT_DIR="$(cd "$OUTPUT_DIR_ARG" && pwd)"
 
@@ -295,6 +341,9 @@ run_quick() {
     local extra_args=()
     [[ -n "$DEVICE_ID" ]] && extra_args+=("--device" "$DEVICE_ID")
     [[ -n "$OP_NAME" ]] && extra_args+=("--op-name" "$OP_NAME")
+    [[ -n "$CASE_ARG" ]] && extra_args+=("--case-arg=${CASE_ARG}")
+    [[ -n "$CASE_ENV" ]] && extra_args+=("--case-env=${CASE_ENV}")
+    [[ -n "$CASE_MANIFEST" ]] && extra_args+=("--case-manifest=${CASE_MANIFEST}")
     [[ -n "${REPEATS:-}" ]] && extra_args+=("--repeats" "$REPEATS")
     extra_args+=("--seed" "$SEED")
     [[ -n "${RETRY:-}" ]] && extra_args+=("--retry" "$RETRY")
@@ -318,6 +367,198 @@ run_batch() {
         exit 1
     fi
 
+    # 双模式分发：任一带 manifest 输入即走 Stage 5 证据批；否则既有 batch。
+    local use_stage5=0
+    if [[ -n "$OP_NAME_MAP_FILE" || -n "$CASE_MANIFEST_MAP_FILE" || -n "$CASE_MANIFEST" ]]; then
+        use_stage5=1
+    else
+        for dir in "$BASE_DIR"/*; do
+            if [[ -f "$dir/PERFORMANCE_CASES.json" ]]; then
+                use_stage5=1
+                break
+            fi
+        done
+    fi
+    if [[ "$use_stage5" == "1" ]]; then
+        run_batch_stage5
+    else
+        run_batch_legacy
+    fi
+}
+
+# ============================================================================
+# 批量模式（Stage 5 证据批）：先完整预检再启动
+# ============================================================================
+run_batch_stage5() {
+    if ! [[ "$MAX_JOBS" =~ ^[1-8]$ ]]; then
+        echo "ERROR: --max-jobs 必须是 1..8" >&2
+        exit 1
+    fi
+    if ! [[ "$DEVICE_START" =~ ^[0-7]$ ]]; then
+        echo "ERROR: --device-start 必须是当前 8 卡编排约定内的 0..7" >&2
+        exit 1
+    fi
+    if [[ -n "$OP_NAME" && -n "$OP_NAME_MAP_FILE" ]]; then
+        echo "ERROR: batch 的 --op-name 与 --op-name-map 二选一" >&2
+        return 1
+    fi
+    if [[ -n "$OP_NAME_MAP_FILE" && ! -f "$OP_NAME_MAP_FILE" ]]; then
+        echo "ERROR: --op-name-map 文件不存在: $OP_NAME_MAP_FILE" >&2
+        return 1
+    fi
+    if [[ -n "$CASE_MANIFEST" ]]; then
+        echo "ERROR: batch 不接受全局 --case-manifest；请用每目录 PERFORMANCE_CASES.json 或 --case-manifest-map" >&2
+        return 1
+    fi
+    if [[ -n "$CASE_MANIFEST_MAP_FILE" && ! -f "$CASE_MANIFEST_MAP_FILE" ]]; then
+        echo "ERROR: --case-manifest-map 文件不存在: $CASE_MANIFEST_MAP_FILE" >&2
+        return 1
+    fi
+
+    BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+    operator_dirs=()
+    expected_operators=()
+    operator_op_names=()
+    operator_case_manifests=()
+    job_pids=()
+
+    # 第一遍只发现并验证全部任务；任何配置错误都必须在启动采集前失败。
+    for dir in "$BASE_DIR"/*; do
+        if [[ -d "$dir" ]] && compgen -G "$dir/test_*.py" >/dev/null; then
+            folder_name=$(basename "$dir")
+            task_op_name="$OP_NAME"
+            task_case_manifest=""
+            if [[ -n "$OP_NAME_MAP_FILE" ]]; then
+                task_op_name=$(awk -F '\t' -v name="$folder_name" '$1 == name { print $2; count++ } END { if (count != 1) exit 1 }' "$OP_NAME_MAP_FILE") || {
+                    echo "ERROR: --op-name-map 必须为 $folder_name 提供且只提供一个 exact Op Name" >&2
+                    return 1
+                }
+            fi
+            if [[ -z "$task_op_name" ]]; then
+                echo "ERROR: batch 必须通过 --op-name 或 --op-name-map 为 $folder_name 提供 exact Op Name" >&2
+                return 1
+            fi
+            if [[ -n "$CASE_MANIFEST_MAP_FILE" ]]; then
+                task_case_manifest=$(awk -F '\t' -v name="$folder_name" '$1 == name { print $2; count++ } END { if (count != 1) exit 1 }' "$CASE_MANIFEST_MAP_FILE") || {
+                    echo "ERROR: --case-manifest-map 必须为 $folder_name 提供且只提供一个 manifest 路径" >&2
+                    return 1
+                }
+                if [[ "$task_case_manifest" != /* ]]; then
+                    task_case_manifest="$(cd "$(dirname "$CASE_MANIFEST_MAP_FILE")" && pwd)/$task_case_manifest"
+                fi
+                if [[ ! -f "$task_case_manifest" ]]; then
+                    echo "ERROR: $folder_name 的 case manifest 不存在: $task_case_manifest" >&2
+                    return 1
+                fi
+            elif [[ -f "$dir/PERFORMANCE_CASES.json" ]]; then
+                task_case_manifest="$dir/PERFORMANCE_CASES.json"
+            else
+                echo "ERROR: $folder_name 缺少必需的 PERFORMANCE_CASES.json" >&2
+                return 1
+            fi
+            # 这里只解析 schema/来源并校验可选 Golden exact-id join；所有算子均通过后才启动任何 msprof。
+            case_source_args=(
+                --validate-case-source
+                --output-dir "$dir"
+            )
+            case_source_args+=("--case-manifest=$task_case_manifest")
+            if ! python3 "${SCRIPT_DIR}/msprof_perf_summary.py" "${case_source_args[@]}"; then
+                echo "ERROR: $folder_name 的性能 case 来源预检失败" >&2
+                return 1
+            fi
+            operator_dirs+=("$dir")
+            expected_operators+=("$folder_name")
+            operator_op_names+=("$task_op_name")
+            operator_case_manifests+=("$task_case_manifest")
+        fi
+    done
+
+    if [[ ${#expected_operators[@]} -eq 0 ]]; then
+        echo "ERROR: batch 根目录下没有包含 test_*.py 的算子目录" >&2
+        return 1
+    fi
+
+    COLLECTION_ID="batch_$(date +%Y%m%d_%H%M%S)_$$"
+    export PYPTO_PERF_COLLECTION_ID="$COLLECTION_ID"
+    LOG_FILE="${BASE_DIR}/batch_performance_${COLLECTION_ID}.log"
+    : > "$LOG_FILE"
+
+    device_id=$DEVICE_START
+    for task_index in "${!operator_dirs[@]}"; do
+            dir="${operator_dirs[$task_index]}"
+            folder_name="${expected_operators[$task_index]}"
+            task_op_name="${operator_op_names[$task_index]}"
+            task_case_manifest="${operator_case_manifests[$task_index]}"
+            # 控制总并发数
+            while [[ $(jobs -r | wc -l) -ge $MAX_JOBS ]]; do
+                sleep 0.5
+            done
+
+            echo ">>> 分配设备 $device_id 并启动算子: $folder_name" | tee -a "$LOG_FILE"
+
+            # 启动后台任务
+            (
+                unset ASCEND_RT_VISIBLE_DEVICES
+                export TILE_FWK_DEVICE_ID=$device_id
+
+                # 调用对比模式；公共证据参数必须与单算子采集完全一致。
+                batch_args=(
+                    --compare
+                    "--output-dir=$dir"
+                    "--warm-up=$WARM_UP"
+                    "--device=$device_id"
+                    "--repeats=$REPEATS"
+                    "--retry=$RETRY"
+                )
+                [[ -n "$SEED" ]] && batch_args+=("--seed=$SEED")
+                batch_args+=("--op-name=$task_op_name")
+                [[ -n "$task_case_manifest" ]] && batch_args+=("--case-manifest=$task_case_manifest")
+                [[ -n "$CASE_ARG" ]] && batch_args+=("--case-arg=$CASE_ARG")
+                [[ -n "$CASE_ENV" ]] && batch_args+=("--case-env=$CASE_ENV")
+                [[ "$KEEP_PROF" == "1" ]] && batch_args+=(--keep-prof)
+                bash "$0" "${batch_args[@]}" >> "$LOG_FILE" 2>&1
+
+                echo ">>> 算子 $folder_name 在设备 $device_id 上执行完毕" >> "$LOG_FILE"
+            ) &
+            job_pids+=("$!")
+
+            device_id=$(( (device_id + 1) % 8 ))
+    done
+
+    batch_failed=0
+    for job_pid in "${job_pids[@]}"; do
+        if ! wait "$job_pid"; then
+            batch_failed=1
+        fi
+    done
+    echo "所有并行任务已执行完毕，日志已保存至 $LOG_FILE"
+
+    # 生成批量汇总报告
+    summary_args=(
+        --batch "$BASE_DIR"
+        --collection-id "$COLLECTION_ID"
+        --output-md "${BASE_DIR}/batch_report_${COLLECTION_ID}.md"
+        --output-json "${BASE_DIR}/batch_summary_${COLLECTION_ID}.json"
+    )
+    for operator_name in "${expected_operators[@]}"; do
+        summary_args+=(--expect-operator "$operator_name")
+    done
+    if ! python3 "${SCRIPT_DIR}/msprof_perf_summary.py" "${summary_args[@]}"; then
+        batch_failed=1
+    fi
+
+    print_elapsed
+    if [[ "$batch_failed" == "1" ]]; then
+        echo "ERROR: 一个或多个算子未生成完整的本轮性能证据" >&2
+        return 1
+    fi
+}
+
+
+# ============================================================================
+# 批量模式（既有流程）：flock 锁 + ASCEND_RT_VISIBLE_DEVICES 轮转
+# ============================================================================
+run_batch_legacy() {
     BASE_DIR="$(cd "$BASE_DIR" && pwd)"
     LOG_FILE="${BASE_DIR}/batch_performance.log"
     : > "$LOG_FILE"
@@ -395,6 +636,9 @@ case "$MODE" in
         ;;
     quick)
         run_quick
+        ;;
+    batch)
+        run_batch
         ;;
     *)
         echo "ERROR: 未知模式: $MODE" >&2

@@ -132,7 +132,7 @@ def check_pl09(ctx: CheckContext) -> Finding:
 
 @register("PL10")
 def check_pl10(ctx: CheckContext) -> Finding:
-    """orchestrator_state.json 是合法 JSON 且 max_stage == 4."""
+    """orchestrator_state.json 是合法 JSON，且 max_stage 是严格整数 5."""
     state_path = ctx.file_path(STATE_FILE)
     if not os.path.isfile(state_path):
         return ctx.make_finding(
@@ -146,12 +146,12 @@ def check_pl10(ctx: CheckContext) -> Finding:
             "PL10", "FAIL", f"{STATE_FILE} 不是合法 JSON: {e}", file=STATE_FILE
         )
     max_stage = data.get("max_stage")
-    if max_stage != 4:
+    if type(max_stage) is not int or max_stage != 5:
         return ctx.make_finding(
             "PL10", "FAIL",
-            f"{STATE_FILE} max_stage={max_stage}（期望 4）",
+            f"{STATE_FILE} max_stage={max_stage}（期望严格整数 5）",
             file=STATE_FILE
         )
     return ctx.make_finding(
-        "PL10", "PASS", f"{STATE_FILE} 合法，max_stage=4", file=STATE_FILE
+        "PL10", "PASS", f"{STATE_FILE} 合法，max_stage={max_stage}", file=STATE_FILE
     )

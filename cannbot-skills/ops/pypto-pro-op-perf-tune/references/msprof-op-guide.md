@@ -77,7 +77,7 @@ msprof op --warm-up=10 --launch-count=5 --output=./msprof_output ./demo
 OPPROF_DIR=$(ls -td <output_dir>/OPPROF_* | head -1)
 
 # 归档 CSV + 生成摘要（自动创建 docs/perf/round_NNN/）
-python3 {skill_path}/scripts/perf_summary.py $OPPROF_DIR ops/{operator_name}
+python3 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/perf_summary.py $OPPROF_DIR ops/{operator_name}
 ```
 
 脚本会：

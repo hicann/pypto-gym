@@ -99,6 +99,11 @@ P0/P1 必须进入首个版本；P2 可选；P3 明确暂缓。不要在本 skil
 - `default_params` 只包含公开签名中已确认的标量默认参数；没有则写 `{}`；
 - `tolerance`、动态轴范围、shape 约束和性能目标直接记录已确认裁定；
 
+性能目标遵循单一来源规则：只有用户明确给出且可复算的数值目标时，才把该值写入
+`perf_target`，并在 SPEC“P0 与性能目标依据”中记录用户来源。用户未指定数值目标时，
+`perf_target` 写 `null`，并在“自动决策”中说明 Stage 5 将使用逐 P0 case 的默认目标
+`golden_reference_ratio >= 1.0`；不得把这一系统默认值写成用户要求。
+
 所有 P0 的映射 key 与顺序分别等于 `default_params`、`inputs`、`outputs`；具体 shape 必须
 等于把本 case 输入/参数代入合同 shape 表达式后的结果。rank-0 tensor 写 `[]`。tile/kernel
 shape 仍由 Stage 3 决定。每个动态 shape 符号须在至少一个输入维中单独出现，保证 P0
@@ -120,4 +125,5 @@ python "$CANNBOT_CONFIG_ROOT/skills/pypto-pro-intent-understand/scripts/validate
 - 所有 P0 配置均可供 golden 构造输入，且输出 shape 与机器合同公式一致；
 - 所有机器合同输入/输出均有有依据、可解析的有限 `value_range`；
 - SPEC 恰有一个严格 JSON machine-contract、正文没有重复机器字段、无占位符或未披露默认值；
+- 用户性能目标或 Stage 5 默认 Golden 1.0 目标的来源已按规则明确记录；
 - `validate_spec.py` 通过。

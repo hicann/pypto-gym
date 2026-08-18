@@ -332,6 +332,14 @@ def _validate_tolerance(value: Any) -> None:
         _number(value[key], f"tolerance.{key}", non_negative=True)
 
 
+def _validate_perf_target(value: Any) -> None:
+    if value is None:
+        return
+    target = _number(value, "perf_target")
+    if target <= 0:
+        raise SpecContractError("perf_target must be null or a positive finite number")
+
+
 def _valid_range_bounds(value: Any) -> bool:
     if not isinstance(value, list):
         return False
@@ -409,6 +417,7 @@ def _validate(contract: dict[str, Any]) -> dict[str, Any]:
     _validate_tensor_dtypes(dtypes, inputs, outputs)
     defaults = _default_params(contract["default_params"])
     _validate_tolerance(contract["tolerance"])
+    _validate_perf_target(contract.get("perf_target"))
     ranges = _dynamic_ranges(contract["dynamic_axes_ranges"])
     used_symbols = _shape_symbols(inputs + outputs)
     _validate_dynamic_symbols(ranges, used_symbols, inputs)

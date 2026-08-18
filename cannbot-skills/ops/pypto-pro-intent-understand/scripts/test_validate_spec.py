@@ -30,6 +30,7 @@ VALID = '''```json machine-contract
   "tolerance": {"atol": 0.001, "rtol": 0.002},
   "dynamic_axes_ranges": {"N": [1, 128]},
   "shape_constraints": [],
+  "perf_target": null,
   "p0_cases": [
     {"name": "small", "params": {}, "input_shapes": {"x": [8, 16]}, "output_shapes": {"y": [8, 16]}},
     {"name": "large", "params": {}, "input_shapes": {"x": [32, 16]}, "output_shapes": {"y": [32, 16]}}
@@ -83,6 +84,19 @@ class SpecValidationTests(unittest.TestCase):
         self.assertIn("exactly one", validate_text(VALID + VALID)[0])
         bad = VALID.replace('"schema_version": 1,', '"schema_version": 1,\n  "extra": true,')
         self.assertIn("unknown fields", validate_text(bad)[0])
+
+    def test_perf_target_is_null_or_positive_finite_number(self) -> None:
+        self.assertEqual(validate_text(VALID), [])
+        self.assertEqual(validate_text(VALID.replace('"perf_target": null',
+                                                     '"perf_target": 1.25')), [])
+        for invalid in ('"未指定"', "true", "0", "-1", "{}"):
+            with self.subTest(invalid=invalid):
+                errors = validate_text(
+                    VALID.replace('"perf_target": null', f'"perf_target": {invalid}'))
+                self.assertIn("perf_target", errors[0])
+        non_finite = validate_text(
+            VALID.replace('"perf_target": null', '"perf_target": NaN'))
+        self.assertIn("non-finite JSON number", non_finite[0])
 
     def test_rejects_unknown_dtype_and_dynamic_symbol_drift(self) -> None:
         unknown_dtype = VALID.replace('"float32"', '"banana"')

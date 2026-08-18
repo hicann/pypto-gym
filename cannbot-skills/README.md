@@ -48,7 +48,7 @@ opencode
 | 领域 / 路径 | 适用场景 | 入口插件 |
 |------------|---------|---------|
 | **PyPTO 算子开发** | Stage 1–7 全流程融合算子开发与调优 | [pypto-op-orchestrator](plugins-official/pypto-op-orchestrator/AGENTS.md) |
-| **PyPTO-Pro 算子开发** | Stage 1–4 精简流程算子开发与调优 | [pypto-pro-op-orchestrator](plugins-official/pypto-pro-op-orchestrator/AGENTS.md) |
+| **PyPTO-Pro 算子开发** | Stage 1–5 精简流程算子开发与性能优化 | [pypto-pro-op-orchestrator](plugins-official/pypto-pro-op-orchestrator/AGENTS.md) |
 | **模型适配** | HF 模型上 NPU、融合算子整网集成、模型格式转换 | [pypto-model-tools](plugins-official/pypto-model-tools/AGENTS.md) |
 | **算子产物校验** | KernelBench 评测把关：反作弊 + 精度 + 性能统一校验 | [pypto-kernel-validator](plugins-official/pypto-kernel-validator/AGENTS.md) |
 
@@ -89,7 +89,7 @@ cannbot-skills/
 ├── model/                # 模型适配与推理优化 Skills
 └── plugins-official/     # 官方 Plugins（开发路径入口，含 Agents）
     ├── pypto-op-orchestrator/      # PyPTO classic 算子开发（8 Subagent + 状态机）
-    ├── pypto-pro-op-orchestrator/  # PyPTO-Pro 算子开发（5 Subagent）
+    ├── pypto-pro-op-orchestrator/  # PyPTO-Pro 算子开发（6 Subagent）
     ├── pypto-model-tools/          # 模型适配工具集（安装时附带 8 个算子支撑 skill）
     └── pypto-kernel-validator/     # 算子产物校验（反作弊 + 精度 + 性能，单 Subagent）
 ```
