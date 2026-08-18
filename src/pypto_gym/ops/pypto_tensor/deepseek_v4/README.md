@@ -220,7 +220,7 @@ torch.ops.pypto.quant_lightning_indexer_prolog(
 ## 调用方法
 
 ```
-python3  tests/ops/deepseek_v4/test_lightning_indexer_prolog_quant.py
+python3  tests/ops/deepseek_v4/test_lightning_indexer_prolog_quant_v4.py
 
 ```
 
