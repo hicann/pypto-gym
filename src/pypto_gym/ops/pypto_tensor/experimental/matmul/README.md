@@ -68,7 +68,7 @@ def scaled_matmul_kernel(
 
 ### 调用示例
 
-- 详见 [gmm_mxfp8.py](./gmm_mxfp8.py)
+- 详见 [gmm_mxfp8](./gmm_mxfp8/)
 
 ---
 
