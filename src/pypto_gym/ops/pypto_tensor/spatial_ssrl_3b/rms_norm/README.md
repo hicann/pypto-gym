@@ -40,7 +40,7 @@ model = AutoModel.from_pretrained(model_path)
 
 ```bash
 export TILE_FWK_DEVICE_ID=2
-python3 test/test_rms_norm.py
+python3 tests/ops/spatial_ssrl_3b/rms_norm/test_rms_norm_spatial_ssrl_3b.py
 ```
 
 ## 依赖
