@@ -55,7 +55,7 @@ The kernel uses **two separate vector scopes** because the compiler enforces CV-
 
 ```bash
 export TILE_FWK_DEVICE_ID=0
-python3 tests/ops/jd_segment_attention/test_mtgr_ragged_segment_attention.py
+python3 tests/ops/mtgr_segment_attention/test_mtgr_ragged_segment_attention.py
 ```
 
 ## Three-state Markers
