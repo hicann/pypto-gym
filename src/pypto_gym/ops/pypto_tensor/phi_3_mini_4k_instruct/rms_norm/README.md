@@ -15,7 +15,7 @@
 
 ```bash
 export TILE_FWK_DEVICE_ID=4
-python3 test/test_rms_norm_phi_3_mini_4k_instruct.py
+python3 tests/ops/phi_3_mini_4k_instruct/test_rms_norm_phi_3_mini_4k_instruct.py
 ```
 
 ## 测试用例来源
