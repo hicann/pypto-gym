@@ -130,7 +130,6 @@ def flash_attention_varlen_forward_kernel(
 
 
 @pypto.frontend.jit(
-    new_ir=False,
     runtime_options={
         "device_sched_mode": 1,
         "stitch_function_max_num": 1024,

@@ -279,7 +279,6 @@ def options_list():
 
 
 @pypto.frontend.jit(
-    new_ir=False,
     pass_options=options_list()["pass_options"],
     runtime_options=options_list()["runtime_options"],
 )
