@@ -123,4 +123,4 @@ def quant_matmul_reduce_sum_impl(
 
 ### 调用示例
 
-- 详见 [quant_matmul_reduce_sum.py](./quant_matmul_reduce_sum.py)
+- 详见 [quant_matmul_reduce_sum](./quant_matmul_reduce_sum/)
