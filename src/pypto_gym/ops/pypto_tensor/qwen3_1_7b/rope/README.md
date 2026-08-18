@@ -7,7 +7,7 @@
 ```bash
 export TILE_FWK_DEVICE_ID=0
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-python3 test/test_rms_norm_rope.py
+python3 tests/ops/qwen3_1_7b/test_rms_norm_rope.py
 ```
 
 ## 测试用例来源
