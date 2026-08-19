@@ -51,12 +51,10 @@ class EngramTilingKey:
 # ════════════════════════════════════════════════
 # Layer B: Compile-time constants
 # ════════════════════════════════════════════════
-
-TILE_M = 64           # cube TILE_M (reference; actual value bound per CMode in kernel)
-TILE_M_VEC = 8        # vec TILE_M (reference; actual value bound per HMode in kernel)
+# cube TILE_M 由 CMode 在 kernel 内绑定为 128/64; vec TILE_M 与 H_CHUNK 由
+# HMode 绑定 (见下方 per-HMode 表); TILE_K/TILE_N 固定 128.
 TILE_K = 128
 TILE_N = 128
-H_CHUNK = 1280        # per-chunk hidden dim (reference; actual value bound per HMode)
 
 # Per-HMode vector-tile split sizes. HMode 0,3 use 8 rows; HMode 1,2 use 4 rows.
 # (constant-product optimization dropped for 2048/1536 to match backward)
@@ -73,10 +71,8 @@ TILE_M_VEC_1536 = 8
 H_CHUNK_1536 = 1536
 
 LANES_FP32 = 64
-LANES_BF16 = 128
-
-CLAMP_VALUE = 1.0e-6
-RMS_EPS = 1.0e-6
+# clamp_value / eps 作为 kernel 运行时标量参数 (与 pypto tensor 版本 API 一致),
+# 由 wrapper 可选传入, 默认 1e-6.
 
 INV_H_1280 = 1.0 / 1280.0
 INV_SQRT_H_1280 = 1.0 / math.sqrt(1280.0)
@@ -247,10 +243,10 @@ def vf_accum_sq(
 def vf_compute_rms(
     key_sq_acc, query_sq_acc,
     key_rms_out, query_rms_out,
-    n_rows, inv_h,
+    n_rows, inv_h, eps,
 ):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-    eps_reg = vf.full(RMS_EPS, preg, dtype=pl.DT_FP32)
+    eps_reg = vf.full(eps, preg, dtype=pl.DT_FP32)
     inv_h_reg = vf.full(inv_h, preg, dtype=pl.DT_FP32)
     one_reg = vf.full(1.0, preg, dtype=pl.DT_FP32)
 
@@ -315,13 +311,13 @@ def vf_score_dot(
 
 @pl.vector_function
 def vf_compute_gate(
-    score_acc, scout_f32, gaout_f32, n_rows, inv_sqrt_h,
+    score_acc, scout_f32, gaout_f32, n_rows, inv_sqrt_h, clamp_value,
 ):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     one_reg = vf.full(1.0, preg, dtype=pl.DT_FP32)
     zero_reg = vf.full(0.0, preg, dtype=pl.DT_FP32)
     neg_one_reg = vf.full(-1.0, preg, dtype=pl.DT_FP32)
-    clamp_reg = vf.full(CLAMP_VALUE, preg, dtype=pl.DT_FP32)
+    clamp_reg = vf.full(clamp_value, preg, dtype=pl.DT_FP32)
     inv_sqrt_h_reg = vf.full(inv_sqrt_h, preg, dtype=pl.DT_FP32)
 
     for m in pl.range(0, n_rows):
@@ -384,8 +380,9 @@ def engram_forward_kernel(
     key_back: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     value_back: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     gate_back: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
-    key_rms_back: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
-    query_rms_back: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
+    # attrs (runtime scalars, aligned with the pypto tensor-version API)
+    clamp_value: pl.DT_FP32,
+    eps: pl.DT_FP32,
 ):
     """engram CV 并行 + GM 中转 + sub_idx split kernel (v2).
 
@@ -687,21 +684,15 @@ def engram_forward_kernel(
                             valid_mv, h_chunk_size, h_chunk_size,
                         )
 
-                    # ── Phase 2: 由累加平方和算 rms ──
+                    # ── Phase 2: 由累加平方和算 rms (inv_rms = 1/sqrt(mean+eps)) ──
                     key_rms = key_rms_grp.current()
                     pl.set_validshape(key_rms, [valid_mv, 64])
                     query_rms = query_rms_grp.current()
                     pl.set_validshape(query_rms, [valid_mv, 64])
                     vf_compute_rms(
                         key_sq_acc, query_sq_acc, key_rms, query_rms,
-                        valid_mv, inv_h,
+                        valid_mv, inv_h, eps,
                     )
-
-                    # store key_rms / query_rms (实际是 inv_rms = 1/sqrt(...)) 给反向复用
-                    pl.store(key_rms_back, key_rms,
-                             [row_off + vm_start, h, 0], order=[0, 2])
-                    pl.store(query_rms_back, query_rms,
-                             [row_off + vm_start, h, 0], order=[0, 2])
 
                     # ── Phase 3: 跨 H-chunk score 点积 + gate ──
                     for h_chunk in pl.range(0, n_h_chunks):
@@ -739,7 +730,7 @@ def engram_forward_kernel(
                     pl.set_validshape(gaout_f32, [valid_mv, 64])
                     vf_compute_gate(
                         score_acc, scout_f32, gaout_f32,
-                        valid_mv, inv_sqrt_h,
+                        valid_mv, inv_sqrt_h, clamp_value,
                     )
 
                     # store score_back / gate_back (直接 FP32, 无需 cast)
@@ -788,6 +779,8 @@ def engram_forward_wrapper(
     value_proj_weights,   # [De, H]      bf16
     key_gamma,            # [M, H]       bf16
     query_gamma,          # [M, H]       bf16
+    clamp_value=1e-6,
+    eps=1e-6,
 ):
     b, s, m_dim, h_out = hidden_states.shape
     m = b * s
@@ -824,9 +817,6 @@ def engram_forward_wrapper(
     key_back = torch.empty((m, m_dim, h_out), dtype=torch.float32, device=device)
     value_back = torch.empty((m, h_out), dtype=torch.float32, device=device)
     gate_back = torch.empty((m, m_dim, 64), dtype=torch.float32, device=device)
-    # inv_rms caches for backward reuse: FP32 [m, m_dim, 64] (有效只有 lane 0)
-    key_rms_back = torch.empty((m, m_dim, 64), dtype=torch.float32, device=device)
-    query_rms_back = torch.empty((m, m_dim, 64), dtype=torch.float32, device=device)
 
     num_cores = min(32, (m + tile_m - 1) // tile_m)
     if num_cores < 1:
@@ -836,14 +826,12 @@ def engram_forward_wrapper(
         hs_m, emb_m, key_proj_weights, value_proj_weights,
         key_gamma, query_gamma,
         value_out, score_back, key_back, value_back, gate_back,
-        key_rms_back, query_rms_back,
+        clamp_value, eps,
     )
 
     value_out = value_out.reshape(b, s, m_dim, h_out)
     score_back = score_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
-    key_back = key_back.reshape(b, s, m_dim, h_out)
-    value_back = value_back.reshape(b, s, h_out)
+    key_back = key_back.reshape(b, s, m_dim, h_out).to(torch.bfloat16)
+    value_back = value_back.reshape(b, s, h_out).to(torch.bfloat16)
     gate_back = gate_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
-    key_rms_back = key_rms_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
-    query_rms_back = query_rms_back[:, :, 0:1].reshape(b, s, m_dim).contiguous()
-    return value_out, score_back, key_back, value_back, gate_back, key_rms_back, query_rms_back
+    return value_out, score_back, key_back, value_back, gate_back

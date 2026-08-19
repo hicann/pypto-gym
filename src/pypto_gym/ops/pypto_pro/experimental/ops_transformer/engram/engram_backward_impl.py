@@ -44,8 +44,8 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # TilingKey: two specialization fields (4x4 = 16 compiled variants).
 #   HMode (bits=2): vector sub-tile row count on H + per-H UB layout.
-#     0 -> H=1280 (rows: B=8, A=16; H_CHUNK=1280)   1 -> H=2560 (rows: B=4, A=8; H_CHUNK=2560)
-#     2 -> H=2048 (rows: B=4, A=8;  H_CHUNK=2048)    3 -> H=1536 (rows: B=8, A=16; H_CHUNK=1536)
+#     0 -> H=1280 (rows: B=4, A=8;  H_CHUNK=1280)   1 -> H=2560 (rows: B=4, A=4; H_CHUNK=2560)
+#     2 -> H=2048 (rows: B=4, A=4;  H_CHUNK=2048)    3 -> H=1536 (rows: B=4, A=4; H_CHUNK=1536)
 
 
 class EngramTilingKey:
@@ -55,11 +55,10 @@ class EngramTilingKey:
 
 # Compile-time constants (mirror forward engram_v4).
 # M_H (head count) is DYNAMIC (1-16), derived in kernel body from grad_output.shape[1].
-TILE_M = 128             # CUBE BS-row tile (== cube_mn); vector uses V_TILE
-TILE_N = 128             # De/col tile (== cube_mn)
+# Cube tiles are fixed 128 (cube_mn == cube_k in kernel); TILE_M/TILE_N references removed.
 # Vector worker BS-row tile candidates, selected per launch by BSMode so the
 # 64 AIV workers (32 cores x 2) stay filled. V_TILE is a multiple of
-# TILE_BS_VEC_A (8/16) so a worker's row window never straddles VF sub-tiles.
+# TILE_BS_VEC_A (4/8) so a worker's row window never straddles VF sub-tiles.
 V_TILE_BS0 = 128           # BSMode 0: BS >= 8192
 V_TILE_BS1 = 64            # BSMode 1: BS >= 4096
 V_TILE_BS2 = 32            # BSMode 2: BS >= 2048
@@ -68,7 +67,7 @@ LANES_FP32 = 64          # VF FP32 register width
 
 # Per-HMode vector-tile split sizes. A four-way `if pl.constexpr(HMode==k)` binds
 # TILE_BS_VEC / TILE_BS_VEC_A / H_CHUNK to one triple so TileType.shape stays
-# compile-time constant.  B-phase rows are fixed 8/4/4/4 (Pass-A doubles: 16/8/8/8).
+# compile-time constant.  B-phase rows are fixed 4 (Pass-A: 8 for H=1280, else 4).
 TILE_BS_VEC_1280 = 4           # HMode 0 H=1280: vec sub-row tile (B-key/B-query)
 TILE_BS_VEC_2560 = 4           # HMode 1 H=2560
 TILE_BS_VEC_2048 = 4           # HMode 2 H=2048
@@ -82,9 +81,9 @@ H_CHUNK_2560 = 2560           # HMode 1
 H_CHUNK_2048 = 2048           # HMode 2
 H_CHUNK_1536 = 1536           # HMode 3
 
-CLAMP_VALUE = 1.0e-6     # signed_sqrt_gate |s| floor
-RMS_EPS = 1.0e-6         # RMSNorm zero-division guard
 GATE_EPS = 1.0e-12       # signed_sqrt_gate denominator guard (aligns golden)
+# clamp_value / eps 为 kernel 运行时标量参数 (与 pypto tensor 版本 API 一致),
+# wrapper 可选传入, 默认 1e-6.
 GAMMA_SLOT_SPLIT = 1
 
 # UB addresses (vector section), two groups:
@@ -101,31 +100,25 @@ GAMMA_SLOT_SPLIT = 1
 #  so the address arithmetic is written inline at each make_tile_group call.
 
 # ---- HMode = 0 (H = 1280, B-rows = 8): (A) group ----
-VA_GOUT16_1280 = 0x00000  # [8,1280] BF16 grad_output load (20KB)
 VA_GOUT32_1280 = 0x05000  # [8,1280] FP32 grad_output FP32 (40KB)
 VA_PTNR16_1280 = 0x0F000  # [8,1280] BF16 partner (20KB)
 VA_PTNR32_1280 = 0x14000  # [8,1280] FP32 partner (40KB)
-VA_GVAL32_1280 = 0x1E000  # [8,1280] FP32 Pass-A grad_value accumulator (40KB)
 VA_GN32_1280 = 0x28000    # [8,1280] FP32 Pass-B grad_nQuery/grad_nKey (INDEPENDENT) (40KB)
 VA_GBUF16_1280 = 0x1E000  # BF16 final vector output (aliases GVAL32)
 VA_XCACHE32_1280 = 0x1E000  # RMS-x cache (aliases GVAL32)
 
 # ---- HMode = 1 (H = 2560, B-rows = 4): (A) group (byte-identical to HMode 0) ----
-VA_GOUT16_2560 = 0x00000
 VA_GOUT32_2560 = 0x05000
 VA_PTNR16_2560 = 0x0F000
 VA_PTNR32_2560 = 0x14000
-VA_GVAL32_2560 = 0x1E000
 VA_GN32_2560 = 0x28000
 VA_GBUF16_2560 = 0x1E000
 VA_XCACHE32_2560 = 0x1E000
 
 # ---- HMode = 2 (H = 2048, B-rows = 4): (A) group (32KB FP32 tiles) ----
-VA_GOUT16_2048 = 0x00000  # [4,2048] BF16 (16KB)
 VA_GOUT32_2048 = 0x04000  # [4,2048] FP32 (32KB)
 VA_PTNR16_2048 = 0x0C000  # [4,2048] BF16 (16KB)
 VA_PTNR32_2048 = 0x10000  # [4,2048] FP32 (32KB)
-VA_GVAL32_2048 = 0x18000  # [4,2048] FP32 (32KB)
 VA_GN32_2048 = 0x20000    # [4,2048] FP32 (32KB)
 VA_GBUF16_2048 = 0x18000  # aliases GVAL32
 VA_XCACHE32_2048 = 0x18000  # aliases GVAL32
@@ -134,11 +127,9 @@ VA_XCACHE32_2048 = 0x18000  # aliases GVAL32
 # rows=4 (like 2048/2560) shrinks each big tile to 24KB, so ALL 6 big tiles fit
 # fully independently in 154KB -- NO dead-region reuse, NO risky aliasing.  GN32
 # is independent; only the baseline-safe aliases apply (GBUF16/XCACHE32==GVAL32).
-VA_GOUT16_1536 = 0x00000  # [4,1536] BF16 (12KB)
 VA_GOUT32_1536 = 0x03000  # [4,1536] FP32 (24KB)
 VA_PTNR16_1536 = 0x09000  # [4,1536] BF16 (12KB)
 VA_PTNR32_1536 = 0x0C000  # [4,1536] FP32 (24KB)
-VA_GVAL32_1536 = 0x12000  # [4,1536] FP32 (24KB)
 VA_GN32_1536 = 0x18000    # [4,1536] FP32 (24KB)
 VA_GBUF16_1536 = 0x12000  # aliases GVAL32
 VA_XCACHE32_1536 = 0x12000  # aliases GVAL32
@@ -148,8 +139,6 @@ VA_XCACHE32_1536 = 0x12000  # aliases GVAL32
 #     [1,H_CHUNK] gamma: BF16 = H*2, FP32 = H*4.
 
 # ---- HMode = 0 (H = 1280, rows = 8) ----
-VA_SCORE32_1280 = 0x32000  # [8,64] FP32 score
-VA_GATE32_1280 = 0x32800
 VA_GGATE32_1280 = 0x33000
 VA_GSCORE32_1280 = 0x33800
 VA_RSQ32_1280 = 0x34000
@@ -160,11 +149,8 @@ VA_GAMMA32_1280 = 0x36200  # [1,1280] FP32 gamma
 VA_GGAMQ32_1280 = 0x37600  # [1,1280] FP32 grad_gamma -- query
 VA_GGAMK32_1280 = 0x38A00  # [1,1280] FP32 grad_gamma -- key
 VA_GGAMQ_ACC32_1280 = 0x39E00  # [1,1280] FP32 RMW acc -- query   (ends 0x3B200)
-VA_GGAMK_ACC32_1280 = 0x37600  # aliases GGAMQ32
 
 # ---- HMode = 1 (H = 2560, rows = 4) ----
-VA_SCORE32_2560 = 0x32000  # [4,64] FP32 score
-VA_GATE32_2560 = 0x32400
 VA_GGATE32_2560 = 0x32800
 VA_GSCORE32_2560 = 0x32C00
 VA_RSQ32_2560 = 0x33000
@@ -175,11 +161,8 @@ VA_GAMMA32_2560 = 0x35000  # [1,2560] FP32 gamma
 VA_GGAMQ32_2560 = 0x37800  # [1,2560] FP32 grad_gamma -- query
 VA_GGAMK32_2560 = 0x3A000  # [1,2560] FP32 grad_gamma -- key
 VA_GGAMQ_ACC32_2560 = 0x3C800  # [1,2560] FP32 RMW acc -- query   (ends 0x3F000)
-VA_GGAMK_ACC32_2560 = 0x37800  # aliases GGAMQ32
 
 # ---- HMode = 2 (H = 2048, rows = 4): (B) starts at (A) end 0x28000 ----
-VA_SCORE32_2048 = 0x28000  # [4,64] FP32 score
-VA_GATE32_2048 = 0x28400
 VA_GGATE32_2048 = 0x28800
 VA_GSCORE32_2048 = 0x28C00
 VA_RSQ32_2048 = 0x29000
@@ -190,13 +173,10 @@ VA_GAMMA32_2048 = 0x2AC00  # [1,2048] FP32 gamma (0x2000)
 VA_GGAMQ32_2048 = 0x2CC00  # [1,2048] FP32 grad_gamma -- query
 VA_GGAMK32_2048 = 0x2EC00  # [1,2048] FP32 grad_gamma -- key
 VA_GGAMQ_ACC32_2048 = 0x30C00  # [1,2048] FP32 RMW acc -- query
-VA_GGAMK_ACC32_2048 = 0x2CC00  # aliases GGAMQ32
 
 # ---- HMode = 3 (H = 1536, rows = 4): (B) fully-independent, after (A) end 0x1E000 ----
 # rows=4 makes the (A) group end at 0x1E000, leaving ample room for score/gamma
 # tiles at independent addresses (like 1280/2048).  NO dead-region reuse.
-VA_SCORE32_1536 = 0x1E000   # [4,64] FP32 1K (0x400 stride)
-VA_GATE32_1536 = 0x1E400
 VA_GGATE32_1536 = 0x1E800
 VA_GSCORE32_1536 = 0x1EC00
 VA_RSQ32_1536 = 0x1F000
@@ -207,7 +187,6 @@ VA_GAMMA32_1536 = 0x20800   # [1,1536] FP32 6K
 VA_GGAMQ32_1536 = 0x22000   # [1,1536] FP32 6K
 VA_GGAMK32_1536 = 0x23800   # [1,1536] FP32 6K
 VA_GGAMQ_ACC32_1536 = 0x25000  # [1,1536] FP32 6K  ends 0x26800 (154KB)
-VA_GGAMK_ACC32_1536 = 0x22000  # aliases GGAMQ32
 
 # ---- HMode 0 (H=1280, A-rows=8) ----   ---- HMode 1 (H=2560, A-rows=4) same addrs ----
 VA_PA_GO16_1280 = 0x00000   # BF16 [8,1280] (20KB)
@@ -250,9 +229,7 @@ VA_PA_SCORE32_1536 = 0x18400
 VA_PA_GG32_1536 = 0x18800
 VA_PA_GS32_1536 = 0x18C00
 
-# ---- VAL32: value 跨 m_head 复用 cache (Phase B, 省m_h倍 value MTE2) ----
-VA_VAL32_1280 = 0x0A000   # [4,1280] FP32 = 20KB
-VA_VAL32_2560 = 0x05000   # [4,2560] FP32 = 40KB (tile=4 后别名 GOUT32; Phase B 未使用 val32，仅占位)
+# ---- VAL32: value 复用 cache 地址 (HMode 2/3 被 GAMMA32_K 别名引用) ----
 VA_VAL32_2048 = 0x32C00   # [4,2048] FP32 = 32KB
 VA_VAL32_1536 = 0x26800   # [4,1536] FP32 = 24KB
 
@@ -271,16 +248,13 @@ VA_RMEANQ32_1536 = VA_GGATE32_1536      # 0x1E800 [4,64] FP32 = 1KB
 LA_L1_A_BASE = 0x00000   # a_l1 4-buffer base (slots at +0x0000/+0x8000/+0x10000/+0x18000)
 LA_L1_B_BASE = 0x20000   # b_l1 4-buffer base (slots at +0x0000/+0x8000/+0x10000/+0x18000)
 LA_L1_SLOT_STRIDE = 0x8000   # 32KB = [128,128] BF16
+# L0A/L0B/L0C tile group addresses are written inline (0x0000/0x8000/0x10000).
 
-L0A_BASE = 0x0000
-L0B_BASE = 0x0000
-L0C_BASE = 0x0000
-
-# Cross-core handoff event IDs.
-#   Phase A: grad_value_ws -> GV_DONE (Cube Nest1-val + Nest2 may start)
-#   Phase B: grad_key_ws -> GK_DONE (Cube Nest1-key + Nest3 may start)
-EVENT_GV_DONE = 0                  # grad_value_ws ready (Phase A / Pass A)
-EVENT_GK_DONE = 2                  # grad_key_ws ready (Phase B)
+# Cross-core event id 规划。
+EVENT_GV_WAVE_BASE = 0               # grad_value_ws wave-ready pair {0,1}
+EVENT_GK_BASE = 2                    # per-head grad_key_ws ready pair {2,3}
+EVENT_GK_ACK_BASE = 4                # cube->vec per-head backpressure pair {4,5}
+EVENT_GV_ACK_BASE = 6                # cube->vec wave backpressure pair {6,7}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -359,13 +333,14 @@ def vf_gate_bw(
     gate_f32,          # [TILE_BS_VEC, 64] FP32  gate g (scalar per row)
     gs_out,            # [TILE_BS_VEC, 64] FP32 write  grad_score
     n_rows,
+    clamp_value,
 ):
     """Step5^{-1}: signed_sqrt_gate backward.
        grad_score = grad_gate · g(1−g) · mask / (2·√max(|s|,c) + 1e-12)
        mask = (|s| > c)
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-    clamp_reg = vf.full(CLAMP_VALUE, preg, dtype=pl.DT_FP32)
+    clamp_reg = vf.full(clamp_value, preg, dtype=pl.DT_FP32)
     eps_reg = vf.full(GATE_EPS, preg, dtype=pl.DT_FP32)
     two_reg = vf.full(2.0, preg, dtype=pl.DT_FP32)
     zero_reg = vf.full(0.0, preg, dtype=pl.DT_FP32)
@@ -428,13 +403,38 @@ def vf_scaled_dot(
 
 
 # ── rms_norm_backward (3-pass; H-split cross-chunk accumulation) ──
-# Pass 1 (sq + inv_rms) removed: backward now loads inv_rms from the forward
-# cache (key_rms / query_rms GM tensors), eliminating redundant sq/sqrt work.
+@pl.vector_function
+def vf_compute_inv_rms(
+    x_f32,              # [TILE_BS_VEC, H_CHUNK] FP32  x (key or hidden)
+    rms_out,            # [TILE_BS_VEC, 64] FP32 write  inv_rms = 1/sqrt(mean(x²)+eps)
+    n_rows, n_cols, row_stride,
+    h_value, eps,
+):
+    """inv_rms[r] = 1 / sqrt(Σx²/H + eps).  H itself is exact, so the scale is
+       constructed in vector registers (same trick as vf_scaled_dot)."""
+    preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
+    n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
+    h_reg = vf.full(h_value, preg, dtype=pl.DT_FP32)
+    eps_reg = vf.full(eps, preg, dtype=pl.DT_FP32)
+    one_reg = vf.full(1.0, preg, dtype=pl.DT_FP32)
+    for m in pl.range(0, n_rows):
+        acc = vf.full(0.0, preg, dtype=pl.DT_FP32)
+        for r in pl.range(0, n_regs):
+            off = m * row_stride + r * LANES_FP32
+            x = vf.load_align(x_f32, off)
+            sq = vf.mul(x, x, preg)
+            part = vf.reduce_sum(sq, preg, merge_mode=pl.MergeMode.ZEROING)
+            acc = vf.add(acc, part, preg)
+        mean = vf.div(acc, h_reg, preg)
+        mean_eps = vf.add(mean, eps_reg, preg)
+        sqrt_v = vf.sqrt(mean_eps, preg)
+        inv_rms = vf.div(one_reg, sqrt_v, preg)
+        vf.store_align(rms_out + m * 64, inv_rms, preg)
 
 @pl.vector_function
 def vf_rmsnorm_fwd(x_f32, gam_f32, rms_f32, out_f32, n_rows, n_cols, row_stride):
     """Recompute RMSNorm(x, gamma) in FP32 without materializing a cache.
-       rms_f32 now stores inv_rms (1/rms) from the forward cache → n = x * inv_rms.
+       rms_f32 stores inv_rms (1/rms), recomputed in-kernel → n = x * inv_rms.
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
@@ -455,14 +455,14 @@ def vf_rmsbw_rmean(
     gx_f32,            # [TILE_BS_VEC, H_CHUNK] FP32  grad_xhat (= grad_n)
     x_f32,             # [TILE_BS_VEC, H_CHUNK] FP32  x
     gam_f32,           # [1, H_CHUNK] FP32  gamma
-    rms_f32,           # [TILE_BS_VEC, 64] FP32  inv_rms per row (from forward cache)
+    rms_f32,           # [TILE_BS_VEC, 64] FP32  inv_rms per row
     rmean_acc,         # [TILE_BS_VEC, 64] FP32 in/out
     gg_acc,            # [1, H_CHUNK] FP32 in/out  grad_gamma partial
     n_rows, n_cols, row_stride,
 ):
     """rms_bw Pass 2: rmean[r] += Σ(grad_n·n); gg_acc[h] += Σ grad_xhat·n.
        n = x * inv_rms ; grad_n = grad_xhat · gamma.
-       rms_f32 stores inv_rms (1/rms) from the forward cache.
+       rms_f32 stores inv_rms (1/rms), recomputed in-kernel.
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
@@ -510,7 +510,7 @@ def vf_rmsbw_gradx(
 ):
     """rms_bw Pass 3: grad_x = (grad_n − n·rmean) * inv_rms.
        n = x * inv_rms ; grad_n = grad_xhat · gamma.
-       rms_f32 stores inv_rms (1/rms) from the forward cache.
+       rms_f32 stores inv_rms (1/rms).
     """
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     n_regs = (n_cols + LANES_FP32 - 1) // LANES_FP32
@@ -548,9 +548,6 @@ def engram_backward_kernel(
     gates: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
     keys: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     value: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
-    # forward cache: inv_rms = 1/rms (FP32 [BS, M_H, 64]，lane 0 有效，与 scores/gates 同布局)
-    key_rms: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
-    query_rms: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 64], pl.DT_FP32],
     # host-pre-transposed inputs (plain NZ loads, NO is_transpose / layout=ZN)
     emb_t: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [De, BS] BF16
     wv_t: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],  # [H, De] BF16
@@ -569,6 +566,9 @@ def engram_backward_kernel(
     grad_hidden_states: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     grad_key_proj_weights: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
     grad_value_proj_weights: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_BF16],
+    # attrs (runtime scalars, aligned with the pypto tensor-version API)
+    clamp_value: pl.DT_FP32,
+    eps: pl.DT_FP32,
 ):
     """Single kernel: vector section (produces grad_value_ws/grad_key_ws +
     grad_hidden + grad_γ) then cube section (consumes ws, produces grad_emb +
@@ -583,7 +583,7 @@ def engram_backward_kernel(
 
     # Bind vector tile sizes to compile-time constants via TilingKey. HMode/BSMode
     # are ConstInt -> `if pl.constexpr` parses only the taken branch, so these names
-    # are usable in TileType.shape and pl.range steps.  Rows fixed 8/4/4/8 (B-phase).
+    # are usable in TileType.shape and pl.range steps.  Rows fixed 4 (B-phase).
     if pl.constexpr(HMode == 0):  # H = 1280
         tile_bs_vec = TILE_BS_VEC_1280  # 8
         tile_bs_vec_a = TILE_BS_VEC_A_1280  # 16
@@ -609,16 +609,6 @@ def engram_backward_kernel(
         v_tile = V_TILE_BS2  # 32
     else:  # BSMode == 3: small BS
         v_tile = V_TILE_BS3  # 16
-    # NOTE: UB addresses for ALL vector tiles are chosen by a parser-foldable 4-way
-    # HMode select (parser can't see names from the `if` blocks above, but HMode itself
-    # is a ConstInt so `(HMode == k)` folds to 0/1 and the whole sum folds to one
-    # constant per key -- exactly the baseline's `HMode*X + (1-HMode)*Y` mechanism,
-    # extended to four keys).  TileType.shape DOES see tile_bs_vec/h_chunk_size.
-    # h0/h1/h2/h3 are compile-time 0/1 selectors (exactly one is 1 for the taken key).
-    h0 = (HMode == 0)  # H = 1280
-    h1 = (HMode == 1)  # H = 2560
-    h2 = (HMode == 2)  # H = 2048
-    h3 = (HMode == 3)  # H = 1536
     n_h_chunks = (h + h_chunk_size - 1) // h_chunk_size  # exactly one full-H tile
     cube_k = 128  # cube K tile: BF16 [128,128]=32KB fits L0A/L0B double-buffer
     cube_mn = 128  # cube M/N output tile
@@ -636,6 +626,8 @@ def engram_backward_kernel(
     worker_id = core_id * num_subcores + sub_id   # global vector-subblock index
     iters_per_core = (n_bs + num_cores - 1) // num_cores      # per-core BS-tile iterations (cube)
     iters_per_subblock = (n_bs_v + total_subblocks - 1) // total_subblocks  # per-worker
+    gv_groups = iters_per_subblock
+    gv_iters_per_group = (iters_per_subblock + gv_groups - 1) // gv_groups  # = 1
 
     # ═══════════════════════════════════════════════════════════════
     # VECTOR SECTION (runs first; produces grad_value_ws / grad_key_ws)
@@ -655,11 +647,6 @@ def engram_backward_kernel(
     # as its valid width (set_validshape). H <= H_CHUNK, so H is never split.
 
     # (A) group -- HMode-specialized: HModes 0/1 share addrs (byte-constant), 2/3 differ.
-    gout16_grp = pl.make_tile_group(
-        type=tt_mv16,
-        addrs=((HMode == 0) * VA_GOUT16_1280 + (HMode == 1) * VA_GOUT16_2560 +
-               (HMode == 2) * VA_GOUT16_2048 + (HMode == 3) * VA_GOUT16_1536),
-        mutex_ids=[0])
     gout32_grp = pl.make_tile_group(
         type=tt_mv32,
         addrs=((HMode == 0) * VA_GOUT32_1280 + (HMode == 1) * VA_GOUT32_2560 +
@@ -675,44 +662,17 @@ def engram_backward_kernel(
         addrs=((HMode == 0) * VA_PTNR32_1280 + (HMode == 1) * VA_PTNR32_2560 +
                (HMode == 2) * VA_PTNR32_2048 + (HMode == 3) * VA_PTNR32_1536),
         mutex_ids=[3])
-    gval32_grp = pl.make_tile_group(
-        type=tt_mv32,
-        addrs=((HMode == 0) * VA_GVAL32_1280 + (HMode == 1) * VA_GVAL32_2560 +
-               (HMode == 2) * VA_GVAL32_2048 + (HMode == 3) * VA_GVAL32_1536),
-        mutex_ids=[4])
     gn32_grp = pl.make_tile_group(
         type=tt_mv32,
         addrs=((HMode == 0) * VA_GN32_1280 + (HMode == 1) * VA_GN32_2560 +
                (HMode == 2) * VA_GN32_2048 + (HMode == 3) * VA_GN32_1536),
         mutex_ids=[17])
-    # BF16 cast temp (fused Phase B): gbuf16 overlays GVAL32 == xcache.  In the
-    # fused gradx stage BOTH casts (gh16 then gk16) go through this ONE tile,
-    # strictly AFTER the QUERY rmsbw_gradx (hidden32's last read) — the exact
-    # time-multiplexing trick the old separate passes used.  This keeps ptnr16
-    # a PURE MTE2 load buffer so the next bs_start's keys/hidden loads prefetch
-    # during gradx compute (a second group overlaying PTNR32 was tried but the
-    # codegen rejects two groups sharing one address's mutex variable).
     gbuf16_grp = pl.make_tile_group(
         type=tt_mv16,
         addrs=((HMode == 0) * VA_GBUF16_1280 + (HMode == 1) * VA_GBUF16_2560 +
                (HMode == 2) * VA_GBUF16_2048 + (HMode == 3) * VA_GBUF16_1536),
         mutex_ids=[4])
     # (B) group -- HMode-specialized [rows,64]/[1,H_CHUNK] addresses.
-    score32_grp = pl.make_tile_group(
-        type=tt_score32,
-        addrs=((HMode == 0) * VA_SCORE32_1280 + (HMode == 1) * VA_SCORE32_2560 +
-               (HMode == 2) * VA_SCORE32_2048 + (HMode == 3) * VA_SCORE32_1536),
-        mutex_ids=[7])
-    gate32_grp = pl.make_tile_group(
-        type=tt_score32,
-        addrs=((HMode == 0) * VA_GATE32_1280 + (HMode == 1) * VA_GATE32_2560 +
-               (HMode == 2) * VA_GATE32_2048 + (HMode == 3) * VA_GATE32_1536),
-        mutex_ids=[8])
-    ggate_grp = pl.make_tile_group(
-        type=tt_score32,
-        addrs=((HMode == 0) * VA_GGATE32_1280 + (HMode == 1) * VA_GGATE32_2560 +
-               (HMode == 2) * VA_GGATE32_2048 + (HMode == 3) * VA_GGATE32_1536),
-        mutex_ids=[9])
     gscore_grp = pl.make_tile_group(
         type=tt_score32,
         addrs=((HMode == 0) * VA_GSCORE32_1280 + (HMode == 1) * VA_GSCORE32_2560 +
@@ -768,11 +728,6 @@ def engram_backward_kernel(
         addrs=((HMode == 0) * VA_GGAMQ_ACC32_1280 + (HMode == 1) * VA_GGAMQ_ACC32_2560 +
                (HMode == 2) * VA_GGAMQ_ACC32_2048 + (HMode == 3) * VA_GGAMQ_ACC32_1536),
         mutex_ids=[19])
-    ggamk_acc_grp = pl.make_tile_group(
-        type=tt_gamma32,
-        addrs=((HMode == 0) * VA_GGAMK_ACC32_1280 + (HMode == 1) * VA_GGAMK_ACC32_2560 +
-               (HMode == 2) * VA_GGAMK_ACC32_2048 + (HMode == 3) * VA_GGAMK_ACC32_1536),
-        mutex_ids=[20])
     # RMS-x cache: keys (B-key) / hidden (B-query), loaded once in RMS Pass1,
     # reused in Pass2/Pass3. Aliases grad_value (dead after GV_DONE).
     xcache_grp = pl.make_tile_group(
@@ -832,21 +787,19 @@ def engram_backward_kernel(
         addrs=((HMode == 0) * VA_PA_GS32_1280 + (HMode == 1) * VA_PA_GS32_2560 +
                (HMode == 2) * VA_PA_GS32_2048 + (HMode == 3) * VA_PA_GS32_1536),
         mutex_ids=[31])
-    val32_grp = pl.make_tile_group(
-        type=tt_mv32,
-        addrs=((HMode == 0) * VA_VAL32_1280 + (HMode == 1) * VA_VAL32_2560 +
-               (HMode == 2) * VA_VAL32_2048 + (HMode == 3) * VA_VAL32_1536),
-        mutex_ids=[27])
 
     with pl.section_vector():
-        for tile_idx in pl.range(0, iters_per_subblock):
-            bsi = worker_id + tile_idx * total_subblocks
-            if bsi < n_bs_v:
-                row_off = bsi * v_tile
-                bs_tile_rows = pl.min(v_tile, bs - row_off)
-                for bs_start in pl.range(0, bs_tile_rows, tile_bs_vec_a):
-                    valid_bsv = pl.min(tile_bs_vec_a, bs_tile_rows - bs_start)
-                    bs_off = row_off + bs_start
+        # ── Phase A waves (wave-major row ownership) ──
+        wave_span = num_cores * cube_mn
+        n_waves = (bs + wave_span - 1) // wave_span
+        share_w = wave_span // total_subblocks
+        for wave_idx in pl.range(0, n_waves):
+            row_base = wave_idx * wave_span + worker_id * share_w
+            my_rows = pl.min(share_w, bs - row_base)
+            if my_rows > 0:
+                for bs_start in pl.range(0, my_rows, tile_bs_vec_a):
+                    valid_bsv = pl.min(tile_bs_vec_a, my_rows - bs_start)
+                    bs_off = row_base + bs_start
                     # Pass A+: Step7a (grad_value) + Step7b (grad_gate) + Step5 (grad_score)
                     # grad_output loaded ONCE (shared Step7a+Step7b), gates loaded ONCE
                     for h_chunk in pl.range(0, n_h_chunks):
@@ -889,7 +842,8 @@ def engram_backward_kernel(
                             pl.load(pa_score32, scores, [bs_off, m_head, 0], order=[0, 2])
                             pa_gs32 = pa_gs32_grp.current()
                             pl.set_validshape(pa_gs32, [valid_bsv, 64])
-                            vf_gate_bw(pa_gg32, pa_score32, pa_gate32, pa_gs32, valid_bsv)
+                            vf_gate_bw(pa_gg32, pa_score32, pa_gate32, pa_gs32,
+                                       valid_bsv, clamp_value)
                             pl.store(gscore_ws, pa_gs32, [bs_off, m_head, 0], order=[0, 2])
 
                         pa_gv16 = pa_gv16_grp.current()
@@ -897,19 +851,27 @@ def engram_backward_kernel(
                         pl.cast(pa_gv16, gv, mode=pl.RoundMode.CAST_ROUND)  # FP32 -> BF16
                         pl.store(grad_value_ws, pa_gv16, [bs_off, h_off])
 
-        # ===== GV_DONE: grad_value_ws ready (Phase A). Cube Nest1-val + Nest2 may
-        # start and overlap with Vector Phase B below. =====
-        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=EVENT_GV_DONE,
-                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            pl.system.sync_all(core_type=pl.SyncCoreType.AIV_ONLY)
+            # 不变量：每 worker 每波必发（无行也发）；iters_per_core == n_waves
+            # 保证 cube 每轮 wait 都有对应 set。复用 parity 槽位前须等 cube
+            # 对 wave w-2 的 ACK，否则二进制 flag 合并（陈旧/未就绪读）。
+            if wave_idx >= 2:
+                pl.system.wait_cross_core(
+                    pipe=pl.PipeType.MTE3,
+                    event_id=EVENT_GV_ACK_BASE + (wave_idx % 2),
+                    sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            pl.system.set_cross_core(
+                pipe=pl.PipeType.MTE3,
+                event_id=EVENT_GV_WAVE_BASE + (wave_idx % 2),
+                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
 
         # ===== Phase B fused pass: gscore_ws → KEY + QUERY in ONE loop =====
-        for tile_idx in pl.range(0, iters_per_subblock):
-            bsi = worker_id + tile_idx * total_subblocks
-            if bsi < n_bs_v:
-                row_off = bsi * v_tile
-                bs_tile_rows = pl.min(v_tile, bs - row_off)
-                for m_head in pl.range(0, m_h):
+        for m_head in pl.range(0, m_h):
+            for tile_idx in pl.range(0, iters_per_subblock):
+                bsi = worker_id + tile_idx * total_subblocks
+                if bsi < n_bs_v:
+                    row_off = bsi * v_tile
+                    bs_tile_rows = pl.min(v_tile, bs - row_off)
                     ggam_q = ggamq_grp.current()
                     pl.set_validshape(ggam_q, [1, h])
                     vf_zero_1d(ggam_q, h)
@@ -937,14 +899,10 @@ def engram_backward_kernel(
                         gs = gscore_grp.current()
                         pl.set_validshape(gs, [valid_bsv, 64])
                         pl.load(gs, gscore_ws, [bs_off, m_head, 0], order=[0, 2])
-                        # rms caches: KEY's own rms = key_rms, partner = query_rms;
-                        # QUERY is the mirror image.
-                        rms = rinv_grp.current()          # key_rms
+                        rms = rinv_grp.current()
                         pl.set_validshape(rms, [valid_bsv, 64])
-                        pl.load(rms, key_rms, [bs_off, m_head, 0], order=[0, 2])
-                        partner_sq = rsq_grp.current()    # query_rms
+                        partner_sq = rsq_grp.current()
                         pl.set_validshape(partner_sq, [valid_bsv, 64])
-                        pl.load(partner_sq, query_rms, [bs_off, m_head, 0], order=[0, 2])
 
                         # ══ rmean stage — both chains share one tile pair ══
                         rmean_k = rmean_grp.current()
@@ -967,6 +925,11 @@ def engram_backward_kernel(
                             hidden32 = xcache_grp.current()
                             pl.set_validshape(hidden32, [valid_bsv, h])
                             pl.cast(hidden32, ptnr16, mode=pl.RoundMode.CAST_NONE)
+                            # recompute inv_rms (1/rms) from keys/hidden in FP32
+                            vf_compute_inv_rms(keys32, rms, valid_bsv, h,
+                                               h_chunk_size, h, eps)
+                            vf_compute_inv_rms(hidden32, partner_sq, valid_bsv, h,
+                                               h_chunk_size, h, eps)
                             gamma32 = gamma32_grp.current()  # query_gamma
                             gx_k = gn32_grp.current()
                             pl.set_validshape(gx_k, [valid_bsv, h])
@@ -1032,8 +995,7 @@ def engram_backward_kernel(
                             pl.store(grad_key_ws, gk16,
                                      [bs_off, m_head, h_off], order=[0, 2])
                     # ── RMW gamma accs ONCE per (tile, m_head).  BOTH chains stage
-                    # through ggamq_acc_grp (independent address); ggamk_acc_grp is
-                    # never touched (it aliases ggamq_grp's address). ──
+                    # through ggamq_acc_grp (independent address). ──
                     gslot = worker_id * GAMMA_SLOT_SPLIT + (tile_idx % GAMMA_SLOT_SPLIT)
                     gamma_acc = ggamq_acc_grp.current()
                     pl.set_validshape(gamma_acc, [1, h])
@@ -1051,13 +1013,20 @@ def engram_backward_kernel(
                         pl.add(gamma_acc, gamma_acc, ggam_k)
                         pl.store(grad_kgamma_acc, gamma_acc,
                                  [gslot, m_head, h_off], order=[1, 2])
-
-        # ===== GK_DONE: fused pass complete — grad_key_ws AND grad_hidden_states
-        # ready.  Cube Nest1-key/Nest3 start here (the separate query pass no
-        # longer exists, so there is nothing left to overlap). =====
-        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=EVENT_GK_DONE,
-                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            # ===== Per-head GK_DONE: ALL workers finished this head's
+            # grad_key_ws (and grad_hidden_states) rows -> Cube may consume
+            # head m_head's Nest1-key + Nest3 while vector produces the
+            # remaining heads. Event id 排在 GV 分组事件之后。 =====
+            pl.system.sync_all(core_type=pl.SyncCoreType.AIV_ONLY)
+            if m_head >= 2:
+                pl.system.wait_cross_core(
+                    pipe=pl.PipeType.MTE3,
+                    event_id=EVENT_GK_ACK_BASE + (m_head % 2),
+                    sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            pl.system.set_cross_core(
+                pipe=pl.PipeType.MTE3,
+                event_id=EVENT_GK_BASE + (m_head % 2),
+                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
 
     # ═══════════════════════════════════════════════════════════════
     # CUBE SECTION (consumes grad_value_ws / grad_key_ws and transposed inputs)
@@ -1094,23 +1063,24 @@ def engram_backward_kernel(
                                   mutex_ids=[12, 13, 29, 30])
     a_l0_grp = pl.make_tile_group(type=tt_a_l0, addrs=[0x0000, 0x8000], mutex_ids=[14, 15])
     b_l0_grp = pl.make_tile_group(type=tt_b_l0, addrs=[0x0000, 0x8000], mutex_ids=[16, 17])
-    acc_grp = pl.make_tile_group(type=tt_acc, addrs=[0x0000, 0x10000], mutex_ids=[18, 21])
+    acc_grp = pl.make_tile_group(type=tt_acc, addrs=[0x00000, 0x10000, 0x20000, 0x30000],
+                                 mutex_ids=[18, 21, 22, 23])
 
     with pl.section_cube():
-        # wait GV_DONE: grad_value_ws ready. Nest1-val + Nest2 may now run,
-        # overlapping Vector Phase B.
-        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=EVENT_GV_DONE,
-                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
         pl.system.set_mm_layout_transform(enabled=True)
 
-        # Nest 1 (value): grad_value_ws @ wv_t -> atomic-add into grad_emb_acc.
-        # M-strided partitioning -> each output address has one cube owner ->
-        # atomicAdd is a local FP32 accumulate (no cross-core race).
         for tile_idx in pl.range(0, iters_per_core):
+            pl.system.wait_cross_core(
+                pipe=pl.PipeType.MTE2,
+                event_id=EVENT_GV_WAVE_BASE + (tile_idx % 2),
+                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            pl.system.set_cross_core(
+                pipe=pl.PipeType.FIX,
+                event_id=EVENT_GV_ACK_BASE + (tile_idx % 2),
+                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
             bsi = core_id + tile_idx * num_cores
-            for ni in pl.range(0, n_de):
-                if bsi < n_bs:
+            if bsi < n_bs:
+                for ni in pl.range(0, n_de):
                     row_off = bsi * cube_mn
                     valid_bs = pl.min(cube_mn, bs - row_off)
                     col_off = ni * cube_mn
@@ -1143,6 +1113,9 @@ def engram_backward_kernel(
 
         # Nest 2: grad_W_v[De, H] = emb_t @ grad_value_ws. Only depends on
         # grad_value_ws -> runs before wait(GK_DONE), overlapping Vector Phase B.
+        # NO wave waits here: Nest1's rounds already waited every wave in
+        # order (iters_per_core == n_waves), so all grad_value_ws rows this
+        # K-loop touches are long since ready.
         total_wv = n_de * n_h
         iters_wv = (total_wv + num_cores - 1) // num_cores
         for wv_idx in pl.range(0, iters_wv):
@@ -1177,14 +1150,18 @@ def engram_backward_kernel(
                         pl.matmul_acc(ac, ac, al, br)
                 pl.store(grad_value_proj_weights, ac, [de_off, h_off])
 
-        # wait GK_DONE: grad_key_ws ready (both AIV subblocks split its production).
-        pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=EVENT_GK_DONE,
-                                 sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
-
-        # Nest 1 (per-head key): grad_key_ws[m] @ wk_t[m] -> atomic-add into the
-        # same grad_emb_acc slot as the value store above.
+        # Nest 1 (per-head key) + Nest 3 consumed PER HEAD: each head's GK
         for m_head in pl.range(0, m_h):
+            pl.system.wait_cross_core(pipe=pl.PipeType.MTE2,
+                                      event_id=EVENT_GK_BASE + (m_head % 2),
+                                      sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+            pl.system.set_cross_core(
+                pipe=pl.PipeType.FIX,
+                event_id=EVENT_GK_ACK_BASE + (m_head % 2),
+                sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+
+            # Nest 1 (per-head key): grad_key_ws[m] @ wk_t[m] -> atomic-add into the
+            # same grad_emb_acc slot as the value store above.
             for tile_idx in pl.range(0, iters_per_core):
                 bsi = core_id + tile_idx * num_cores
                 for n_idx in pl.range(0, n_de):
@@ -1220,44 +1197,41 @@ def engram_backward_kernel(
                         pl.store(grad_emb_acc, ac, [row_off, col_off],
                                  atomic=pl.AtomicType.AtomicAdd)
 
-        # Nest 3: grad_W_k[m][De, H] = emb_t @ grad_key_ws[m].
-        total_wk = m_h * n_de * n_h
-        iters_wk = (total_wk + num_cores - 1) // num_cores
-        for wk_idx in pl.range(0, iters_wk):
-            flat = core_id + wk_idx * num_cores
-            if flat < total_wk:
-                m_head = flat // (n_de * n_h)
-                rem = flat % (n_de * n_h)
-                de_idx = rem // n_h
-                h_idx = rem % n_h
-                de_off = de_idx * cube_mn
-                h_off = h_idx * cube_mn
-                valid_de = pl.min(cube_mn, de - de_off)
-                valid_h = pl.min(cube_mn, h - h_off)
-                ac = acc_grp.next()
-                pl.set_validshape(ac, [valid_de, valid_h])
-                for k_idx in pl.range(0, n_kbs):
-                    k_off = k_idx * cube_k
-                    valid_k = pl.min(cube_k, bs - k_off)
-                    left = a_l1_grp.next()
-                    right = b_l1_grp.next()
-                    pl.set_validshape(left, [valid_de, valid_k])
-                    pl.set_validshape(right, [valid_k, valid_h])
-                    pl.load(left, emb_t, [de_off, k_off])
-                    pl.load(right, grad_key_ws,
-                            [k_off, m_head, h_off], order=[0, 2])
-                    al = a_l0_grp.next()
-                    br = b_l0_grp.next()
-                    pl.set_validshape(al, [valid_de, valid_k])
-                    pl.set_validshape(br, [valid_k, valid_h])
-                    pl.move(al, left)
-                    pl.move(br, right)
-                    if k_idx == 0:
-                        pl.matmul(ac, al, br)
-                    else:
-                        pl.matmul_acc(ac, ac, al, br)
-                pl.store(grad_key_proj_weights, ac,
-                         [m_head, de_off, h_off], order=[1, 2])
+            total_wk = n_de * n_h
+            iters_wk = (total_wk + num_cores - 1) // num_cores
+            for wk_idx in pl.range(0, iters_wk):
+                flat = core_id + wk_idx * num_cores
+                if flat < total_wk:
+                    de_idx = flat // n_h
+                    h_idx = flat % n_h
+                    de_off = de_idx * cube_mn
+                    h_off = h_idx * cube_mn
+                    valid_de = pl.min(cube_mn, de - de_off)
+                    valid_h = pl.min(cube_mn, h - h_off)
+                    ac = acc_grp.next()
+                    pl.set_validshape(ac, [valid_de, valid_h])
+                    for k_idx in pl.range(0, n_kbs):
+                        k_off = k_idx * cube_k
+                        valid_k = pl.min(cube_k, bs - k_off)
+                        left = a_l1_grp.next()
+                        right = b_l1_grp.next()
+                        pl.set_validshape(left, [valid_de, valid_k])
+                        pl.set_validshape(right, [valid_k, valid_h])
+                        pl.load(left, emb_t, [de_off, k_off])
+                        pl.load(right, grad_key_ws,
+                                [k_off, m_head, h_off], order=[0, 2])
+                        al = a_l0_grp.next()
+                        br = b_l0_grp.next()
+                        pl.set_validshape(al, [valid_de, valid_k])
+                        pl.set_validshape(br, [valid_k, valid_h])
+                        pl.move(al, left)
+                        pl.move(br, right)
+                        if k_idx == 0:
+                            pl.matmul(ac, al, br)
+                        else:
+                            pl.matmul_acc(ac, ac, al, br)
+                    pl.store(grad_key_proj_weights, ac,
+                             [m_head, de_off, h_off], order=[1, 2])
 
         pl.system.set_mm_layout_transform(enabled=False)
         # grad_emb_acc is final (Nest1 value + per-head key atomic-add). Host casts it -> BF16.
@@ -1279,22 +1253,21 @@ def engram_backward_wrapper(
     gates,              # [B, S, M_H, 1] FP32
     keys,               # [B, S, M_H, H] BF16 cache; cast to FP32 in kernel
     value,              # [B, S, H]      BF16 cache; cast to FP32 in kernel
-    key_rms,            # [B, S, M_H, 1] FP32 inv_rms cache from forward
-    query_rms,          # [B, S, M_H, 1] FP32 inv_rms cache from forward
     clamp_value=1e-6,
     eps=1e-6,
-    use_kernel_transpose=True,   # API-compat flag; only host-pre-transpose path exists
 ):
     """Host wrapper. Mirrors forward's reshape + launch + reshape-back, and
     additionally:
       * host pre-transposes W_v, W_k, E (rule 3: no is_transpose / layout=ZN)
       * pads scores/gates scalar dim 1->64 (PyPTO tile load does not broadcast 1)
       * pre-zeros FP32 grad_γ GM (FP32 tile RMW targets)
+      * pre-zeros FP32 grad_emb GM accumulator (cube atomicAdd target);
+        grad_W_v / grad_W_k FP32 buffers are single-writer (full-K per core)
+        so they need no pre-zeroing; host casts all three to BF16 after launch
       * keeps only scores/gates in FP32 cache form; other cache tensors stay BF16.
       * returns low-precision final gradients; gamma RMW and reduction use an
         FP32 per-core GM workspace, with one vector subblock as the writer.
     """
-    del use_kernel_transpose  # only the host-pre-transpose path is implemented
     if scores.dtype != torch.float32 or gates.dtype != torch.float32:
         raise TypeError(
             "engram_backward_wrapper expects scores and gates to be torch.float32"
@@ -1334,9 +1307,6 @@ def engram_backward_wrapper(
     # Pad scores/gates 1->64 (forward stores score_back/gate_back as [.,.,64]).
     sc_bs = scores.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
     gt_bs = gates.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
-    # key_rms / query_rms: FP32 [B,S,M,1] -> [BS, M, 64] (lane 0 广播，对齐 kernel vec load)
-    krms_bs = key_rms.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
-    qrms_bs = query_rms.reshape(bs, m_dim, 1).expand(-1, -1, 64).contiguous()
 
     # ── Host pre-transpose (rule 3): kernel uses plain NZ loads.  Weights stay
     #    BF16 (cube is BF16) -- no .float() upcast. ──
@@ -1376,11 +1346,11 @@ def engram_backward_wrapper(
         go_bs, hid_bs, emb_bs,
         key_gamma, query_gamma,
         sc_bs, gt_bs, keys_bs, val_bs,
-        krms_bs, qrms_bs,
         emb_t, wv_t, wk_t,
         grad_value_ws, grad_key_ws, gscore_ws,
         grad_qgamma_acc, grad_kgamma_acc, grad_emb_acc,
         grad_hidden_states, grad_key_proj_weights, grad_value_proj_weights,
+        clamp_value, eps,
     )
     torch.npu.synchronize()
 

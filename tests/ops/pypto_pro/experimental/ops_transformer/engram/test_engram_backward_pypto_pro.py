@@ -110,7 +110,6 @@ def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=4
         key_gamma, query_gamma,
         cache["scores"].float(), cache["gates"].float(),
         cache["keys"], cache["value"],
-        cache["key_rms"], cache["query_rms"],
     )
     kwargs = {"clamp_value": clamp_value, "eps": eps}
     return kernel_args, kwargs
