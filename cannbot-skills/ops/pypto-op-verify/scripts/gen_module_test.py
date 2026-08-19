@@ -55,12 +55,11 @@ _DTYPE_MAP = {
     "int32": "torch.int32", "int64": "torch.int64", "bool": "torch.bool",
 }
 
-_IMPORTS = '''from importlib import import_module
-import os
+_IMPORTS = '''import os
 import sys
 
 import torch
-import_module("torch_npu")  # Register torch.npu on supported installations.'''
+import torch_npu  # Register torch.npu on supported installations.  # noqa: F401'''
 
 _BOOTSTRAP = '''# detailed_tensor_compare bootstrap — self-contained: no PYTHONPATH, and no dependency
 # on the agent framework's skills directory (its name varies by framework). The helper is

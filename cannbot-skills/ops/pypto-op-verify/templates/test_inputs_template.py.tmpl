@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 
 import torch
+import torch_npu  # Register torch.npu device type before constructing NPU device.  # noqa: F401
 
 DEVICE = torch.device(f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', '0'))}")
 

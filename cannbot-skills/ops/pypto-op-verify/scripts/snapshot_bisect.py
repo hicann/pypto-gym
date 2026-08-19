@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import torch_npu  # Register torch.npu device type before any NPU usage.  # noqa: F401
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 load_manifest = import_module("snapshot_manifest_schema").load_manifest
