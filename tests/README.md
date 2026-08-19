@@ -23,9 +23,6 @@ pytest tests/ops/glm_v4_5/test_glm_gate.py -v
 
 # 指定 NPU 设备
 pytest tests/ops/arctic -v --forked --device 0
-
-# 运行 experimental 目录下的算子（需显式指定路径）
-pytest src/pypto_gym/ops/pypto_tensor/experimental/matmul -v --forked
 ```
 
 ## 标记（markers）

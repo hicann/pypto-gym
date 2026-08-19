@@ -210,8 +210,6 @@ pypto-gym/
 │   │   ├── spatial_ssrl_3b/                 # Spatial SSRL 3B 算子测试
 │   │   ├── utils/                           # 测试工具函数
 │   │   └── experimental/                    # 实验性算子测试
-│   ├── st/                                  # 系统测试（Flash Attention、Page Attention 等）
-│   ├── ut/                                  # 单元测试（算子基础测试）
 │   └── README.md                            # 测试目录说明
 ├── conftest.py                              # pytest 调度（多卡 / 多 SoC 筛选）
 ├── CONTRIBUTING.md                          # 贡献指南
