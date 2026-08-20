@@ -354,6 +354,34 @@ def test_ol51_recognizes_tensor_method_index_add__as_writeback(tmp_path: Path):
     assert finding.status == "PASS"
 
 
+def test_ol51_recognizes_atomic_add_positional_dst_as_writeback(tmp_path: Path):
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_module_interfaces(op_dir)
+    impl = _four_arg_impl(
+        "pypto.atomic_add(x, [0, 0], out_a)\n"
+        "pypto.atomic_add(y, [0, 0], out_b)",
+    )
+    write_file(op_dir / "demo_impl.py", impl)
+
+    finding = run_rule(mod, op_dir, "OL51")
+    assert finding.status == "PASS"
+
+
+def test_ol51_recognizes_atomic_add_keyword_dst_as_writeback(tmp_path: Path):
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    _write_module_interfaces(op_dir)
+    impl = _four_arg_impl(
+        "pypto.atomic_add(src=x, offsets=[0, 0], dst=out_a)\n"
+        "pypto.atomic_add(src=y, offsets=[0, 0], dst=out_b)",
+    )
+    write_file(op_dir / "demo_impl.py", impl)
+
+    finding = run_rule(mod, op_dir, "OL51")
+    assert finding.status == "PASS"
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # OL51.b — 非平凡写入层 (覆盖 ds_v4 / Issue #2083 placeholder 模式)
 # ───────────────────────────────────────────────────────────────────────────

@@ -915,6 +915,12 @@ def _call_writeback_targets(node: ast.Call) -> set[str]:
         if node.args and isinstance(node.args[0], ast.Name):
             targets.add(node.args[0].id)
         targets.update(_named_keyword_targets(node, ("input", "y")))
+    elif receiver == "pypto" and func.attr == "atomic_add":
+        # pypto.atomic_add(src, offsets, dst) — 写回目标是第 3 个位置参数 dst
+        # 或 dst 关键字参数（atomic_add 是 flash attention 反向梯度等场景的规范写回手段）。
+        if len(node.args) >= 3 and isinstance(node.args[2], ast.Name):
+            targets.add(node.args[2].id)
+        targets.update(_named_keyword_targets(node, ("dst", "out", "target")))
     elif func.attr in ("move", "assemble", "index_add_", "scatter_", "axpy_"):
         targets.add(receiver)
     return targets
@@ -949,6 +955,7 @@ def _collected_writeback_targets(tree: ast.Module) -> set[str]:
       - `pypto.index_put_(<name>, ...)` — inplace 索引写入
       - `pypto.scatter_(<name>, ...)` — inplace 散射写入
       - `pypto.axpy_(<name>, ...)` — inplace AXPY (y = alpha*x + y)
+      - `pypto.atomic_add(src, offsets, <name>)` — 原子累加写回 (dst 为第 3 参)
       - `<name>.index_add_(...)` / `.scatter_(...)` / `.axpy_(...)`
     """
     out: set[str] = set()
@@ -1271,10 +1278,10 @@ def _ol51_count_failure(
         f"[OL51.a] {impl_file}: YAML 声明了 {len(expected_outputs)} 个输出 "
         f"{expected_outputs}, 但 impl 中只检测到 "
         f"{len(writebacks)} 个写回点 (writebacks={sorted(writebacks)})。\n"
-        f"修正方针: 对每个输出, 在 JIT 函数内 / 任意 Layer I-J 中执行 "
-        f"`pypto.assemble(src, offsets, <buffer>)`、`<buffer>.move(src)` "
-        f"或 `<buffer>[:] = expr`。"
-        f"漏写回 = Verify 阶段「全零输出」型精度 FAIL 的典型原因。",
+f"修正方针: 对每个输出, 在 JIT 函数内 / 任意 Layer I-J 中执行 "
+         f"`pypto.assemble(src, offsets, <buffer>)`、`<buffer>.move(src)`、"
+         f"`<buffer>[:] = expr` 或累加写回 `pypto.atomic_add(src, offsets, <buffer>)`。"
+         f"漏写回 = Verify 阶段「全零输出」型精度 FAIL 的典型原因。",
         file=impl_file,
     )
 
