@@ -1,28 +1,10 @@
 # A5 roofline workflow
 
-## Contents
-
-- [Evidence gate](#evidence-gate)
-- [Primary source paths](#primary-source-paths)
-- [Derive, do not transcribe](#derive-dont-transcribe)
-- [The scoring anchor is not the hardware roofline](#scoring-anchor)
-- [Calibration measurements](#calibration-measurements)
-- [The vector-only ceiling](#vector-only-ceiling)
-- [Symbolic roofline](#symbolic-roofline)
-- [Measurement loop](#measurement-loop)
-- [A5 原语代价表（每 64 lane 寄存器）](#a5-primitive-costs)
-- [Measured levers, ranked by what they actually returned](#measured-levers)
-- [Scope of retained examples](#example-scope)
-- [When the local levers plateau: structural levers](#structural-levers)
-- [When to stop](#when-to-stop)
-- [Provenance of the numbers on this page](#provenance)
-
-
 Load this reference only after the runtime or build configuration confirms an
 A5 target (`NpuArch=3510` / `dav-c310`). It must not supply constants or tuning
 rules to an unknown or non-A5 target.
 
-## <a id="evidence-gate"></a>Evidence gate
+## Evidence gate
 
 Before calculating a roofline:
 
@@ -34,7 +16,7 @@ Before calculating a roofline:
 If any input is unavailable, leave the numerical estimate unverified and use
 the profiler result as the only tuning basis.
 
-## <a id="primary-source-paths"></a>Primary source paths
+## Primary source paths
 
 Resolve these under the installed, version-recorded PyPTO/CANN tree; do not copy
 values from another checkout:
@@ -50,16 +32,20 @@ The files are primary evidence for the matching installed version only. If a
 path or key differs, search the installed source and record the replacement;
 do not infer a value.
 
-## <a id="derive-dont-transcribe"></a>Derive, do not transcribe
+## Derive, do not transcribe
 
-`tools/roofline_a5.py` parses whichever ini matches the detected SKU and derives
-the cube, HBM, UB, L1 and L0 figures from it, so no constant needs to live in
-this page and detach from the installed version:
+Read the cube, HBM, UB, L1 and L0 figures out of the platform ini that ships
+with the runtime you are measuring, so no constant lives in this page and
+detaches from the installed version:
 
 ```
-python tools/roofline_a5.py --op <op> --sku <ini stem>
-python tools/roofline_a5.py --selfcheck
+<pypto root>/framework/src/platform/parser/simulation_platform/platform_config/<SKU>.ini
 ```
+
+Resolve `<SKU>` from the detected device rather than assuming it, and record
+which ini you read alongside the number. The derivation is deliberately stated
+as arithmetic over the ini rather than delegated to a tool: it is the part that
+has to stay reproducible from this repository alone.
 
 The derivations it applies, so they can be checked rather than trusted:
 
@@ -77,78 +63,59 @@ wrong one is wrong by that factor. `950DT` and `950PR` at the same core count ar
 not interchangeable, and `platform.py` reports only `DAV_3510` plus core counts,
 which narrows to two SKUs rather than one. Record which ini was used.
 
-## <a id="scoring-anchor"></a>The scoring anchor is not the hardware roofline
-
-`cann-bench` scores each case with a saturating ratio, not a speedup
-(`kernel_eval/benches/cann_scoring.py`):
-
-```
-score_i = (T_baseline - T_HW) / ((T_cand - T_HW) + (T_baseline - T_HW))
-```
-
-Both anchors are per-`(op, case_id)` in `tasks/metadata/<hardware>.json`, and
-`<hardware>` comes from `resolve_hardware(torch.npu.get_device_name(...))` —
-where **only names beginning `Ascend950PR` map to `950pr`**. A box reporting
-anything else finds no metadata, gets no anchors, and earns no performance
-points at all. Check that before interpreting a zero.
-
-Two consequences:
-
-- **The anchors travel with the task, not with the box.** Running on hardware
-  with more cores or bandwidth than the anchor assumed makes `T_HW` easier to
-  approach; less makes it harder. Neither changes the score, only what it means.
-- **`T_HW` is theoretical peak and generally unreachable.** A score below 1.0 is
-  the normal case; calibrate against measurement, not against the anchor.
-
-## <a id="calibration-measurements"></a>Calibration measurements
+## Calibration measurements
 
 Measured ratios, not platform constants, recorded with provenance because the
 evidence gate above requires it.
 
-**Model versus published anchor** (`roofline_a5.py --selfcheck` against
-`tasks/metadata/950pr.json`, SKU `950PR_957x`):
+**A byte-count model is a floor, not a prediction.** It prices the traffic and
+nothing else, so it will sit below any figure that also prices vector work in
+the epilogue, weight streaming rather than peak bandwidth, or a cube bound that
+binds before memory does. Establish *which* resource binds before optimising
+against the model, and recompute per case: the same kernel changes which
+resource binds at different shapes, and the spread within one operator can be
+as wide as the spread between operators.
 
-| operator | model / `t_hw_us` | reading |
-|---|---|---|
-| `add_rms_norm_dynamic_quant` | 0.97 (0.96–1.00) | anchor is the pure memory roofline |
-| `mla` | 1.06 (1.03–1.14) | anchor is memory or cube, whichever binds |
-| `dequant_swiglu_quant` | 0.69 (0.62–1.00) | anchor ~1.45x more conservative than bytes alone: it prices vector work (the `exp` in SiLU) |
-| `mla_prolog` | 0.62 (0.55–1.14) | anchor ~1.6x more conservative: weight streaming, not peak bandwidth |
-
-Where the anchor is *more* conservative than the byte count, the case has more
-attainable headroom than a naive memory roofline suggests.
-
-**The anchors discount causal work.** Adding a bottom-right-aligned causal
-fraction to the `mla` model moved it from 1.22 (worst case 2.28) to 1.06 (worst
-1.14). The kept fraction for mask `j <= i + (S_kv - S)` is
+**Price causal work explicitly, or the model is wrong by up to 2x.** A model
+that counts the full attention rectangle overstates a causally masked kernel.
+For mask `j <= i + (S_kv - S)` the kept fraction is
 `(S*(S_kv-S+1) + S*(S-1)/2) / (S*S_kv)` — about 0.5 when `S == S_kv`, about 1.0
-when `S << S_kv`. Skipping masked work is therefore required to reach the anchor
-on square cases and buys nothing on short-query ones.
+when `S << S_kv`. So skipping masked work is required on square cases and buys
+nothing on short-query ones, and a model that ignores the mask can be off by
+roughly the reciprocal of that fraction.
 
-**Achievable fraction of peak.** Independent A5 measurements: an aligned-plane
-MTE2 read reaches ~1.7 TB/s, and a tuned vector-only Ascend-C
-`AddRmsNormDynamicQuant` reaches 1.17 TB/s (8192x8192 fp16 in 401 us), which its
-authors describe as sitting at the memory roof. CANN's own kernel for that case
-manages 0.69 TB/s. The corresponding `t_hw_us` implies 2.80 TB/s.
+**Achievable fraction of peak.** Measured on A5: an aligned-plane MTE2 read
+reaches ~1.7 TB/s, and a tuned vector-only kernel on a memory-bound normalise +
+quantise shape (8192x8192 fp16, 401 us) reaches 1.17 TB/s and is described by
+its authors as sitting at the memory roof, while an untuned kernel for the same
+shape manages 0.69 TB/s.
 
-## <a id="vector-only-ceiling"></a>The vector-only ceiling
+Two things to take from that, both independent of who wrote either kernel:
+**the roof a real kernel reaches is well below theoretical peak**, so calibrate
+against a measured ceiling rather than the peak; and **the tuned/untuned gap on
+one shape is the size of the prize**, which is the number worth estimating
+before committing to a tuning round.
+
+## The vector-only ceiling
 
 If the per-core `ddr_rate` split is physical, a kernel using only
 `section_vector()` can reach at most the vector-core share — roughly half the
-aggregate on `950PR`. On `add_rms_norm_dynamic_quant` case 1 that caps the score
-near 0.77 however clean the kernel is, because score 0.8 needs 1.59 TB/s against
-a ~1.48 TB/s vector-only theoretical ceiling.
+aggregate on `950PR`. On a memory-bound case that needs ~1.59 TB/s to hit a
+given target, a ~1.48 TB/s vector-only theoretical ceiling puts the target out
+of reach however clean the kernel is. Compute both numbers before committing to
+a vector-only design: if the requirement exceeds the vector share, the deficit
+is structural and no kernel-side work reaches it.
 
 Treat this as a hypothesis, not a constant. The same ini block lists
 `ddr_rate=31` beside `ub_to_ddr_rate=128` for AICore and `16` beside `40` for
 VectorCore; the units are not self-consistent, and the reading above is simply
-the one that reproduces the published anchors.
+the one consistent with measured aggregate bandwidth.
 
 **Settle it by measurement:** a pure-DMA copy of identical bytes, vector-only
 versus cube+vector, nothing else varied, with a control variant in the same run.
 Design around the answer only afterwards.
 
-## <a id="symbolic-roofline"></a>Symbolic roofline
+## Symbolic roofline
 
 Use version- and SKU-specific values read from the source above:
 
@@ -163,7 +130,7 @@ This ranks hypotheses; it does not establish actual latency. Reload counts,
 launch overhead, dependencies, occupancy, and compiler scheduling can change
 the result.
 
-## <a id="measurement-loop"></a>Measurement loop
+## Measurement loop
 
 1. Freeze a passing correctness test.
 2. Capture a baseline with the same input, launch geometry, warm-up, and
@@ -182,7 +149,7 @@ Use [msprof-guide.md](msprof-guide.md) or
 [csv_fields_reference.md](csv_fields_reference.md) for the fields supported by
 the current parser.
 
-## <a id="a5-primitive-costs"></a>A5 原语代价表（每 64 lane 寄存器）
+## A5 原语代价表（每 64 lane 寄存器）
 
 这张表决定绝大多数 dataflow 决策，**设计阶段就要用**。它从 `pypto-pro-op-perf-tune/SKILL.md`
 移到本页，因为它是 target 相关的实测值，而核心 Skill 对任意目标都会加载。
@@ -211,7 +178,7 @@ the current parser.
   即使两种写法 op 数完全相同，**UB 寻址也会占到 83%、算术只占 17%**
   （证据：一个连续扫描算子，64 元素 13 op）。
 
-## <a id="measured-levers"></a>Measured levers, ranked by what they actually returned
+## Measured levers, ranked by what they actually returned
 
 From two attention-family operators taken from correct-but-slow to the
 bandwidth roof. Each was chosen from a per-kernel profile, never guessed, and
@@ -270,11 +237,12 @@ what improved was L2 pressure rather than DRAM traffic.
 
 **Know when to stop.** After these, the kernels moved 604 MB in 351 us
 (**1.72 TB/s**), 125 MB in 72 us (1.74 TB/s) and 234 MB in 139 us (1.68 TB/s),
-against a ~1.6 TB/s weight-anchored roof. At that point nothing further is
+against a ~1.6 TB/s roof for a weight-streaming access pattern. At that point
+nothing further is
 available by making a kernel faster — only by making it move fewer bytes. Say so
 and stop, rather than continuing to tune.
 
-## <a id="example-scope"></a>Scope of retained examples
+## Scope of retained examples
 
 The KB's
 [BF16 operand-reuse implementation](../../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
@@ -282,7 +250,7 @@ demonstrates one reuse topology and embeds a correctness test. It does not prove
 that an operator is cube-bound or that the topology is faster on another shape
 or target. Profile the current kernel.
 
-## <a id="structural-levers"></a>When the local levers plateau: structural levers
+## When the local levers plateau: structural levers
 
 Every lever above preserves the algorithm — it re-times, de-duplicates, or
 re-lays-out work that already exists. When those plateau against a traffic or
@@ -323,7 +291,7 @@ numbers do not):
 These are larger edits that usually move reduction or cast order: apply one at
 a time and re-verify correctness at the new boundary before measuring.
 
-## <a id="when-to-stop"></a>When to stop
+## When to stop
 
 Stop at a wall proven with data: the moved bytes are irreducible — each read or
 written once, each feeding the contract — **and** occupancy is at the device
@@ -331,15 +299,98 @@ limit for the parallelism the algorithm exposes. Record the measurement that
 proves it. "`MTE2` is at 98%" alone does not; "`MTE2` is at 98% and every byte it
 moves is read exactly once" does.
 
-## <a id="provenance"></a>Provenance of the numbers on this page
+## Provenance of the numbers on this page
 
-The ratios in "Calibration measurements" are reproducible without hardware:
-`roofline_a5.py --selfcheck` recomputes them from the installed platform ini and
-`tasks/metadata/950pr.json`. They are model-versus-anchor comparisons, not
-profiler output.
+The model in "Calibration measurements" is reproducible without hardware:
+recompute it from the installed platform ini. It is arithmetic over the platform
+constants, not profiler output, and should be recomputed rather than quoted from
+here.
 
 The achievable-bandwidth figures are cited measurements from other A5 work, kept
-because the anchor alone gives no sense of what fraction of it is reachable. They
+because a theoretical roof alone gives no sense of what fraction is reachable. They
 are scenario-specific: do not treat 1.17 TB/s as a target for a different
 operator or shape. Any *new* bandwidth or duration claim added here needs a
 version-tagged profiler artifact and the command that produced it.
+
+## The per-register mask is a first-class cost, and hoisting it can be the whole win
+
+Established with an ablation ladder -- a load/store-only floor rung, then each
+compute stage added back -- with ABAB pairing inside one lock window and control
+drift held under ~0.3%. Re-derive it the same way on any target before quoting
+the numbers below.
+
+**`pl.min` + `vf.update_mask` costs 10.3-13.6 ns per register group.** Against
+this page's own primitive table -- arithmetic ~0.3 ns, `load_align`/`store_align`
+under 1 ns -- that puts the *mask that guards the arithmetic* in `vf.gather`'s
+class (~20 ns), i.e. **30-45x the work it protects**. A loop that recomputes the
+predicate every register group is therefore paying for masking, not for
+computing, and no amount of buffering or blocking touches that cost.
+
+**Splitting the register loop** into a full-register path that takes the
+all-lanes predicate, plus a zero-or-one-trip tail that keeps the mask, measured
+on the floor rung:
+
+| 形态 | 观察 |
+|---|---|
+| 大而访存受限的 shape | 提升有限（约 1.1x）：本就接近访存上限，掩码不是主要成本 |
+| 中等 shape | 约 2x |
+| 小而落在 L2 内的 shape | 约 3x：掩码开销占比最高，且不受访存上限压制 |
+
+The ratio flip is the mechanism self-proof: a vector-bound rung became a
+genuinely memory-bound one. The speedups differ because the 8192 case hits the
+DDR wall and stops while the smaller two are L2-resident -- **a fixed
+per-element saving shows up as wildly different ratios depending on which side
+of the 128 MiB L2 the working set sits.**
+
+**It is value-equivalent, so the ordinary correctness suite applies**: on a full
+register `vf.update_mask(64)` *is* the all-lanes predicate and
+`vf.select(v, ident, all)` is the identity, accumulation order is untouched, and
+the tail keeps both. Bit-exact, not within-tolerance -- which matters when an
+output is passing *at* its threshold.
+
+**Two caveats, both measured.** This page's mask-hoisting entry elsewhere
+reports only +5% and a 3-4% *loss* on 8/16-column tiles: narrow tiles amortise
+the hoist over 2-4 registers and can lose. Measure the short-axis cases
+separately rather than assuming, and dispatch per width if they disagree. And a
+zero-length tail is a live hazard: `vf.update_mask(0)` reaching a
+`vf.select`/`vf.reduce_*` inside a zero-trip tail body has produced device
+fault 507035; clamp the tail extent to at least 1 (harmless, since the loop is
+zero-trip exactly there).
+
+### Two corollaries about reading a floor rung
+
+- **A load/store-only rung is not automatically "the memory floor."** Check its
+  own pipe row first: the rung above had `aiv_vec_ratio` 0.658 against
+  `aiv_mte2_ratio` 0.337, so it was a *minimal-VF* floor, and every ratio taken
+  against it was a ratio against vector work. Cross-DSL closure made the error
+  visible: another DSL's **complete** kernel beat this do-nothing rung on the
+  same shape, while the hoisted rung then beat that complete kernel.
+- **Stall headroom lives in the floor rung, not the full kernel.** Measured
+  bubble (`1 - aiv_vec_time/aiv_time`) was 34.2% at the floor and **0.8%** at
+  the full kernel on the same shape: the bubble is absorbed as stages are added.
+  "The floor has 147 us of stall, so deeper buffering can win 147 us" does not
+  follow -- deeper buffering only pays where `1 - aiv_vec_ratio` is large in the
+  *shipping* kernel.
+
+## Cube cores cannot be borrowed as DMA engines on this DSL
+
+Two independent reasons, both measured or read off the installed source, on
+PyPTO-Pro 26.0:
+
+- **L1 cannot be written back to GM.** `pypto_pro/ir/op/block_ops.py:233`
+  restricts `store`/`store_tile` sources to Vec (UB) or Acc (L0C), and `:465`'s
+  `move` paths (`Mat->Left, Mat->Right, Acc->Vec, Vec->Vec`) give L1 no route to
+  UB either. GM->L1 loads are fine (`:668`), so the only cube->GM path is
+  GM->L1->L0A/L0B->L0C->GM, i.e. through the matmul accumulator. **The doc page
+  `store.md:17` lists "L1/UB Tile" as valid sources; the installed code
+  disagrees, and the code is what runs.**
+- **Merely declaring `pl.section_cube()` costs 1.88x on the vector path** --
+  the launch drops from 56 blocks to 28 (803.5 us vs 427.2 us on the same
+  vector-only work). The cube assist is a net loss before the store
+  restriction even applies.
+
+Also measured while testing this: **there is abundant spare DDR bandwidth on a
+vector-bound kernel.** A read-only contention probe on the same shape took
++28.6% bytes for +7.6% time -- the extra reads were served at 26% of the
+saturated rate, a marginal 2.21 TB/s. So on this operator family a
+vector-issue-bound verdict cannot be re-explained as a bandwidth shortage.

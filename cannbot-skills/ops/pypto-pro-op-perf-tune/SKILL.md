@@ -165,12 +165,6 @@ Markdown 报告包含：
 | [`references/msprof-guide.md`](references/msprof-guide.md) | `msprof`：构建 / 采集 / 归档 / **主 Bound 判定** / 瓶颈 | 选用 `msprof` 时 |
 | [`references/csv_fields_reference.md`](references/csv_fields_reference.md) | CSV 字段定义与阈值 | 理解指标含义时 |
 
-> **性能分析顺序**：① 探测目标平台；② 若目标为 A5，按
-> [`references/a5-roofline-and-levers.md`](references/a5-roofline-and-levers.md)
-> 建立带来源的假设；③ 用 msprof 实测。非 A5 或未知平台跳过 A5 模型。
-
----
-
 ## 适用场景总览
 
 | 场景 | 推荐命令 | 说明 |
@@ -421,8 +415,8 @@ stride 恰为 64 元素是最坏情况：**~5–7×**（51.0 vs 7.0 µs）。
 
 ## 优化循环（正式 baseline 后，先完整读 [实战指南](references/optimization-playbook.md)）
 
-1. **候选与排序**：每轮只提一个主要假设（证据、拟改变量、预期指标、精度/容量风险、回退点），按"对验收指标的预计改善 ÷ 实现与验证成本"排序。
-2. **瓶颈定性**：先用必要计算量、必要搬运字节、平台规格与受控 A/B 判断主要受计算、搬运或二者平衡限制；缺可复算输入时保留为候选，不伪造终态。
+1. **候选与排序**：提假设前先按瓶颈类型查[按需阅读路由](#按需阅读路由)定位对应参考/模板（目标为 A5 → A5 Roofline 与杠杆；怀疑 ratio 被误读 → msprof op 补充指南 §4.2a–f；单核负载不均或小 shape → 多阶段任务展平），以其判据形成"证据＋拟改变量＋预期指标"；每轮只提一个主要假设（含精度/容量风险与回退点），按"对验收指标的预计改善 ÷ 实现与验证成本"排序。
+2. **瓶颈定性**：先用必要计算量、必要搬运字节、平台规格与受控 A/B 判断主要受计算、搬运或二者平衡限制；ratio 类指标按 msprof op 补充指南 §4.2a–f 的判据读，不把"流水忙"直接当作到顶；缺可复算输入时保留为候选，不伪造终态。
 3. **实施与验证**：改源码 → 全量正确性（失败即归档回退）→ quick 初筛；只有稳定收益或有明确解锁价值的候选才升级正式采集。
 4. **机制核对**：用绝对时间、必要工作量、冲突/等待或 lowering 证据核对预期机制；变快但原因不符必须重新诊断，不得当作原假设的证明。
 5. **晋级与组合**：候选通过全部 P0 正确性后按 `average_speedup` 判定——超过当前最佳且高于测量噪声、无新 Scalar/等待/串行化/容量/尾块问题才替换"最快且正确"；逐场景回退单列且不得破坏最终目标；中性但有解锁价值的只进组合队列。随后尝试兼容/互补组合，沿当前最佳逐项扩展；瓶颈或数据流变化后重开受影响旧结论。
@@ -463,5 +457,14 @@ stride 恰为 64 元素是最坏情况：**~5–7×**（51.0 vs 7.0 µs）。
 | [CSV 字段参考](references/csv_fields_reference.md) | profiler 字段、单位或阈值含义不清时；实际 CSV schema 优先 |
 | [msprof op 补充指南](references/msprof-op-guide.md) | 环境明确支持 Python runner，且正式 compare 之外还需补充诊断时 |
 | [知识库路由](../pypto-pro-op-kb/ROUTER.md) | 需要历史经验、wrapper 边界、调查纪律或专题 pattern 时；历史数字只作待验证候选 |
+| [多阶段任务展平](references/stage-task-flatten.md) | 单核负载不均、外层 tile 循环只点亮少数核时 |
+| [分阶段 matmul A/B 证据协议](references/staged-matmul-ab-protocol.md) | 要把一次 A/B 结果当作证据前 |
+| [模板：cube-output-wave-reuse](templates/cube-output-wave-reuse.py.tmpl) | 一个 Left tile 可复用到一小组输出时 |
+| [模板：cube-shared-left-output-pair](templates/cube-shared-left-output-pair.py.tmpl) | 成对输出可共享 Left/Right tile 时 |
+| [模板：typed-tilegroup-stage-reuse](templates/typed-tilegroup-stage-reuse.py.tmpl) | 需跨阶段复用同一 TileGroup 时 |
+| [模板：stage-task-flatten](templates/stage-task-flatten.py.tmpl) | 按上一行的展平结论落代码时 |
+| [模板：dual-aiv-mailbox](templates/dual-aiv-mailbox.py.tmpl) | 需要双 AIV subblock 交接时 |
+| [模板：tiling-key-resource-specialization](templates/tiling-key-resource-specialization.py.tmpl) | 需按编译期 key 特化资源、且分支不得进 IR 时 |
+| [模板：vf-broadcast-dot-panel](templates/vf-broadcast-dot-panel.py.tmpl) | 需要 VF 广播点积面板时 |
 
 平台探测失败或平台不是 A5 时，跳过 A5 常量，继续用当前平台资料与实测；任何参考资料中的案例收益、阈值和代码都不能直接写成本算子的已验证结论。

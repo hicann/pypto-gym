@@ -74,9 +74,8 @@ copying a call; names and signatures may differ across SDK versions.
 
 ## <a id="no-branch"></a>Do not branch inside a vector function
 
-Transferred from measured EasyASC work on the same A5 silicon (a different DSL
-over the same vector unit). The hardware claim is a property of the unit, not
-of the DSL: the vector pipe has no branch, so an `if` inside a vector function
+This is a property of the vector unit, not of any DSL over it: the vector pipe
+has no branch, so an `if` inside a vector function
 lowers to predicated execution — both arms issue, every lane pays for both, and
 the loop around them pays the mask bookkeeping. A vector function that branches
 per iteration is far slower than one that does not.
@@ -101,78 +100,14 @@ Write the alternative out of the vector function instead:
   followed by `vf.select` is a data-path operation, not a branch — and masks
   measured free (see the cost model below).
 
-## <a id="call-overhead"></a>Per-call overhead and loop form
-
-EasyASC-measured on Ascend 950; the instruction-level premise that EasyASC
-micro ≈ pypto-pro `vf.*` is unverified, so treat the numbers as hypotheses and
-the structure as the default until a probe on this DSL says otherwise.
-
-- **A vector-function call costs on the order of 180 cycles before any work
-  issues.** A pooling case written as one call per output row spent that per
-  row; moving the row loop *inside* the vector function and hoisting the
-  lane-group loop out of it — one call per lane group instead of
-  rows × groups — cut the small cases 2–3.6x. Shape the work inside the
-  vector function; do not wrap a call in a per-row loop.
-- **Loop form: a constant trip count beats an unrolled constant beats a
-  runtime-variable bound**, which is the slowest. If a loop's trip count is one
-  of a few known values, specialising the kernel on it is a real lever; if it
-  is genuinely dynamic, budget for the loop overhead.
-- **EasyASC's in-vf scalar path has no division and no modulo** (add, sub,
-  mul, min, max only) — a per-row index needing `//` or `%` arrives as a
-  recurrence: step the remainder and quotient forward with adds and a clamped
-  0/1 carry (`carry = max(0, min(1, r - d + 1))`). Whether pypto-pro's
-  vector-function scalar path shares the restriction is a probe, not an
-  assumption — check the installed API page before designing the recurrence
-  in or out. Related, and measured on this DSL: the backend has no 64-bit
-  integer division at all (see
-  [`pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md`](../../../pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md)).
-
-## <a id="load-cost-model"></a>Load-issue cost model — a hypothesis to re-probe, not a fact
-
-EasyASC-measured on Ascend 950, solved from four builds of one fp32
-accumulation loop that differed only in body: roughly **25 cycles per
-full-register UB→register load issue and 0.4 cycles per register ALU op**.
-Readings, if the model transfers:
-
-- **Deleting arithmetic buys almost nothing.** Cutting seven ALU ops per tap
-  to one — on the phase that owned 60% of the kernel — moved the operator
-  2.5%. Compensated (Kahan) summation is nearly free; do not trade accuracy
-  for it.
-- **Masks are free.** Compare + select, and masked variants of cast/add, all
-  measured 1.00x when removed.
-- **What costs is a load issue, not the bytes.** Pairing two taps into one
-  iteration (same loads per element, half the iterations) measured neutral;
-  adding a *second* load per tap cost ~20%.
-- **fp16/bf16 pay double per issue**: the unpacking load moves 64 values per
-  issue because the cast consumes only the even lanes, so a half-precision tap
-  costs a full issue for half the data.
-- Consequence: the only lever on such a loop is **fewer load issues per input
-  element**.
-
-Two reasons this must be re-probed before spending on it: the cross-DSL
-premise above, and this KB's own scan measurements
-([`pypto-pro-op-kb/patterns/vec-scan-prefix-dependent.md`](../../../pypto-pro-op-kb/patterns/vec-scan-prefix-dependent.md))
-put an aligned `vf.load_align` at under 1 ns (~1.6 cycles) per register in a
-different loop structure — the two figures cannot both govern the same loop.
-(EasyASC also measured its gather at parity with its ordinary load; pypto-pro's
-own measurement puts `vf.gather` at 20–35x an aligned load at real dependency
-depth, so that claim is deliberately **not** ported.)
-
-**Named re-probe** (one board session, control build included): four builds of
-one fp32 `vf` accumulation loop over a fixed UB tile, differing only in body —
-(a) 1 load + 1 ALU, (b) 1 load + 5 ALU, (c) 1 load + 7 ALU, (d) 2 loads +
-6 ALU. Solve the two coefficients from (a)–(c); (d) tests whether the second
-load issue is what costs. Until it runs, use the model only to rank
-candidates, never to reject one.
-
 ## <a id="reviewable-examples"></a>Reviewable examples
 
 - Tile-operation softmax:
-  [`../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py)
+  [`pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py)
 - Vector-function softmax:
-  [`../../../pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py)
+  [`pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py)
 - Other validated vector-function compositions:
-  [`../../../pypto-pro-op-kb/examples/kernel-index.md`](../../../pypto-pro-op-kb/examples/kernel-index.md)
+  [`pypto-pro-op-kb/examples/kernel-index.md`](../../../pypto-pro-op-kb/examples/kernel-index.md)
 
 These examples establish API usage only for their recorded environment. They
 are not proof that the same implementation level is fastest for another

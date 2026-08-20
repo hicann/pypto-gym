@@ -38,17 +38,22 @@ description: 实现、调试并自验证 PyPTO-Pro 算子 kernel。用于 Stage 
 
 ## 按需读取的资源
 
-| 场景 | 资源 |
-|---|---|
-| 纯 Vector 的主要编码参考 | [templates/pure_vec_impl_template.py.tmpl](templates/pure_vec_impl_template.py.tmpl)；选择方式见步骤 4 |
-| 纯 Cube 的主要编码参考 | PRO_MATERIAL_INDEX.md §B 列出的官方 `matmul_perf_asw_4k_dynamic` 样例（`$PYPTO_DEVKIT_DIR/pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py`） |
-| 通用、CV 融合或多 Module 文件骨架 | [templates/impl_template.py.tmpl](templates/impl_template.py.tmpl) |
-| Vector reduction | [references/vf-reduction-perf.md](references/vf-reduction-perf.md) |
-| wrapper 动态反作弊检查 | [pypto-pro-op-perf-tune](../pypto-pro-op-perf-tune/SKILL.md)；只检查 profile 中的 device op，不评价性能 |
-| 验证失败 | [references/debugging-methodology.md](references/debugging-methodology.md) |
-| KB 选择与使用格式 | [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md)；它是完整合同的唯一来源 |
-| API/样例不足 | [KB ROUTER](../../pypto-pro-op-kb/ROUTER.md) 每次只选择与当前决策直接相关的参考 |
-| 运行前选择空闲卡 | [scripts/list_idle_chip_ids.sh](scripts/list_idle_chip_ids.sh) |
+本表是本 skill 资源索引的唯一来源（含加载时机）。
+
+| 资源 | 用途 | 加载时机 |
+|---|---|---|
+| [templates/pure_vec_impl_template.py.tmpl](templates/pure_vec_impl_template.py.tmpl) | 纯 vec 通用骨架；使用前按目标 API 与 DESIGN.md 核对 | 纯 vec 算子生成代码前 |
+| `$PYPTO_DEVKIT_DIR/pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | **纯 cube 算子候选实现起点**——两级 K 分块 + move offset + 嵌套四分支 K 累加 + 尾块处理 + ASW 蛇形调度；仅在该路径存在且目标版本匹配时使用 | 纯 cube 算子生成代码前 |
+| [templates/impl_template.py.tmpl](templates/impl_template.py.tmpl) | kernel 文件骨架（tile 声明 + section + Module + 测试函数）——**通用**（含 CV 融合 / 多 Module / 跨核流水）；CV 融合算子当前无专用模板，走此通用骨架，按「开发流程」各步执行 | 生成代码前必读 |
+| [references/debugging-methodology.md](references/debugging-methodology.md) | 调试方法论：**先确认失败可信** → 症状快查表 → 分层 review → 定位技术（最小复现/消融/单原语替换/差异属性）→ 升级切换 → **修正后验证** + 诊断纪律 | 验证失败进入 debug 状态时必读 |
+| [references/vf-reduction-perf.md](references/vf-reduction-perf.md) | Vector reduction 的数值安全、正确 API 形态与性能注意事项 | 实现或调优 Vector reduction 时 |
+| [references/cv-matmul-direct-buffering.md](references/cv-matmul-direct-buffering.md) | Cube 累加器在同一 launch 内被 Vector epilogue 消费时的轮转缓冲与 `auto_mutex` 形态 | 实现 CV 直连 matmul 时 |
+| [templates/cv_matmul_direct_buffering.py.tmpl](templates/cv_matmul_direct_buffering.py.tmpl) | 上一行的可替换代码骨架 | 同上 |
+| [templates/fp32-chain-precision-fragments.py.tmpl](templates/fp32-chain-precision-fragments.py.tmpl) | fp32 链路的精度安全片段 | 需要与 CPU 参考逐位对齐时 |
+| [../../pypto-pro-op-kb/ROUTER.md](../../pypto-pro-op-kb/ROUTER.md) | 按任务选择一个补充约束、pattern 或 validated study kernel | API 文档与官方样例不足时 |
+| [scripts/list_idle_chip_ids.sh](scripts/list_idle_chip_ids.sh) | 查找空闲 NPU chip | 运行前按需执行 |
+| [pypto-pro-op-perf-tune](../pypto-pro-op-perf-tune/SKILL.md) | wrapper 动态反作弊检查：只检查 profile 中的 device op，不评价性能 | 需要验证 wrapper 未绕过 kernel 时 |
+| [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md) | KB 选择与使用格式的完整合同，唯一来源 | 写 `KB_SELECTION.json` / `KB_USAGE.json` 前 |
 
 参考之间是互补关系：DESIGN.md 决定“实现什么”，纯 Vector 模板或 Cube 官方样例提供“如何写”的主要起点，`KB_SELECTION.json` 已选参考补充必须落实的 pattern 和约束；三者不得相互替代。模板和样例不是 API 或性能事实源，使用时仍须核对目标版本 API 文档；与 DESIGN.md 或已选 KB 冲突的参考片段直接弃用，只有上游合同本身无法同时落实时才按根因分流，Stage 4 不自行改合同。标为 conceptual 的片段不得直接复制成交付代码。
 

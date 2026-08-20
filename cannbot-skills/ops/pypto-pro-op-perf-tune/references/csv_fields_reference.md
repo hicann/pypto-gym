@@ -149,16 +149,45 @@ Cube 和 Vector 类型指令的详细占比和计算量。
 
 ### 数据搬运量
 
-| 字段名 | 含义 |
-|--------|------|
-| read_main_memory_datas(KB) | 读主存储器总量 |
-| write_main_memory_datas(KB) | 写主存储器总量 |
-| GM_to_L1_datas(KB) | GM→L1 搬运量 |
-| L1_to_GM_datas(KB)(estimate) | L1→GM 搬运量（估算） |
-| L0C_to_L1_datas(KB) | L0C→L1 搬运量 |
-| L0C_to_GM_datas(KB) | L0C→GM 搬运量 |
-| GM_to_UB_datas(KB) | GM→UB 搬运量 |
-| UB_to_GM_datas(KB) | UB→GM 搬运量 |
+> **在 CANN 9.2.0 / A5(Ascend950PR)上，下表的字节字段全部不存在。**
+> 一手核实（同机、同一次采集）：`read_main_memory_datas`、
+> `write_main_memory_datas`、`GM_to_L1_datas`、`L2_to_L1_datas` 在
+> `ai_core_op_summary.db` 里 **ABSENT**。实际存在的是带宽字段（GB/s）：
+> `ai{c,v}_{l1_write,main_mem_read,main_mem_write}_bw`。
+>
+> 而且**不要把 `main_mem_*_bw` 积分当作 DRAM 流量**：在一个权重流式的 attention 类算子
+> 几何上这样积分得到 **90.1 KB/row，而该 shape 的 cold（distinct 字节）下限是
+> 877.5 KB/row——低于物理最小值 9.7 倍**，且它随行数几乎不变而下限却下降 3 倍，
+> 连形状都不对。
+>
+> **可用替代（requested 侧，已三次验证，其中一次是在“差值”而非“量级”上）**：
+> `aic_l1_write_bw × 28 × aic_total_time`。用它闭合*请求*字节，残差显式写出；
+> 一个健康的闭合会随编译期图切换而同步跳变（r2 与 r3 相差 +12%，实测同步），
+> 且残差在数十倍行数范围内保持为**单一乘性因子**而非漂移。
+>
+> 两个附带坑：`aic_mte2_time` 在 **`PipeUtilization`** 表而非 `Memory` 表
+> （每条 arm 要扫两次）；`*_local_l2_*` 计数器仍然闭合不了（推出的 line size
+> 会从 240 漂到 150 B、写少 8 倍，`local` 似乎只代表一个 slice）。
+>
+> **定价系数必须自己标定，不能沿用别处的数。** "1% 时间 ≈ 多少 KB/row 的 requested
+> Cube 读"这个系数随算子、tiling key 与 dtype 变化，跨算子搬运会整体错一个量级；
+> 曾有一批候选因沿用旧系数而被高估约 5 倍。做法：在当前算子的当前配置上量一次，
+> 记下配置与系数，配置一变就重新标定。
+
+> **平台可用性**：下表的 `*_datas(KB)` 字节字段仅存在于 **非 A5 或 CANN < 9.2** 的
+> 采集中；A5 / CANN 9.2.0 上这些列不存在（见上方告警），只有带宽类字段可用。
+> 按本表采集前先确认平台，不要在 A5 上等待这些列。
+
+| 字段名 | 含义 | 平台 |
+|--------|------|------|
+| read_main_memory_datas(KB) | 读主存储器总量 | 非 A5 / CANN<9.2 |
+| write_main_memory_datas(KB) | 写主存储器总量 | 非 A5 / CANN<9.2 |
+| GM_to_L1_datas(KB) | GM→L1 搬运量 | 非 A5 / CANN<9.2 |
+| L1_to_GM_datas(KB)(estimate) | L1→GM 搬运量（估算） | 非 A5 / CANN<9.2 |
+| L0C_to_L1_datas(KB) | L0C→L1 搬运量 | 非 A5 / CANN<9.2 |
+| L0C_to_GM_datas(KB) | L0C→GM 搬运量 | 非 A5 / CANN<9.2 |
+| GM_to_UB_datas(KB) | GM→UB 搬运量 | 非 A5 / CANN<9.2 |
+| UB_to_GM_datas(KB) | UB→GM 搬运量 | 非 A5 / CANN<9.2 |
 
 ### 带宽利用率
 
