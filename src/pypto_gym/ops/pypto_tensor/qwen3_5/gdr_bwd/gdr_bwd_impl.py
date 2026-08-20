@@ -454,6 +454,7 @@ _CT = 128
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8},
                   "cube_nbuffer_setting": {-1: 8},
                   "cube_l1_reuse_setting": {-1: 8}},
+    new_ir=False
     )
 
 
