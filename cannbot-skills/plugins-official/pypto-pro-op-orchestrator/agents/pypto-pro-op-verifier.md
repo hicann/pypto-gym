@@ -316,11 +316,13 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/CONTRACT.md`）
 
 - `schema_version` 等于 `topology-map.json` 中的 contract version；
-- `topology` 是 `topology-map.json.topologies` 的当前键；不得使用本文件内的枚举副本；
-- `optional_patterns` 不设数量上限且都位于 `patterns/`；每条必须满足当前 class 的适用前提，
-  说明独立、具体的预期设计作用，不得仅凭算子名相似、通用背景或重复作用入选；
-- `required_constraints` 包含 topology、properties、已确认 target 与
-  `mandatory_constraints` 触发的全部约束，全部位于 `constraints/`，**不得截断**；
+- `topologies` 是数组且每个元素都是 `topology-map.json.topologies` 的当前键；不得使用本文件内的枚举副本；**零命中和多命中都是正常结果**：公式不匹配任何已声明拓扑时必须如实为 `[]`，不得强行归类；但若实际命中任何已声明拓扑却写 `[]` 或遗漏该命中，判 FAIL；融合算子同时命中 `multi-phase-fusion` 与其组成部分时全部保留，不因多命中判 FAIL；
+- `optional_patterns` 候选来自全部命中拓扑与适用 property modifier 路由结果的并集，
+  不设数量上限且都位于 `patterns/`；每条必须满足当前 class 的适用前提，说明独立、具体的
+  预期设计作用，不得仅凭算子名相似、通用背景或重复作用入选；
+- `required_constraints` 包含 **`topologies` 全部命中拓扑的并集**（空并集合法）、properties、
+  已确认 target 与 `mandatory_constraints` 触发的全部约束；拓扑数组为空时后三类仍须检查，
+  全部引用位于 `constraints/`，**不得截断、不得只收其一**；
 - 两类参考的每条都有 class-specific `reason`、真实内容哈希和 KB 相对路径；
 - 没有匹配 pattern 时由 `no_matching_pattern: true` 显式声明，但必需约束仍须保留。
 

@@ -9,7 +9,7 @@ topologies, property keys, reference classes, role scope and status vocabulary.
 - `pypto-pro-op-verifier` independently validates the artifacts and the referenced code.
 - The orchestrator may complete a stage only after the corresponding verifier returns PASS.
 
-There is no external evaluator dependency in this contract. `contract_version` is **2**.
+There is no external evaluator dependency in this contract. `contract_version` is **3**.
 
 ## Optional input from a driver
 
@@ -87,7 +87,7 @@ from the operator name.
 | `schema_version` | Equals `contract.contract_version` |
 | `op` | Operator name |
 | `class_id` | Class directory, or `"."` for a flat layout; never empty |
-| `topology` | A current key of `topology-map.json.topologies`; consumers must read the map rather than copy the enum |
+| `topologies` | An array, possibly empty, of current keys of `topology-map.json.topologies`; consumers must read the map rather than copy the enum. Record `[]` only after routing was evaluated and the formula matched no declared topology — never force a best-fit category, and never use an empty array to mean unknown or skipped. Every actual match must be recorded and coexists, with no override and no single winner; omitting one is invalid. The union of matched topologies' routed constraints is mandatory; their routed patterns join patterns from applicable property modifiers in the candidate pool and remain subject to the optional-pattern relevance rules below. An empty topology set contributes no topology-routed references, but property, target and mandatory routing still applies |
 | `properties` | Facts whose keys come from `contract.property_keys` |
 | `optional_patterns` | All and only materially applicable pattern references; each has a KB-relative path, class-specific reason, distinct expected design effect and content hash |
 | `required_constraints` | Every applicable constraint, without a quantity limit; each has a KB-relative path, reason and content hash |

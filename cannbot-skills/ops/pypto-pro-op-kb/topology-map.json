@@ -1,9 +1,9 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "description": "Deterministic routing from general operator topology and shape/dtype properties to knowledge-base references. Routing keys off the shape of the computation, never off an operator name, so a new operator with a known topology reuses knowledge automatically and no benchmark operator gets a bespoke path.",
-  "selection_rule": "Collect every applicable constraint from the topology, property modifiers, target gate and mandatory constraints. Constraints are correctness obligations and are never truncated. Separately select all and only the patterns that have a distinct, concrete design effect for the class. Pattern count is not capped. If no pattern fits, record no_matching_pattern while retaining all applicable constraints.",
+  "selection_rule": "An operator may match zero or more topologies. Record every actual match with no override or single winner; omitting an actual match is invalid. An empty topologies array asserts that routing was evaluated and no current topology key matched; it must not mean unknown or skipped, and no best-fit category is forced. Collect the union of constraints routed by matched topologies (an empty union is valid), then add every applicable constraint from property modifiers, the target gate and mandatory constraints. Constraints are correctness obligations and are never truncated. The pattern candidate pool is the union routed by matched topologies and applicable property modifiers; retain all and only candidates that have a distinct, concrete design effect for the class. Pattern count is not capped. If no pattern fits, record no_matching_pattern while retaining all applicable constraints.",
   "contract": {
-    "contract_version": 2,
+    "contract_version": 3,
     "description": "The vocabulary shared with whatever validates the artifacts this KB's routing produces. This file is the single source; a consumer reads it rather than keeping its own copy. See CONTRACT.md.",
     "consumer": "this repository's Stage 1-4 flow: pypto-pro-op-plan writes KB_SELECTION.json, pypto-pro-op-develop writes implementation claims to KB_USAGE.json, and pypto-pro-op-verifier independently validates both before the orchestrator completes the corresponding stage.",
     "selection_filename": "KB_SELECTION.json",

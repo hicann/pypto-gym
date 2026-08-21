@@ -78,9 +78,17 @@ skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 执行规则：
 
 1. 从公式的计算拓扑和已确认 properties 路由，禁止按算子名称猜选。
-2. `topology` 必须是 `topology-map.json.topologies` 的当前键；不维护本地枚举副本。
-3. 收集 topology、properties、已确认 target 和 mandatory 触发的全部 constraints。
-4. optional pattern 只保留适用前提成立且会产生独立、具体设计作用的条目，不限数量。
+2. **允许命中零个或多个拓扑，不做唯一选择、不做覆盖**：融合算子同时符合
+   `multi-phase-fusion` 与其组成部分（如 `cube-matmul`、`row-reduction`）时全部选入。
+   若公式不符合任何已声明拓扑，必须如实记录 `topologies: []`，不得强行选择最接近的类别。
+   `[]` 只表示已完成公式路由且没有当前键命中，不能表示未知、未分析或跳过；信息不足时必须
+   继续补充分析依据，任何实际命中都不得遗漏。
+   数组中的每个元素都必须是 `topology-map.json.topologies` 的当前键；不维护本地枚举副本。
+3. 收集全部命中 `topologies` 的并集（空并集合法）、properties、已确认 target 和 mandatory
+   触发的全部 constraints（去重合并，不得截断、不得只收其一）。拓扑数组为空时，后三类
+   路由仍须正常执行。
+4. optional pattern 候选来自全部命中拓扑与适用 property modifier 路由结果的并集；只保留
+   适用前提成立且会产生独立、具体设计作用的条目，不限数量。
 5. 无适用 pattern 时设置 `no_matching_pattern: true`，但不得删除 required constraints。
 6. 每条引用使用 KB 根相对路径，记录 class-specific reason 与当前文件 SHA-256；不得记录
    安装前缀、绝对路径或占位哈希。
@@ -104,13 +112,22 @@ kb = pathlib.Path("<kb_root>")
 selection = json.loads(selection_path.read_text(encoding="utf-8"))
 mapping = json.loads((kb / "topology-map.json").read_text(encoding="utf-8"))
 bad = []
-required = {"schema_version", "op", "class_id", "topology", "properties",
+required = {"schema_version", "op", "class_id", "topologies", "properties",
             "optional_patterns", "required_constraints", "no_matching_pattern"}
 bad += [f"missing field: {key}" for key in sorted(required - set(selection))]
+if "topology" in selection:
+    bad.append("legacy field topology is not allowed; use topologies")
 if selection.get("schema_version") != mapping["contract"]["contract_version"]:
     bad.append("schema_version does not match topology-map contract")
-if selection.get("topology") not in mapping["topologies"]:
-    bad.append("topology is not declared in topology-map")
+topologies = selection.get("topologies")
+if not isinstance(topologies, list):
+    bad.append("topologies must be an array")
+else:
+    for topo in topologies:
+        if not isinstance(topo, str):
+            bad.append(f"topology must be a string: {topo!r}")
+        elif topo not in mapping["topologies"]:
+            bad.append(f"topology is not declared in topology-map: {topo}")
 expected_class = "." if selection_path.parent.parent.name == "custom" else selection_path.parent.name
 if selection.get("class_id") != expected_class:
     bad.append(f"class_id must be {expected_class}")
@@ -166,7 +183,8 @@ sys.exit(0 if not bad else 1)
 - INDEX 的 §A/§B/§C 与本次缓存一致；
 - EXPLORE_REPORT 没有未解决的 `unsupported` 阻断；
 - MEMORY 只记录摘要和指针，含 kernel 合同裁定；
-- KB_SELECTION 满足 contract v2，所有路径和哈希真实可复核；
+- KB_SELECTION 的 `schema_version` 等于 `topology-map.json` 中当前的
+  `contract.contract_version`，所有路径和哈希真实可复核；
 - 本 agent 只做预检，不得自称 verifier PASS。
 
 返回上述产物路径、未决风险和预检结果，交 orchestrator 调度 `stage1-check`。

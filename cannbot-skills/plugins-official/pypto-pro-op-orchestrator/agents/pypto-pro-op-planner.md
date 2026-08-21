@@ -33,7 +33,7 @@ skills:
 | `custom/<op>/EXPLORE_REPORT.md` | 资料探索报告（10 个必要章节） |
 | `custom/<op>/PRO_MATERIAL_INDEX.md` | 全量资料索引（§A/§B/§C 三章节） |
 | `custom/<op>/MEMORY.md` | 任务摘要 + 字段裁定记录 |
-| `custom/<op>/[<class>/]KB_SELECTION.json` | 每个 class 的知识选择产物；扁平布局位于 `<op>/`，分 class 布局位于各 class 目录 |
+| `custom/<op>/[<class>/]KB_SELECTION.json` | 每个 class 的知识选择产物；扁平布局位于 `<op>/`，分 class 布局位于各 class 目录；`topologies` 数组允许零个或多个命中，零命中时如实写 `[]`，多命中时全部并存 |
 
 你不产出：`{op}_golden.py`、`DESIGN.md`、`test_{op}.py`——这些属于后续 Stage。
 

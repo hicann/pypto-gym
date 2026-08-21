@@ -35,14 +35,20 @@ the workflow default A5 applies; do not use its numerical limits until the exact
 shape of the computation, never on the operator name. Planner, architect, coder and verifier
 must not keep their own topology enum or copy of the routing table.
 
-For the selected topology and the properties that actually hold:
+Route zero or more topologies matched by the formula and every property that actually holds.
+When no declared topology matches, record `topologies: []` rather than force a best-fit category;
+the topology contribution is then empty, but property, target and mandatory routing still runs.
+Use `[]` only after evaluating the formula: it does not mean unknown or skipped, and every actual
+topology match must be recorded:
 
-1. Collect every matching topology constraint.
+1. Collect the union of constraints routed by every matched topology.
 2. Collect every matching property constraint.
 3. Add the target-gated constraint selected by the explicit target or workflow default.
 4. Add every `mandatory_constraints` entry whose `applies_to` roles participate.
 5. Deduplicate these into `required_constraints`; do not truncate them.
-6. Evaluate every matching pattern and retain it only when its preconditions hold and it
+6. Form the pattern candidate pool from the union routed by every matched topology and every
+   applicable property modifier, then
+   retain a candidate only when its preconditions hold and it
    contributes a distinct, concrete design decision for the class. There is no numeric limit.
 7. If no pattern fits, set `no_matching_pattern: true`; this does not remove constraints.
 
@@ -60,7 +66,7 @@ are obligations. Pattern relevance is enforced by explicit design impact, not by
 
 ## Selection and usage artifacts
 
-`KB_SELECTION.json` contains topology/properties, all materially applicable optional patterns, every
+`KB_SELECTION.json` contains topologies/properties, all materially applicable optional patterns, every
 required constraint, reasons, content hashes and the explicit no-pattern outcome.
 
 `KB_USAGE.json` maps:

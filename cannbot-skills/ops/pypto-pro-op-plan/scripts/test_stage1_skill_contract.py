@@ -26,6 +26,10 @@ INTENT = OPS_ROOT / "pypto-pro-intent-understand"
 MATERIAL = OPS_ROOT / "pypto-pro-material-explore"
 PLAN = OPS_ROOT / "pypto-pro-op-plan"
 KB = OPS_ROOT / "pypto-pro-op-kb"
+VERIFIER = (
+    OPS_ROOT.parent / "plugins-official" / "pypto-pro-op-orchestrator"
+    / "agents" / "pypto-pro-op-verifier.md"
+)
 
 
 def _read(path: Path) -> str:
@@ -114,6 +118,54 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertLess(plan.index("立即创建或追加 `MEMORY.md`"), plan.index("### 3. 探索"))
         self.assertIn("单一 VF API", material)
 
+    def test_kb_documents_define_zero_or_multi_topology_semantics(self) -> None:
+        plan = _read(PLAN / "SKILL.md")
+        router = _read(KB / "ROUTER.md")
+        router_flat = " ".join(router.split())
+        contract = _read(KB / "CONTRACT.md")
+        selection_rule = json.loads(
+            _read(KB / "topology-map.json")
+        )["selection_rule"]
+        verifier = _read(VERIFIER)
+
+        self.assertIn("Route zero or more topologies matched by the formula", router)
+        self.assertIn("record `topologies: []` rather than force a best-fit category", router)
+        self.assertIn("property, target and mandatory routing still runs", router)
+        self.assertIn("does not mean unknown or skipped", router)
+        self.assertIn("every actual topology match must be recorded", router_flat)
+        self.assertIn("union of constraints routed by every matched topology", router)
+        self.assertIn("applicable property modifier", router)
+        self.assertIn("contains topologies/properties", router)
+        self.assertNotIn("For the selected topology", router)
+        self.assertIn("possibly empty", contract)
+        self.assertIn("never force a best-fit category", contract)
+        self.assertIn("never use an empty array to mean unknown or skipped", contract)
+        self.assertIn("omitting one is invalid", contract)
+        self.assertIn("property, target and mandatory routing still applies", contract)
+        self.assertIn("routed constraints is mandatory", contract)
+        self.assertIn("applicable property modifiers in the candidate pool", contract)
+        self.assertIn("optional-pattern relevance rules", contract)
+        self.assertIn("may match zero or more topologies", selection_rule)
+        self.assertIn("omitting an actual match is invalid", selection_rule)
+        self.assertIn("must not mean unknown or skipped", selection_rule)
+        self.assertIn(
+            "then add every applicable constraint from property modifiers, "
+            "the target gate and mandatory constraints",
+            selection_rule,
+        )
+        self.assertIn("matched topologies and applicable property modifiers", selection_rule)
+        self.assertIn("retain all and only candidates", selection_rule)
+        self.assertIn("零命中和多命中都是正常结果", verifier)
+        self.assertIn("若实际命中任何已声明拓扑却写 `[]` 或遗漏该命中，判 FAIL", verifier)
+        self.assertIn("适用 property modifier 路由结果的并集", verifier)
+        self.assertIn("拓扑数组为空时后三类仍须检查", verifier)
+        self.assertIn("不能表示未知、未分析或跳过", plan)
+        topology_map = json.loads(_read(KB / "topology-map.json"))
+        self.assertTrue(topology_map["property_modifiers"]["is_list"]["patterns"])
+        self.assertTrue(topology_map["target_gated"])
+        self.assertTrue(topology_map["mandatory_constraints"])
+        self.assertNotRegex(plan, r"contract v\d+")
+
     def test_plan_defaults_to_a5_and_has_an_executable_kb_precheck(self) -> None:
         plan = _read(PLAN / "SKILL.md")
         code_template = self._extract_kb_precheck(plan)
@@ -132,6 +184,72 @@ class Stage1SkillContractTests(unittest.TestCase):
             )
             self._assert_invalid_selection(root, split, code, selection)
 
+    def test_kb_precheck_validates_topologies_array(self) -> None:
+        plan = _read(PLAN / "SKILL.md")
+        code_template = self._extract_kb_precheck(plan)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kb, selection = self._create_kb_fixture(root)
+            op_dir = root / "custom" / "demo"
+            op_dir.mkdir(parents=True)
+            selection_path = op_dir / "KB_SELECTION.json"
+            code = code_template.replace(
+                "<selection>", "custom/demo/KB_SELECTION.json"
+            ).replace("<kb_root>", kb.as_posix())
+
+            selection_path.write_text(json.dumps(selection), encoding="utf-8")
+            result = _run_precheck(code, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.strip(), "OK")
+
+            no_topology = json.loads(json.dumps(selection))
+            no_topology["topologies"] = []
+            no_topology["properties"] = {"is_list": True}
+            no_topology["optional_patterns"] = [
+                _ref(kb / "patterns" / "list.md", "patterns/list.md")
+            ]
+            no_topology["required_constraints"] = [
+                _ref(kb / "constraints" / "list.md", "constraints/list.md"),
+                _ref(kb / "constraints" / "target.md", "constraints/target.md"),
+                _ref(kb / "constraints" / "mandatory.md", "constraints/mandatory.md"),
+            ]
+            no_topology["no_matching_pattern"] = False
+            selection_path.write_text(json.dumps(no_topology), encoding="utf-8")
+            result = _run_precheck(code, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.strip(), "OK")
+
+            self._assert_topology_rejections(root, selection_path, code, selection)
+
+    def _assert_topology_rejections(
+        self, root: Path, selection_path: Path, code: str,
+        selection: dict[str, object],
+    ) -> None:
+        invalid_cases = (
+            ("scalar", "elementwise", "topologies must be an array"),
+            ("null", None, "topologies must be an array"),
+            ("non-string", ["elementwise", {}], "topology must be a string"),
+            ("unknown", ["elementwise", "made-up"], "topology is not declared"),
+        )
+        for name, topologies, message in invalid_cases:
+            with self.subTest(name=name):
+                candidate = json.loads(json.dumps(selection))
+                candidate["topologies"] = topologies
+                selection_path.write_text(json.dumps(candidate), encoding="utf-8")
+                result = _run_precheck(code, root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout)
+                self.assertEqual(result.stderr, "")
+
+        candidate = json.loads(json.dumps(selection))
+        candidate["topology"] = "made-up-legacy-value"
+        selection_path.write_text(json.dumps(candidate), encoding="utf-8")
+        result = _run_precheck(code, root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("legacy field topology is not allowed", result.stdout)
+        self.assertEqual(result.stderr, "")
+
     def _extract_kb_precheck(self, plan: str) -> str:
         self.assertIn("未指定时默认 A5", plan)
         self.assertIn("constraints/arch-a5.md", plan)
@@ -145,23 +263,50 @@ class Stage1SkillContractTests(unittest.TestCase):
         return match.group(1)
 
     def _create_kb_fixture(self, root: Path) -> tuple[Path, dict[str, object]]:
+        production_version = json.loads(
+            _read(KB / "topology-map.json")
+        )["contract"]["contract_version"]
+        contract_version = production_version + 1000
         config = root / "config"
         kb = config / "pypto-pro-op-kb"
         pattern = kb / "patterns" / "demo.md"
+        list_pattern = kb / "patterns" / "list.md"
         constraint = kb / "constraints" / "demo.md"
+        list_constraint = kb / "constraints" / "list.md"
+        target_constraint = kb / "constraints" / "target.md"
+        mandatory_constraint = kb / "constraints" / "mandatory.md"
         pattern.parent.mkdir(parents=True)
         constraint.parent.mkdir(parents=True)
         pattern.write_bytes(b"pattern\n")
+        list_pattern.write_bytes(b"list pattern\n")
         constraint.write_bytes(b"constraint\n")
+        list_constraint.write_bytes(b"list constraint\n")
+        target_constraint.write_bytes(b"target constraint\n")
+        mandatory_constraint.write_bytes(b"mandatory constraint\n")
         (kb / "topology-map.json").write_text(json.dumps({
-            "contract": {"contract_version": 2, "property_keys": ["dtypes"]},
-            "topologies": {"elementwise": {}},
+            "contract": {
+                "contract_version": contract_version,
+                "property_keys": ["dtypes", "is_list"],
+            },
+            "topologies": {"elementwise": {}, "row-reduction": {}},
+            "property_modifiers": {
+                "is_list": {
+                    "patterns": ["patterns/list.md"],
+                    "constraints": ["constraints/list.md"],
+                },
+            },
+            "target_gated": {"constraints/target.md": "fixture target"},
+            "mandatory_constraints": {
+                "constraints/mandatory.md": {
+                    "applies_to": ["architect", "coder", "verifier"],
+                },
+            },
         }), encoding="utf-8")
         selection = {
-            "schema_version": 2,
+            "schema_version": contract_version,
             "op": "demo",
             "class_id": ".",
-            "topology": "elementwise",
+            "topologies": ["elementwise", "row-reduction"],
             "properties": {"dtypes": ["float16"]},
             "optional_patterns": [_ref(pattern, "patterns/demo.md")],
             "required_constraints": [_ref(constraint, "constraints/demo.md")],
@@ -201,8 +346,8 @@ class Stage1SkillContractTests(unittest.TestCase):
         selection["optional_patterns"][0]["reason"] = ""
         selection["optional_patterns"][0]["path"] = "patterns/../constraints/demo.md"
         selection["required_constraints"][0]["sha256"] = "sha256:ABC"
-        selection["schema_version"] = 99
-        selection["topology"] = "made-up"
+        selection["schema_version"] += 1
+        selection["topologies"] = ["made-up"]
         selection["class_id"] = "wrong"
         selection["properties"] = {"unknown": True}
         split.write_text(json.dumps(selection), encoding="utf-8")
