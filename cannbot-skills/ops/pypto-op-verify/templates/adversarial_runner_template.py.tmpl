@@ -32,6 +32,10 @@ from pathlib import Path
 
 import torch
 import torch_npu  # Register torch.npu device type; the runner must self-register.  # noqa: F401
+# NZ 格式守卫: npu_format_cast(..., FRACTAL_NZ) 依赖此开关,
+# 默认关闭时静默降级为 ND, 导致声明 TILEOP_NZ 的 kernel 报 F00002。
+if hasattr(torch_npu.npu, "config") and hasattr(torch_npu.npu.config, "allow_internal_format"):
+    torch_npu.npu.config.allow_internal_format = True
 
 # Bare (message-only) stdout logging so the printed summary stays readable.
 _LOGGER = logging.getLogger("adversarial_runner")

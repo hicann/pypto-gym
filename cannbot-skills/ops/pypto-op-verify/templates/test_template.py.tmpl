@@ -104,6 +104,10 @@ del _compare_module
 def _set_device() -> None:
     """Initialise the NPU device from the standard env var."""
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
+    # NZ 格式守卫: npu_format_cast(..., FRACTAL_NZ) 依赖此开关,
+    # 默认关闭时静默降级为 ND, 导致声明 TILEOP_NZ 的 kernel 报 F00002。
+    if hasattr(torch_npu.npu, "config") and hasattr(torch_npu.npu.config, "allow_internal_format"):
+        torch_npu.npu.config.allow_internal_format = True
 
 
 def _compare_all_leaves(impl_out, gold_out, *, atol: float, rtol: float, label: str) -> None:
