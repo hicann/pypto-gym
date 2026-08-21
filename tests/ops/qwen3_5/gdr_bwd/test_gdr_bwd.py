@@ -35,8 +35,8 @@ import time
 import logging
 
 import pytest
-import torch 
-import torch_npu
+import torch
+import numpy as np
 
 DEV = int(os.environ.get("TILE_FWK_DEVICE_ID", "0"))
 os.environ["TILE_FWK_DEVICE_ID"] = str(DEV)
@@ -51,26 +51,27 @@ if HERE not in sys.path:
 # 让 gdr_bwd 包（src/pypto_gym/ops/pypto_tensor/qwen3_5/gdr_bwd/）可 import
 _repo_root = HERE
 for _ in range(5):
-    if os.path.isdir(os.path.join(_repo_root, "src", "pypto_gym", "ops", "pypto_tensor", "qwen3_5")):
+    if os.path.isdir(os.path.join(_repo_root, "src", "pypto_gym", "ops", "pypto_tensor")):
         break
     _repo_root = os.path.dirname(_repo_root)
-_ops_dir = os.path.join(_repo_root, "src", "pypto_gym", "ops", "pypto_tensor", "qwen3_5")
+_ops_dir = os.path.join(_repo_root, "src", "pypto_gym", "ops", "pypto_tensor")
 if _ops_dir not in sys.path:
     sys.path.insert(0, _ops_dir)
 del _repo_root, _ops_dir
 
-from gdr_bwd import gdr_bwd_impl as K   # noqa: E402
+from qwen3_5.gdr_bwd import gdr_bwd_impl as K   # noqa: E402
 from gdr_bwd_golden import (  # noqa: E402
     chunk_gated_delta_rule_bwd_golden as golden_bwd,
     recompute_a_from_forward as recompute_a,
     detailed_tensor_compare,
 )
+from common_utils import detailed_allclose_manual as compare
 
 PYTO_LN2 = getattr(K, '_LN2', 0.6931471805599453)
 pypto_bwd = K.chunk_gated_delta_rule_backward_wrapper
 
 GRAD_NAMES = ["dq", "dk", "dv", "db", "dg", "dh0", "dA_log", "ddt_bias"]
-COMPARE_NAMES = ["dq", "dk", "dv", "db", "dg"]
+COMPARE_NAMES = ["dq", "dk", "dv", "db", "dg", "dh0"]
 
 
 def _l2norm_vjp(dy, y, rstd):
@@ -283,14 +284,15 @@ def run_precision(inp):
     logging.info(f"PRECISION: {case}  {inp['shape']}")
     logging.info(f"{'=' * 80}")
 
+    logging.info(f"  golden bwd begin.....")
+    t0 = time.time()
+    golden_result = call_golden(inp)
+    logging.info(f"  golden bwd: {time.time() - t0:.1f}s")
+
     t0 = time.time()
     pypto_output = call_pypto(inp)
     torch.npu.synchronize()
     logging.info(f"  pypto bwd: {time.time() - t0:.1f}s")
-
-    t0 = time.time()
-    golden_result = call_golden(inp)
-    logging.info(f"  golden bwd: {time.time() - t0:.1f}s")
 
     pypto_dict = dict(zip(GRAD_NAMES, pypto_output))
     golden_dict = dict(zip(GRAD_NAMES, golden_result))
@@ -312,11 +314,12 @@ def run_precision(inp):
     # 逐步发散）。dv 不受 dS carry 影响（PASS）。这是已知的 bf16 forward recompute 限制。
     # 门限按梯度分量分别设置：dv 严格（3e-3），dq/dk/db/dg 放宽。
     tol_map = {
-        "dq": (1e-1, 1e-1),   # dS carry 累积 + bf16 量化
-        "dk": (3e-2, 3e-2),   # dS carry 累积较轻
-        "dv": (3e-3, 3e-3),   # 无 dS carry 依赖
-        "db": (1e-1, 1e-1),   # beta 梯度链较长
-        "dg": (2.0, 2.0),    # gate 梯度跨 chunk 累积最严重
+        "dq": (1e-3, 1e-3),   # dS carry 累积 + bf16 量化
+        "dk": (1e-3, 1e-3),   # dS carry 累积较轻
+        "dv": (1e-3, 1e-3),   # 无 dS carry 依赖
+        "db": (1e-2, 1e-2),   # beta 梯度链较长
+        "dg": (1e-2, 1e-2),    # gate 梯度跨 chunk 累积最严重
+        "dh0": (1e-3, 1e-3),
     }
     logging.info(f"\n  detailed_tensor_compare (per-gradient tolerances, both cast to fp32):")
     for n in COMPARE_NAMES:
@@ -329,6 +332,13 @@ def run_precision(inp):
             rtol, atol = tol_map[n]
         except KeyError:
             pass
+        compare(
+            np.array(g.cpu().flatten().tolist()),
+            np.array(p.cpu().flatten().tolist()),
+            f"{n}",
+            rtol=rtol,
+            atol=atol,
+        )
         r = detailed_tensor_compare(p, g, f"pypto_output-vs-G {n}",
                                     rtol=rtol, atol=atol, verbose=False)
         c_ok = r["all_close"]
@@ -432,4 +442,9 @@ if __name__ == "__main__":
         format='%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s: %(message)s',
         level=logging.INFO
     )
+    test_b2_t2048()
     test_t1024()
+    test_t256()
+    test_t4096()
+    test_varlen64_t32k_h8_bt64()
+    test_t2048()

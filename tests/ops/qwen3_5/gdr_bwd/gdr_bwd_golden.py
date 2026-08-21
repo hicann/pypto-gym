@@ -2120,7 +2120,7 @@ def detailed_tensor_compare(tensor1, tensor2, tensor_name,
                             rtol=1e-3, atol=1e-3, verbose=True,
                             max_outliers_display=20):
     """
-    Detailed tensor comparison, analyzing the proportion of elements that are out of tolerance, 
+    Detailed tensor comparison, analyzing the proportion of elements that are out of tolerance,
     and displaying specific information about those that exceed the tolerance.
 
     Args:
