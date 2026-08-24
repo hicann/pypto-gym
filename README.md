@@ -1,7 +1,7 @@
 # PyPTO-Gym
 
 ## 🔥最新动态
-- 2026/06：PyPTO-GYM 项目首次上线，本仓原为 [PyPTO](https://gitcode.com/cann/pypto) 仓的 `models` 目录，现已拆分为独立仓，与主仓解耦演进。
+- 2026/06：PyPTO-Gym 项目首次上线，本仓原为 [PyPTO](https://gitcode.com/cann/pypto) 仓的 `models` 目录，现已拆分为独立仓，与主仓解耦演进。
 
 ## 🚀概述
 
