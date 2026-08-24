@@ -139,7 +139,7 @@ pypto-gym/
 │       ├── infer.py                         # 通用推理入口
 │       ├── download_hf_model.py             # HuggingFace 模型下载
 │       ├── runtime_patch.py                 # PyPTO 运行时补丁覆盖层生成
-│       ├── bench_qwen3_1_7b.sh             # Qwen3-1.7B 基准脚本
+│       ├── bench_qwen3_1_7b.sh              # Qwen3-1.7B 基准脚本
 │       ├── deepseek-v2-lite-chat/           # DeepSeek V2 Lite Chat
 │       ├── gemma4_31b_it/                   # Gemma4-31B-it
 │       ├── gutenocr_3b/                     # GutenOCR-3B
