@@ -234,6 +234,7 @@ pypto-gym/
 | `glm_v4_5/` | attention_pre_quant, attention, attention_fusion, gate, select_experts, ffn_shared_expert_quant, moe_fusion | 注意力（含量化前处理与融合）、MoE 门控/专家选择/FFN/融合等算子 |
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
+| `ling_3_0_flash/` | chunk_kda, fused_recurrent_kda | KDA 融合算子（Chunk / Recurrent） |
 | `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
 | `mtgr_segment_attention/` | mtgr_ragged_segment_attention | 可变长 Flash Attention 前向（4 段策略 mask 组合） |
 | `openpangu_v5_7b/` | pangu_fused_layer_v2_bsh | 整解码层融合（RMSNorm+QKV(+bias)+RoPE+KV-cache+GQA Attention+O proj(+bias)+RMSNorm+SwiGLU FFN）；单层 BSH 动态 kernel，仅 decode |
