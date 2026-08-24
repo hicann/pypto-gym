@@ -198,6 +198,7 @@ pypto-gym/
 │   │   ├── gemma4_31b_it/                   # Gemma4-31B-it 算子测试
 │   │   ├── glm_v4_5/                        # GLM V4.5 算子测试
 │   │   ├── gutenocr_3b/                     # GutenOCR-3B 算子测试
+│   │   ├── kimi_linear_48b_a3b/             # Kimi-Linear-48B-A3B 算子测试
 │   │   ├── llada2_moe/                      # LLaDA2-MoE 算子测试
 │   │   ├── ling_3_0_flash/                  # Ling 3.0 Flash 算子测试
 │   │   ├── minimax_m27/                     # MiniMax M2.7 算子测试
