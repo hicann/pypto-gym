@@ -182,6 +182,7 @@ pypto-gym/
 │           ├── gutenocr_3b/
 │           ├── llada2_moe/
 │           ├── minimax_m27/
+│           ├── minimax_m3/
 │           ├── openpangu_v5_7b/
 │           ├── phi_3_mini_4k_instruct/
 │           ├── qwen3_1_7b/
