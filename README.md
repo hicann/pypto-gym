@@ -168,6 +168,7 @@ pypto-gym/
 │       │       ├── gutenocr_3b/             # GutenOCR-3B RMSNorm / SwiGLU MLP / MRoPE
 │       │       ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
 │       │       ├── minimax_m27/             # MiniMax M2.7 MoE Grouped GEMM
+│       │       ├── mtgr_segment_attention/  # MTGR Ragged Segment Attention
 │       │       ├── openpangu_v5_7b/         # openPangu-Embedded-7B 整层融合（单层 BSH）
 │       │       ├── phi_3_mini_4k_instruct/  # Phi-3-mini-4k-instruct RMSNorm
 │       │       ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
