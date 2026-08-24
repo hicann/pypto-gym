@@ -239,6 +239,7 @@ pypto-gym/
 | `phi_3_mini_4k_instruct/` | rms_norm | RMSNorm（D=3072），支持 ACLGraph |
 | `qat/` | symmetric_per_tensor, symmetric_per_channel, asymmetric_per_group | 量化感知训练三模式（前向 + 反向） |
 | `qwen3_1_7b/` | rms_norm_rope | RMSNorm + RoPE 融合 |
+| `qwen3_5/` | gdr_fwd, gdr_bwd | Chunk Gated Delta Rule 前向/反向 |
 | `qwen3_5_9b/` | gated_delta_rule | Chunk Gated Delta Rule 注意力（D=128, Nv=32, Nqk=16） |
 | `qwen3_6_27b/` | gated_delta_rule | Chunk Gated Delta Rule 注意力（D=128, Nv=48, Nqk=16） |
 | `qwen3_next/` | gated_delta_rule | Chunk Gated Delta Rule，线性复杂度 O(n)，支持 1K-1M+ 序列长度 |
