@@ -200,6 +200,7 @@ def attention(
     runtime_options={"stitch_function_max_num": 128,
                      "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
                     },
+    host_options={"compile_monitor_enable": 0},
 )
 def ifa_func_kernel(
     block_table: pypto.Tensor(),
@@ -428,7 +429,7 @@ def ifa_func_kernel(
                         valid_shape=[act_bs_tile, kv_num_head, half_rotary_dim])
 
         # rope data
-        k_rope = rope_data(k1, k2, cos_fp32, sin_fp32, [q_batch_tile, q_num_head, half_rotary_dim])
+        k_rope = rope_data(k1, k2, cos_fp32, sin_fp32, [q_batch_tile, kv_num_head, half_rotary_dim])
         k_cat = pypto.concat([k_rope, k_pass], 2)
 
         # post process
