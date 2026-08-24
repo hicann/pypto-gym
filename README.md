@@ -233,6 +233,7 @@ pypto-gym/
 | `gemma4_31b_it/` | gqa_decode_attn, attn_softmax | GQA 解码注意力（KV 头均值，带宽降低 75%）、3-pass Softmax |
 | `glm_v4_5/` | attention_pre_quant, attention, attention_fusion, gate, select_experts, ffn_shared_expert_quant, moe_fusion | 注意力（含量化前处理与融合）、MoE 门控/专家选择/FFN/融合等算子 |
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
+| `kimi_linear_48b_a3b/` | kda_chunk | Kimi Delta Attention（线性注意力，prefill/chunk） |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
 | `ling_3_0_flash/` | chunk_kda, fused_recurrent_kda | KDA 融合算子（Chunk / Recurrent） |
 | `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
