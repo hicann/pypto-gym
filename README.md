@@ -259,7 +259,7 @@ pypto-gym/
 | `qwen3_5_9b/` | gated_delta_rule | Chunk Gated Delta Rule 注意力（D=128, Nv=32, Nqk=16） |
 | `qwen3_6_27b/` | gated_delta_rule | Chunk Gated Delta Rule 注意力（D=128, Nv=48, Nqk=16） |
 | `qwen3_next/` | gated_delta_rule | Chunk Gated Delta Rule，线性复杂度 O(n)，支持 1K-1M+ 序列长度 |
-| `qwen3_vl_8b_instruct_.../` | rms_norm | RMSNorm（hidden_size=2048） |
+| `qwen3_vl_8b_instruct_unredacted_max/` | rms_norm | RMSNorm（hidden_size=2048） |
 | `spatial_ssrl_3b/` | rms_norm, rope | RMSNorm + RoPE（Vision 2D / 多模态 3D） |
 | `experimental/attention/` | BSA, chunked_gdr, incre_flash_attention_gqa_antiquant, incre_flash_attention_mla, incre_flash_attention, pfa_flash_attention | BSA、Chunk GDR、增量 Flash Attention（GQA/MLA）、PFA Flash Attention 等算子 |
 | `experimental/matmul/` | gmm_mxfp8, grouped_matmul_finalize_routing, grouped_matmul_swiglu_quant, quant_batch_matmul, quant_grouped_matmul_inplace_add, quant_matmul_reduce_sum, transpose_quant_batch_matmul | MXFP8 GMM、量化分组矩阵乘、量化批量矩阵乘、转置量化矩阵乘等算子 |
