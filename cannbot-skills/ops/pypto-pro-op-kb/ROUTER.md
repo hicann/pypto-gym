@@ -15,16 +15,18 @@ for signatures and platform-specific behavior.
 | Check dynamic tails | `pypto-pro-op-design` / `pypto-pro-op-develop` | [constraints/tail-validshape.md](constraints/tail-validshape.md) |
 | Select A5 constraints; use limits only after target detection | design/develop/perf skills | [constraints/arch-a5.md](constraints/arch-a5.md) |
 | Decide what may run on the host | `pypto-pro-op-design` / `pypto-pro-op-develop` | [constraints/wrapper-boundary.md](constraints/wrapper-boundary.md) |
-| Measure and tune a correct kernel | `pypto-pro-op-perf-tune` | [playbooks/benchmark-scoring.md](playbooks/benchmark-scoring.md) |
+| Measure and tune a correct kernel | `pypto-pro-op-perf-tune` | [`pypto-pro-op-perf-tune` evidence protocol](../pypto-pro-op-perf-tune/references/evidence-protocol.md) |
 | Localise a numerical error | `pypto-pro-op-develop` | [playbooks/numerical-error-localisation.md](playbooks/numerical-error-localisation.md) |
 | Quantize per row with a scale that is also an output | `pypto-pro-op-design` | [patterns/vec-per-token-dynamic-quant.md](patterns/vec-per-token-dynamic-quant.md) |
+| Feed an integer Cube contraction directly into a floating-point epilogue | `pypto-pro-op-design` / `pypto-pro-op-develop` | [patterns/cv-quant-matmul-direct-epilogue.md](patterns/cv-quant-matmul-direct-epilogue.md) |
+| Changing a staged multi-phase Cube matmul and need target-version precision/performance gates before trusting an alternative | `pypto-pro-op-develop` / `pypto-pro-op-perf-tune` | [references/staged-cube-matmul-gates.md](references/staged-cube-matmul-gates.md) |
+| Choosing or varying a kernel's per-launch `block_dim` / core count | `pypto-pro-op-develop` / `pypto-pro-op-perf-tune` | [references/pypto-pro-launch-block-dim.md](references/pypto-pro-launch-block-dim.md) |
 | Hit a framework limit, or debug something that makes no sense | any | [references/pypto-pro-framework-findings.md](references/pypto-pro-framework-findings.md) |
 | An API looks unsupported, or a correct-looking call returns stale/wrong data | any | [references/pypto-pro-dsl-limitations-a5.md](references/pypto-pro-dsl-limitations-a5.md) — severity-ordered, silent failures first |
 | An investigation keeps failing to converge, or you are about to trust a measurement | any | [references/investigation-discipline.md](references/investigation-discipline.md) |
-| A whole run failed at once (0/N), or a change "did nothing", or a number reproduces suspiciously well | any | [playbooks/benchmark-scoring.md](playbooks/benchmark-scoring.md) § traps, then `pypto-pro-environment-check` |
+| A whole run failed at once (0/N), or a change "did nothing", or a number reproduces suspiciously well | any | [references/investigation-discipline.md](references/investigation-discipline.md) §2, §13, then `pypto-pro-environment-check` |
 | Several agents are working in parallel on one shared record, or you are merging their branches | any | [references/investigation-discipline.md](references/investigation-discipline.md) §10 |
 | Map a Chinese/English hardware, pipe, tiling, or layout term to its meaning | any | [references/terminology.md](references/terminology.md) |
-| A page carries a cross-DSL claim and you need its provenance, or you are about to re-derive something a sibling DSL already knew | any | [references/easyasc-port-ledger.md](references/easyasc-port-ledger.md) — provenance record, not a selected pattern or constraint |
 
 Load [constraints/arch-a5.md](constraints/arch-a5.md) when runtime/build selects A5 or when
 the workflow default A5 applies; do not use its numerical limits until the exact device and source are confirmed.

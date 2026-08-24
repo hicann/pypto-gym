@@ -33,7 +33,7 @@ description: 实现、调试并自验证 PyPTO-Pro 算子 kernel。用于 Stage 
 1. 一个交付文件只含一个 `@pl.jit` kernel，核心计算全部在该 kernel 内；wrapper 只启动一次 kernel，且启动不在 host 循环内。
 2. 严格执行 DESIGN.md 已冻结的 Module 边界、API 序列、tile 属性/地址、循环、同步、尾块和 `vector_selection`。本轮功能或精度测试表明设计有误时返回 `design_violation`，不得在 Stage 4 静默改设计。
 3. 轮转 tile 使用 `make_tile_group` + `auto_mutex`；`make_tile` 只用于不参与轮转的单次 scratch。不要在 `auto_mutex` 管理的 tile 上叠加手动 `sync_src`/`sync_dst`。
-4. wrapper 默认只做参数检查与 Python 形状推导、`torch.empty` 输出分配、一次 kernel 启动。完整边界、迁移方式和例外条件只以 [wrapper-boundary.md](../../pypto-pro-op-kb/constraints/wrapper-boundary.md) 为准。
+4. wrapper 默认只做参数检查与 Python 形状推导、`torch.empty` 输出分配、一次 kernel 启动。完整边界、迁移方式和例外条件只以 [wrapper-boundary.md](../pypto-pro-op-kb/constraints/wrapper-boundary.md) 为准。
 5. 测试通过 wrapper 调用 kernel；不得删改 DESIGN.md §8 的 case 来迁就实现，也不得把核心计算移到测试或 host 代码。
 
 ## 按需读取的资源
@@ -50,10 +50,10 @@ description: 实现、调试并自验证 PyPTO-Pro 算子 kernel。用于 Stage 
 | [references/cv-matmul-direct-buffering.md](references/cv-matmul-direct-buffering.md) | Cube 累加器在同一 launch 内被 Vector epilogue 消费时的轮转缓冲与 `auto_mutex` 形态 | 实现 CV 直连 matmul 时 |
 | [templates/cv_matmul_direct_buffering.py.tmpl](templates/cv_matmul_direct_buffering.py.tmpl) | 上一行的可替换代码骨架 | 同上 |
 | [templates/fp32-chain-precision-fragments.py.tmpl](templates/fp32-chain-precision-fragments.py.tmpl) | fp32 链路的精度安全片段 | 需要与 CPU 参考逐位对齐时 |
-| [../../pypto-pro-op-kb/ROUTER.md](../../pypto-pro-op-kb/ROUTER.md) | 按任务选择一个补充约束、pattern 或 validated study kernel | API 文档与官方样例不足时 |
+| [../../pypto-pro-op-kb/ROUTER.md](../pypto-pro-op-kb/ROUTER.md) | 按任务选择一个补充约束、pattern 或 validated study kernel | API 文档与官方样例不足时 |
 | [scripts/list_idle_chip_ids.sh](scripts/list_idle_chip_ids.sh) | 查找空闲 NPU chip | 运行前按需执行 |
 | [pypto-pro-op-perf-tune](../pypto-pro-op-perf-tune/SKILL.md) | wrapper 动态反作弊检查：只检查 profile 中的 device op，不评价性能 | 需要验证 wrapper 未绕过 kernel 时 |
-| [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md) | KB 选择与使用格式的完整合同，唯一来源 | 写 `KB_SELECTION.json` / `KB_USAGE.json` 前 |
+| [KB CONTRACT](../pypto-pro-op-kb/CONTRACT.md) | KB 选择与使用格式的完整合同，唯一来源 | 写 `KB_SELECTION.json` / `KB_USAGE.json` 前 |
 
 参考之间是互补关系：DESIGN.md 决定“实现什么”，纯 Vector 模板或 Cube 官方样例提供“如何写”的主要起点，`KB_SELECTION.json` 已选参考补充必须落实的 pattern 和约束；三者不得相互替代。模板和样例不是 API 或性能事实源，使用时仍须核对目标版本 API 文档；与 DESIGN.md 或已选 KB 冲突的参考片段直接弃用，只有上游合同本身无法同时落实时才按根因分流，Stage 4 不自行改合同。标为 conceptual 的片段不得直接复制成交付代码。
 
@@ -112,7 +112,7 @@ L1 的逐 Module 交付只规定开发与验证顺序，不等于运行时整段
 
 ### 6. 编写 wrapper、测试和 KB 使用记录
 
-入口命名是硬合同：L0 必须命名为 `<op>_wrapper`，L1 staged 入口必须命名为 `<op>_wrapper_module<suffix_k>`。wrapper 的签名与算子 schema 一致；L1 使用 `primary_inputs`，输出当前 Module 的结果。optional 参数若可被调用方省略，必须提供相应默认值。wrapper 只执行 [wrapper-boundary.md](../../pypto-pro-op-kb/constraints/wrapper-boundary.md) 允许的三类动作；只有 DESIGN.md 已冻结的逐项例外可原样实现，并在 `KB_USAGE.json` 中记录 `deviated` 和理由。
+入口命名是硬合同：L0 必须命名为 `<op>_wrapper`，L1 staged 入口必须命名为 `<op>_wrapper_module<suffix_k>`。wrapper 的签名与算子 schema 一致；L1 使用 `primary_inputs`，输出当前 Module 的结果。optional 参数若可被调用方省略，必须提供相应默认值。wrapper 只执行 [wrapper-boundary.md](../pypto-pro-op-kb/constraints/wrapper-boundary.md) 允许的三类动作；只有 DESIGN.md 已冻结的逐项例外可原样实现，并在 `KB_USAGE.json` 中记录 `deviated` 和理由。
 
 TensorList（`is_list: true`）同样只能启动一次 kernel，且启动不得位于 host 循环内。参数展开、固定 arity、地址/shape 传递与 work-item 映射必须原样执行 DESIGN.md 及 `KB_SELECTION.json` 已选 TensorList pattern；Stage 4 不自行发明新的打包协议或改写支持范围。
 
@@ -126,7 +126,7 @@ TensorList（`is_list: true`）同样只能启动一次 kernel，且启动不得
 - `precision_compare` 与 `<op>_golden_cpu` 是 dev-only；import 放在函数体内，保证交付单元仅含 test 与 NPU golden 时可安全导入。
 - L1 改为对比当前 `<op>_golden_stage<suffix_k>`；它同样属于 dev-only 依赖，必须在 `_assert_precision` 或测试函数体内 import，禁止顶层 import。
 
-读取 `KB_SELECTION.json` 中每个 `optional_patterns` 和 `required_constraints`，再按 [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md) 生成 `KB_USAGE.json`。本阶段只声明选中参考如何落到真实文件和符号；不得引用未选路径，也不得写 `verified`。`deviated` 或 `not_applicable` 必须说明理由。写完用标准库 `json.load` 做格式预检，verifier 才负责最终裁决。
+读取 `KB_SELECTION.json` 中每个 `optional_patterns` 和 `required_constraints`，再按 [KB CONTRACT](../pypto-pro-op-kb/CONTRACT.md) 生成 `KB_USAGE.json`。本阶段只声明选中参考如何落到真实文件和符号；不得引用未选路径，也不得写 `verified`。`deviated` 或 `not_applicable` 必须说明理由。写完用标准库 `json.load` 做格式预检，verifier 才负责最终裁决。
 
 若实现中发现必须使用未选参考，返回 `kb_selection_invalid` 请求回 Stage 1 更新选择；不得只在 `KB_USAGE.json` 中补路径。
 

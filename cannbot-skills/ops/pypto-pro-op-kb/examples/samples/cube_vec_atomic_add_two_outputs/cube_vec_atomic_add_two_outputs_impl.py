@@ -20,7 +20,7 @@
 # output written with pl.AtomicType.AtomicAdd. The atomic is the new capability under test:
 # both vector sub-blocks accumulate their own 32-row slab into the SAME [0,0] region, so a
 # correct result requires the atomic accumulate to serialize the two concurrent writes.
-# Convention note: siblings compute q@k (not q@k.t()); easyasc golden is x@y.t() — the
+# Convention note: siblings compute q@k (not q@k.t()); the reference golden is x@y.t() — the
 # transpose convention is already proven separately by k4 (TN). Kept q@k to stay a pure
 # delta on the proven template.
 import logging

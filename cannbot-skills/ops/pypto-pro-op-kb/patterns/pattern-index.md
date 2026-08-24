@@ -19,6 +19,7 @@ The validation column controls how a pattern may be used:
 | [buffer-reuse-lifetime.md](buffer-reuse-lifetime.md) | tile groups rotate or persist across iterations | validated skeleton for the indexed rotating groups; conceptual for other loop-carried state |
 | [batched-2d-contraction.md](batched-2d-contraction.md) | host reshaping can reduce a batched contraction to 2-D | conceptual only |
 | [quant-matmul-scaled-mm.md](quant-matmul-scaled-mm.md) | a quantized matmul uses explicit scale/round/clamp semantics | validated skeleton for the indexed int8 path |
+| [cv-quant-matmul-direct-epilogue.md](cv-quant-matmul-direct-epilogue.md) | an integer Cube contraction feeds a floating-point Vector epilogue directly | conceptual only |
 | [vec-per-token-dynamic-quant.md](vec-per-token-dynamic-quant.md) | each row is quantized by a scale derived from that row, and the scale is an output | conceptual only |
 | [online-softmax-tail.md](online-softmax-tail.md) | a softmax reduction streams across multiple score chunks | conceptual only |
 | [vec-scan-prefix-dependent.md](vec-scan-prefix-dependent.md) | element i of the output depends on elements 0..i along one axis | validated skeleton for both dataflows, measured on Ascend950PR_9579 |

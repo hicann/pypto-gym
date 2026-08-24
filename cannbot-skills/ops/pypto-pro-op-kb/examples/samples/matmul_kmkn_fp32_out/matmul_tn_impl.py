@@ -14,7 +14,7 @@
 # Gate A was bit-exact on the 1024-by-1024-by-128 FP32 case. Gate B reached 89.8% cube
 # utilisation. The implementation uses the proven tiled multicore TN transpose-load pattern.
 # Kernel 4 computes a transposed-left-operand FP32 matmul with reduction dimension 128.
-# twin_of easyasc matmul_kmkn_fp32_out (golden x.t()@y fp32, tol 3e-3). Place in a5/matmul dir.
+# Golden is x.t()@y fp32, tol 3e-3.
 import csv
 import glob
 import logging

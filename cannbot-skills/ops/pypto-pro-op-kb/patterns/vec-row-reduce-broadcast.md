@@ -78,8 +78,8 @@ from the toolbox for a very short axis.
 
 ## Where the time goes
 
-Measured on `Ascend950PR_9579` for `rms_norm`, which is this pattern with the
-`max`/`sub`/`exp` steps removed:
+Measured on `Ascend950PR_9579` for a row normalization, which is this pattern
+with the `max`/`sub`/`exp` steps removed:
 
 * **The fp32 form is memory-bound and the arithmetic is free.** At a 268 MB
   working set a pure copy ran 217.0 us and the full reduce-and-broadcast chain
@@ -105,8 +105,8 @@ load contiguous but destroys the per-row reduction, and the compact re-view that
 would restore it is blocked by the Cols alignment rule above. Record the cost
 rather than assuming a tiling escape exists.
 
-**Measured escapes now exist for the vf form** (rms_norm, Ascend950PR_9579,
-2026-08-06, 20/20 public + 19/19 hidden-guess): keep the reduction in
+**Measured escapes now exist for the vf form** (Ascend950PR_9579, 2026-08-06,
+bit-exact across the whole measured domain): keep the reduction in
 *registers* instead of re-viewing tiles — load rows contiguously and restore
 per-row sums with in-register shuffles, one kernel family per D band.
 - D=2: de-interleave even/odd lanes (`DINTLV_B32` for fp32; `vf.astype`
@@ -133,10 +133,10 @@ form is a separate implementation choice and must be validated against the
 target SDK's current API.
 
 The sizing rules, the over-declared reduction tile and the measurements above
-are preserved in the [retained validation record](../examples/validation-records.md): 20/20 cases
-passing at TR ranging 1..128. The over-declaration is verified at TR = 1, 2, 3,
+are preserved in the [retained validation record](../examples/validation-records.md): bit-exact
+across the full recorded case set at TR ranging 1..128. The over-declaration is verified at TR = 1, 2, 3,
 4, 8 and 16 producing the same fp32 rounding as the legal TR=8 form, not merely a
 close one. The "very short axis" section's degradation is measured; its
-register-shuffle escapes above are also measured (on branch `bench/rms_norm-a5`,
-`custom/rms_norm/{DESIGN.md,test_rms_norm.py}`, verifier-rerun 2026-08-06) —
-port the family structure, not the numbers.
+register-shuffle escapes above are also measured (verifier-rerun 2026-08-06,
+against a retained row-normalization implementation) — port the family
+structure, not the numbers.

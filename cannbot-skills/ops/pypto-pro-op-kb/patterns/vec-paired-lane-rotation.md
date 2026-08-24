@@ -110,12 +110,12 @@ absolute error of each product can exceed the magnitude of their difference, and
 relative-error gates fail on the positions where the result is near zero.
 
 Before reaching for compensated arithmetic, establish **which references the gate
-actually compares against**. A grader that supplies a same-precision reference
-alongside its high-precision oracle typically grades the normal range as a *ratio*
-against that reference, in which case reproducing the reference's operation order
-in the operand's own precision already passes, and compensated arithmetic buys
-nothing. A grader that supplies only the oracle grades absolutely, and then
-compensation is required.
+actually compares against**. An accuracy gate that supplies a same-precision
+reference alongside its high-precision oracle typically judges the normal range as
+a *ratio* against that reference, in which case reproducing the reference's
+operation order in the operand's own precision already passes, and compensated
+arithmetic buys nothing. A gate that supplies only the oracle judges absolutely,
+and then compensation is required.
 
 Getting this backwards is expensive in both directions, and it is not usually
 documented in the task package — read the evaluator. A worked instance, including

@@ -20,13 +20,13 @@
 
 - 第一次拓扑实验只改任务所有权与同步，不改 K 分拆、FP32/BF16 workspace、累加树或舍入模式。
 - 静态穷举每个 shape 的写区间，证明无缺口、无重复；同时数 value-producing DSL 调用的种类和数量。
-- 真板先跑含 row tail、小 shape、最大 workspace、独立 epsilon、全零输入的集合，再跑完整 public。
-- 本机通过不能替代 evaluation server：设备子型、CANN、PyPTO、Python 版本任一不同，都要线上复验。
+- 真板先跑含 row tail、小 shape、最大 workspace、独立 epsilon、全零输入的集合，再跑完整用例集。
+- 本机通过不能替代目标部署环境：设备子型、CANN、PyPTO、Python 版本任一不同，都要在目标环境复验。
 
 ## 固定输入、成组输出的 Cube 复用
 
 展平为单输出任务后，如果多个相邻输出 tile 共享同一个左输入，可以把 owner 改成
-`(partition, output_wave)`，一个任务保留一份 Mat/Left 并驱动最多四个独立 Acc。MlaProlog
+`(partition, output_wave)`，一个任务保留一份 Mat/Left 并驱动最多四个独立 Acc。某个 staged 链
 的 down projection 由此把每个 row tile、每个 K wave 的 token Mat/Left 搬运从 68 次降到
 20 次，而 weight Mat/Right、MMA、最终 GM store 和 FP32 加法树均不变。
 

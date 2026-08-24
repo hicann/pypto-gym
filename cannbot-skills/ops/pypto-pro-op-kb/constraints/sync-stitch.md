@@ -18,7 +18,7 @@ this order — the same order the adjudication further down this page arrives at
 
 1. **Try the generated pipeline path first.** `fwd_ids`/`bwd_ids` plus
    `@pl.pipeline.stage` plus `PipelineConfig` **does work** here, measured on the
-   reference kernel and on a full MLA kernel
+   reference kernel and on a full staged kernel
    ([framework-findings §17](../references/pypto-pro-framework-findings.md)).
 2. **Fall back to single-sided launches with GM intermediates** when the fused
    form fails. This is the proven escape, not evidence that fusion is impossible.
@@ -33,9 +33,11 @@ compiles and then dies with `aicore timeout`. One attention kernel was taken
 through **thirteen hypotheses and nine mutation-ladder rungs** on that construct
 and never ran once, even though every ingredient passed in isolation — the cube
 half (including the transposed NT load and a dual-accumulator contraction) and
-the register-level softmax were each proven separately. The reference Ascend-C
-implementation of a sibling operator hit the identical wall on the identical
-construct. This says nothing about the generated pipeline path in step 1.
+the register-level softmax were each proven separately. A reference
+implementation written against a different kernel language hit the identical
+wall on the identical construct, so the limit is in the construct rather than in
+one language's lowering. This says nothing about the generated pipeline path in
+step 1.
 
 ### The proven fallback: decompose into single-sided launches
 
@@ -86,87 +88,144 @@ remain authoritative for pipe/event signatures.
 
 ---
 
-## An unresolved conflict: must A5 cube↔vec round-trip GM?
+## A hang is not evidence of a synchronization bug — locate the PC first
 
-Recorded, not adjudicated. A sibling DSL (EasyASC) targeting the same A5 silicon
-states the opposite of this page's headline advice, and both statements rest on
-work that was actually run. Leaving the disagreement visible is more useful than
-picking a winner, because the two claims are about **different objects**.
+Five ablations of the cross-core edges of one deadlocking kernel all came back
+negative: even-vs-odd loop parity, moving a release to a different pipe, deleting
+the guarded cube-side wait, deleting the guarded vector-side wait, and deleting
+both back edges. Each was a well-formed experiment and each said "not this."
 
-| | claim | basis |
+They were all aimed at the wrong resource class. Resolving the two stuck PCs to
+source settled it in one step:
+
+| core | parked at | pipe |
 |---|---|---|
-| this page, above | a fused single-launch cube+vector kernel with per-tile handoff does not run on A5; decompose into single-sided launches with GM intermediates | measured here, repeatedly — 13 hypotheses, 9 mutation-ladder rungs, never ran once |
-| EasyASC `agent/references/constraints/a5.md` §4 | on A5 the cube↔vec handoff **stays on chip**; no GM workspace bridge is required, unlike the A2 model | asserted as an A5-vs-A2 authoring consequence; that page cites no probe for this specific line |
+| AIC, all 28 | `get_buf(PIPE_MTE1, b_right/b_l1)` → `TEXTRACT`, inner K sub-block loop | MTE1 |
+| AIV, all 56 | `TSTORE(out_tile)` → `set_loop_size_ubtoout` | MTE3 |
 
-**They are reconcilable, and the reconciliation is the actionable part.** The
-disagreement is not about whether the silicon has on-chip cube↔vec paths — it
-does, and PyPTO-Pro exposes them: `pl.move`'s documented space table
-(`pypto_pro/language/_api.py:196-206` in this checkout) carries `Acc (L0C) → Vec
-(UB)` on the fix pipe and `Vec (UB) → Mat (L1)` on mte3. What failed here was one
-*construct*: a hand-written per-tile cross-core event sequence inside a single
-`@pl.jit`. And this KB's own
-[framework-findings §17](../references/pypto-pro-framework-findings.md) records
-that the **generated** path — `fwd_ids`/`bwd_ids` plus `@pl.pipeline.stage` plus
-`PipelineConfig` — does work, on the reference kernel and on a full MLA kernel.
+**Neither is a `wait_intra_block` or a `wait_flag`.** There was no flag id to
+audit, and no cross-core edge to fix, because the machine was never parked on
+one — it was parked on **pipe/buffer resource acquisition**. Every core of both
+types at a fixed PC is a structural stall, and `aicore timeout` names the
+watchdog, not the mechanism.
 
-So the honest three-way statement is:
+**The lesson is about ordering of work.** "All cores hang" invites the
+synchronization hypothesis, and the vocabulary of the failure (`aicore timeout`,
+`retCode=0x25`) reinforces it. But a hang localises *exactly* — one address per
+core type — and that address is cheap to obtain. Get it before enumerating
+candidate edges; five ablation rounds is a lot to spend re-deriving "not a wait."
 
-1. on-chip cube↔vec handoff **exists** and is reachable (both DSLs agree);
-2. the **hand-written** per-tile event sequence hangs here (measured);
-3. the **generated** pipeline path works here (measured, §17) — and is the thing
-   to try before falling back to GM intermediates.
+### Getting the source line without an ISA disassembler
 
-Read the "decompose into single-sided launches" advice above as *the proven
-escape when the fused form fails*, not as evidence that fusion is impossible.
-**Nothing here has been re-measured against EasyASC's claim** — it remains a
-cross-DSL assertion about the same silicon, and the experiment that would settle
-it is a PyPTO-Pro kernel built on the generated pipeline path at the tile
-granularity the fused attempt used.
+The obstacle looks like tooling and is not. No Ascend disassembler was available
+(`msobjdump`'s Python module absent, `llvm-objdump -d` prints
+`<not available>` for every instruction, no bisheng toolchain `bin/`). **But the
+instruction is not what you need — the source line is**, and that needs only
+`.debug_line`, which `llvm-symbolizer` and `llvm-dwarfdump --lookup` read without
+knowing the ISA.
 
-## Cube→cube re-feed: EasyASC's on-chip route has no `pl.move` spelling here
+The recipe, with the two checks that make it trustworthy:
 
-**未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设 (unverified on PyPTO-Pro — an
-assumption ported from EasyASC), and the PyPTO-Pro side of it is a checked
-absence rather than a checked presence.**
+1. The device binary is embedded in the built shared library:
+   `objcopy --dump-section .aicore_binary=out.bin <build>/tk_*/call_kernel.so /dev/null`.
+   Load base is reported in the fault dump; `vaddr = PC − base`. **Verify the base**
+   by checking that the AIV `pc start` equals `base + _mix_aiv` from the symbol
+   table — do not assume it.
+2. Rebuild with `-g` appended to the compile flags, then **prove `-g` was
+   codegen-neutral** before trusting the line table: compare `.text` *bytes*,
+   `_mix_aic`/`_mix_aiv` offsets, and the generated `kernel.cpp` against the
+   archived binary that actually hung. Byte-identical `.text` is the gate. If it
+   shifts, the line table describes different code and the lookup is void.
 
-EasyASC (`constraints/a5.md` §5) tells an author that when a later cube matmul
-consumes an earlier one's result, the direct on-chip route
-`mmad → L0C → l0c_to_l1 → l1_to_l0 → mmad` should be preferred, and the detour
-`L0C → UB → L1` avoided as pure traffic and synchronization with no added
-capability. It adds that its `auto_sync()` does **not** create the `FIX → MTE1`
-edge between the L0C→L1 copy and the next consumer, so that edge must be fenced
-by hand.
+Two practical notes. A frozen config dataclass can be patched in the probe
+process only (`object.__setattr__` on the flags tuple), so nothing is installed
+on a shared board. And **the rebuild need not reproduce the hang**: a tiny case
+on the *same tiling key* emits the identical binary, because the key selects the
+specialization while shapes are runtime tiling parameters — 1.6 s instead of a
+570 s watchdog timeout.
 
-**In PyPTO-Pro the recommended route does not appear to exist.** `pl.move`'s
-documented space table (`pypto_pro/language/_api.py:196-206`) lists exactly one
-path out of `Acc`:
+### What this did *not* establish
 
-```
-Acc (L0C) → Vec (UB)     fix
-Mat (L1)  → Left (L0A)   mte1
-Mat (L1)  → Right (L0B)  mte1
-Mat (L1)  → Vec (UB)     v
-Vec (UB)  → Mat (L1)     mte3
-```
+The investigation that produced the rule above also produced a specific
+geometric hypothesis (one tile group declared outside both sections, shared
+mutex ids), a discriminator that **refuted** it, and a claim about the
+vec-to-cube handshake that was later **withdrawn** under isolation. None of it
+is carried here: this page is routed as a constraint, and a page an agent reads
+as normative must not also carry the arguments that were overturned on the way.
+What survives is the rule -- locate the PC before believing a hang is a
+synchronization bug -- and the technique for doing it without a disassembler.
 
-There is **no `Acc → Mat` row**. The only on-chip way back from an accumulator to
-L1 is therefore `Acc → Vec → Mat` — precisely the detour EasyASC says to avoid.
+## 从累加器回 L1 没有直达路径：`Acc → Vec → Mat`，或走 GM
 
-Two consequences, and one of them is a warning about this very entry:
+`pl.move` 的空间表（本 checkout 的 `pypto_pro/language/_api.py:196-206`）只列出
+`Acc (L0C) → Vec (UB)`（fix 流水）与 `Vec (UB) → Mat (L1)`（mte3）两条，
+**没有 `Acc → Mat` 一行**。
 
-- **Design consequence.** Do not plan a cube→cube on-chip re-feed around an
-  `L0C → L1` move. Budget either the `Acc → Vec → Mat` round trip (two moves, two
-  spaces, and a vector-pipe touch that the fix→mte3 sequence has to be ordered
-  against) or a GM intermediate.
-- **Do not promote this into a capability claim without running the absence
-  gate.** A missing row in one docstring table is weaker evidence than it looks —
-  this KB has a standing finding that
-  [documentation tables under-report](../references/investigation-discipline.md)
-  (`vf.astype`'s table omits BF16 while the silicon does it). Before recording
-  "PyPTO-Pro cannot re-feed L0C to L1", check the installed `_api.py` for other
-  spellings, grep the official samples under `$PYPTO_DEVKIT_DIR/pro_ops/` with
-  `find -L`, and build the minimal two-matmul probe.
+> **证据等级：这是关于那张表的陈述，不是一次完整的能力缺失判定。**
+> 本 KB 自己的
+> [absence gate](../references/investigation-discipline.md)（§11「Before claiming a
+> capability is absent, run the absence gate」）要求 API 文档、安装源码、可组合原语、
+> 最小探针与生成代码/板端证据齐备后，才能宣布一项能力不存在。此处只走到了"安装源码里
+> 那张空间表没有这一行"。因此下面按"没有直达路径"来规划是**当前最稳妥的默认**，
+> 而不是已证成的禁令——若你确有理由需要 `Acc → Mat`，先补齐 absence gate 再下结论，
+> 不要把这段当作已经替你跑完了那个 gate。
 
-The `FIX → MTE1` fencing half of EasyASC's advice is untested here and has no
-obvious PyPTO-Pro counterpart to test, since the edge it fences is on the path
-that appears to be absent.
+**设计后果**：不要围绕 `L0C → L1` 直搬来规划 cube→cube 的片上再喂。要么预算
+`Acc → Vec → Mat` 这趟往返——两次 move、两个空间，外加一次向量流水触碰，
+且必须与 fix→mte3 的次序对齐——要么走 GM 中转。
+
+链式收缩（QK^T 后接 PV，或任意两段 GEMM）最容易踩这条：把累加器直接当作下一个
+matmul 的 L1 操作数在 DESIGN 阶段看起来成立，到 Stage 4 才发现没有对应的 `pl.move`
+拼写。**在设计期就按上面两条之一预算，不要留到实现期。**
+
+## `phase=` is a hardware handshake, and only `pl.store` can answer it
+
+Added after a hang that was misattributed to `Acc→Vec` for weeks. Full entry:
+`references/pypto-pro-dsl-limitations-a5.md` #28.
+
+`phase=` on a `matmul` **turns off** the framework's automatic M↔FixPipe
+synchronization and replaces it with a hardware `unit_flag` that the paired
+`store(phase=...)` must clear. **`pl.move` has no `phase` parameter**, so a
+`matmul(phase=Final)` drained by `pl.move(..., acc_to_vec_mode=...)` arms a
+protocol whose other half cannot reply. Nothing rejects it.
+
+Checklist item, before diagnosing any Cube-side hang or L0C fault:
+
+1. For every `matmul` carrying `phase=`, name the drain. If it is not
+   `pl.store` / `store_tile` **with `phase=`**, that is the defect — stop here.
+2. Do not read buffer depth as causal. A slot buys one iteration; it does not
+   clear the flag. Depth 1→2 "fixing" a hang means the test shape stopped
+   re-entering a dirty block, not that the race is gone.
+3. Do not treat a hang and an ECC fault as different bugs. `phase.md`'s 案例三
+   (flag stuck at 1 → the next matmul on that block waits forever) and 案例二
+   (read not gated on completion → fixpipe reads unwritten L0C → multi-bit ECC
+   `error 171`) are the **same** violation seen from the writer's and the
+   reader's side.
+4. A passing cut is not a cleared cut. Two cuts here carried the violation and
+   passed because `kv_tiles = 1` against a 2-slot accumulator never re-entered a
+   dirty block. Re-test at a shape that forces re-entry (`kv_len >= 384`).
+
+An `error 171` multi-bit ECC on an L0C read also drives the card into
+driver-level `Alarm` through the RAS path — `8C4BA00C`, "The software has failed
+and cannot recover", needing a driver reset. A single probe here cost two of
+three cards.
+
+**Do not reproduce a suspected L0C fault on shared hardware.** This is a
+default prohibition, not a budgeting exercise — an earlier revision of this page
+said "budget cards accordingly", which reads as permission and is how the two
+cards were lost. Diagnose from the generated code and the failure signature
+first; they are usually sufficient, because the hang and the ECC fault are the
+same violation (point 3 above) and the hang side is not destructive.
+
+If a live reproduction is genuinely unavoidable, every one of the following must
+hold before it runs, and the probe is forbidden if any is missing:
+
+1. written authorization from the hardware owner for this specific probe;
+2. an explicitly named device from an allowlist, never "whatever is free";
+3. exclusive possession of that device, with every other job drained first;
+4. a single attempt with a hard cap — no retry loop, no sweep;
+5. isolation from any shared scheduler or CI pool;
+6. a written recovery path (driver reset procedure and who may run it), agreed
+   before the probe rather than discovered after it.
+
+Record the outcome so the next reader does not pay for it again.

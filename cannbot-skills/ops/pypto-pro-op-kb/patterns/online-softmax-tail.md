@@ -54,12 +54,6 @@ The requirement above — "exclude padding lanes from both `row_max` and
 `row_sum`" — is correct but under-specified, and the under-specification has a
 name. This section says *where* in the recurrence each mask lands.
 
-**Provenance.** The ordering and the failure chain are from EasyASC
-(`patterns/online-softmax-tail.md`, board-exercised there on A2 flash-attention
-kernels): **未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设**. The sentinel rule
-below has an independent PyPTO-Pro anchor and is not merely assumed. This page is
-conceptual-only either way, so nothing here is an implementation skeleton.
-
 ### Padding zeros are not neutral for a maximum
 
 When the final score chunk has `valid_n < TILE_N`, the padded columns of the
@@ -119,13 +113,11 @@ NEG_LARGE = -1.0e30
 and initialise the running row-max `m` to it as well, so the first chunk's
 `max(m_old, m_chunk)` is a no-op rather than a special case.
 
-**This one has a local anchor, and it is stronger than the cross-DSL reason.**
-EasyASC's stated reason is that true `-inf` is not reliably representable across
-all vector paths — unverified here. But in PyPTO-Pro a module-level
+**This one has a local anchor.** In PyPTO-Pro a module-level
 `float("inf")` **does not even compile**: it renders as the undeclared C++
 identifier `inff` and bisheng rejects the generated `kernel.cpp`
 ([pypto-pro-dsl-limitations-a5.md](../references/pypto-pro-dsl-limitations-a5.md)
-#19, measured on cummin). So the finite sentinel is the route here regardless of
+#19, measured on a scan kernel). So the finite sentinel is the route here regardless of
 whether the representability claim transfers.
 
 **The sentinel has one hazard, and it is the all-invalid row.** On a row where

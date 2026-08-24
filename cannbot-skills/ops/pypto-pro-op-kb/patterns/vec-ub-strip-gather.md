@@ -17,9 +17,8 @@ that is a segment copy, not this.
 ## The constraint that determines everything
 
 **`vf.gather` reads UB only.** There is no GM random-access primitive, and
-pypto-pro has no SIMT, so an implementation ported from a framework that indexes
-GM per element (easyasc's `x[source_idx]` inside `@simt`) has nothing to port
-except its flattening. Every element a tile needs must already be in UB.
+pypto-pro has no SIMT, so an approach that indexes GM per element does not
+translate here at all. Every element a tile needs must already be in UB.
 
 ## The shape
 
@@ -143,10 +142,10 @@ viewed as UINT32 with the inner extent doubled, the source word for output word
 `p` is `idx[p/2]*2C + (p mod 2C)`, the same expression with each index value
 duplicated.
 
-## Coverage the public cases will not exercise
+## Coverage the cases you can see will not exercise
 
 The map from index coordinates to source coordinates is the identity only under
-two conditions, and a benchmark's public draws routinely satisfy both while the
+two conditions, and the draws you can inspect routinely satisfy both while the
 declared range does not:
 
 * **prefix identity** — extents agree on every axis before `k` except the
@@ -168,34 +167,3 @@ case and an inf case precisely because they are cheap to generate. Compare
 floats through `.view()` on an integer of the same width so NaN payloads and
 signed zeros are compared as bits, and keep the official gate as the formal
 second verdict rather than the first.
-
-## Independent corroboration from a second DSL on the same silicon
-
-Two rules on this page were reached independently under EasyASC on Ascend 950 and
-board-validated there (dates are EasyASC's). This adds no new instruction to the
-page; it raises confidence that both are **CANN-level properties of the gather
-unit** rather than artifacts of how PyPTO-Pro lowers it — which matters when
-deciding whether they survive a toolchain or SDK bump.
-
-- **Index width is bound to data width.** EasyASC records `uint16` indices for
-  8-bit *and* 16-bit data, `uint32` for 32-bit, and `uint32` or `uint64` for
-  64-bit — "all combinations sim + Ascend950 board-validated (2026-07-21)". That
-  matches §6 of [the scatter page](vec-scatter-owner-model.md) and the dtype table
-  above, and it extends both with the 8-bit row, which neither states explicitly.
-
-- **The 8-bit gather zero-extends into 16 bits.** EasyASC: an 8-bit-source gather
-  "is a `b8 -> b16` byte zero-extend: the source byte lands in the low 8 bits of a
-  16-bit `dst`, high 8 bits zeroed (`int8` `0xFF` -> `255`, not `-1`)", and the
-  same-width `b8 -> b8` case is what the hardware rejects. That is exactly the
-  mechanism behind this page's int8 row — declare `DT_UINT8`, widen to `DT_UINT16`
-  in UB, and narrow the offsets with a **truncating** `vf.pack` because "`-1`
-  arrives as `0x00FF` and a saturating cast returns `127`". Two DSLs, one
-  mechanism, same remedy.
-
-**One EasyASC claim from the same section is deliberately not carried:** that a
-gather prices the same as an ordinary load (it measured 0.995–1.001x). This DSL's
-own scan measurements put `vf.gather` at 20–35x an aligned `vf.load_align` at real
-dependency depth
-([vec-scan-prefix-dependent.md](vec-scan-prefix-dependent.md)). The measurements
-were taken in different loop structures and are not necessarily in contradiction,
-but the local one governs designs built here, and it is the one to design against.

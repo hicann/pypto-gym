@@ -86,33 +86,6 @@ about A5 UB. So it is a usable cross-check, and the one row it got wrong is the
 one that was quoted most. Verify against the platform file before reusing any row
 of it.
 
-## Three cross-DSL notes about this silicon
-
-**未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设 (unverified on PyPTO-Pro — an
-assumption ported from EasyASC).** These are statements about the chip rather than
-about a DSL, which is why they are here rather than being dropped as another
-project's platform data. Two are design bounds and one is a negative.
-
-- **A fused-bias contraction is capped at `N` / `Cout` ≤ 512.** The total is
-  anchored — `bt_size=4096` in the SKU's platform file, which is 1024 fp32/int32
-  elements. The **unverified** half is the structure: the bias table is described
-  as two slots, with a shortcut-matmul or conv bias required to fit *one*, which
-  halves the usable width to 512. Check the slot structure before a tiling leans
-  on it, but check it *early* — it caps a dimension tile planning otherwise treats
-  as free. (For scale: A2/A3's BT is 512 B, so the equivalent bound there is 64.)
-- **The 12-bit `n_burst` field is an A2/A3 restriction that A5 does not inherit.**
-  On C220, padded GM↔UB transfers encode the burst count in `[0, 4095]` and a
-  request for 4096 silently does nothing. This is carried as a **negative**: do
-  not budget around a 4095 burst cap on A5, and do not port an A2-era tiling
-  workaround that exists only to respect it. Recorded because a silent no-op is
-  the kind of rule that gets applied defensively long after it stopped applying.
-- **950 and 950PR share the C310 instruction and codegen family**, differing in
-  default core count, vector lane count, and the debug SoC string. The platform
-  files corroborate the shared family directly — `950PR_957x.ini` and
-  `950DT_957x.ini` both declare `dav-c310-cube` — which is why a finding measured
-  on one is worth *testing* on the other, and equally why it is not automatically
-  valid there, since anything derived from core count is exactly what differs.
-
 ## Performance boundary
 
 Platform configuration values are roofline inputs, not measured kernel

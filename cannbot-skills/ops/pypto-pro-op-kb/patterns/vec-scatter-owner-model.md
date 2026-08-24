@@ -13,13 +13,12 @@ owner-batch and rank-1 layouts.
 **Evidence:** [retained validation record](../examples/validation-records.md), which keeps
 the fp32 inner-tile result and its explicit exclusions separate from the conceptual layouts.
 
-**Read the scope literally.** The operator as a whole scored **14 of 20 cases**, and the
-known failures are narrow-dtype accumulation — `float16` `add` misses the gate on MARE
-while its MERE stays small, which is accumulation order, not addressing. So this page
-validates **the owner model and the inner-tile addressing**, in fp32. It does **not**
-validate narrow-dtype accumulation, and the "bit-exact on all 20 public cases" figure
-recorded in `MEMORY.md` §1 belongs to the **golden**, which was settled offline before
-any kernel existed — not to the kernel.
+**Read the scope literally.** The record validates **the owner model and the inner-tile
+addressing**, in fp32. It does **not** validate narrow-dtype accumulation: `float16` `add`
+misses the gate on MARE while its MERE stays small, which is accumulation order, not
+addressing. Nor does a bit-exactness figure recorded against a **golden** transfer to the
+kernel — a golden settled offline before any kernel existed says nothing about the kernel
+that later consumes it. Match every claim to the artifact it was measured on.
 
 ---
 
@@ -51,7 +50,7 @@ at once:
 
 Do not guard on rank or on a shape. Guard on the relationship — `indices.rank ==
 data.rank`, `indices.shape[a] <= data.shape[a]` — because the declared range is
-routinely wider than the public cases and has been observed wider than the
+routinely wider than the cases you can see, and has been observed wider than the
 documentation.
 
 ## 2. `vf.scatter` writes UB, so the whole indexed axis must be resident
@@ -109,7 +108,8 @@ Ascend950PR_9579 with `K=4, U=16` so that every column carried duplicates:
 plain scatter left **3 of 256** elements holding the earlier write; the same
 kernel with `vf.mem_bar()` after each scatter was **0 of 256**. On realistic
 index draws the error rate is around 1 in 1000 — low enough to survive a casual
-check and lose hidden cases, which is precisely why it belongs in a pattern page.
+check and still fail on inputs you never inspect, which is precisely why it
+belongs in a pattern page.
 
 For `amax` / `amin` the combine collapses into the mask itself, which is both
 faster and avoids `vf.select` entirely:
@@ -179,41 +179,3 @@ and keep control of the addressing.
   `outer`/`K`/`inner` factorisation is host-side *metadata* arithmetic over
   shapes, and the reshape it implies is a pure view of a contiguous tensor.
   Anything that moves data stays in the kernel.
-
-## 10. An 8-bit scatter consumes only the even source lanes
-
-**未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设 (unverified on PyPTO-Pro — an
-assumption ported from EasyASC).** Board-verified under EasyASC on Ascend 950; §6
-above stops at b16 and states no b8 row, so this fills a real hole in the table
-rather than restating it.
-
-EasyASC (`constraints/a5.md` §8) records that a register→UB scatter of **8-bit**
-data writes `dst_flat[index[k]] = src[2k]` for its 128 `uint16` indices — the
-**odd source bytes are ignored**. Its remedy for placing a dense 8-bit payload:
-cast even and odd logical rows separately, pack each group, then interleave and
-scatter through a `uint16` carrier view.
-
-**Why to expect this to transfer.** It is the write-side mirror of a rule this KB
-already holds on the read side. The
-[gather page](vec-ub-strip-gather.md) records that an 8-bit *gather* is a
-`b8 → b16` zero-extend — the byte arrives in the low half of a 16-bit lane. If the
-gather unit addresses 8-bit data through 16-bit lanes, a scatter addressing the
-same data through the same `uint16` index register has nowhere to put the odd
-byte. The two statements are one mechanism seen from both ends, which is the main
-reason to trust the ported half before measuring it.
-
-**Practical reading.** This is *why* the gather page's int8 route declares
-`DT_UINT8` and widens to `DT_UINT16` in UB rather than working at native width —
-that widening is not a convenience, it is the layout the index register imposes.
-Expect a dense int8 output to cost an explicit compaction stage on the way out,
-and budget it at design time rather than discovering it as half-empty output.
-
-The same EasyASC section also states that the **scatter's mask is lane-wise**,
-unlike the continuous store paths whose masks round up to whole 32-byte blocks
-(board-verified 2026-07-29 there). That half is already carried, with its
-PyPTO-Pro caveats, in
-[constraints/vec-alignment-and-rotation.md](../constraints/vec-alignment-and-rotation.md).
-
-**Named probe:** scatter 128 known b8 values through a `uint16` carrier into a
-zeroed UB tile at known indices and read the tile back. If exactly the even source
-lanes landed, the rule transfers.

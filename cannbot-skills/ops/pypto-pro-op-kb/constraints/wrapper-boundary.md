@@ -29,10 +29,8 @@ CANN 9.1.0 vs dev 9.2.0), and its operator inventory is not a superset: a
 wrapper `.to(torch.float32)` that ran fine locally raised
 `aclnnInplaceCopy failed, error code is 561103` (`EZ1013:
 aclnnInplaceCopy_1_CastAiCore cannot be found`) on every fp16/bf16 case of a
-real submission, scoring 7/20 with all fp32 cases passing (job_cb400c1718cb,
-2026-08-06). A wrapper that dispatches no device op has no such dependency.
-See the eval-runner trap entry in
-[../playbooks/benchmark-scoring.md](../playbooks/benchmark-scoring.md).
+real delivery, where only the fp32 cases passed. A wrapper that dispatches no
+device op has no such dependency.
 
 Two consequences follow, and they are the durable part:
 
@@ -108,11 +106,30 @@ appear in the profile — it is `.contiguous()`, `.to()` and the movement ops
 that are charged. If in doubt, read the profile: anything named `aclnn*` in
 `op_times.device_kernels` is wrapper time.
 
-## The one legitimate exception
+## What this boundary governs
 
-If a transformation genuinely cannot be expressed in the kernel, keep it, and
-**record why** in `DESIGN.md` with the measured cost of the op you kept. An
-unexplained host-side shaping op is a defect, not a trade-off.
+It governs the **delivered wrapper** — the `{op}_wrapper` in `custom/<op>/test_{op}.py`
+that ships with the operator and whose host time is measured.
+
+It does **not** govern the driver functions in this KB's study samples under
+`examples/samples/`. Those exist to make a sample runnable on its own, and they allocate,
+reshape and synchronize to do that. They are harnesses, not delivery shapes — see
+[examples/README.md](../examples/README.md). Do not copy one into a delivery and do not
+read one as evidence that a call is permitted here.
+
+## There is no pre-approval exception
+
+`torch.empty` for output allocation is the only Torch call a delivered wrapper
+may make. Nothing in `DESIGN.md` can widen that: an earlier revision of this
+page let a transformation stay if the reason was recorded, which turns a hard
+boundary into a promise and is how host-side `.t().contiguous()`, `torch.zeros`
+and `torch.npu.synchronize` reached delivered wrappers.
+
+If a transformation appears impossible to express in the kernel, that is a
+design problem to escalate at Stage 3, not something a wrapper may absorb.
+Record the blocker and the measured cost of the alternative in `DESIGN.md` so it
+can be judged -- but the recording is the escalation, never the authorization,
+and the wrapper stays inside the boundary while it is judged.
 
 ### A bit reinterpretation is never that exception
 
@@ -123,12 +140,11 @@ tile, an int64 pair viewed as two 32-bit words — happens **inside** the kernel
 and the wrapper needs no `.view()`.
 
 This matters beyond tidiness. A host-side `.view()` or `.to()` is measured
-time, and, as the runner-inventory trap in
-[../playbooks/benchmark-scoring.md](../playbooks/benchmark-scoring.md) shows, an
-`aclnn`-dispatching host op is also a **compatibility** risk on an evaluation
-runner whose CANN differs from the dev box. A kernel-side reinterpretation
-depends on nothing outside the submission. (Measured on Ascend950PR / CANN
-9.2.0.)
+time, and an `aclnn`-dispatching host op is also a **compatibility** risk on any
+machine whose CANN inventory differs from the dev box -- the op set is not
+guaranteed to be a superset. A kernel-side reinterpretation
+depends on nothing outside the delivered kernel itself. (Measured on
+Ascend950PR / CANN 9.2.0.)
 
 ## How this is checked
 

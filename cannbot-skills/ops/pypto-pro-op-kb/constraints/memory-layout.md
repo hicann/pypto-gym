@@ -78,17 +78,6 @@ Two consequences worth stating separately:
   Assert the linear extent, and keep the negative control that shows the
   assertion can fire.
 
-**Provenance.** The two formulas are from EasyASC's runtime footprint guards
-(`references/simulator-datamove-footprint-guards.md:19,52-55`), where they are
-enforced in that DSL's bounds checker. They are **shape arithmetic over
-offsets, spans and strides**, so they hold for any DSL that lets a tile view a
-sub-region of a wider tensor — which `pl.load` / `pl.load_tile` / `pl.store` all
-do. Nothing about them is EasyASC-specific and nothing needs re-measuring; what
-would need checking, if a design depends on it, is which *particular* extent a
-given PyPTO-Pro call validates internally. The same source also warns against
-clamping a view to the parent size with `min(...)`: it hides the real
-out-of-bounds and re-surfaces later as an unrelated-looking footprint failure.
-
 ## Evidence
 
 - rotating Vec groups:
@@ -102,46 +91,3 @@ Use the installed API documentation and matching official example to confirm
 alignment and layout semantics for the target version.
 
 ---
-
-## A transposing GM→on-chip read has a source-plane alignment cliff
-
-**未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设 (unverified on PyPTO-Pro — an
-assumption ported from EasyASC).** Board-confirmed on Ascend 950 under EasyASC, a
-different DSL over the same silicon; the claim below is about the **DMA engine's
-transposing read path**, which is a property of the hardware rather than of
-either DSL's spelling of it.
-
-**Trigger — check this against your own kernel.** A load that converts layout on
-the way in (dense source → fractal destination) *and* whose source plane extent
-in bytes is not a multiple of 32. In EasyASC's terms that is `gm_to_l1_dn2nz`;
-in PyPTO-Pro the layout-converting surface is `pl.set_mm_layout_transform` plus
-the transposing operand load used by the retained
-[TN matmul sample](../examples/samples/matmul_kmkn_fp32_out/matmul_tn_impl.py).
-
-**The measurement.** When `H*W*sizeof(dtype)` is not a multiple of 32 bytes, the
-transposing read falls off its fast path: **about 40 GB/s against roughly
-1.7 TB/s on an aligned plane** — a factor of ~40, enough to turn a MAC-bound
-kernel into a load-bound one (EasyASC reported `aic_mte2_ratio` 0.978 at the
-cliff). `W = 127` fp16 and `W = 63` fp32 both hit it. The recorded remedy is to
-split that branch into a separate dense→fractal conversion pass; on the aligned
-branch the single fused read stays faster.
-
-**A second, quieter rule from the same source.** EasyASC's dense→fractal copy
-sets its destination fractal-row stride to `align16(M_dst)` — it rounds the C0
-stride **up to 16 rows** — so one call may only span several C0 blocks when the
-destination plane is itself 16-row aligned. With an unaligned plane the C0 blocks
-drift apart and any consumer assuming a packed stride reads the wrong block.
-Whether PyPTO-Pro's conversion does the same rounding is unknown.
-
-**Why this is worth carrying despite being unverified.** It is a *cliff*, not a
-gradient: a design that lands on the wrong side loses more than an order of
-magnitude and the kernel is still bit-correct, so nothing but a timing
-measurement reveals it. It also cannot be seen by any simulator that models the
-transfer as a flat copy.
-
-**Named probe to settle it** (one board session): one transposing operand load of
-fixed total volume, built twice — once with the source plane extent a multiple of
-32 bytes, once one element short of it — timed, with the byte counts asserted
-equal. If the two times differ by an order of magnitude the cliff transfers; if
-they do not, delete this section. Pair it with a check that the fractal stride
-the consumer assumes matches what the copy wrote, which is the second rule above.

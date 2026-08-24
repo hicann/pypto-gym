@@ -34,29 +34,37 @@ always relative to the KB root:
 
 Never record an absolute path or an installation-specific prefix.
 
-### Links into this KB are authored for the installed layout
+### Cross-package links use the sibling form, which resolves in both layouts
 
-The two roots above sit at different depths relative to a skill, and that difference is
-not reconcilable: installed, a skill lives at `$CONFIG_ROOT/skills/<skill>/` and reaches
-the KB with `../../pypto-pro-op-kb/`; in a checkout it lives at
-`cannbot-skills/ops/<skill>/` with the KB as a *sibling*, needing
-`../pypto-pro-op-kb/`. One relative path cannot satisfy both.
+**The rule: write the path that is correct with the KB as a sibling of each skill**, i.e.
+the `cannbot-skills/ops/` layout — `../pypto-pro-op-kb/…` from `<skill>/SKILL.md`,
+`../../pypto-pro-op-kb/…` from `<skill>/references/`, and the mirror image for KB→skill
+links.
 
-**Write the installed form.** That is the one agents actually follow. The accepted
-consequence, decided deliberately rather than overlooked: those links do not resolve when
-browsing the repository on the web or in an editor. Runtime is unaffected.
+An earlier revision of this section said the opposite — that a separate "installed form"
+(one `../` deeper) had to be written and would not resolve in a checkout. **That was
+wrong, and 17 links written to follow it were broken everywhere.** Skills are installed as
+**symlinks** into `cannbot-skills/ops/`, so a `..` traversal out of an installed skill is
+resolved by the filesystem *physically* — it lands back in `cannbot-skills/ops/`, where
+the KB is a sibling. The sibling form is therefore correct under both a lexical resolver
+in a checkout and the physical resolver at runtime; the deeper form is correct under
+neither.
 
-Two things follow, and both have already been got wrong once:
+Measured over all 41 cross-package links: sibling form 41/41 resolve repo-relative and
+41/41 resolve through the installed symlink tree.
 
-- **Do not "fix" a KB link that looks broken in a checkout.** Rewriting it to the
-  checkout-relative form breaks it for every installed agent. Verify against
-  `$CONFIG_ROOT` before changing any `../../pypto-pro-op-kb/` path.
-- **Do not extend `check_kb_integrity.py`'s link check to skill or plugin Markdown.** It
-  is KB-internal by design; a repo-relative scan there reports ~35 correct links as
-  broken. Checking them would require resolving through the install layout.
+Two consequences:
+
+- **A cross-package link that does not resolve in a checkout is broken, not "authored for
+  the installed layout".** The previous instruction not to "fix" such links protected the
+  defect it was written to prevent.
+- **`check_kb_integrity.py` does traverse cross-package links** (`cross-package links
+  resolve`). The old prohibition rested on the claim that a repo-relative scan reports
+  correct links as broken; it does not — every failure it reports is a link that resolves
+  nowhere.
 
 Links *within* this KB are unaffected — the directory moves as a unit, so relative paths
-between its own pages hold in either layout, and those are the ones the checker verifies.
+between its own pages hold in either layout.
 
 The orchestrator's `agents/*.md` are a further special case: they install to
 `$CONFIG_ROOT/agents/`, which bears no fixed relation to their repo path, so no single

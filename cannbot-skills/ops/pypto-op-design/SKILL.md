@@ -189,7 +189,7 @@ python scripts/derive_design_params.py \
 
 当算子的数学形式是「带前导批次轴的 2D contraction」（前导若干 batch 轴 + 一次 matmul，如 `out[..., m, n] = Σ_k a[..., m, k] * w[k, n]`）时：
 
-- 折叠前导 batch 轴让 `pypto.matmul` 保持 2D `[M,K]@[K,N]`。**优先在 kernel 内**按真实 shape 计算扁平偏移完成折叠；只有当输入已连续、host 侧 `reshape` 确认是纯 view（profile 中不出现 `aclnn*`）时，才可在 Layer K 做 reshape 并在输出侧还原。会 materialize 的 `.contiguous()` / dtype 转换属于被计入分数的 device 算子，见 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)。
+- 折叠前导 batch 轴让 `pypto.matmul` 保持 2D `[M,K]@[K,N]`。**优先在 kernel 内**按真实 shape 计算扁平偏移完成折叠；只有当输入已连续、host 侧 `reshape` 确认是纯 view（profile 中不出现 `aclnn*`）时，才可在 Layer K 做 reshape 并在输出侧还原。会 materialize 的 `.contiguous()` / dtype 转换属于被计入分数的 device 算子，见 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md)。
 - **不要**把另一个 operand `unsqueeze` 升到和输入一样的高 rank 去「凑维度」——那会逼出退化的 `[1, 1, ...]` 高 rank matmul 和多层嵌套动态 loop，得不偿失。
 - 行主序连续张量折叠前导维是 no-copy view，输出 reshape 是其逆操作，语义可逆。
 

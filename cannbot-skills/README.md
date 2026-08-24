@@ -67,7 +67,7 @@ opencode
 | 验证与检视 | `pypto-op-verify`、`pypto-op-review`、`pypto-kernel-validate` | 算子功能验证、代码检视与产物校验（反作弊 + 精度 + 性能） |
 | 性能调优 | `pypto-op-perf-tune` | 算子性能采集、分析与自动调优 |
 | 监控与调试 | `pypto-op-monitor`、`pypto-general-debug` | 任务进度监控与通用问题诊断 |
-| **Pro 专属** | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check` | PyPTO-Pro 精简流程的九项专属技能，含 CANN Bench 提交与评测 |
+| **Pro 专属** | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check` | PyPTO-Pro 精简流程的八项专属技能 |
 
 **模型适配**（model/，共 3 个）
 

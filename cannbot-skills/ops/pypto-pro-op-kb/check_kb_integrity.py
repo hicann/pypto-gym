@@ -150,22 +150,19 @@ def _links_from(path: Path) -> list[tuple[str, Path]]:
 def check_links() -> list[str]:
     """Resolve relative links, KB-internal only.
 
-    **Do not widen this to skill or plugin Markdown.** Links from
-    ``cannbot-skills/ops/<skill>/`` and from the orchestrator's ``agents/`` into this KB
-    are authored against the *installed* layout, not the repo: ``init.sh`` symlinks this
-    directory to the config root (``$CANNBOT_DIR/pypto-pro-op-kb``), so a skill reaches it
-    with ``../../pypto-pro-op-kb/`` once installed but would need ``../pypto-pro-op-kb/``
-    in a checkout. Those two cannot both be satisfied by one relative path, and the
-    installed form is the one that has to work.
+    Cross-package links are checked too, by `check_cross_package_links` -- not here.
 
-    A repo-relative scan over that Markdown therefore reports ~35 correct links as broken.
-    That is an accepted tradeoff, decided deliberately: KB links do not resolve when
-    browsing the repo on the web or in an editor. Runtime is unaffected. If this ever
-    needs checking, the checker has to resolve through the install layout -- widening the
-    glob is not the fix, it just manufactures false positives.
+    This docstring used to say they must **not** be checked, on the reasoning that a skill
+    reaches the KB with ``../../pypto-pro-op-kb/`` once installed but ``../pypto-pro-op-kb/``
+    in a checkout, so a repo-relative scan would report ~35 correct links as broken. That
+    was wrong on the facts: skills install as **symlinks** into ``cannbot-skills/ops/``, so
+    a ``..`` traversal out of an installed skill resolves physically back to the KB's
+    siblings -- the same place a checkout puts it. The sibling form is correct under both
+    resolvers, and every link the widened scan reported was genuinely broken. See
+    `CONTRACT.md`.
 
-    KB-internal links are safe to check because the whole directory moves as a unit, so
-    relative paths between its own pages hold in either layout.
+    KB-internal links are safe to check for the separate reason that the directory moves as
+    a unit, so relative paths between its own pages hold in either layout.
     """
     errors: list[str] = []
     for path in _kb_files():
@@ -459,13 +456,22 @@ def _citation_resolution_result(
 ) -> str | None:
     present, absent = refs
     parts = _expand(citation)
-    on_disk = any(((page.parent / part) if part.startswith("..") else (REPO_ROOT / part)).exists() for part in parts)
+    # `all`, not `any`. A brace citation names several files and is evidence only for
+    # what it names; under `any` one present member vouched for every absent one. This
+    # was fixed in `check_reference_artifact_citations` and missed here, so the hole
+    # stayed open on the path that guards `validated` rows -- the stronger claim.
+    on_disk = all(((page.parent / part) if part.startswith("..") else (REPO_ROOT / part)).exists() for part in parts)
     if on_disk or (present and all(any(_git_has(ref, part) for ref in present) for part in parts)):
         return None
     if absent and not present:
-        # Preserve the existing best-effort behaviour for shallow clones: an unfetched
-        # branch cannot be verified locally, but it is not reported as a broken citation.
-        return None
+        # Cannot be settled locally: a named ref may be unfetched (shallow clone) or may
+        # never have existed. Returning None passed both, so a fabricated branch name
+        # plus a path that exists nowhere produced a green run. Report it as SKIP --
+        # inconclusive, not verified -- which `main` prints as SKIP rather than ok.
+        return (
+            f"SKIP: pattern-index.md:{lineno} ({name}) cites {citation!r} against ref(s) {absent} that "
+            f"are not present locally; fetch them to verify, or the citation is unchecked"
+        )
     hint = (
         f"; it names branch(es) {present} but the path is not in them"
         if present
@@ -481,8 +487,7 @@ def check_pattern_validated_claims_cite_evidence() -> list[str]:
 
     `pattern-index.md` defines the status: "validated skeleton: the page links to a
     retained runnable implementation". Enforced only for `kernel-index.md` once, so a
-    pattern could claim validation and cite nothing -- and one did, while the operator
-    behind it passed 14 of 20 cases.
+    pattern could claim validation and cite nothing -- and one did.
 
     This repo splits the knowledge base from the operator trees that validate it, so an
     artifact may legitimately live on another branch. That is resolved by **looking**:
@@ -735,6 +740,14 @@ def stamp_validation_hashes() -> int:
     Run this only after a sample has actually been re-validated -- stamping is what
     records "this exact code is what produced the result above", so stamping unverified
     code launders it into looking verified.
+
+    One narrower case is permitted and must be **written into the sample's header**: a
+    text-only edit (comment or docstring) that provably leaves the executable code
+    identical -- compare the parsed AST with docstrings stripped, before and after. The
+    record still describes the same computation, but the stamp then asserts "semantically
+    the same code", not "just re-validated", and a reader deciding whether to trust the
+    number needs to know which of the two it is. Anything touching executable code
+    requires a real re-run; there is no AST argument for it.
     """
     changed = 0
     for sample in _validated_sample_paths():
@@ -817,6 +830,85 @@ def check_skill_absolute_paths() -> list[str]:
 
     paths = (path for path in sorted(skills_root.glob("pypto-*/**/*")) if _is_skill_file(path))
     return _absolute_path_errors(paths)
+
+
+_CROSS_PACKAGE_LINK = re.compile(r"\[[^\]]*\]\(((?:\.\./)+pypto-[^)]+)\)")
+
+
+_REPORT_ENTRY = re.compile(r"^### (\d+(?:\.\d+)?\..*)$", re.M)
+
+
+def check_report_copies_agree() -> list[str]:
+    """The KB's A5 limitations page and Part I of the consolidated report must agree.
+
+    They are two copies of the same entries for two audiences: the KB page is routed to
+    agents, the `docs/` report goes upstream. Nothing kept them in step, and they drifted
+    exactly as predicted -- one copy called a defect `unexplained` while the other had
+    already located it, and an entry title said "evaluation server" on one side and
+    "deployed runtime" on the other. Both were found by review, not by this checker.
+
+    Entry titles are compared, not prose: the titles carry the entry number and the claim,
+    so a renumber, a dropped entry or a reworded verdict all show up, while ordinary
+    editorial differences between the two framings do not.
+    """
+    kb_report = KB_ROOT / "references" / "pypto-pro-dsl-limitations-a5.md"
+    docs_report = REPO_ROOT / "docs" / "pypto-pro-dsl-limitations.md"
+    if not (kb_report.is_file() and docs_report.is_file()):
+        return ["SKIP: one of the two report copies is absent"]
+    docs = _text(docs_report)
+    if "# Part I" not in docs or "# Part II" not in docs:
+        return ["SKIP: the consolidated report has no Part I span to compare"]
+    part_one_start = docs.index("# Part I")
+    part_one_end = docs.index("# Part II")
+    part_one = docs[part_one_start:part_one_end]
+    in_docs = {m.group(1).strip() for m in _REPORT_ENTRY.finditer(part_one)}
+    in_kb = {m.group(1).strip() for m in _REPORT_ENTRY.finditer(_text(kb_report))}
+    errors = [
+        f"{docs_report.relative_to(REPO_ROOT)} Part I has an entry the KB copy lacks: {title!r}"
+        for title in sorted(in_docs - in_kb)
+    ]
+    errors += [
+        f"{kb_report.relative_to(REPO_ROOT)} has an entry Part I lacks: {title!r}"
+        for title in sorted(in_kb - in_docs)
+    ]
+    return errors
+
+
+def check_cross_package_links() -> list[str]:
+    """Every link that leaves its own package must resolve.
+
+    These are the links between a skill and this KB, in both directions. They were
+    excluded from checking on the theory that they are "authored for the installed
+    layout" and only look broken in a checkout. They are not: skills install as
+    **symlinks** into `cannbot-skills/ops/`, so a `..` traversal out of an installed
+    skill is resolved physically and lands back among its siblings -- the same place a
+    checkout puts it. The sibling form is correct under both resolvers, the deeper
+    "installed" form under neither, and 17 links written to the latter resolved nowhere
+    while this check did not exist to say so.
+
+    Scoped to `ops/pypto-*`, matching `check_skill_absolute_paths`.
+    """
+    ops_root = KB_ROOT.parent
+    if not ops_root.is_dir():
+        return ["SKIP: no ops/ root to scan"]
+    errors: list[str] = []
+    seen = 0
+    for md in sorted(ops_root.glob("pypto-*/**/*.md")):
+        text = _text(md)
+        for m in _CROSS_PACKAGE_LINK.finditer(text):
+            rel = m.group(1)
+            seen += 1
+            if (md.parent / rel).exists():
+                continue
+            lineno = text[: m.start()].count("\n") + 1
+            errors.append(
+                f"{md.relative_to(REPO_ROOT)}:{lineno} links out of its package to "
+                f"{rel!r}, which resolves nowhere; use the sibling form "
+                f"(see CONTRACT.md)"
+            )
+    if not seen:
+        return ["SKIP: no cross-package links found"]
+    return errors
 
 
 def check_tool_absolute_paths() -> list[str]:
@@ -917,6 +1009,279 @@ def _module_constants(path: Path) -> dict:
     return {k: (list(v) if isinstance(v, tuple) else v) for k, v in out.items()}
 
 
+_DOCS_ROOT = REPO_ROOT / "docs"
+_ARTIFACT_CITE = re.compile(r"`((?:custom|tools)/[\w./{},-]+)`")
+# A markdown link to another page. The `§N` it carries may sit **inside** the link text
+# (`[ROUTER §99](../ROUTER.md)`) or after it (`[ROUTER](../ROUTER.md) §99`), and there may
+# be more than one (`§1, §99`). The first version of this matched only the trailing shape
+# and only the first number, so two of the three ways a citation is actually written went
+# unchecked -- a gap an audit found, not a control.
+_SECTION_LINK = re.compile(r"\[([^\]]*)\]\(([^)#]+?\.md)(?:#[^)]*)?\)")
+_SECTION_NUM = re.compile(r"§(\d+(?:\.\d+)?)")
+_PART_HEADING = re.compile(r"^# Part ([IVX]+)\b", re.M)
+# A bare `entry N` is only ambiguous when the reader has to guess which Part it
+# belongs to. `entry 16 of `some-page.md`` already names its target, and that
+# target keeps its own numbering, so the lookahead exempts it -- without it this
+# check demands a Part prefix for a cross-document citation, which is how a first
+# run of it turned a correct reference into a wrong one.
+_BARE_ENTRY = re.compile(
+    r"(?<![-\w])(?:entry|Entry) (\d+)\b(?!\s+of\s+`[^`]*\.md`)")
+# A qualified citation: `entry II-14`, or the bare `II-14` token the consolidated-ask
+# lists use. Roman-dash-digit is distinctive enough to match unqualified -- a survey of
+# every KB and docs page returned 58 hits, all of them genuine entry references.
+_QUALIFIED_ENTRY = re.compile(r"\b([IVX]+)-(\d+)\b")
+# Entries are numbered paragraphs in one Part of the merged report and `###` headings in
+# another, because the two source reports wrote them differently. Match both, or the Part
+# that uses bold paragraphs reads as defining no entries at all and every citation into it
+# is reported missing.
+_ENTRY_HEADING = re.compile(r"^(?:\*\*|#{2,4} )(\d+)\. ", re.M)
+
+
+def _paragraphs(text: str):
+    """(start_lineno, block) for each blank-line-delimited block, 1-indexed."""
+    lineno, block, start = 1, [], 1
+    for line in text.split("\n"):
+        if line.strip():
+            if not block:
+                start = lineno
+            block.append(line)
+        elif block:
+            yield start, "\n".join(block)
+            block = []
+        lineno += 1
+    if block:
+        yield start, "\n".join(block)
+
+
+def _heading_numbers(text: str) -> set[str]:
+    """Section numbers a page actually defines, as strings ('14', '14.2')."""
+    return {
+        m.group(1)
+        for m in re.finditer(r"^#{1,4} +(?:§)?(\d+(?:\.\d+)?)[.\s]", text, re.M)
+    }
+
+
+def check_reference_artifact_citations() -> list[str]:
+    """Any KB page citing `custom/...` or `tools/...` must cite something that RESOLVES.
+
+    This rule already existed for `validated` rows in `patterns/pattern-index.md`, and
+    nowhere else -- so `references/` and `playbooks/` pages could cite a retained artifact
+    in exactly the form the KB reserves for evidence, on the one page class where nothing
+    checked retention. Three such citations shipped: two naming files that exist on no ref
+    at all, carrying a page's entire measured sweep, and the page named no branch.
+
+    The failure is not cosmetic. A citation a reader cannot open invites re-running a
+    measurement that was already paid for -- which is the reason this KB gives elsewhere
+    for deleting dangling pointers.
+
+    The `on branch <name>` escape hatch is honoured, but scoped to the **paragraph** that
+    carries the citation. Searching the whole page for the keyword is how an unrelated
+    sentence once laundered a broken path (see
+    `check_pattern_validated_claims_cite_evidence`), and a page-wide scope would reopen it.
+    """
+    errors: list[str] = []
+    # `docs/` is scanned too. Leaving it out is how a dangling `custom/...` path in the
+    # merged DSL report survived a full green run: the citation rule existed, but not for
+    # the directory that carried the citation.
+    pages = list(_kb_files()) + (
+        sorted(_DOCS_ROOT.glob("*.md")) if _DOCS_ROOT.is_dir() else []
+    )
+    for page in pages:
+        if page.suffix == ".md" and page.name != "pattern-index.md":
+            errors.extend(_artifact_citation_errors(page))
+    return errors
+
+
+def _artifact_citation_errors(page: Path) -> list[str]:
+    """Unresolved `custom/`/`tools/` citations on one page.
+
+    Split out so neither function nests more than four deep.
+    """
+    errors: list[str] = []
+    text = _text(page)
+    for start, block in _paragraphs(text):
+        cites = _ARTIFACT_CITE.findall(block)
+        if cites:
+            named = _PATTERN_BRANCH.findall(block)
+            present = [r for r in named if _ref_exists(r)]
+            absent = [r for r in named if not _ref_exists(r)]
+            errors.extend(
+                _artifact_citation_error(page, start, citation, present, absent)
+                for citation in cites
+            )
+    return [e for e in errors if e]
+
+
+def _artifact_citation_error(
+    page: Path,
+    start: int,
+    citation: str,
+    present: list[str],
+    absent: list[str],
+) -> str | None:
+    """One citation's verdict: an error string, a `SKIP:` note, or None when it resolves."""
+    rel = page.relative_to(REPO_ROOT)
+    parts = _expand(citation)
+    # `all`, not `any`: `{present.py,absent.py}` names two files, and a citation is
+    # only evidence for what it names. Under `any` the present member vouched for the
+    # absent one -- the same "one member covers the rest" hole `_expand` was written to
+    # close, reintroduced one line later.
+    if all((REPO_ROOT / part).exists() for part in parts):
+        return None
+    if present and all(any(_git_has(r, part) for r in present) for part in parts):
+        return None
+    if absent and not present:
+        # Same reasoning as `_citation_resolution_result`: unfetched and never-existed
+        # are indistinguishable here, so say "unchecked" rather than passing a citation
+        # nothing verified.
+        return (
+            f"SKIP: {rel}:{start} cites {citation!r} "
+            f"against ref(s) {absent} not present locally; fetch to verify"
+        )
+    hint = (
+        f"; it names branch(es) {present} but the path is not in them"
+        if present
+        else "; retain it, name the branch with `on branch <name>`, or drop the path"
+    )
+    return f"{rel}:{start} cites {citation!r} which resolves nowhere{hint}"
+
+
+def _cited_sections(text: str, match: "re.Match[str]") -> list[str]:
+    """Section numbers a single markdown link carries.
+
+    Both spellings occur: the number can sit inside the link text
+    (``[ROUTER §99](../ROUTER.md)``) or follow the link (``[ROUTER](../ROUTER.md) §99``),
+    and a run may name several (``§1, §99``). The trailing window stops at the next ``[``
+    so a second link's sections are never attributed to this one.
+    """
+    tail = text[match.end():match.end() + 40].split("[")[0]
+    cited = _SECTION_NUM.findall(match.group(1)) + _SECTION_NUM.findall(tail)
+    return list(dict.fromkeys(cited))
+
+
+def _section_citation_errors(page: Path) -> list[str]:
+    """Unresolved `§N` citations on one page.
+
+    Split out of `check_section_citations` so neither function nests more than four
+    deep; the loop-inside-loop-inside-loop form tripped the depth limit.
+    """
+    text = _text(page)
+    rel = page.relative_to(REPO_ROOT)
+    errors: list[str] = []
+    for match in _SECTION_LINK.finditer(text):
+        target_rel = match.group(2)
+        target = (page.parent / target_rel).resolve()
+        if not target.is_file():
+            continue  # link resolution is check_links's job, not this one
+        cited = _cited_sections(text, match)
+        if not cited:
+            continue
+        defined = _heading_numbers(_text(target))
+        missing = [section for section in cited if section not in defined]
+        lineno = text[: match.start()].count("\n") + 1
+        errors.extend(
+            f"{rel}:{lineno} cites §{section} of {target_rel}, which defines no "
+            f"such section"
+            for section in missing
+        )
+    return errors
+
+
+def check_section_citations() -> list[str]:
+    """A `§N` citation must point at a section the target page actually defines.
+
+    A number is a silent reference: when the target renumbers, the citation keeps
+    resolving -- to the wrong section -- and nothing announces it. That happened here: a
+    page cited `§15` while the target stopped at `§14.x`, so the link was visibly broken;
+    a later commit added a `§15` on an unrelated subject and the citation became quietly
+    wrong, which is worse than the dangling version it replaced.
+
+    Only citations of the form `[...](target.md) ... §N` are checked -- the ones that name
+    both the page and the number, so both halves can be compared.
+    """
+    errors: list[str] = []
+    pages = list(_kb_files()) + (
+        sorted(_DOCS_ROOT.glob("*.md")) if _DOCS_ROOT.is_dir() else []
+    )
+    for page in pages:
+        if page.suffix == ".md":
+            errors.extend(_section_citation_errors(page))
+    return errors
+
+
+def _entries_by_part(text: str) -> dict[str, set[str]]:
+    """Which entry numbers each `# Part <ROMAN>` actually defines."""
+    marks = [(m.group(1), m.start()) for m in _PART_HEADING.finditer(text)]
+    parts: dict[str, set[str]] = {}
+    for i, (roman, start) in enumerate(marks):
+        end = marks[i + 1][1] if i + 1 < len(marks) else len(text)
+        parts[roman] = {m.group(1) for m in _ENTRY_HEADING.finditer(text[start:end])}
+    return parts
+
+
+def check_multi_part_entry_citations() -> list[str]:
+    """In a report with numbered Parts, `entry N` must say which Part.
+
+    Merging two separately-numbered reports into one document makes every bare `entry N`
+    ambiguous, and the reader lands on whichever Part comes first -- a wrong-number defect
+    that never announces itself. One such document here carries two entries numbered 20,
+    two numbered 24, and so on; thirteen bare citations pointed at the wrong one.
+
+    Applies only to documents that declare `# Part <ROMAN>` headings more than once, since
+    that is what makes a bare number ambiguous. A citation that names an external page --
+    ``entry 16 of `pypto-pro-framework-findings.md` `` -- is exempt: the number indexes that
+    page's numbering, not this document's Parts, and demanding a Part prefix there produces
+    a citation that points at the wrong entry.
+
+    A citation that *is* qualified is then resolved: `II-14` must be an entry Part II
+    actually defines. Checking only that a prefix is present would accept any number.
+    The limit is worth stating: resolution rejects an out-of-range prefix, not one
+    that lands on a real but unrelated entry. No static rule reaches that.
+    """
+    errors: list[str] = []
+    pages = list(_kb_files()) + (
+        sorted(_DOCS_ROOT.glob("*.md")) if _DOCS_ROOT.is_dir() else []
+    )
+    for page in pages:
+        if page.suffix != ".md":
+            continue
+        text = _text(page)
+        if len(_PART_HEADING.findall(text)) < 2:
+            continue
+        rel = page.relative_to(REPO_ROOT)
+        for m in _BARE_ENTRY.finditer(text):
+            lineno = text[: m.start()].count("\n") + 1
+            errors.append(
+                f"{rel}:{lineno} cites bare 'entry {m.group(1)}' in a multi-part report; "
+                f"say which part (e.g. 'entry II-{m.group(1)}')"
+            )
+        # Qualifying a citation is not the same as it resolving: the rule above demands a
+        # Part prefix, and any number satisfies it. This catches a prefix that names an
+        # entry the Part does not have. It does NOT catch a prefix that is in range and
+        # still wrong -- `entry I-16` resolves, because Part I does define an entry 16;
+        # that one is caught upstream by exempting citations which name a target file.
+        parts = _entries_by_part(text)
+        for m in _QUALIFIED_ENTRY.finditer(text):
+            roman, number = m.groups()
+            if number in parts.get(roman, ()):
+                continue
+            if roman not in parts:
+                lineno = text[: m.start()].count("\n") + 1
+                errors.append(
+                    f"{rel}:{lineno} cites {roman}-{number}, but this document defines no "
+                    f"Part {roman} (it defines {', '.join(sorted(parts))})"
+                )
+                continue
+            lineno = text[: m.start()].count("\n") + 1
+            known = sorted(parts[roman], key=int)
+            span = f"{known[0]}-{known[-1]}" if known else "none"
+            errors.append(
+                f"{rel}:{lineno} cites {roman}-{number}, but Part {roman} defines no "
+                f"entry {number} (it defines {span})"
+            )
+    return errors
+
+
 CHECKS = (
     ("links resolve", check_links),
     ("files are reachable", check_reachability),
@@ -932,6 +1297,11 @@ CHECKS = (
     ("every page is routable", check_every_page_is_routable),
     ("pypto skill paths are portable", check_skill_absolute_paths),
     ("repo tool paths are portable", check_tool_absolute_paths),
+    ("cross-package links resolve", check_cross_package_links),
+    ("report copies agree", check_report_copies_agree),
+    ("reference citations resolve", check_reference_artifact_citations),
+    ("section citations resolve", check_section_citations),
+    ("multi-part entries are qualified", check_multi_part_entry_citations),
 )
 
 

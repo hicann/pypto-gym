@@ -15,6 +15,10 @@
 #   Modeled on python/tests/ut/block/frontend/a5/tile_vector/test_softmax.py.
 #   Fully dynamic rows AND cols; row-tiles spread across vector cores; tail handled by
 #   pl.set_validshape. pl has NO RunMode.SIM -> validated ONLY on Tier-3 NPU.
+#   NOT A DELIVERY SHAPE: the `*_wrapper` below is this sample's own driver so the
+#   file runs standalone. Its host-side allocation, layout and synchronize calls are
+#   harness, not a licensed pattern -- a delivered wrapper may call only torch.empty.
+#   See ../../../constraints/wrapper-boundary.md. Copy the kernel, not the driver.
 # VALIDATED-CODE-SHA256: c3238d2b21879ab4e34a4dfbd570661eee7bed91e406d3eae0f750fb9cae3bb8
 import pypto_pro.language as pl
 import torch

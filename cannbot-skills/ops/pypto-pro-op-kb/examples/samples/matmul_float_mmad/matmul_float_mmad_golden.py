@@ -7,16 +7,19 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 # Golden for the matmul_float_mmad transfer (pure torch, NO pypto — lint D3).
-# twin_of: easyasc:kernels/a5/matmul/matmul_float_mmad.py
 #
-# Oracle demonstrated on Tier 1 (Mac) via
-#   python tools/agent/easyasc_oracle_dump.py \
-#       ../easyasc/kernels/a5/matmul/matmul_float_mmad.py --out oracle/
 # SAMPLE PROVENANCE -- describes THIS reference implementation only.
 # Do not copy this header into generated code: a generated kernel inherits
 # no validation from the sample it was modelled on.
 # The oracle and simulator artifacts matched exactly; the reference performance target is 1,483 cycles.
-# VALIDATED-CODE-SHA256: ed7722de58bb8cb621265fd66ec9dac1b1fc950b6c1d58f2bd245c0be032b839
+#   RE-STAMP BASIS (this PR): the edit that moved this hash was **text only** -- a
+#   docstring/comment change with no executable difference, proved by comparing the
+#   parsed AST with docstrings stripped before and after. The recorded result above was
+#   NOT re-measured on a board. So this stamp asserts "semantically the same code as the
+#   one that produced that record", which is weaker than `--stamp-validation-hashes`'s
+#   normal meaning ("this exact code was just re-validated"). Re-run on target before
+#   relying on it as a fresh result.
+# VALIDATED-CODE-SHA256: c4c115ec3421995800cb8e62e55da51165126e492400f8c157f90e49946038c2
 import logging
 
 import torch
@@ -28,7 +31,7 @@ def matmul_float_mmad_golden(x, y):
     """z = x @ y.T with FP32 accumulation.
 
     x: [M, K] float32,  y: [N, K] float32  ->  z: [M, N] float32.
-    Matches the easyasc kernel's embedded reference `z_ref = x @ y.t()`.
+    Matches the reference implementation's `z_ref = x @ y.t()`.
     The `.float()` is load-bearing: the pypto twin accumulates in FP32 in L0C
     (constraints/precision.md), so the golden must accumulate in FP32 too.
     """

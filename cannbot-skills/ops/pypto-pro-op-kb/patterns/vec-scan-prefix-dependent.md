@@ -146,6 +146,37 @@ read of the same address inside a vector function requires
 `vf.mem_bar(mode=pl.MemBarMode.VST_VLD)`** — omit it and the kernel faults the
 vector core — and the barrier, not the store or the load, is what costs.
 
+**屏障不是全部——但这条的证据等级低于上一条，必须分开读。**
+
+*源码级（本 checkout 可核对）*：`vf.mem_bar` 的模式为 `VST_VLD` / `VST_VST` / `VV_ALL`
+（`pypto_pro/language/_vf_api.py:242-252`），它排序的是本地内存流。源码只确立模式集合，
+**不足以确立**下面这条更强的结论。
+
+> **未在 PyPTO-Pro 上验证——由另一套 tile DSL 移植的假设。** 在那套 DSL 下于
+> Ascend 950 实测过，此处**未**复现。carry 它的理由是它把本 KB 已有的规则往
+> **不安全**方向收窄，而这个方向的修正自己踩出来代价很高。
+
+被移植的结论有两条，都保持假设状态：
+
+- **不要在同一个 vector-function 循环里，把一个 UB tensor 同时用作"逐元素基值来源"
+  和"prefix / reverse-prefix 目的地"。** 那套 DSL 的记述是：store→load 屏障
+  "orders local memory streams, but it does not turn that UB read/write alias into
+  scalar program order on hardware"——屏障在场，别名递推依然错。
+- **"换成两个 UB tensor"并未被确立为与寄存器累加等价。** 这条同样值得带过来：
+  别名规则的显而易见的修法（基值放一个 tensor、结果写另一个）在那套 DSL 的
+  随机输入硬件探针上**也失败了**。其保留立场是把 staged UB 递推当作需要硬件验证的例外，
+  而不是默认写法。
+
+**要在 PyPTO-Pro 上把它升级为硬规则，需要的探针**：同一 vector-function 循环内做别名
+递推，加满 `vf.mem_bar(VST_VLD)`，用**随机**输入在目标板上与 golden 逐位比较；再用
+分离 src/dst 的版本重跑一次。在此之前按假设处理——写法上仍建议把 loop-carried 状态
+放寄存器（成本低），但不要据此判定某个实现"必然错"。
+
+**为什么输入分布是关键**：该失败只在*随机*输入上出现。用 ramp、常量或小整数探到的 scan
+可能是"构造上正确"——结构化数据下递推的错误中间值与正确值重合的概率远高于随机数据。
+见 [investigation-discipline §13](../references/investigation-discipline.md)。
+
+
 Per 64-lane register on this SKU: `vf.gather` ~20 ns, `vf.scatter` ~18 ns, a
 barriered UB round trip ~16 ns, an aligned `load_align`/`store_align` under
 1 ns, the arithmetic ~0.3 ns. **Every way of moving data across lanes costs
@@ -305,61 +336,6 @@ jobs" from "slow per element", which look identical in a score column.
    reaches ~1.2 TB/s, but a working set under ~130 MB reaches 4–5 TB/s. Small
    and medium cases are therefore **vector-issue-bound**, and op count — not
    traffic — is what to minimise. Check before tuning tiles.
-
-## Keep the recurrence in registers — the barrier is not the whole story
-
-**未在 PyPTO-Pro 上验证——由 EasyASC 移植的假设 (unverified on PyPTO-Pro — an
-assumption ported from EasyASC).** Board-probed under EasyASC on Ascend 950. It is
-carried here because it **narrows** a rule this KB already states, and narrowing a
-rule in the unsafe direction is the kind of correction that is expensive to
-discover for yourself.
-
-**What this KB already says.** A scratch store must be fenced before the next
-vector load reads it
-(`ops/pypto-pro-op-develop/references/vf-reduction-perf.md` § "Scratch stores need
-a barrier before the next vector load"). The local fence is `vf.mem_bar`, whose
-modes are `VST_VLD`, `VST_VST` and `VV_ALL`
-(`pypto_pro/language/_vf_api.py:242-252`). Read on its own, that section implies
-the barrier is *sufficient* — put the fence in and the round trip is safe.
-
-**What EasyASC reports, and it is the stronger claim.** For a scan, cumsum, or
-row-wise recurrence inside a vector function, keep the loop-carried state in
-registers. Specifically (`constraints/a5.md` §1, `facts-authoring.md:147`):
-
-- **Do not use one UB tensor as both the per-element base-value source and the
-  prefix / reverse-prefix destination inside the same vector-function loop.** A
-  `vf_barrier(STORE, LOAD)` "orders local memory streams, but it does not turn
-  that UB read/write alias into scalar program order on hardware." The fence is
-  present and the aliased recurrence is still wrong.
-- **Separate source and destination UB tensors are not established as equivalent
-  to register accumulation either.** That is the part worth carrying: the obvious
-  fix for the aliasing rule — stage the base values in one tensor, write results
-  to another — **also failed the random-input hardware probe.** EasyASC's retained
-  position is to treat a staged UB recurrence as a hardware-validated exception,
-  never as a default.
-
-**Why the input distribution is load-bearing here.** The failure was seen on
-*random* inputs. A scan probed on a ramp, a constant, or small integers can be
-right by construction — the recurrence's wrong intermediate and its right one
-coincide for structured data far more often than they do for random data. This is
-[investigation-discipline §13](../references/investigation-discipline.md) in its
-data form: a green probe on a friendly input is not a green probe. Any test of a
-staged recurrence has to run random inputs, and has to show the checker going red.
-
-**Design consequence, in this DSL's terms.** Where the scan state can live in
-`vf` registers across the loop, keep it there and do not stage it through UB for
-readability or for register pressure without measuring. Where the base vector
-genuinely must be staged, use distinct source and destination tiles — that
-remains the least-bad staged form — and treat the result as unvalidated until it
-has been run on the board against random inputs.
-
-**Named probe to settle it here:** one `vf` scan over a tile, built three ways —
-register-carried accumulator; one UB tile as both source and destination with
-`vf.mem_bar(VST_VLD)` between; separate source and destination UB tiles with the
-same fence — all three run against a CPU reference on uniform random input at a
-length that needs several loop iterations. If the two staged forms match the
-register form bit-for-bit, this section is retired for PyPTO-Pro; if either
-diverges, it is promoted to a measurement.
 
 ## Where this was built
 

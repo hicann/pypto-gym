@@ -68,6 +68,11 @@ tokens as the epilogue drains. **Both sides stay balanced whatever the number
 is**, so a wrong credit count produces no unbalanced-event warning, no assertion,
 and no error. Nothing reports it; the values are simply stale.
 
+> **未在 PyPTO-Pro 上验证。** 上面这条"错误的 credit 数不会引发任何诊断"是从另一套
+> DSL 对其自身 prologue/epilogue 的观察迁移过来的，本仓从未复现过。
+> **本地验证方法**：用两槽 group 搭一个两拍、两角色的轮转，跑一个会回绕的 shape，
+> 看是否有任何一层报出来。在复现之前，把它当作待验证假设，不要当作 PyPTO-Pro 的既定行为。
+
 Two further non-proofs, from the same source:
 
 - **Source order is not retirement.** That a store appears earlier in the Python
@@ -96,16 +101,6 @@ from the indexing side.
 **Verify it on a shape that wraps.** The law is unobservable at one work item per
 core; see
 [investigation-discipline §13.2](../references/investigation-discipline.md).
-
-**Provenance.** From EasyASC's `patterns/buffer-slot-lifetime.md`, with its slot
-types (`DBuff`/`TBuff`/`QBuff` = 2/3/4 slots) and its explicit mutex-`depth`
-parameter dropped — PyPTO-Pro spells the same thing as the slot count of a
-`make_tile_group(..., auto_mutex=True)`. The counting law and the
-credits-are-not-slots distinction transfer as reasoning. **未在 PyPTO-Pro 上验证**
-for the specific claim that a wrong credit count raises *no* diagnostic here;
-that is EasyASC's observation about its own prologue/epilogue, and the
-PyPTO-Pro-side check is to build a two-beat two-role rotation with a two-slot
-group on a wrapping shape and see whether anything at all complains.
 
 ## Validation status
 

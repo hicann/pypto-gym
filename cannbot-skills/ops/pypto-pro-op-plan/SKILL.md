@@ -95,9 +95,9 @@ skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 7. `properties` 只来自 SPEC、cases 或已确认环境事实。target 未指定时按默认 A5
    触发 `constraints/arch-a5.md`；已明确为非 A5 时不触发。
 
-布局、`class_id` 与完整字段合同以 [KB CONTRACT](../../pypto-pro-op-kb/CONTRACT.md) 为唯一规范，路由算法以
-[KB ROUTER](../../pypto-pro-op-kb/ROUTER.md) 和
-[`topology-map.json`](../../pypto-pro-op-kb/topology-map.json) 为唯一数据源。
+布局、`class_id` 与完整字段合同以 [KB CONTRACT](../pypto-pro-op-kb/CONTRACT.md) 为唯一规范，路由算法以
+[KB ROUTER](../pypto-pro-op-kb/ROUTER.md) 和
+[`topology-map.json`](../pypto-pro-op-kb/topology-map.json) 为唯一数据源。
 
 ### 6. 收尾自检
 

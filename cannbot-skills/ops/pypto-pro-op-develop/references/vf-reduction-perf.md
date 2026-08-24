@@ -26,7 +26,7 @@ Apply the workflow policy in this order:
    candidates: the reduce primitives are same-type and cannot widen, so a
    narrow-dtype chain whose intermediates exceed the format's range has to be
    widened by the caller. See
-   [`pypto-pro-op-kb/constraints/precision.md`](../../../pypto-pro-op-kb/constraints/precision.md).
+   [`pypto-pro-op-kb/constraints/precision.md`](../../pypto-pro-op-kb/constraints/precision.md).
    A faster candidate that returns `inf` is not a candidate.
 2. **Follow `DESIGN.md §1`.** Implement its single frozen choice. Use tile
    operations only when DESIGN cites an explicit selected-KB-template requirement.
@@ -89,7 +89,7 @@ Write the alternative out of the vector function instead:
   straight-line and neither needs a condition. The empty range is genuinely
   empty in pypto-pro: `pl.range(start, 0, step)` executing zero times is
   measured directly in
-  [`pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md`](../../../pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md).
+  [`pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md`](../../pypto-pro-op-kb/patterns/vec-tensorlist-fixed-arity.md).
 - **A zero-or-one-iteration loop replaces an `if`.** A loop bounded by
   `min(n, 1)` runs its body only when `n > 0`, costs one loop set-up, and does
   not predicate the lanes.
@@ -103,11 +103,11 @@ Write the alternative out of the vector function instead:
 ## <a id="reviewable-examples"></a>Reviewable examples
 
 - Tile-operation softmax:
-  [`pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py)
+  [`pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py`](../../pypto-pro-op-kb/examples/samples/softmax/softmax_impl.py)
 - Vector-function softmax:
-  [`pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py`](../../../pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py)
+  [`pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py`](../../pypto-pro-op-kb/examples/samples/vf_vs_tileop/vf_softmax_impl.py)
 - Other validated vector-function compositions:
-  [`pypto-pro-op-kb/examples/kernel-index.md`](../../../pypto-pro-op-kb/examples/kernel-index.md)
+  [`pypto-pro-op-kb/examples/kernel-index.md`](../../pypto-pro-op-kb/examples/kernel-index.md)
 
 These examples establish API usage only for their recorded environment. They
 are not proof that the same implementation level is fastest for another

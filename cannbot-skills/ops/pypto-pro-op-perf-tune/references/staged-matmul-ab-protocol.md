@@ -1,8 +1,9 @@
 # 分阶段 matmul A/B 证据协议
 
 一次分阶段 Cube matmul 的 A/B 比较要成立，必须满足下列每一项。把它当判据清单读，
-不是当表格填——它约束的是"这次比较能不能作为证据"，不是记录格式。
-配套的精度与性能门在知识库的「分阶段 Cube matmul gates」一页，先读那一页。
+不是当表格填——它约束的是"这次比较能不能作为证据"，不是记录格式。配套的精度与性能门在
+[分阶段 Cube matmul gates](../../pypto-pro-op-kb/references/staged-cube-matmul-gates.md)，
+先读那一页。
 
 两条贯穿全篇的规则：
 

@@ -101,19 +101,19 @@ Three cheap checks, in the order they would have caught it:
 A control that only exercises the harness — re-measuring the same variant twice
 — cannot catch this. The control has to distinguish the variants.
 
-### 1c. `precision_compare` is stricter on integers than the benchmark
+### 1c. `precision_compare` is stricter on integers than the accuracy contract
 
 The dev-side helper compares integer outputs for **exact equality**, while the
-benchmark applies the operator's `proto.yaml` tolerance — commonly `int8: 1`,
+contract applies the operator's `proto.yaml` tolerance — commonly `int8: 1`,
 i.e. every element within ±1. A kernel can therefore fail the local check and
 pass the real gate.
 
 Measured on a quantizing operator: 1281 of 262144 int8 elements differed, **all
-by exactly 1**, `max|diff| = 1`. Local check FAIL, benchmark rule PASS.
+by exactly 1**, `max|diff| = 1`. Local check FAIL, contract rule PASS.
 
 So when the local check reports an integer mismatch, get the distribution before
 changing anything — `max|diff|` and the off-by-one count. Chasing exact equality
-that the benchmark never required costs real time, and the two-step
+that the contract never required costs real time, and the two-step
 `fp32 → fp16 → int8` convert (necessary, see below) inherently produces
 off-by-one drift near rounding boundaries.
 
@@ -181,7 +181,7 @@ taking the device lock. Use it as the fast gate before every on-board run.
 **Observed.** `ValueError: no <op> class for signature []` on every case of any
 operator with more than one class.
 
-**Established.** The evaluator calls the candidate as `func(**params)` — keyword
+**Established.** The caller invokes the candidate as `func(**params)` — keyword
 arguments only, with keys taken from `signature(golden_func)`. The generated
 PyPTO-Pro dispatcher builds its lookup key from positional `args` alone, so the
 key is empty and matches nothing. Reproduced directly by reimplementing the
@@ -189,7 +189,7 @@ matcher: it returns the right class for `stock(x)` and raises for `stock(x=x)`.
 The non-Pro dispatcher in the sibling generator is correct — it falls back to
 keyword values and prefix-matches.
 
-**Cost.** The operator scores zero on routing, before any kernel runs.
+**Cost.** The operator fails on routing, before any kernel runs.
 
 **Workaround.** Emit a dispatcher that binds positional *and* keyword arguments
 against the golden's parameter order before keying, and that skips absent-or-None
@@ -302,13 +302,14 @@ Whether that matters depends on which pipes the two accesses sit on:
   MTE2→V barrier is never emitted, and the broadcast reads whatever was at the
   address before the transfer landed.
 
-Measured on DequantSwigluQuant: loading the per-token `activation_scale` into
-the row-major alias and broadcasting through the DN view corrupted 1,071,046 of
-8,388,608 elements on case 20 and produced scale errors of 1e7 relative. It is
-a *latent* failure — it only appears once a block runs more than one tile, so
-every case whose token count fit in a single tile per core passed, and a test
-set built from small shapes would have shipped it. Four of the twenty public
-cases hid it; the four that exposed it were the largest.
+Measured on a fused dequant/activation/quant kernel: loading the per-token
+`activation_scale` into the row-major alias and broadcasting through the DN view
+corrupted about an eighth of the output elements on the largest case and
+produced scale errors of 1e7 relative. It is a *latent* failure — it only
+appears once a block runs more than one tile, so every case whose token count
+fit in a single tile per core passed, and a test set built from small shapes
+would have shipped it. Only a handful of the contract cases exposed it, and
+those were the largest.
 
 **Rule.** Never DMA into an address that is read through a different tile-group
 view. Land the transfer in its own tile with its own `mutex_id`, then copy it
@@ -359,7 +360,7 @@ illegal in the cube section, so the same enum passes one half of the compile and
 fails the other.
 
 **This is narrower than it first appeared.** The auto path emits the correct
-`PIPE_FIX` for the reference kernel *and* for a full MLA kernel whose vector
+`PIPE_FIX` for the reference kernel *and* for a full staged kernel whose vector
 stage consumes the buffer with `pl.mul`. Only the DMA-consumer probe broke. So
 the rule is: **have the consuming stage touch a cross-core buffer with a vector
 op first**. If a stage only wants to forward the buffer to GM, copy it into a
@@ -413,8 +414,8 @@ groups throughout, checked against torch:
 | 4 | 56 | 7168 | 8.7e-04 |
 
 So **two slots suffice at any depth** — `auto_mutex` does order slot reuse
-against the matmul still reading it, and a 56-block contraction (which
-MlaProlog's `He = 7168` requires) is fine. Extra slots buy nothing for
+against the matmul still reading it, and a 56-block contraction (which a
+7168-wide hidden extent requires) is fine. Extra slots buy nothing for
 correctness.
 
 **This finding previously said the opposite** — that slots must be >= blocks,
@@ -501,7 +502,7 @@ leaving an architect to reason about a roofline with no numbers available. The
 right fix is not to paste constants — the platform constraints page explicitly
 forbids that, since transcribed numbers detach from the installed version — but
 to supply a tool that derives them from the installed platform file, plus the
-knowledge that no platform file contains: which SKU applies, how the scoring
+knowledge that no platform file contains: which SKU applies, how a comparison
 anchor relates to the hardware roofline, and what fraction of peak is actually
 reachable.
 
@@ -515,9 +516,9 @@ sent this operator's development down a blind alley for a full cycle: a
 reimplemented checker reported **0/20** on kernels whose real verdict was mixed,
 and it did so by being wrong in four independent ways at once.
 
-Measured against `src/kernel_eval/utils/compare.py` (identical on the A5 box and
-in the local checkout; the box's copy simply predates the normal-region
-relaxation and is therefore the stricter of the two):
+Measured against the configured comparator (identical on the A5 box and in the
+local checkout; the box's copy simply predates the normal-region relaxation and
+is therefore the stricter of the two):
 
 | what | the real rule | what a plausible paraphrase gets wrong |
 |---|---|---|
@@ -543,10 +544,11 @@ to a local approximation reintroduces exactly the bug it is meant to prevent.
 
 ### 22. A bf16 GM intermediate is not a free choice in a multi-matmul chain
 
-MlaProlog's golden upcasts every input to fp32, carries the whole chain in fp32,
-and rounds only its four outputs. A kernel that instead rounds each GM
-intermediate to bf16 — the obvious tiling, and the one this operator shipped
-first — fails every case on `query` and `query_rope`.
+Consider a golden that upcasts every input to fp32, carries the whole chain in
+fp32, and rounds only its final outputs. A kernel that instead rounds each GM
+intermediate to bf16 — the obvious tiling, and the one commonly reached for
+first — fails every case on the outputs fed by the longest accumulation
+chain.
 
 The mechanism is not accumulated relative error, which stays near `2e-3` and
 would pass. It is that `query` is a 128-term signed sum, so its elements are
@@ -590,7 +592,7 @@ widen to fp32.
 
 **The cheap way to find this:** the whole table above was produced on a laptop
 with no NPU, by replaying the kernel's dataflow in torch with `store` and
-`terms` as parameters and grading with the bench's own comparator. A precision
+`terms` as parameters and checking with the configured comparator. A precision
 plan is settleable offline; only the kernel that implements it needs hardware.
 
 ### 23. Vector-kernel throughput is set by DMA granularity and task striding
@@ -643,8 +645,8 @@ contraction pairwise. For a 7168-deep contraction (N = 56) that is a ~3x gap,
 and on an operator whose graded outputs include catastrophically cancelled
 near-zeros it is the difference between passing and failing.
 
-Measured on MlaProlog's first projection, decomposing `qr`'s absolute error by
-substituting each stage with its exact value:
+Measured on the first projection of a staged multi-matmul chain, decomposing
+one output's absolute error by substituting each stage with its exact value:
 
 | contribution | 1 accumulator | 4 accumulators | CPU |
 |---|---|---|---|
@@ -658,7 +660,7 @@ and recombine them **pairwise** in the consumer: `(p0+p1) + (p2+p3)` keeps both
 intermediates at half scale so only the final addition rounds at full scale.
 Four `[64, 128]` fp32 accumulators cost 128 KB of the 256 KB L0C, and the extra
 GM traffic was ~19 MB against 122 MB of weights -- runtime did not move.
-17/20 -> 19/20, operator score 57.96 -> 61.84.
+17/20 -> 19/20 correct.
 
 Practical notes: unroll the K loop by the accumulator count rather than
 branching on `k % 4`, so the Partial/Final phase conditions stay simple (`q == 0`
@@ -702,9 +704,8 @@ Read them under these conditions:
 
 ## Consolidated DSL limitations — the four-operator sweep (2026-08)
 
-One pass across four CANN Bench operators built in this DSL on
-Ascend950PR_9579 (CANN 9.2.0, bisheng 15.0.5): `foreach_addcdiv_scalar`,
-`swi_glu`, `apply_rotary_pos_emb`, `cummin`. The upstream-facing report with
+One pass across four operators built in this DSL on
+Ascend950PR_9579 (CANN 9.2.0, bisheng 15.0.5). The upstream-facing report with
 full text and citations for every entry is
 [`docs/pypto-pro-dsl-limitations.md`](../../../../docs/pypto-pro-dsl-limitations.md).
 Per-operator `FRAMEWORK_FINDINGS.md` numbering collides from #22 up across
@@ -733,9 +734,9 @@ below is the superseding record.
   [patterns/vec-scan-prefix-dependent.md](../patterns/vec-scan-prefix-dependent.md).
 - **`vf.*` is three-address only** — the assignment-form rule under #1f
   above.
-- **The build cache keys on `co_name`** — #1g above for the collision
-  direction; the stale-binary converse is a listed trap in
-  [playbooks/benchmark-scoring.md](../playbooks/benchmark-scoring.md).
+- **The build cache keys on `co_name`** — #1g above for both directions: the
+  collision, and the stale-binary converse where an edited body under an
+  unchanged name is served the previous binary.
 - **UB ordering hazards inside a vector function** — store-then-reload under
   #1f above; cross-call scatter ordering in
   [patterns/vec-scatter-owner-model.md](../patterns/vec-scatter-owner-model.md)
@@ -780,18 +781,18 @@ below is the superseding record.
   `min`, `max`, `data`.
 - **A module-level Python `float("inf")` constant renders as the undeclared
   C++ identifier `inff`** — bisheng fails with `use of undeclared identifier
-  'inff'` in the generated `kernel.cpp` (cummin `cummin_agg_float32`,
-  2026-08-06). Treat any non-finite module-level float constant consumed
+  'inff'` in the generated `kernel.cpp` (observed 2026-08-06 in a scan
+  aggregation kernel). Treat any non-finite module-level float constant consumed
   inside a jit body as a compile risk; check the generated source.
 - **Two caveats on hoisting `vf.update_mask`** (the lever itself is in the
   alignment page above): the tail loop must be its **own pass** over rows —
   nesting it inside the main loop cost 1.65x on empty tails — and one hoisted
-  variant (`rope_bcast_interleaved_float32`) **faults the device and poisons
+  variant of a broadcast-interleave body **faults the device and poisons
   the NPU context**, failing later cases in
   `copy_between_host_and_device_opapi`; root cause unestablished. Keep a
   non-hoisted fallback in reach.
 
-### The four upstream asks (cummin branch, near-verbatim)
+### The four upstream asks (near-verbatim)
 
 1. Expose a register-level lane shift (vslide-style) — the substantive ask;
    everything else is papercuts around it.
@@ -802,7 +803,7 @@ below is the superseding record.
 4. Move the unaligned entry points next to the aligned ones, or
    cross-reference them.
 
-## rms_norm session findings (2026-08-06, bench/rms_norm-a5)
+## Row-reduce/normalization session findings (2026-08-06)
 
 Identified by title, per the numbering-collision rule above.
 
@@ -814,8 +815,9 @@ Identified by title, per the numbering-collision rule above.
   to. Bounds the earlier "`CAST_RINT` *is* half-to-even" finding to the
   tile-op `pl.cast` path. vf kernels narrow with `CAST_ROUND` (half-away);
   vs a torch-RNE golden that measured 1 ulp on a sub-percent of elements,
-  10x inside the bench gate. Keep the mode a one-line switch.
-  (`docs/pypto-pro-dsl-limitations.md` entry 20 has the full probe record.)
+  10x inside the accuracy gate. Keep the mode a one-line switch.
+  (`docs/pypto-pro-dsl-limitations.md` entry **II-20** has the full probe
+  record; the report carries two entries numbered 20, one per part.)
 - **`section_vector` launch width must come from `vector_core_num`, not
   `core_num`.** `get_platform_info()` on Ascend950PR_9579 reports
   `core_num=28, vector_core_num=56`; the launch dimension of a
@@ -877,7 +879,7 @@ the entry says so. The upstream-facing subset, severity-ordered, is
   `torch.zeros(dtype=torch.uint32/uint64, device=npu)` fails inside `zero_`
   (`ZerosLikeKernelNpuOpApi.cpp:26`, error 161002), so a uint64 **device**
   tensor cannot be constructed to begin with. Route 64-bit index work through
-  two 32-bit words (see the `vf.interleave` workaround under entry 14 of the
+  two 32-bit words (see the `vf.interleave` workaround under the four-operator report's gather/scatter index-register typing entry of the
   consolidated section).
 
 - **The AIV block id is the raw `0..N-1`, and each block observes
@@ -940,13 +942,18 @@ the entry says so. The upstream-facing subset, severity-ordered, is
   apart" returns every other element. Consistent with the official sample at
   `test_quant_lightning_indexer_vf.py:193-196`.
 
+- **`CastLayout` 声明四个成员，不是两个。** 已安装的 Python API 是权威：`vf.astype`
+  的 docstring（本 checkout 的 `pypto_pro/language/_vf_api.py:655`）列出四个位置，
+  而 `astype.md` 只描述两个。跨 4 倍位宽比的转换（b32↔b8、bf16↔fp4 等）要预期**指名
+  layout**、并预期**四个位置存在**；按两成员的读法写，会取到错误的半边。
+
 - **Index primitives bind the index width to the data width.** The NORM tables
   in `scatter.md` / `gather.md`: b16 data accepts **only** UINT16 indices;
   INT32/UINT32/FP32 take UINT32; INT64/UINT64 take UINT32 or UINT64. The
   corollary that bites: a b16 source needs UINT16 offsets, and **there is no
   `vf` path that constructs them** — `vf.muls` has no 16-bit row and
   `vf.astype` has no b32→u16 narrowing row. **So a b16 indexed pipeline has to
-  run at 32 bits end to end.** This refines entry 14 of the consolidated
+  run at 32 bits end to end.** This refines the four-operator report's gather/scatter index-register typing entry of the consolidated
   section ("gather/scatter type the index register from the data dtype"),
   which gives the int8/int64 routes; the b16 case has no route, only the
   32-bit reroute.
@@ -1083,65 +1090,91 @@ Not PyPTO-Pro issues — ours. Both were reproduced on this branch.
   `compile`), but changing the SPEC-parsing contract is a behaviour change and
   is left for a decision rather than made here.
 
-## EasyASC cross-port session findings (2026-08-07)
+## A5 attention is vector-issue bound, and small shapes have a fixed-cost floor
 
-Identified by title, per the numbering-collision rule above. **Scope:** these came
-out of porting a sibling Ascend DSL's knowledge base (EasyASC) onto this one. The
-port itself is inventoried in
-[`easyasc-port-ledger.md`](easyasc-port-ledger.md); only the entries below are
-statements about **PyPTO-Pro**, each established by reading the installed source
-in this checkout. Cross-DSL assertions that were *not* verified here live on the
-pages that carry them, marked as assumptions.
+Measured on `Ascend950PR_9579` (28 cube / 56 vector), CANN 9.2.0, npu3, with
+`torch_npu.profiler` PipeUtilization over 7 shapes × 2 builds. Every ratio below
+is measured; the models built on them are labelled as such.
 
-### `CastLayout` has four members, not two — `TWO` and `THREE` are in the source and in no document
-
-This KB records that "`CastLayout.ZERO` / `ONE` select even / odd lanes, not the
-low / high half-register" (A5 probe session, above), and the installed
-documentation agrees with that pair: `CastLayout.ZERO` and `CastLayout.ONE` are
-the only members appearing anywhere under
-`$PYPTO_DEVKIT_DIR/docs/pypto_pro/`.
-
-**The installed Python API declares four.** `vf.astype`'s docstring, at
-`pypto_pro/language/_vf_api.py:655` in this checkout:
+### A5 attention is vector-issue bound, not traffic bound
 
 ```
-layout: ``pl.CastLayout.ZERO`` (default) / ``ONE`` / ``TWO`` / ``THREE``
+aiv_time == kernel duration in all 7 shapes (within 0.1%)
+aiv_vec_ratio   0.51-0.86   (prefill 0.80-0.86)
+aic_mac_ratio   0.08-0.18   <- the Cube MAC is 82-92% IDLE
+aiv_mte2_ratio  0.05-0.34,  aic_mte2_ratio 0.28-0.43
 ```
 
-The two-member reading is not wrong, it is **incomplete, and incomplete in a way
-that matters for width ratios above 2**. `ZERO`/`ONE` selecting even/odd lanes is
-the 2:1 case — one selector per destination position inside a source lane. A 4:1
-narrowing has four such positions, and `TWO`/`THREE` are what addresses the other
-two.
+The critical path is the vector core in every shape, and GM traffic never binds.
+**Consequence for design work:** a candidate justified by "it reduces GM bytes"
+is aimed at an idle resource. Two such candidates were modelled at 2.04x and
+1.45x and would have delivered nothing. Reach for a pipe-utilisation profile
+*before* adjudicating attention-scheduling candidates on a traffic model — the
+adjudication inherits whatever the model measures, and DESIGN-time traffic
+arithmetic looks equally rigorous whether or not traffic is the constraint.
 
-**How this was found, because the route generalises.** EasyASC's
-`constraints/a5.md` §6.1 records that on C310 (the same die) a BF16→FP4 register
-cast **requires** one of `RegLayout.ZERO/ONE/TWO/THREE` and rejects `UNKNOWN`,
-because the underlying `vcvt` demands one of `P0..P3` — four positions for a 4:1
-width ratio. That is a claim about the *instruction*, so it predicted that any DSL
-reaching the same `vcvt` must expose four selectors. Checking this DSL's installed
-source confirmed the prediction.
+Corollary: `pl.move(Acc->Vec)` uses fixpipe too, so relocating an intermediate
+from GM to UB does not reduce fixpipe bytes — and fixpipe measured 0.90/0.93 on
+two prefill shapes.
 
-**Rule.** When a `vf.astype` spans a width ratio of 4 (b32↔b8, bf16↔fp4 — and
-PyPTO-Pro does declare `DT_FP4`, `DT_INT4`, `DT_UINT4`), expect to name a layout
-and expect four positions to exist. Do not conclude from `astype.md` that only two
-do. This is the same trap as the dtype table: **the documentation under-reports
-this API's enums as well as its dtypes** — a second instance of the pattern
-recorded in
-[investigation-discipline §11](investigation-discipline.md).
+### Small shapes carry a fixed cost that no kernel-side optimisation can reach
 
-**What is *not* established.** That `TWO`/`THREE` compile, lower correctly, or
-have the interleaved (rather than half-register) meaning that `ZERO`/`ONE` were
-measured to have. Only their declaration is established. Two further EasyASC
-claims about the same cast are carried nowhere else and are unverified here: that
-the cast mask follows the **wider** element width (so a BF16↔FP4 cast masks at 128
-BF16 lanes, not at the FP4 lane count), and that this silicon **preserves signed
-zero** into FP4 — a negative input rounding to zero emits nibble `0x8`, not `0x0`.
-Both are cheap to check on a first fp4 kernel and neither should be assumed before
-then.
+On the tiny decode shape, `aiv_scalar` alone is **4.08 us against a 1.22 us
+hardware limit**. Tiling parse, `make_tensor` stride construction,
+regime/layout branching and loop setup cost 3-5x the entire hardware limit
+*before any arithmetic runs*.
 
-The same docstring also enumerates eight round modes — `CAST_ROUND` (default),
-`CAST_RINT`, `CAST_FLOOR`, `CAST_CEIL`, `CAST_TRUNC`, `CAST_RNA`, `CAST_ODD`,
-`CAST_HYBRID` — which is worth knowing beside the measured finding that
-`CAST_RINT` fails to lower on 950PR toolchains (rms_norm session, above): the
-failure is one mode's lowering, not a two-mode surface.
+The consequence is a hard ceiling on achievable speedup:
+`t_hw / aiv_scalar = 0.299` on such a case, i.e. **<= 3.34x, even with every
+vector instruction deleted** (`1 / 0.299`, and `4.08 / 1.22` independently). Shapes whose `t_hw` is around 1 us are therefore
+structurally unimprovable, and a workload weighted toward them has a ceiling set
+by launch overhead, not by kernel quality. Establish this ratio early — it
+decides whether a perf deficit is addressable at all, and it is one profile
+away.
+
+**How the fixed cost was distinguished from per-iteration cost** — the general
+method, worth reusing: tabulate ns per loop-iteration across a wide range of
+iteration counts. A per-iteration cost holds it roughly constant; a fixed cost
+makes it fall monotonically.
+
+| shape | loop iters/item | x wpc | `aiv_scalar` us | **ns/loop-iter** |
+|---|---:|---:|---:|---:|
+| tiny | 768 | 1 | 4.08 | **5.315** |
+| small | 4,608 | 1 | 5.76 | 1.250 |
+| medium | 4,607 | 10 | 7.16 | 0.155 |
+| large | 4,608 | 18 | 12.64 | 0.152 |
+
+Monotone across 35x ⇒ fixed. This refuted an attribution of `aiv_scalar 0.26`
+to per-KV-column overhead **using the same profile that produced it**, and with
+it a proposed optimisation aimed at the wrong term.
+
+### Wall clock is not device time on A5, and the sign can differ
+
+Eager-mode launch carries a ~4 ms host floor that device-time measurement
+excludes. Measured on the same 7 shapes: **wall-clock A/B was below 1.0 on four
+shapes while device A/B was >= 1.0 on all seven** — the two disagree in
+*direction*, not merely magnitude. One shape was 15.7 us device against 4.5 ms
+wall. Never quote a wall-clock ratio as a device-time prediction, and treat an
+apparent wall-clock regression on small shapes as a host artefact until device
+time says otherwise. A previously open "+1.0 ms prefill regression" was closed
+this way — it was host-side and invisible to device time.
+
+Calibration point for translating a wall-clock gain into a device-time one: a
+decode change measuring 4.2-4.7x wall clock moved device time by **1.87x**.
+
+### A traffic model and an instruction model disagree by 25 points of realization
+
+The one change with both a model and a measurement was a causal KV-tile loop
+bound. Scored against two models:
+
+| case | measured | instruction-count model | column-count model |
+|---|---:|---:|---:|
+| A | 1.081 | 1.100 → **0.983** | 1.333 → 0.811 |
+| B | 1.219 | 1.263 → **0.965** | 1.600 → 0.762 |
+| C | 1.420 | 1.459 → **0.973** | 1.778 → 0.799 |
+
+The column-count model was not "80% realized" — it was counting the wrong
+quantity. **Calibrate a model against the one change that has both a prediction
+and a measurement before using it to adjudicate anything**, and prefer the model
+whose realization factor is near 1.0. A model at 0.79 is usually mis-specified
+rather than pessimistic.

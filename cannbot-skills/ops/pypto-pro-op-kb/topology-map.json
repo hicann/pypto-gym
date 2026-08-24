@@ -77,6 +77,7 @@
     "quantized-matmul": {
       "patterns": [
         "patterns/quant-matmul-scaled-mm.md",
+        "patterns/cv-quant-matmul-direct-epilogue.md",
         "patterns/cube-only.md",
         "patterns/batched-2d-contraction.md"
       ],
@@ -84,7 +85,7 @@
         "constraints/precision.md",
         "constraints/memory-layout.md"
       ],
-      "note": "Integer contraction with explicit scale, rounding and clamping semantics. It inherits cube tile geometry and L0/L1 budgeting from cube-matmul because quantization modifies a contraction rather than defining an unrelated computation topology."
+      "note": "Integer contraction. The epilogue is either an explicitly scaled/rounded/clamped integer output or a direct floating-point epilogue; the two have different formula oracles, so select the pattern by the epilogue the operator actually has. It inherits cube tile geometry and L0/L1 budgeting from cube-matmul because quantization modifies a contraction rather than defining an unrelated computation topology."
     },
     "multi-phase-fusion": {
       "patterns": [
@@ -130,39 +131,60 @@
   "property_modifiers": {
     "tail_blocks": {
       "patterns": [],
-      "constraints": ["constraints/tail-validshape.md"]
+      "constraints": [
+        "constraints/tail-validshape.md"
+      ]
     },
     "unaligned_shapes": {
       "patterns": [],
-      "constraints": ["constraints/tail-validshape.md", "constraints/memory-layout.md"]
+      "constraints": [
+        "constraints/tail-validshape.md",
+        "constraints/memory-layout.md"
+      ]
     },
     "mixed_precision": {
       "patterns": [],
-      "constraints": ["constraints/precision.md", "constraints/vec-mask-width.md"]
+      "constraints": [
+        "constraints/precision.md",
+        "constraints/vec-mask-width.md"
+      ]
     },
     "index_dtypes": {
       "patterns": [],
-      "constraints": ["constraints/precision.md"]
+      "constraints": [
+        "constraints/precision.md"
+      ]
     },
     "long_axis": {
       "patterns": [],
-      "constraints": ["constraints/tiling.md"]
+      "constraints": [
+        "constraints/tiling.md"
+      ]
     },
     "dynamic_dims": {
       "patterns": [],
-      "constraints": ["constraints/tail-validshape.md"]
+      "constraints": [
+        "constraints/tail-validshape.md"
+      ]
     },
     "is_list": {
-      "patterns": ["patterns/vec-tensorlist-fixed-arity.md"],
+      "patterns": [
+        "patterns/vec-tensorlist-fixed-arity.md"
+      ],
       "constraints": []
     }
   },
   "target_gated": {
-    "constraints/arch-a5.md": "Load when runtime/build configuration selects A5, or when no target is specified and the workflow default A5 applies."
+    "constraints/arch-a5.md": "Load when runtime/build configuration selects A5, or when no target is specified and the workflow default A5 applies.",
+    "patterns/cv-quant-matmul-direct-epilogue.md": "A5 only. Load only after target detection selects A5. The page freezes A5 memory capacities, event mapping and width gates, so a non-A5 planner routed here by operator class alone would take A5 constants as general."
   },
   "mandatory_constraints": {
     "constraints/wrapper-boundary.md": {
-      "applies_to": ["architect", "coder", "verifier"],
+      "applies_to": [
+        "architect",
+        "coder",
+        "verifier"
+      ],
       "reason": "Applies to every class regardless of topology. The public callable must not dispatch host-side tensor kernels around the single PyPTO-Pro kernel launch."
     }
   }

@@ -1,8 +1,8 @@
 # Converting a mask between element widths
 
-A `MaskReg` can be converted to a different element width in **one instruction**. Two operators
-independently concluded it could not be, and between them that cost roughly **+8 OperatorScore**
-and several development rounds. This page exists because the capability is real but undiscoverable
+A `MaskReg` can be converted to a different element width in **one instruction**. Two separate
+efforts independently concluded it could not be, and between them that cost several development
+rounds of avoidable work. This page exists because the capability is real but undiscoverable
 from the place you would look for it.
 
 ## Why it is missed
@@ -70,19 +70,18 @@ Two details worth copying, both non-obvious: the destinations are pre-declared a
 | `interleave`/`de_interleave` take MaskRegs; `dtype` selects `pintlv/pdintlv_b8/16/32` | **documented** (`_vf_api.py:687,1312`; `de_interleave.md:31,111`) |
 | `dst0` = lower part, `dst1` = higher part | **documented figure + numeric golden** (`test_vf_basic_ops.py:3865-3867` round-trips and recovers both 64-lane inputs) |
 | **narrowing** b32 → b16 | **sample-backed, shipped** |
-| **widening** b16 → b32 | **measured on device** — `cummin/probe/probe_mask.py`, 128/128 lanes correct with `dtype=pl.DT_UINT16`; `dtype=pl.DT_UINT32` is wrong on 32/128, confirming `dtype=` names the *finer* width |
+| **widening** b16 → b32 | **measured on device** — a retained lane-mask probe, 128/128 lanes correct with `dtype=pl.DT_UINT16`; `dtype=pl.DT_UINT32` is wrong on 32/128, confirming `dtype=` names the *finer* width |
 | b32 ↔ b8 in three ops | **derived only** |
 
 ## It working does not mean it pays
 
-`cummin` verified the widening on device, built its native fp16/bf16 path on it, got a **correct**
-kernel (253/253) — and measured it **slower on all four target cases** (0.322 → 0.245, 0.530 →
-0.480, 0.377 → 0.368, 0.322 → 0.314). Reverted.
+One effort verified the widening on device, built a native fp16/bf16 path on it, got a **correct**
+kernel — and measured it **slower on every target case it was meant to help**. Reverted.
 
-The projected gain had been **+5.8 OperatorScore across 11 of 16 cases**, carried for three rounds.
-It was void, and it was **its own earlier fix that voided it**: a round before, `cummin` found the
-narrow-dtype penalty was mostly a UB bank conflict on the *work tile's* pitch rather than the fp32
-round trip, and fixing the pitch collected that value. What remained of the round trip costs less
+A substantial gain had been projected for it and carried for several rounds. It was void, and it
+was **that effort's own earlier fix that voided it**: a round before, it had found the narrow-dtype
+penalty was mostly a UB bank conflict on the *work tile's* pitch rather than the fp32 round trip,
+and fixing the pitch had already collected that value. What remained of the round trip costs less
 than two `vf.interleave` calls plus doubled index-register traffic — the native step is 20 vector
 ops per 128 elements against 26-plus-a-cast, and still measures 1.18–1.44× worse.
 

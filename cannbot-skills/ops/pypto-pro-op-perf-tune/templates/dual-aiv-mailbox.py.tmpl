@@ -134,8 +134,9 @@ with pl.section_vector():
 # This closure does not allow tokens to cross sync_all(MIX), and `bar_all()` is
 # not a replacement for MIX.  A real gate must exercise per-core depths just
 # below and at the observed failure threshold, the production uneven owner
-# distribution, and the maximum dynamic task count.  MlaProlog needed depths
-# 3, 4, uneven 4/5, and dynamic 36/37 (1024 tasks over 28 cores).
+# distribution, and the maximum dynamic task count.  One staged kernel needed
+# depths 3 and 4, an uneven 4/5 split, and a dynamic 36/37 split (its task count
+# over its core count) before the gate was trustworthy.
 
 # DUAL-RING AMORTIZATION (optional, after the one-ring protocol is proved):
 #

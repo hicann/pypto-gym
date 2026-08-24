@@ -127,7 +127,8 @@ elements whose true value happens to land near zero then carry enormous relative
 error. Worse, that same absolute error pushes `|output|` past the cancel-region
 threshold, so those elements do not even qualify for the cancel region's
 CPU comparison — they land in the normal region, which must have zero
-exceedances. Measured on MlaProlog: ~0.1 absolute error on `query`, ~77 elements
+exceedances. Measured on a staged multi-matmul chain: ~0.1 absolute error on one
+output, ~77 elements
 per case, every case failing.
 
 Two rules follow, and they are separate:
@@ -167,7 +168,7 @@ them **pairwise** in the consumer — `(p0+p1) + (p2+p3)` keeps both intermediat
 at half scale so only the final addition rounds at full scale. Four `[64, 128]`
 fp32 accumulators cost 128 KB of a 256 KB L0C.
 
-Measured on MlaProlog's first projection: the inherited error fell 3.51e-6 →
+Measured on the first projection of such a chain: the inherited error fell 3.51e-6 →
 1.68e-6 (2.09x), bringing the chain to parity with the CPU reference
 (2.76e-6 vs 2.74e-6) at **unchanged runtime** — the extra GM traffic was ~19 MB
 against 122 MB of weights. 17/20 → 19/20.
@@ -213,8 +214,8 @@ Consequences that change design decisions:
 - **The cheap pre-board check** is to replay the kernel's exact arithmetic on CPU
   against a higher-precision golden and count threshold exceedances per region,
   next to the same counts for the reference. That ratio is what the gate compares.
-  `tools/precision_oracle.py` does this, including the deterministic input
-  generation.
+  A CPU-side oracle that replays the accuracy gate does this, including
+  the deterministic input generation.
 
 ### Integer outputs are not covered by any of that
 

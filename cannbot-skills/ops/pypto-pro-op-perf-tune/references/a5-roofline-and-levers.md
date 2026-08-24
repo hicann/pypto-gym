@@ -197,7 +197,8 @@ the transfer size you want.
 
 **3. Fold the inner dimension into the task index.** The same kernel strided its
 outer loop over rows with an inner loop over column tiles. At `M = 1` — the
-decode shape, and 8 of 20 cases — that is one row, so one core did everything
+decode shape, and a large share of any decode-heavy set — that is one row, so
+one core did everything
 and 31 idled. Striding over `(row, column_tile)` pairs fixes it with no change to
 the body. Whenever the outer dimension can be small, fold the inner one in.
 
@@ -245,7 +246,7 @@ and stop, rather than continuing to tune.
 ## Scope of retained examples
 
 The KB's
-[BF16 operand-reuse implementation](../../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
+[BF16 operand-reuse implementation](../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
 demonstrates one reuse topology and embeds a correctness test. It does not prove
 that an operator is cube-bound or that the topology is faster on another shape
 or target. Profile the current kernel.

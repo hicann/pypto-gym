@@ -39,10 +39,9 @@ Eight fp32 rows is exactly 32 bytes.
 reduction tile `[roundup(TR, 8), 1]` and narrow it with `pl.set_validshape`. That satisfies the
 assertion while leaving the effective `TR` free, including 1.
 
-Two operators reached this independently and it is the remedy both landed on:
-`rms_norm` verified identical fp32 rounding at effective `TR` = 1, 2, 3, 4, 8, 16; `softmax`
-declared `[8, 1]` and narrowed, which took every public last-axis case from a two-pass kernel
-to single-pass. Original observation held at `TR = 16` (N=256) and `TR = 8` (N=1024).
+Two operators reached this independently and it is the remedy both landed on: one verified
+identical fp32 rounding at effective `TR` = 1, 2, 3, 4, 8, 16; the other declared `[8, 1]` and
+narrowed, which took every last-axis case from a two-pass kernel to single-pass. Original observation held at `TR = 16` (N=256) and `TR = 8` (N=1024).
 
 > **Corrected.** This page first said to "reduce the buffer count rather than dropping TR
 > below 8". That advice is wrong and was propagated before it was tested: at a long
@@ -148,22 +147,22 @@ used for, and getting this wrong corrupts results silently.**
 this page. `load_align` moves a whole register, so with a non-64-multiple width the extra
 lanes run off the tile and fault at `507035` instead of computing harmless garbage.
 
-**Measured**, swi_glu on Ascend950PR_9579, same body, two separately `stamped()` names in
+**Measured** on Ascend950PR_9579, one elementwise body, two separately `stamped()` names in
 one module so neither could be served the other's binary:
 
-| case | shape, dtype | per-register mask | hoisted | ratio |
-|---|---|---|---|---|
-| 3 | 4096x8192 bf16 | 91.06 us | 14.01 us | **6.5x** |
-| 18 | 2x1023x4096 fp32 | 19.87 us | 3.85 us | 5.2x |
-| 15 | 512x4096 fp32 | 6.58 us | 1.50 us | 4.4x |
-| 11 | 3x7x13x1018 fp32 | 2.52 us | 0.93 us | 2.7x |
-| 8 | 1538x1537 fp32, dim 0 | 8.36 us | 3.50 us | 2.4x |
-| 5 | 2039x65520 fp32 | 655.86 us | 649.88 us | 1.01x |
+| shape, dtype | per-register mask | hoisted | ratio |
+|---|---|---|---|
+| 4096x8192 bf16 | 91.06 us | 14.01 us | **6.5x** |
+| 2x1023x4096 fp32 | 19.87 us | 3.85 us | 5.2x |
+| 512x4096 fp32 | 6.58 us | 1.50 us | 4.4x |
+| 3x7x13x1018 fp32 | 2.52 us | 0.93 us | 2.7x |
+| 1538x1537 fp32, dim 0 | 8.36 us | 3.50 us | 2.4x |
+| 2039x65520 fp32 | 655.86 us | 649.88 us | 1.01x |
 
 **The gain scales with how far the kernel is from the DRAM roof, which is why it is easy to
-dismiss.** Case 5 moves 801 MB and is bandwidth-bound at 1.23 TB/s, so the mask costs it 1%;
-every case that fits cache pays the full 2.4–6.5x. A kernel tuned only on its largest case
-will conclude the mask is free. cummin measured this lever at 28% on a scan body of ~20 ops;
+dismiss.** The largest row moves 801 MB and is bandwidth-bound at 1.23 TB/s, so the mask costs
+it 1%; every shape that fits cache pays the full 2.4–6.5x. A kernel tuned only on its largest
+case will conclude the mask is free. A scan body of ~20 ops measured this lever at 28%;
 on a 4-op elementwise body the same fix is worth an order of magnitude more, because the
 overhead is fixed per register and the body it is amortised over is not.
 
@@ -171,7 +170,7 @@ overhead is fixed per register and the body it is amortised over is not.
 only stored — see the criterion above; if it takes part in addressing, keep the tail
 regardless of what these numbers say). An explicitly masked tail register (hoisted mask for
 the full registers, one `update_mask` for the remainder) measured within noise of the no-tail
-form — 3.65 vs 3.85 us on case 18, 1.54 vs 1.50 on case 15 — **so keeping the tail costs
+form — 3.65 vs 3.85 us on the 2x1023x4096 shape, 1.54 vs 1.50 on 512x4096 — **so keeping the tail costs
 essentially nothing.** These numbers were once written as "the tail path buys nothing and
 costs a branch", which read as an argument for removing it; measured, it is an argument that
 removing it is not worth the risk.
@@ -185,11 +184,9 @@ fast kernel. Board-only, ~30% in the originating case.
 
 **Cause.** UB is banked, on the store path as on the load path. The *gather*-side rule and
 its pypto-pro measurements (stride 64 = 51.0 µs vs 65 = 7.0 µs) are in
-[vec-scan-prefix-dependent.md](../patterns/vec-scan-prefix-dependent.md); the store side
-was measured under EasyASC on the same silicon: padding an NZ fractal-row store stride from
-64 to 65 rows took the kernel from **167.67 µs to 128.05 µs**, with the pad row excluded on
-the copy that publishes the tile onward (the publishing copy takes a separate source
-stride, so the downstream tile stays compact).
+[vec-scan-prefix-dependent.md](../patterns/vec-scan-prefix-dependent.md). The store
+side has not been measured here; treat it as the same bank behaviour and probe it
+before relying on a particular stride.
 
 **Rule.** The same pitch rule as the gather side, applied to the tile a scatter/strided
 store writes into: make the row pitch an **odd multiple of 32 bytes** — a tile row must be
@@ -198,10 +195,20 @@ the tool here — and exclude the pad at the publishing copy via the valid windo
 than carrying it onward. Board-validate the timing of any NZ / strided UB store; this
 class is invisible to flat-UB simulation.
 
+## 分发模式的 store 会写整个寄存器，有没有 mask 都一样
+
+**掩码不缩小写入范围。** 一次 masked distribution store 目标的 scratch，必须按
+**整个寄存器 256 字节**分配，而不是按活跃 lane 数分配。
+
+这条给 `references/pypto-pro-dsl-limitations-a5.md` 里那条 workaround 定尺——
+「不要依赖 `INTLV_B32` 的 predicate；先把数据 mask 掉再 store，或者不带 mask 存进
+scratch 再显式合并」。按活跃 lane 数给 scratch 定尺，store 会越过末尾写入相邻 UB tile，
+而症状出现在**另一个** tile 上，定位方向天然是错的。
+
 ## A masked *continuous* store may round its active lanes up to a whole 32-byte block
 
-EasyASC board measurement on the same silicon; **unverified for `vf.store_align` — treat
-as a hypothesis and run the probe below before relying on either behavior.**
+**Unverified for `vf.store_align` — treat as a hypothesis and run the probe below
+before relying on either behavior.**
 
 A masked continuous store rounded its active lane count up to a whole 32-byte block
 (`align8(n)` lanes at b32), so the spill lands past the active lanes. That is harmless
@@ -226,10 +233,9 @@ and reversing the call order flips which shape "works". `k.__name__ = ...` does 
 `co_name` is fixed at `def` — and `exec` breaks `inspect.getsource`. Code-generate each kernel
 to a real file under a unique `def` name.
 
-Use a source-derived unique kernel name; see "Stale binary under an unchanged kernel name" in
-[benchmark-scoring.md](../playbooks/benchmark-scoring.md) for the quieter converse, where an
-edited body under an unchanged name is served a *stale* binary and the run comes back
-byte-identical. (This pointer previously named a per-operator findings file that is not in this
+Use a source-derived unique kernel name; see [the build-directory finding](../references/pypto-pro-framework-findings.md)
+for the quieter converse, where an edited body under an unchanged name is served a *stale*
+binary and the run comes back byte-identical. (This pointer previously named a per-operator findings file that is not in this
 repo, cited by an entry number -- which this KB's own convention forbids, because the numbering
 collides across operator trees. Cite in-repo pages by title.) The diagnostic is worth
 keeping: **an unchanged module-level reference kernel passing at the same shape where a
@@ -240,79 +246,3 @@ One myth was busted in the same investigation and should not be reintroduced: `i
 out-of-bounds access, misattributed.
 
 ---
-
-## Per-token scalar staging wants one whole 32-byte row per token
-
-**Cross-DSL: EasyASC board measurement on Ascend 950. 未在 PyPTO-Pro 上验证——由
-EasyASC 移植的假设 (unverified on PyPTO-Pro).** It does **not** override the
-PyPTO-Pro measurement it sits next to; read that one first.
-
-**What this KB already measured, and which stays authoritative.** An FP16
-scalar-Tensor store is not safe at a 32-byte ownership boundary — accuracy 0.90
-overall and 0.90625 at `block_dim=32`, while **64 B and 128 B boundaries were
-exact** and a whole-tile `pl.store` was exact at all three
-([framework-findings, A5 probe session](../references/pypto-pro-framework-findings.md)).
-The conclusion there is: prefer the beat-complete tile store.
-
-**What EasyASC adds, from the staging side rather than the store side.** Its
-`constraints/a5.md` §12 reports that repeatedly moving *one scalar per token*
-between GM and UB — `m > 1`, `n == 1` — into a compact `[1, L]` or `[L, 1]` UB
-layout **can misaddress later rows on hardware while its Python simulator
-passes**. Its prescription is to give each token one physical 32-byte UB row and
-use only the first element of it:
-
-```
-scalar_ub : [L, C0]          # C0 = 32 B / sizeof(dtype); 16 for bf16, 8 for fp32
-                             # logical slice stays [L, 1]; the backing stays [L, C0]
-```
-
-EasyASC is explicit that this is a **burst-pitch** requirement — a property of the
-repeated one-element transfer — and *not* a general ban on unaligned scalar
-addressing, which it says is fine for an isolated access.
-
-**Why it is worth carrying.** It is the same 32-byte quantum as the measured
-PyPTO-Pro finding above, reached from a different direction (staging pitch rather
-than concurrent-store ownership), by a different DSL, on the same silicon. Two
-independent arrivals at "give the scalar a whole beat" is the kind of agreement
-that should raise your prior before you spend a board session. It also predicts
-something the PyPTO-Pro measurement did not test: that the hazard survives even
-with a single writer, because it is about burst addressing rather than about two
-cores sharing a beat.
-
-**Named probe:** stage `L` per-token fp32 scalars into a `[L, 1]` UB tile and into
-an `[L, 8]` tile whose column 0 carries the payload, read both back, and compare
-against the host values at `L` large enough to need several bursts. A clean `[L,
-1]` result retires this section; a mismatch that appears only past the first burst
-confirms it. Note the control requirement — the probe is void unless the same run
-shows the checker can report a mismatch
-([investigation-discipline §13](../references/investigation-discipline.md)).
-
-## A distribution-mode store writes the whole register, mask or no mask
-
-Independent corroboration, from a second DSL, of a silent failure this KB already
-records — and a constructive consequence the original entry does not state.
-
-**Already measured here.** A masked `vf.store_align(dist=INTLV_B32)` **ignores its
-predicate entirely**, writing every lane; the store succeeds and the data is wrong
-only in the lanes the mask was supposed to protect
-([framework-findings, A5 probe session](../references/pypto-pro-framework-findings.md)).
-
-**The corroboration.** EasyASC's `constraints/a5.md` §6.2 reports, on the same
-silicon, that its `DIST_NORM_B8` store "writes the full 256-byte register even
-when only a prefix mask is active". Same shape of defect, a different DSL, a
-different distribution mode, and a *different* mask (a prefix rather than a
-scatter pattern). Two arrivals make this look like a property of the
-distribution-mode store path rather than an artifact of one lowering.
-
-**The consequence worth acting on, which is about allocation rather than
-correctness.** EasyASC states it as a sizing rule: the scratch a masked
-distribution store targets must be allocated for the **whole register**, 256
-bytes, not for the active lane count. That is the constructive form — the
-PyPTO-Pro entry tells you the data will be wrong; this tells you the buffer will
-also be too small, which is the failure that shows up as corruption of whatever
-was allocated next to it.
-
-**未在 PyPTO-Pro 上验证 for the sizing rule specifically** (the mask-is-ignored
-half *is* measured here). To verify: place a sentinel immediately after a scratch
-tile sized to the active lane count, issue a masked distribution store into it,
-and read the sentinel back.

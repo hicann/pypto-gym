@@ -72,9 +72,9 @@ Two readings, and the second is the one that generalises:
   loop costs nothing; at 64 items of 4,096 elements it costs 6.2x.
 * **A host loop does not look obviously wrong on small-`L` cases.** At `L <= 4`
   the penalty is 1.0–1.8x, well inside the range an ordinary tuning change moves
-  — and in the task this was measured on, 18 of 20 public cases have `L <= 2`.
-  The rule earns its keep on the cases a public run never reaches, which is
-  exactly why it has to be a rule rather than a measurement.
+  — and in the task this was measured on, nearly every visible case sat at
+  `L <= 2`. The rule earns its keep on the cases a visible run never reaches,
+  which is exactly why it has to be a rule rather than a measurement.
 
 ## The shape that works: fixed arity, padded slots, one launch
 

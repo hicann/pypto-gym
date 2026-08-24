@@ -228,10 +228,10 @@ share not just a record but a board, and three operational facts govern that:
 
 "The framework cannot express X" is a much stronger claim than "I have not
 found a composition that expresses X", and collapsing the second into the first
-has a measured price: two operators independently concluded a mask could not be
-converted between element widths, designed their kernels around the absence,
-and paid roughly **+8 OperatorScore** between them — the capability existed,
-filed under a name neither search reached
+has a measured price: two separate efforts independently concluded a mask could
+not be converted between element widths, designed their kernels around the
+absence, and each carried avoidable cost for several rounds — the capability
+existed, filed under a name neither search reached
 ([mask-width conversion](../constraints/vec-mask-width.md)).
 
 Before promoting a candidate's failure into a capability claim, record all of:
@@ -307,9 +307,9 @@ second.
 Related, in a different register: **grade a test run by the number of
 comparisons that ran**, not by its summary line. Expected verdict lines =
 `Σ (modes per test function)`; a shortfall means something short-circuited, and
-a "20/20 PASS" summary counts functions that did not raise rather than
-comparisons that executed. The procedure is in
-[../playbooks/benchmark-scoring.md](../playbooks/benchmark-scoring.md) § traps.
+an all-pass summary counts functions that did not raise rather than
+comparisons that executed. Count the verdict lines and compare against the
+expected total before reading the summary as coverage.
 
 If the gate is incomplete, report **"the current candidate has not found a
 valid composition"** — a statement that invites the next search — not "the DSL
@@ -338,6 +338,27 @@ The third is the general form, and the least visible: **coupling the oracle to
 the thing under test**. A wrong shape is caught by reading the shape; a shared
 flag is caught only by asking what the control would have to emit if the
 implementation were broken, and then checking that it does.
+
+### 13.0 The negative control has its own mechanism, and that mechanism can fail
+
+One level below §13. A checker was validated by perturbing the source it guards
+and confirming it went red. The perturbation appeared to pass — and the *test* was
+broken, not the checker: the `sed` pattern matched 20-space indentation while the
+code under test now sat at 24, so it edited nothing. A no-op perturbation produces
+a green result that looks exactly like a checker correctly accepting valid input.
+
+> **A negative control must prove it changed something before its result carries
+> information.** Diff the perturbed artifact against the original, or assert the
+> edit count, and only then read the verdict.
+
+The same session produced two related failures in the same script, both of which
+make a naive checker lie while looking healthy. Anchoring a block comparison on
+the first occurrence of its opening line, when that line occurs four times, diffed
+one section against a different one and printed 80 lines that read as catastrophic
+deviation. And widening an alignment window to absorb length changes made the
+*next* section's lines score as deletions — 16 phantom deletions, including
+another module's preamble. Both were caught only because someone read the diff
+instead of the exit code.
 
 So state the expectation as what a correct implementation must produce,
 unconditionally — never as a function of the switch being tested — and make the
@@ -424,20 +445,8 @@ verdict, the way §13 requires the control's mismatch count next to it. "It pass
 with a reuse factor of 1 is the same non-statement as "no mismatches" from a
 checker never shown to go red.
 
-**Provenance.** The predicate and the phrase "a passing single-tile simulation is
-not a reuse proof" are EasyASC's
-(`references/authoring-preflight.md:58-61`, `references/pitfall-records.md:23`,
-where it is a mandatory regression); its own analysis puts the invariant as
-`slots > lookahead` and notes that shapes at or under the pipeline lookahead pass
-while undersized. The reasoning is about ring wrap-around and work distribution,
-not about either DSL's API, and the discipline it expresses is §13's — which is
-why it lives here rather than being marked as an unverified port. What is *not*
-established for PyPTO-Pro is any specific lookahead depth.
-
 One rule travels with it, in the same register: **the ownership checker's
-warnings are correctness signals.** EasyASC's form is "treat `auto_sync` warnings
-as correctness signals — resolve the ownership model or make a concrete proposal;
-do not waive them." Generalised: when the machinery that manages buffer ownership
+warnings are correctness signals.** When the machinery that manages buffer ownership
 for you emits a warning and the run passes anyway, you have a passing result with
 an unresolved warning, which is not a passing result. Read it before shipping.
 
@@ -539,9 +548,8 @@ a wrong-copy error at the point of failure.
 
 ### 14.2 Run the artifact you are shipping, once, before it costs anything
 
-An operator was submitted and scored **0/20 — every case a compile error**. The
-post-mortem first blamed a toolchain version gap between the grader and the
-board. That was wrong, and the truth is duller: **the submitted file had never
+A delivery failed **every case with a compile error**. The post-mortem first
+blamed a toolchain version gap between the build host and the board. That was wrong, and the truth is duller: **the submitted file had never
 been executed anywhere.** It reproduced the failure on the first board run,
 byte-for-byte, in seconds.
 
@@ -566,10 +574,10 @@ Two rules, and the second is the one that was missing:
   "couldn't have affected."
 - **Before any irreversible spend, execute the exact artifact.** Not the staged
   source it came from, not the version the gate saw — the bytes being shipped.
-  One run, one command. It costs seconds against a credit and a zero.
+  One run, one command. It costs seconds, against losing the whole delivery.
 
 A note on how the wrong post-mortem happened, since it wasted a round. The
-version difference between grader and board was real and independently
+version difference between build host and board was real and independently
 documented, so it was *available* as an explanation and it fit the shape of the
 failure. Reaching for it meant the cheap decisive test — run the shipped file on
 the board — went unrun for another cycle. **When a plausible systemic cause and
@@ -598,3 +606,69 @@ names, KB-root-relative paths, a source root declared at the top of the
 document). An audit's first red is as likely to indict the audit as the
 artifact — repair the resolver, then re-confirm it still rejects a fabricated
 path before believing the green.
+
+## 15. The premise is the thing to test first, not the candidates within it
+
+Three optimisation directions were dispatched on one kernel in one session. All three
+premises were wrong, and each was refuted by a measurement that cost far less
+than the work it prevented:
+
+1. *"The deficit is prefill traffic."* A pipe-utilisation profile showed
+   `aic_mac 0.08-0.18` and `aiv_time == kernel duration` — the Cube idle, the
+   vector core always critical, GM traffic never binding. Two candidates modelled
+   at 2.04x and 1.45x were aimed at an idle resource.
+2. *"Band A's cost is per-KV-column iteration overhead, so pack columns."*
+   Refuted from the **same profile that produced the attribution**, by tabulating
+   ns per loop-iteration across a 35x range and finding it monotone — the
+   signature of fixed cost.
+3. *"`TQ_PREFILL=128` gives 2x."* It gives 1.45x, because the bound expression
+   `kv_lim_i = S_kv - S + (i+1)*TQ` contains `TQ`, so a previously shipped lever
+   had already consumed those iterations.
+
+The pattern: each premise was inherited from a document (a DESIGN section, a
+prior agent's report) that was internally rigorous but rested on an unmeasured
+assumption about *what the binding resource is*. Rigour downstream of a wrong
+premise produces confident wrong direction, and it is indistinguishable from
+rigour downstream of a right one.
+
+**Rule.** Before commissioning work against a model, spend one measurement on
+the model's own load-bearing assumption. "Which resource is saturated" is
+usually one profile away and it invalidates or confirms every candidate at once.
+Prefer that to adjudicating candidates more carefully within the model.
+
+**Corollary — a rejected candidate must be re-examined when the premise changes.**
+`TQ_PREFILL=128` had been rejected for "zero traffic benefit". Once traffic was
+measured not to be the constraint, that rejection carried no information, and the
+candidate turned out to be both the cheapest to build (zero extra UB — the tile
+groups were *already* declared at 64 lanes and narrowed at runtime) and the best
+remaining. Rejections inherit the premise they were made under; re-derive them
+rather than trusting the earlier verdict. The same re-examination found the
+recorded capacity obstacle ("L0A over by 32,768 B") was arithmetic for a
+*different* candidate's double-buffered tile, not this one's single slot.
+
+## 16. Fixing an underflow is not fixing the empty case
+
+A data-dependent loop bound was found by review to go negative
+(`min(128, 0+64+128-512) = -320`) and was clamped at zero. The clamp was correct
+and insufficient: the zero-iteration loop it produced **hung the AI Core**,
+because a consumer outside the bound waited on a handshake its producer, inside
+the bound, never performed. The pre-clamp code had been slow but correct — it ran
+the full loop with every lane masked.
+
+Two transferable pieces:
+
+- **A range fix has three cases, not two.** Negative, empty, and non-empty.
+  Clamping merges the first into the second; if the second is unsafe, the fix
+  moves the defect rather than removing it. Enumerate all three explicitly.
+- **Localize a hang by flooring one participant at a time.** Flooring only the
+  suspected loop, while deliberately *leaving* zero bounds on the other three
+  sites carrying the same expression, both proved which site owned the hang and
+  refuted the competing "the primitive mishandles an empty range" theory in one
+  run. A positive control — reverting the fix and confirming the hang returns
+  with the same log signature — is what separates "I changed something and it
+  stopped" from "I fixed the cause".
+
+Related: a safety argument of the form "no in-contract input can reach this" must
+be re-derived per tile size when the threshold contains the tile size. Here the
+condition is `S >= S_kv + QTile`, and one contract case sits exactly on it,
+protected only by carrying `is_causal=False`.

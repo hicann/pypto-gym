@@ -61,7 +61,7 @@ final correctness、final formal compare 与 supplemental timeline 必须连续�
 - 用户目标差距，或默认 `golden_reference_ratio` 的差距；
 - 正确性结果与容差/匹配率；
 - 当前 launch/block 配置、tile/valid shape（若实现使用）、tail、输入分布和主瓶颈路由；
-- 若 SPEC 定义了分数，记录该 case 对总分的真实权重/贡献；没有分数权重时不得自行编造。
+- 若 SPEC 定义了带权重的验收指标，记录该 case 的真实权重/贡献；SPEC 未定义权重时不得自行编造。
 
 候选排序不只看“谁最慢”，也不只挑“谁最容易”。使用以下优先级思想：
 
@@ -71,7 +71,7 @@ priority(case, lever)
     / 实现、编译、正确性与 profiling 的预计成本
 ```
 
-- 有正式评分函数时，“预计改善”使用该 case 的真实权重与预计分数增量；
+- SPEC 定义了带权重的验收指标时，“预计改善”使用该 case 的真实权重与预计指标增量；
 - 目标是全场景门禁时，优先缩小最差场景的目标差距；候选仍按全部目标场景的等权平均加速比排序，逐场景回退必须披露，且最终不得导致任一场景目标失败；
 - 预计收益只能用于排序，不能代替实际代码实验；
 - case 优先级只决定执行顺序，不能改变 final 的 all-P0 覆盖。
@@ -203,7 +203,7 @@ PyPTO-Pro 落地检查：
 - 当前最佳候选不是 Scalar/wait bound；合法搬算已证明重叠，或 DAG 证明不适用；
 - 在相同正式环境和冻结 case 上完成 all-P0 final 验收；
 - final correctness、formal compare、timeline 对应同一最终实现与软件环境；
-- 未修改 case、计时范围、精度门、评分函数或其它测量规则。
+- 未修改 case、计时范围、精度门、验收指标定义或其它测量规则。
 
 预算耗尽、用户中止、环境阻断或仍有 `pending` 候选时不能声称穷尽，也不能 `target_met: true`。
 

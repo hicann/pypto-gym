@@ -4,9 +4,9 @@ Use this when a kernel is structurally correct — it runs, most cases pass — 
 a graded output misses the accuracy gate and you do not know which stage is
 responsible.
 
-It exists because on one operator (MlaProlog) the obvious statistic pointed at
-the wrong stage **twice**, costing two full build-measure-revert cycles. The
-technique below found it in one run.
+It exists because on one staged multi-matmul kernel the obvious statistic
+pointed at the wrong stage **twice**, costing two full build-measure-revert
+cycles. The technique below found it in one run.
 
 ---
 
@@ -20,7 +20,7 @@ Two checks first, both cheap, both of which have produced false failures:
   fine**, by getting four things wrong at once — the flag threshold (`10 ×
   threshold`, not `threshold`), the bf16 small-value boundary (`2**-8`, not the
   fp16 `2**-11`), the cancel region (absent), and the CPU baseline (absent).
-  See [benchmark-scoring.md](benchmark-scoring.md).
+  See [the accuracy-gate model](../constraints/precision.md).
 - **Judge with the harness verdict, not a summary statistic.** `MARE` is a max
   dominated by the smallest `|golden|`, so it moves *non-monotonically* with
   real accuracy: a strictly more accurate scheme measured a **worse** MARE on
@@ -40,7 +40,7 @@ single most common way to chase the wrong stage.
 | relative error in a normal region | **relative** error |
 | an absolute bound on near-zero outputs (small-value / cancel regions) | **absolute** error |
 
-On MlaProlog every failure was in the small-value region — an absolute
+In that case every failure was in the small-value region — an absolute
 `2**-16` bound on cancellation-born near-zeros — while the diagnostic reported a
 *relative* error cut at `0.1 ×` the tensor RMS to stop cancellation dominating
 the statistic. That cut is reasonable for describing a tensor's bulk and
@@ -71,9 +71,9 @@ Independent rounding sources add in quadrature, so
 total² ≈ inherited² + own²
 ```
 
-**That identity is the check that the decomposition is trustworthy.** On
-MlaProlog it held to three digits — `3.51² + 2.43² = 4.27²` — which is what made
-it safe to act on after two earlier misdiagnoses.
+**That identity is the check that the decomposition is trustworthy.** There it
+held to three digits — `3.51² + 2.43² = 4.27²` — which is what made it safe to
+act on after two earlier misdiagnoses.
 
 Then compare each component against the same decomposition of the CPU reference.
 The measured table:
@@ -98,10 +98,18 @@ gain = Σ_newly_passing (0.3 + 0.5·score_i) / N · 100
 cost = Σ_all_cases 0.5·Δscore_i / N · 100
 ```
 
-Worked example: converting the last failing MlaProlog case needed a matmul in
-the cube's fp32 mode, which gains one case (**+1.7 points**) and costs ~2×
-runtime across all twenty (**−5 points**). **Net −3.3.** The right call was to
-ship 19/20 and record the arithmetic, not to chase the case count.
+Worked example, **under the two formulas above and nothing more general**:
+converting the last failing case needed a matmul in the cube's fp32 mode. That
+gains the one case, but costs roughly 2x runtime on **every** case; substituting
+into `gain` and `cost` above, the many small regressions outweigh the single win
+by a wide margin, so the right call was to ship with that case failing and record
+the arithmetic.
+
+**Do not read that as a law.** It is arithmetic in one weighting, not a
+statement about per-case-weighted metrics in general: raise the pass bonus,
+weight cases unequally, or make the regression sublinear and the sign flips.
+The transferable part is the *procedure* — write down the metric's own formula,
+substitute both sides, and compare — not this instance's answer.
 
 ---
 
@@ -142,9 +150,9 @@ acted on without one were both wrong.
 
 Choosing *which* scheme to build needs no accelerator. Replay the kernel's
 dataflow in torch with the GM dtype and the operand split depth as parameters,
-and grade with the benchmark's real comparator. The whole scheme comparison for
-MlaProlog — five candidates across three problem sizes — ran on a laptop with no
-NPU and picked the one that worked:
+and grade with the real comparator. One such whole-scheme comparison — five
+candidates across three problem sizes — ran on a laptop with no NPU and picked
+the one that worked:
 
 | scheme | M=1 | M=128 | M=512 |
 |---|---|---|---|
@@ -162,8 +170,41 @@ mean.
 ## Evidence
 
 All figures were measured on Ascend A5 with the comparator recorded by that run,
-on MlaProlog and MLA. Results over the session: MlaProlog 0/20 → 19/20
-(57.96 → 61.84), MLA never-ran → 20/20. Per-stage numbers in
-`custom/mla_prolog/DESIGN.md` §9.2–9.8 and
+在两个分阶段 attention 类算子上应用后，一个从"几乎全错"到"仅剩一个 case 不过"，
+另一个从"从未跑通"到全部通过。逐阶段的机理见
 [../references/pypto-pro-framework-findings.md](../references/pypto-pro-framework-findings.md)
-findings 21–24.
+中 fp32 链路与 phase 相关的条目（按标题查，不按编号）。
+
+## Two proxies that lie, and the discriminator for each
+
+Both produced a confident wrong diagnosis in the same campaign, in opposite directions, from a
+single-axis reading while two axes had moved.
+
+- **`import_s` cannot see device, driver or compiler-subprocess contention.** A launch measured at
+  184 s against 24 s for the same tuple was called "ambient" because `import_s` had risen
+  6.5 → 36.1 s; a later run showed `import_s` back at 4.9 s with the launch *worse* at 478 s, and
+  it was then called geometry-borne. Both over-read the same proxy. **Discriminator:** re-run the
+  same geometry on the same arm, beside a base-arm run at those exact axes — which converts "is
+  this slow?" into "did my change do this?". The answer was 15.47 s versus 15.94 s: nothing slow,
+  nothing introduced.
+- **A result differing from an older one on *two* axes tells you nothing about either.** A build
+  lost 11 of 20 performance measurements on a machine it had never run on before, and the loss was
+  attributed to the build. The byte-identical archive on a different machine measured 20/20 at the
+  normal score. **Discriminator:** buy the control that varies exactly one axis *before* doing any
+  engineering. It cost one credit and saved a diff plus a board session.
+
+General form: **before diagnosing, count how many things changed.** If more than one did, the first
+move is a control that changes one — not a hypothesis about which one mattered.
+
+## An internal control beats an external threshold
+
+When repairing a numerical defect, find the leaf that *should not move* and prove it didn't.
+Repairing an RMS reciprocal improved `c_kv` 43× and `query` 5.7×, and left `k_rope` — the one output
+with no reciprocal in its path — identical to the digit at every geometry. That unmoved leaf is
+stronger evidence the edit stayed in scope than any tolerance check on the leaves that moved.
+
+**And a passing threshold can be luck rather than accuracy.** One geometry's `mare` went from
+passing 0.055 to failing 0.19 while its `mere` improved 16.6×. The fp32 host golden at that
+geometry sits at 0.164 and fails the same threshold in **both** arms — so the original pass was
+margin the arithmetic never earned. Read a threshold beside the same-precision host control, never
+alone.
