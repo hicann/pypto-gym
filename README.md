@@ -143,6 +143,7 @@ pypto-gym/
 │       ├── deepseek-v2-lite-chat/           # DeepSeek V2 Lite Chat
 │       ├── gemma4_31b_it/                   # Gemma4-31B-it
 │       ├── gutenocr_3b/                     # GutenOCR-3B
+│       ├── kimi_linear_48b_a3b/             # Kimi-Linear-48B-A3B
 │       ├── llada2_moe/                      # LLaDA2-MoE
 │       ├── minimax_m27/                     # MiniMax M2.7
 │       ├── openpangu_v5_7b/                 # openPangu-Embedded-7B
