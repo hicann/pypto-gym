@@ -199,6 +199,7 @@ pypto-gym/
 │   │   ├── glm_v4_5/                        # GLM V4.5 算子测试
 │   │   ├── gutenocr_3b/                     # GutenOCR-3B 算子测试
 │   │   ├── llada2_moe/                      # LLaDA2-MoE 算子测试
+│   │   ├── ling_3_0_flash/                  # Ling 3.0 Flash 算子测试
 │   │   ├── minimax_m27/                     # MiniMax M2.7 算子测试
 │   │   ├── mtgr_segment_attention/          # MTGR 分段注意力算子测试
 │   │   ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct 算子测试
