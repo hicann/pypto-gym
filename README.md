@@ -166,6 +166,7 @@ pypto-gym/
 │       │       ├── gemma4_31b_it/           # Gemma4-31B-it GQA Decode Attention / Softmax
 │       │       ├── glm_v4_5/                # GLM V4.5 Attention / MoE / FFN / Gate
 │       │       ├── gutenocr_3b/             # GutenOCR-3B RMSNorm / SwiGLU MLP / MRoPE
+│       │       ├── kimi_linear_48b_a3b/     # Kimi-Linear-48B-A3B KDA
 │       │       ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
 │       │       ├── ling_3_0_flash/          # Ling 3.0 Flash KDA
 │       │       ├── minimax_m27/             # MiniMax M2.7 MoE Grouped GEMM
