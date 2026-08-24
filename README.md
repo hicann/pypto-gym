@@ -235,6 +235,7 @@ pypto-gym/
 | `gutenocr_3b/` | swiglu_mlp, rms_norm, mrope | SwiGLU MLP、RMSNorm、多模态 RoPE |
 | `llada2_moe/` | gate_select, expert_ffn, moe_grouped_gemm | MoE 门控选择、单专家 FFN、分组 GEMM（9.2x 端到端加速） |
 | `minimax_m27/` | moe_grouped_gemm | MoE Grouped GEMM（256 专家，BF16，910B 适配，7.6x 加速） |
+| `mtgr_segment_attention/` | mtgr_ragged_segment_attention | 可变长 Flash Attention 前向（4 段策略 mask 组合） |
 | `openpangu_v5_7b/` | pangu_fused_layer_v2_bsh | 整解码层融合（RMSNorm+QKV(+bias)+RoPE+KV-cache+GQA Attention+O proj(+bias)+RMSNorm+SwiGLU FFN）；单层 BSH 动态 kernel，仅 decode |
 | `phi_3_mini_4k_instruct/` | rms_norm | RMSNorm（D=3072），支持 ACLGraph |
 | `qat/` | symmetric_per_tensor, symmetric_per_channel, asymmetric_per_group | 量化感知训练三模式（前向 + 反向） |
