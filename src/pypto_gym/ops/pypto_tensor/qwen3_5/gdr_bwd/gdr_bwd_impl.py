@@ -655,9 +655,6 @@ def _bwd_chunk_body_950(q_f, k_f, v_f, b_f, gcum_col, do_i, a_inv_tile, qr_f, kr
     q_s = pypto.mul(q_f32, scale_val)                                        # [bt,head_dim]
 
     # ---- recompute w / v_new (was the PASS-1 wv_ws GM cache) from A_inv + s_i; bit-for-bit
-    #      identical to _fwd_chunk_bodys's u/w/v_new -- same operands, same bf16 rounding, and
-    #      s_i == the fwd `last_state`.  a_inv_bf/v_beta_bf/k_beta_g_bf/w_bf/s_i_bf are the SAME
-    #      operands the gradient matmuls below reuse, so they are cast ONCE here. ----
     a_inv_bf = pypto.cast(a_inv_tile, pypto.DT_BF16)                # matmul operand (reused 4x below)
     v_beta_bf = pypto.cast(v_beta, pypto.DT_BF16)                   # matmul operand (reused d_a_inv_1)
     k_beta_g_bf = pypto.cast(k_beta_g, pypto.DT_BF16)              # matmul operand (reused d_a_inv_2)
@@ -709,10 +706,8 @@ def _bwd_chunk_body_950(q_f, k_f, v_f, b_f, gcum_col, do_i, a_inv_tile, qr_f, kr
         d_q_f = pypto.mul(pypto.sub(d_q_f, pypto.mul(q_f32, dot_q)), qr_f)  # [bt,head_dim]
     d_q_o = pypto.cast(d_q_f, pypto.DT_BF16)
 
-
     # ======================================================== all depend on ds:
     # ---- state-update backward: vec (depends on ds only) then 2 matmuls ----
-    ds_from_decay = pypto.mul(ds, decay_s_d1)                      # [head_dim,head_dim]
     d_decay_s = pypto.sum(pypto.sum(pypto.mul(ds, s_i), -1, keepdim=True), 0, keepdim=True)  # [1,1]
     ds_bf = pypto.cast(ds, pypto.DT_BF16)                          # matmul operand (reused; entering ds)
     d_k_dec = pypto.matmul(v_new_bf, ds_bf, pypto.DT_FP32, b_trans=True) # [bt,head_dim]
@@ -729,11 +724,13 @@ def _bwd_chunk_body_950(q_f, k_f, v_f, b_f, gcum_col, do_i, a_inv_tile, qr_f, kr
     d_v_prime = pypto.mul(d_v_new, -1.0)                           # [bt,head_dim]
 
     d_v_prime_bf = pypto.cast(d_v_prime, pypto.DT_BF16)             # matmul operand (reused d_w/dS_vprime)
-    d_w = pypto.matmul(d_v_prime_bf, s_i_bf, pypto.DT_FP32, b_trans=True) + 0.0    # [bt,head_dim]
+    d_w = pypto.matmul(d_v_prime_bf, s_i_bf, pypto.DT_FP32, b_trans=True)    # [bt,head_dim]
     ds_from_vprime = pypto.matmul(w_bf, d_v_prime_bf, pypto.DT_FP32, a_trans=True)  # [head_dim,head_dim]
 
     # ---- carry: ds_out = dL/dS_i ----
-    ds_out = pypto.add(pypto.add(ds_from_decay, ds_from_ointer), ds_from_vprime)  # [head_dim,head_dim]
+    ds_from_decay = pypto.mul(ds, decay_s_d1)                      # [head_dim,head_dim]
+    ds_from_add = pypto.add(ds_from_decay, ds_from_ointer)
+    ds[:] = pypto.add(ds_from_add, ds_from_vprime)  # [head_dim,head_dim]
 
     # ---- u, w backward -> A_inv, v_beta, k_beta_g  (a_inv_bf/v_beta_bf/k_beta_g_bf cast above) ----
     d_u_bf = pypto.cast(d_u, pypto.DT_BF16)                       # matmul operand (reused)
@@ -796,9 +793,6 @@ def _bwd_chunk_body_950(q_f, k_f, v_f, b_f, gcum_col, do_i, a_inv_tile, qr_f, kr
     d_gcum_col = pypto.add(d_gcum_col, d_gcum_from_exp)
     d_gcum_col = pypto.add(d_gcum_col, pypto.mul(elastc, d_glast_1))
     d_g_col = pypto.matmul(trilc, d_gcum_col, pypto.DT_FP32, a_trans=True)  # [bt,1]
-
-    # ---- carry update (in-place REVERSE serial carry) ----
-    ds[:] = ds_out
     return d_q_o, d_k_o, d_v_o, d_g_col, d_beta_o
 
 
@@ -1000,8 +994,9 @@ _SCHED_950 = 1
                      "max_workspace_kb": 1003024
                      },
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4},
-                  "cube_nbuffer_setting": {-1: 16},
-                  "cube_l1_reuse_setting": {-1: 8}
+                  "cube_nbuffer_setting": {-1: 4},
+                  "cube_l1_reuse_setting": {-1: 8},
+                  "auto_mix_partition": 1,
                   },
     new_ir=False,
     host_options={"compile_monitor_enable": 0}
