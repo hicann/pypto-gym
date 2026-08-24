@@ -9,13 +9,9 @@
 
 ## Knowledge Bindings
 
-> 逐条覆盖 `KB_SELECTION.json.optional_patterns` 与 `required_constraints`。可选模式必须产生
-> 真实、独立的设计不变量；若前提不成立、仅属背景或作用重复，回退 Stage 1 删除或替换，
-> 不得强行绑定。必需约束不得省略，不适用时写明理由交 verifier 裁定。
-
-| 类型 | KB 相对路径 | 本 class 的具体不变量 | 计划实现位置 | verifier 检查方法 |
-|---|---|---|---|---|
-| optional pattern / required constraint | `{patterns/... 或 constraints/...}` | `{不是标题复述，而是可落到代码的约束}` | `{文件 + symbol/设计章节}` | `{静态检查/运行/profiling 证据}` |
+> 完整、机器可读的 requirement 清单见 [`DESIGN_BINDINGS.json`](DESIGN_BINDINGS.json)。
+> 本文只记录 R0–R8 的实际设计决策；每条活动 requirement 的 `planned_location` 必须准确指向
+> 对应决策及最终 `test_<op>.py` file/symbol，不复制 Binding 分组或 requirement 表格。
 
 ---
 
@@ -35,9 +31,9 @@
 
 ### Wrapper 操作清单
 
-> 默认填“空（仅参数校验、纯 Python 形状运算、输出分配和一次 kernel 启动）”。仅当目标框架确实无法迁移、且本阶段有可核验证据时逐项填写；Stage 4 不得新增或扩大例外。
+> 默认填“空（仅参数校验、纯 Python 形状运算、输出分配和一次 kernel 启动）”。仅当目标框架确实无法迁移、且设计中有可核验证据时逐项填写；后续实现不得新增或扩大例外。
 
-| API / 操作 | 无法迁入 kernel 的目标版本证据 | 适用条件 | 预期代价预算 | Stage 4 profile 测量方法 |
+| API / 操作 | 无法迁入 kernel 的目标版本证据 | 适用条件 | 预期代价预算 | 实现 profile 测量方法 |
 |---|---|---|---|---|
 | {空；或具体 API / 操作} | {文档/官方样例路径、原文片段、目标版本；为空时写 N/A} | {dtype/shape/layout 条件；为空时写 N/A} | {允许的 device kernel / 时间上界；为空时写 0} | {profile 命令及核对项；为空时写确认无 aclnn*} |
 
@@ -83,7 +79,6 @@
 >   target_version:        <目标软件/框架版本>
 >   applicable_conditions: <dtype/shape/layout/算子条件>
 > ```
->
 ### Module 1 API 调用序列
 
 ```

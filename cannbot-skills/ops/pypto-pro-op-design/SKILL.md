@@ -1,15 +1,15 @@
 ---
 name: pypto-pro-op-design
-description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产物齐全，且需要确定 Module 与 API 数据流、Tile 和片上内存规划、循环与 Section、分核与同步、动态尾块和数值边界，或产出、审查有证据支撑的 DESIGN.md 时使用；同时产出 module_interfaces.yaml。不要编写 kernel。
+description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 SPEC、Golden 与资料探索产物齐全，且需要确定 Module 与 API 数据流、Tile 和片上内存规划、循环与 Section、分核与同步、动态尾块和数值边界，或产出、审查有证据支撑的 DESIGN.md 时使用；同时产出 DESIGN_BINDINGS.json 与 module_interfaces.yaml。不要编写 kernel。
 ---
 
-# PyPTO-Pro Stage 3 — 迭代式方案设计
+# PyPTO-Pro 迭代式方案设计
 
 通过 9 轮迭代式约束收敛（R0-R8），**目标** 是生成可直接翻译为 kernel 代码的 DESIGN.md。
 
 **核心原则**：
 - 每个决策必须包含**结论 + 推导过程 + 证据来源**
-- 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）。Stage 3 门禁通过后 DESIGN.md 成为 Stage 4 施工合同；运行证据推翻设计时须返回 `design_violation`，由编排器回退 Stage 3 后再修订
+- 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）。设计验收通过后 DESIGN.md 成为实现合同；运行证据推翻设计时须返回 `design_violation`，由编排器重新调度设计修订
 - 每轮发现的矛盾必须回溯修正前序决策，不允许累积到 R8 再处理
 - 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
 
@@ -21,9 +21,9 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 
 ## 知识库
 
-按 [`pypto-pro-op-kb/ROUTER.md`](../pypto-pro-op-kb/ROUTER.md) 每次只读取一个与当前决策相关的
-参考。只有 [pattern selector](../pypto-pro-op-kb/patterns/pattern-index.md) 标为
-`validated skeleton` 的条目可作为代码起点；`conceptual only` 只能用于推导。
+知识来源与读取边界见下方「结构化 Binding 流程（architect）」。
+[pattern selector](../pypto-pro-op-kb/patterns/pattern-index.md) 仅用于确认已选 pattern 的验证
+状态：`validated skeleton` 可作为代码起点，`conceptual only` 只能用于推导，不得据此扩选。
 
 >
 > **`validated skeleton` 保证代码存在，不保证它在你的工作区。** 本仓把知识库与
@@ -40,11 +40,43 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 | Golden 参考 | `custom/<op>/{op}_golden.py` | 函数签名参考（影响 R7.5 测试 case 规划）；增量验证模式下需暴露中间量辅助函数（如 `{op}_golden_stage1`），设计阶段应知晓此依赖 |
 | 资料探索报告 | `custom/<op>/EXPLORE_REPORT.md` | API 映射与约束（§3）、相似样例与可复用模式（§4）、教程设计指导（§5）、Tile/同步策略建议（§6）、环境常量快照（§7：UB 容量/event_id 上限/对齐要求等） |
 | 全量资料索引 | `custom/<op>/PRO_MATERIAL_INDEX.md` | API 文档（§A）、官方指定算子（§B）、教程（§C）的精确路径定位 |
-| 设计知识库 | `cannbot-skills/ops/pypto-pro-op-kb/` | 按 ROUTER 选择的补充约束、pattern 或 validated study kernel |
+| 冻结知识选择 | 按 KB `CONTRACT.md`「Artifact locations」发现的全部 `KB_SELECTION.json` | Planner 的只读交接产物；按本 Skill 的结构化 Binding 流程逐 class 消费全部选中引用 |
+| KB 产物合同 | `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/CONTRACT.md` | 只用于确认 `KB_SELECTION.json` 的字段与 KB 相对路径格式；设计行为由本 Skill 定义 |
 
 ## 输出
 
-- **`custom/<op>/DESIGN.md`**，基于 [templates/design-template.md](templates/design-template.md)，核心交付物为 §10"Tile 数据流全景图"
+- **`custom/<op>/DESIGN.md`**，基于 [templates/design-template.md](templates/design-template.md)，并短链接到结构化 Binding；核心交付物为 §10“Tile 数据流全景图”
+- **`custom/<op>/DESIGN_BINDINGS.json`**，基于 [templates/design-bindings-template.json](templates/design-bindings-template.json)，并遵守下方结构与语义合同；本 Skill 是唯一规范源，模板只提供 JSON 骨架
+- **`custom/<op>/module_interfaces.yaml`**，记录 Module 机器可读契约
+
+### `DESIGN_BINDINGS.json` 结构合同
+
+下列字段均必填，且不得增加其他字段。
+
+| 层级 | 固定字段 |
+|---|---|
+| 根对象 | `schema_version`（整数 `1`）、`bindings` |
+| Binding | `class_id`、`selection_field`、`reference`、`selection_reason`、`requirements` |
+| requirement | `req_id`、`kind`、`source_anchors`、`status`、`class_evidence`、`invariant`、`planned_location`、`verification_method` |
+
+- `schema_version` 必须是整数 `1`；`bindings` 必须是数组。
+- 除 `requirements` 外的四个 Binding 字段是非空字符串；`selection_field` 只能是 `optional_patterns` 或 `required_constraints`，`requirements` 是非空数组。
+- requirement 的 `req_id`、`class_evidence`、`verification_method` 是非空字符串；`source_anchors` 是由非空、不重复字符串组成的非空数组。
+- `kind + status` 只允许 `precondition + met`、`obligation + applies`、`obligation + not_triggered`、`validation_scope + applies`。`obligation + applies` 是活动项：每个 Binding 至少一条；其 `invariant`、`planned_location` 为非空字符串，其他项的这两个字段可为非空字符串或 `null`。
+
+## 结构化 Binding 流程（architect）
+
+进入 R0 前完成第 1–3 步并形成临时要求清单；第 4 步随 R0–R8 更新；交付前执行第 5 步。
+
+1. **读取冻结 selection**：按 KB `CONTRACT.md`「Artifact locations」找到唯一合法的 flat 或 split 布局，读取所有 `KB_SELECTION.json` 及其中数量不限的 `optional_patterns`、`required_constraints`。selection 只读：只消费选中引用，不重查 KB，不增删、替换或改写。引用键是 `(class_id, selection_field, path)`；flat/split 并存、布局/`class_id`/引用无效或键重复时直接报错，不得归一化或去重后继续。API 签名和平台行为以官方文档与样例为准。
+2. **先读原文，逐项盘点（source-first）**：按原文顺序扫描标题辖区、段落、列表、每行表格、代码块、注释和公式，不依赖规范关键词或告警措辞。凡删除后可能改变正确性、支持/适用前提（target/version/dtype/shape/layout）、数据流/API、tile/地址、循环位置/分核、buffer/sync/event、边界、精度/cast 顺序、对齐/容量/索引、buffer lifetime、验证/复用或性能机制的内容，都要收录；silent failure、危险边界和 fallback/条件分支也不能遗漏。仅排除历史叙述、重复原理、纯示例及不影响本 class 决策的 benchmark；清单不落盘。
+3. **拆分要求并确定最窄范围**：可独立失败或验证的要求必须拆开；仅同义要求可合并，`source_anchors` 仍按原文顺序保留全部标题路径和条目短标签，不用行号。验证范围取声明明确指向的最窄语义范围。局部 `conceptual only` / `unverified` / exclusion 只覆盖其明确指向且与页面级 `validated` 重叠的范围，不向外扩散。同范围证据冲突时按 `unverified` 处理、不复用 skeleton，并在 `validation_scope` 中保留双方锚点和证据。
+4. **生成 Binding 并落实设计**：按上述合同生成 `custom/<op>/DESIGN_BINDINGS.json`。Binding 键必须与 selection 引用键一一对应且不重复（exact + unique）：全部 selection 的引用并集为空时，且仅此时写 `bindings: []`；否则 `reference`、`selection_reason` 分别原样复制 `path`、`reason`。同一路径跨 class/field 时分别保留；组内 `req_id` 唯一，requirement 原子键是 `(class_id, selection_field, reference, req_id)`。
+
+   整体必要前提用 `precondition + met`，任一不成立即为 selection 错误；互斥/可选分支不要求同时成立。未触发义务仍用 `obligation + not_triggered` 保留 class 事实；`validation_scope + applies` 的 `class_evidence` 记录最窄范围、复用结论和冲突证据（如有）。每条活动项必须给出具体且可落到代码的 `invariant`、`planned_location` 和可执行的 `verification_method`；`planned_location` 同时指向 DESIGN 决策与最终 `test_<op>.py` file/symbol，staged 位置只能补充。每个 optional pattern 须有独立设计作用；required constraint 的活动义务即使重叠也不得丢失。`DESIGN.md` 只链接 JSON，不复制 Binding 表。
+5. **自检并按根因报错**：确认 JSON 可解析，并复核上述结构、键映射、唯一性和设计落实；把 requirements 与 source-first 清单双向对照，拒绝遗漏、无来源新增、错误合并、锚点丢失/不可定位、状态与 class 事实不符或活动项字段错误。
+
+   布局/`class_id`/引用无效或键重复、整体必要前提不成立、optional pattern 无独立作用/作用重复，或 SPEC/官方资料/已选引用依赖未选 KB 路径时，报 `failure_category: kb_selection_invalid`。selection 有效，但 JSON 合同/覆盖、requirement 或设计落实错误时，报 `failure_category: design_violation`。报告包含可获得的 `class_id`、问题引用、适用时的 `source_anchors`、原因和客观证据；不得修改 selection 掩盖缺口或加入与本 class 无关的通用样板。
 
 ---
 
@@ -72,7 +104,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 Stage 1/2 产
 - 如果只有一个 Module，标注"单 Module"并说明为什么不需要拆分
 - **`module_interfaces.yaml` 契约**（机器可读，single source of truth）——产出到 `custom/<op>/module_interfaces.yaml`，包含以下字段：
   - `module_count`：Module 总数
-  - `is_fusion`：是否为融合算子（同时含 cube 和 vec section → `true`）。按 R0 定义，`is_fusion=true` 隐含 `module_count >= 2`（Cube 和 Vector 必须划分到不同 Module）。此字段决定 Stage 4 走 L0（`false`，一口气开发）还是 L1（`true`，逐 Module 循环）
+  - `is_fusion`：是否为融合算子（同时含 cube 和 vec section → `true`）。按 R0 定义，`is_fusion=true` 隐含 `module_count >= 2`（Cube 和 Vector 必须划分到不同 Module）；本 Skill 只记录设计事实，不决定后续编排路径
   - `has_cross_core`：是否涉及 cross_core 跨核流水（来自 §6，信息记录用，不影响分流判据）
   - `modules[]`：每个 Module 的 `id` / `name` / `description` / `section`（`cube` 或 `vector`）/ `golden_steps`（该 Module 对应的数学步骤列表，供 mathematician 切分 golden 用）/ `inputs`（source 为 `primary` 或 `module_<j>`，`j < 当前 id`）/ `outputs` / `golden_stage_fn`
   - `final_outputs`：每个 golden 返回值对应到产出 Module
@@ -305,39 +337,11 @@ R8 评估通过后，将 R0-R7 各轮的分散产出串成一张全景图（填�
 ## 设计原则
 
 1. **每个决策必须有证据**：API 文档引用、官方指定算子路径、教学文档、数学推导至少占其一
-2. **Tile 数据流图是给 coder 的施工合同**：coder 拿到 DESIGN.md 应能确定 kernel 的完整结构与关键决策；API 签名等细节须以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）；运行验证暴露设计失误时返回 `design_violation`，由编排器回退 Stage 3 后修订并重新过门禁
+2. **Tile 数据流图是给 coder 的施工合同**：coder 拿到 DESIGN.md 应能确定 kernel 的完整结构与关键决策；API 签名等细节须以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）；运行验证暴露设计失误时返回 `design_violation`，由编排器重新调度设计修订并验收
 3. **地址分配精确到字节**：不写"大约"、"若干"
 4. **实现约束不可违背**（见上方「实现约束」节）
 5. **Vector 选择必须可复核**：`vector_selection` 字段完整；`tile_op` 有已选 KB 模板的明确要求，否则为 `vf`
 6. **参考官方指定算子优先于自行设计，拥有最高优先级**：遇到同步策略、tile 尺寸、Vector 指令组合等决策时，优先查阅官方指定算子（PRO_MATERIAL_INDEX §B）中相似者，复用成熟模式；无相似时以 API 文档 / 教学文档为准
-
-## 知识使用契约（architect）
-
-Stage 1 已产出 `KB_SELECTION.json`。设计阶段的知识来源被限定为：
-
-1. `KB_SELECTION.json.optional_patterns` 中列出的全部可选模式（不设数量上限）；
-2. `KB_SELECTION.json.required_constraints` 中列出的全部约束（不限数量，不得截断）；
-3. 当前环境的官方 API 文档与官方样例（签名与平台行为始终以此为准）。
-
-**不要**在设计阶段重新遍历知识库。知识是否生效应由设计不变量及其验证方法证明，
-不能以文档读取次数作为应用证据。
-
-对每一条可选模式和必需约束，在 `DESIGN.md` 中写出它给本 class 带来的**具体不变量**，
-而不是复述文档标题。不变量要能落到代码位置上，例如：
-
-- 「fp16 输入在**平方之前**用 `vf.astype` 升到 fp32，整条归约链保持 fp32，
-  写回前再降回 fp16」——可指向某个 vf 子函数。注意写"归约前 cast"是不够的：
-  平方在窄 dtype 里已经溢出，升位宽必须早于产生增长的那一步；
-- 「尾块用 `pl.set_validshape` 而非补零」——可指向某个循环的尾处理分支。
-
-若某条可选模式无法产生真实且独立的设计不变量，禁止复述标题或编造绑定。Architect
-必须判断原因并回退 Stage 1：适用前提不成立、只提供通用背景、与其他 pattern 重复时，
-从 `KB_SELECTION.json` 删除；原模式不适配但存在更合适模式时，重新路由并替换。若 pattern
-确实适用但当前方案无法实现，应回退重新设计或选择替代 pattern，不能通过删除它掩盖设计
-缺口。必需约束不能直接丢弃；若确实不适用，必须在设计中说明原因，交由 stage3-check
-verifier 裁定。
-
-禁止把与本 class 拓扑无关的通用样板抄进设计。
 
 ## 强制规则：wrapper 边界（每个 class 都适用）
 
@@ -349,7 +353,7 @@ verifier 裁定。
 > **cast、slice、transpose、pad、concat 以及任何数据形状/dtype 处理，
 > 默认必须放进 `@pl.jit` kernel 内部。
 > wrapper 只做参数校验、输出分配、一次 kernel 启动。只有目标框架确实无法迁移且
-> Stage 3 已记录原因、证据、预期代价预算和 Stage 4 测量方法的操作，才可作为明确例外。**
+> 设计中已记录原因、证据、预期代价预算和实现测量方法的操作，才可作为明确例外。**
 
 必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md)，
 它是 `required_constraints` 中的全局约束，不占用可选 pattern 名额。
@@ -360,7 +364,7 @@ verifier 裁定。
    kernel 应当直接接收原始 dtype、原始 layout、原始 rank。
 2. 在 `DESIGN.md` 中列出一张 **wrapper 操作清单**：清单为空是正常且期望的结果；
    若确有无法迁移的 host 张量操作，逐项记录 API、无法迁入 kernel 的目标版本证据、
-   适用条件、预期代价预算和 Stage 4 profile 测量方法，交 stage3-check 裁定，不能只写一句理由。
+   适用条件、预期代价预算和实现 profile 测量方法，交设计验收裁定，不能只写一句理由。
 3. 需要的轴变换用 **stride/offset 索引**在 tile 循环里表达，不要用
    `movedim` / `permute` / `contiguous`。
 4. dtype 转换在 **tile load / store 时**用 `pl.cast`（tile 级）或
@@ -383,5 +387,5 @@ def op_wrapper(input_tensor, dim=-1, ...):
 一次 kernel 启动，外面包了四个被计时的 device 算子。kernel 被写成只接受「规范化的 FP32 连续 2-D 输入」，于是 host 被迫去生产它——这份便利按全价计费。
 wrapper 占比过半的 class 并不罕见，把这些搬进 kernel 通常是该算子最大的一根杠杆。
 
-注意方向：wrapper 也**不得**承担算子的**算术**（那是作弊，Stage-4 anti-cheat
+注意方向：wrapper 也**不得**承担算子的**算术**（那是作弊，实现验收的 anti-cheat
 会判 FAIL）。要求是「形状/dtype 处理进 kernel」，不是「计算搬到 host」。

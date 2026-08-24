@@ -165,8 +165,8 @@ Stage 2 → 判定 collect_golden_perf（默认 false；仅用户明确要求采
        → PASS: state_transition(complete_stage, stage=2)（自动推进） / FAIL 回退
 
 Stage 3 → 调度 pypto-pro-op-architect（加载 skill pypto-pro-op-design）
-       → 产出 DESIGN.md, module_interfaces.yaml（Module 契约）
-       → 调度 pypto-pro-op-verifier（stage3-check）
+       → 产出 DESIGN.md, DESIGN_BINDINGS.json, module_interfaces.yaml（Module 契约）
+       → 调度 pypto-pro-op-verifier（stage3-check，传上述三个产物路径）
        → PASS: state_transition(complete_stage, stage=3)（校验 SPEC.md 冻结 + 自动推进到 Stage 4）
        → 编排器读 module_interfaces.yaml 的 is_fusion，调 state_transition(plan_stage4, module_count=N, is_fusion=bool)
          设置 stage4_path（L0 或 L1），L1 时初始化 stage4_modules
@@ -294,11 +294,21 @@ artifact 哈希、回滚历史）。**只有编排者能通过 `state_transition
 
 **调度**：`pypto-pro-op-architect` 子代理。子代理加载 skill `pypto-pro-op-design`。
 
-**产出**：`DESIGN.md` + `module_interfaces.yaml`（Module 契约，含 `module_count` / `is_fusion` / `has_cross_core` / `modules[]`（含 `golden_steps`）/ `final_outputs` / `composition_verification`）。
+**产出**：`DESIGN.md` + `DESIGN_BINDINGS.json`（结构化 KB requirements）+ `module_interfaces.yaml`（Module 契约，含 `module_count` / `is_fusion` / `has_cross_core` / `modules[]`（含 `golden_steps`）/ `final_outputs` / `composition_verification`）。
 
-**门禁验证**：调度 `pypto-pro-op-verifier`（模式 `stage3-check`）执行检查清单（章节结构以 design skill 的模板为准，verifier 做门禁快检）。
+**Architect 返回分流**：
 
-→ **verifier FAIL**：将失败项反馈给 architect 子代理补充对应轮次
+- 返回 `kb_selection_invalid`：不得让 architect 修改 `KB_SELECTION.json`；原样携带原因、客观证据及可获得的 `class_id`、问题引用、`source_anchors`，执行 `rollback_to_stage(target_stage=1, failure_category="kb_selection_invalid", reason=...)`，重新调度 planner 修正 selection 后重走 Stage 1–3；
+- 返回 `design_violation`：selection 保持冻结，不调度 verifier；将原因、客观证据和可定位的 Binding/requirement 信息原样反馈给 architect，在 Stage 3 重新设计并自检；
+- 返回 `env_error`：不调度 verifier，按统一环境分流处理；
+- 正常交付：调度 `pypto-pro-op-verifier`（模式 `stage3-check`），传入 `DESIGN.md`、`DESIGN_BINDINGS.json`、`module_interfaces.yaml` 路径，不传 Architect 的 requirement 摘要或提取结论；verifier 按检查清单先独立盘点选中原文，再核验结构化 Binding 与设计落点。
+
+→ **verifier FAIL**：按 `failure_category` 路由：
+
+- `kb_selection_invalid`：原样携带 verifier 的原因、客观证据及可获得的 `class_id`、问题引用、`source_anchors`，执行 `rollback_to_stage(target_stage=1, failure_category="kb_selection_invalid", reason=...)`，重新调度 planner；
+- `env_error`：按统一环境分流处理，不反馈 architect；
+- `design_violation` 及其他 Stage 3 本地问题：将 verifier 的失败原因、证据和定位信息原样反馈给 architect 补充对应轮次，architect 不得借此修改 selection。
+
 → **verifier PASS**：`complete_stage(3)`（校验 SPEC.md 冻结，自动推进到 Stage 4）→ 编排器读 `module_interfaces.yaml` 的 `is_fusion`，调 `state_transition(plan_stage4, module_count=N, is_fusion=bool)` 设置 `stage4_path`（L0 或 L1），L1 时初始化 `stage4_modules`
 
 ---

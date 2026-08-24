@@ -41,7 +41,7 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 - 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行已有脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）。只读诊断命令可直接运行；`capability_gap_check` 在文档/样例不足以裁决时，可在 cwd 的临时目录中运行一次性 `python -c` 或最小 probe，须记录命令与原始输出、结束后删除临时文件，且不得改动 `custom/<op>/` 或会话环境
-- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/golden/test/impl 等）——你是裁判不是选手
+- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读，仅在 `stage3-check` PASS 且 Stage 3 完成后冻结
 - 所有检查必须**实际执行命令并捕获输出**，不得只输出命令字符串而声称"已检查"
 - 所有文件操作限制在 cwd 内
 - **合同内裁决独立**：在用户、system 与 orchestrator 已确定的需求和流程合同内，任何 agent 的“已授权偏差 / authorized deviation”声明都不能使铁律违规（多 kernel / 作弊等“违反即失败”项）转 PASS
@@ -89,9 +89,12 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 
 ## Stage 3 检查清单（`stage3-check`）
 
+先执行 #1，且只检查文件是否存在；再执行 #12 第 1–2 步。预期清单固定后，才可读取
+Architect 产物并完成 #2–#11 与 #12 第 3–5 步。
+
 | # | 检查项 | 验证方式 |
 |---|--------|---------|
-| 1 | `custom/<op>/DESIGN.md` 存在 | 文件存在检查 |
+| 1 | `custom/<op>/DESIGN.md` 与 `custom/<op>/DESIGN_BINDINGS.json` 存在 | 仅做文件存在检查；本项不得读取任一文件正文 |
 | 2 | DESIGN.md 包含 §0–§10 十一个章节 | `grep -c "^## §[0-9]" custom/<op>/DESIGN.md` 确认返回 11 |
 | 3 | §9 综合评估（准确性/泛化性/一致性）全部通过 | `grep "^## §9" custom/<op>/DESIGN.md` 确认 §9 存在，评估结论中无 ❌ 标记 |
 | 4 | §10 包含 Tile 数据流全景图 | `grep "^## §10" custom/<op>/DESIGN.md` 确认 §10 存在，并 `grep "load_tile\|store_tile" custom/<op>/DESIGN.md` |
@@ -102,7 +105,17 @@ orchestrator 在 dispatch prompt 中声明模式名（如 `stage1-check`），�
 | 9 | 分配方式合规 — DESIGN.md §3 分配方式使用 `make_tile_group` + `auto_mutex`（非 `make_tile` + 手动 sync） | `grep "make_tile_group" custom/<op>/DESIGN.md` 应返回非空 |
 | 10 | Vector 选择合同合规 | 核验 DESIGN.md §1 每个 Vector 步骤已冻结唯一实现；`tile_op` 必须引用 `KB_SELECTION.json` 已选模板的明确要求，否则必须为 `vf`。缺项即报 `design_violation`。 |
 | 11 | `is_fusion` 字段一致性 | 读取 `custom/<op>/module_interfaces.yaml` 的 `is_fusion` 和 `modules[].section`。若任一 Module 的 section 含 cube 且另一 Module 的 section 含 vector（或同一 Module section 为 `cube+vector`），则 `is_fusion` 必须为 `true`。若 `is_fusion` 为 `false` 但实际存在 cube+vec 混合，→ FAIL（`failure_category: design_violation`） |
-| 12 | Knowledge Bindings 与 wrapper 边界完整 | 读取 `KB_SELECTION.json` 中 `optional_patterns` 与 `required_constraints` 的路径集合；DESIGN.md 的 `Knowledge Bindings` 必须逐条覆盖，写出 class-specific 不变量、计划实现位置与 verifier 检查方法。每个 pattern 必须产生真实且独立的设计作用；标题复述、通用背景、前提不成立或与其他 pattern 重复均判 FAIL，并回退 Stage 1 删除或替换。pattern 确实适用但方案无法落实时应回退重设计，不得以删除掩盖设计缺口。必需约束缺失或无依据地标成不适用 → FAIL。另检查 wrapper 操作清单：默认应为空；非空时每项必须含 API、无法迁入 kernel 的目标版本证据、适用条件、预期代价预算和 Stage 4 profile 测量方法，证据不足不得预先批准例外。失败均报 `design_violation`。 |
+| 12 | Knowledge Bindings 与 wrapper 边界完整 | 先盲审选中原文，再按 design Skill 定义的结构化合同核验 `DESIGN_BINDINGS.json`，并把活动 requirement 的计划位置对照 `DESIGN.md`。wrapper 操作清单仍在 DESIGN：默认应为空；非空时每项必须含 API、目标版本证据、适用条件、代价预算和实现 profile 测量方法。失败类别按下方规则区分。 |
+
+Stage 3 #12：
+
+1. **先建事实**：读取全部 selection 及适用性判断所需的 SPEC、class shape/dtype、target 和官方资料；核验唯一合法的 flat 或 split 布局并推导全部引用键。此时不读 `DESIGN_BINDINGS.json` 或 `DESIGN.md` 正文；重复键须在归一化前报错。
+2. **独立列出预期**：按 design Skill 的 source-first 与最窄范围规则扫描每个选中引用，形成并固定不落盘的临时清单。固定前不得借用 Architect 的分组、锚点或措辞。
+3. **再验 JSON**：按 design Skill 的结构合同逐字段检查。Binding 三元组须与 selection 三元组 exact + unique，`reference == path`、`selection_reason == reason`，requirement 四元组唯一。引用并集为空时 `bindings` 必须为 `[]`，非空时不得为 `[]`；再与预期清单双向对照。遗漏、无来源新增、错误合并独立项、同义合并丢失 `source_anchors`、锚点不可定位或范围不符均 FAIL。
+4. **逐条验语义**：按 design Skill 核验全部状态、证据、检查方法和活动项字段。必要前提必须成立，并有可复核的 class 事实和检查方法；活动项的不变量、计划位置和检查方法须具体可执行且非标题复述；未触发义务和 validation scope 须有可复核的 class/范围证据和检查方法，后者还须说明最窄范围、复用结论及冲突证据（如有）。同时核验 optional pattern 的独立作用、required constraint 的全部活动义务和局部较窄范围优先。
+5. **最后验 DESIGN**：每条活动 requirement 须同时落到对应设计决策和最终 `test_<op>.py` file/symbol；staged 不能代替最终落点，且不变量、实现位置、检查方法一致。Knowledge Bindings 交接只链接 JSON、不复制 Binding 表；wrapper 操作清单也必须通过。
+
+问题来自 selection 本身（布局、`class_id`、引用、重复键、适用性/必要前提、optional pattern 无独立作用或存在未选依赖）时，报 `kb_selection_invalid`；selection 有效，但 JSON 合同、覆盖/唯一性、requirement 语义、DESIGN 落点或 wrapper 例外证据有误时，报 `design_violation`。FAIL 报告包含 `failure_category`、原因、客观证据及可获得的 `class_id`、问题引用和适用时相关/缺失/错误的 `source_anchors`；不得要求 Architect 修改 selection。
 
 ---
 
@@ -257,7 +270,7 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 | `incomplete_structure` | 章节缺失/数量不足 | 回退到对应 Stage 补充 |
 | `unsupported` | EXPLORE_REPORT 有 unsupported 阻断项 | 回退 Stage 1 重新探索 |
 | `golden_failure` | golden 自验证 exit code ≠ 0 | 回退 Stage 2 修复 |
-| `design_violation` | TBD/§4 未参照官方样例/分配方式/Vector 选择合同不合规 | 回退 Stage 3 修正对应轮次 |
+| `design_violation` | design Skill 定义的 Stage 3 设计错误 | 回退 Stage 3 修正对应轮次 |
 | `import_violation` | import 门禁失败（用非 Pro API） | 回退 Stage 4 修复 |
 | `cheating` | host 端做核心计算（值依赖变换/候选筛选/规格砍单/测试输入偷换，含以任何命名伪装者）/多 kernel/wrapper 多次调用 kernel 分担计算/循环调用 kernel 分担计算/规避门禁/未声明实现偏差却产出偏离 DESIGN.md 的代码 | 回退 Stage 4，红线重写 |
 | `perf_violation` | buffer 轮转或 Vector 最终实现偏离已冻结选择 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
@@ -272,7 +285,7 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 | `capability_inconclusive` | 文档、样例和可执行最小实验仍不足以证实或证伪 capability_gap | 阻断当前推进并由 orchestrator 补齐报告中列明的证据；不得猜测归类 |
 | `signature_mismatch` | wrapper 签名与 optional 参数不符（stage4-check #12） | 回退 Stage 4 修正签名 |
 | `delivery_import_unsafe` | 交付单元下 import 失败（stage4-check #13） | 回退 Stage 4 移除 dev-only 顶层依赖 |
-| `kb_selection_invalid` | `KB_SELECTION.json` 缺失或不合规（stage1-check #6） | 回退 Stage 1 重新选择 |
+| `kb_selection_invalid` | Stage 1 selection 不合规，或 design Skill 定义的 Stage 3 selection 错误（stage1-check #6 / stage3-check #12） | 回退 Stage 1 重新选择 |
 | `kb_usage_invalid` | `KB_USAGE.json` 缺失、引用不存在或选而未用（stage4-check #14） | 回退 Stage 4 补齐使用记录 |
 | `wrapper_boundary_violation` | 实现偏离有效设计，在 wrapper 新增了未获 Stage 3 裁定的张量整形 kernel（stage4-check #15） | 留在 Stage 4，将操作移入唯一 kernel；若新证据表明确实无法迁移则改报 `design_violation` 回退 Stage 3 评估例外 |
 | `other` | 以上均不匹配 | orchestrator 人工判断 |
