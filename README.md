@@ -192,6 +192,7 @@ pypto-gym/
 ├── tests/                                   # 测试用例
 │   ├── ops/                                 # 算子测试（与 src/pypto_gym/ops/ 对应）
 │   │   ├── arctic/                          # Arctic LSTM 算子测试
+│   │   ├── chunked_gdr/                     # Chunk Gated Delta Rule 算子测试
 │   │   ├── deepseek_v2_lite_chat/           # DeepSeek V2 Lite Chat 算子测试
 │   │   ├── deepseek_v32_exp/                # DeepSeek V3.2 算子测试
 │   │   ├── deepseek_v4/                     # DeepSeek V4 算子测试
