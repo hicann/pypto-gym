@@ -145,7 +145,7 @@ pypto-gym/
 │       ├── gutenocr_3b/                     # GutenOCR-3B
 │       ├── kimi_linear_48b_a3b/             # Kimi-Linear-48B-A3B
 │       ├── llada2_moe/                      # LLaDA2-MoE
-│       ├── minimax_m27/                     # MiniMax M2.7
+│       ├── minimax/                         # MiniMax M2.7
 │       ├── openpangu_v5_7b/                 # openPangu-Embedded-7B
 │       ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct
 │       ├── qwen3_1_7b/                      # Qwen3-1.7B
