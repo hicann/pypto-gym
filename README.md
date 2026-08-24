@@ -172,6 +172,7 @@ pypto-gym/
 │       │       ├── phi_3_mini_4k_instruct/  # Phi-3-mini-4k-instruct RMSNorm
 │       │       ├── qat/                     # 量化感知训练（对称/非对称，per-tensor/channel/group）
 │       │       ├── qwen3_1_7b/              # Qwen3-1.7B RMSNorm + RoPE
+│       │       ├── qwen3_5/                 # Qwen3.5 GDR 前向/反向
 │       │       ├── qwen3_5_9b/              # Qwen3.5-9B Gated Delta Rule
 │       │       ├── qwen3_6_27b/             # Qwen3.6-27B Gated Delta Rule
 │       │       ├── qwen3_next/              # Qwen3-Next Gated Delta Rule
