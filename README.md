@@ -15,7 +15,7 @@ PyPTO-Gym 是基于 PyPTO 编程框架构建的样例仓库，面向华为昇腾
 - **大模型核心算子样例**：覆盖 DeepSeek 系列、Qwen3 系列、GLM V4.5、Gemma4-31B-it、LLaDA2-MoE 等模型的关键算子实现
 - **实验性算子样例**：基于实验性目录 `experimental`，收录 Attention、Matmul、Vector 等基础算子的开发态样例
 - **大模型适配样例**：提供融合算子入网适配样例，以及端到端模型推理与性能基准脚本
-- **Agent能力**：提供模型整网适配skills，提升大模型对接易用性
+- **Agent 能力**：提供模型整网适配 skills，提升大模型对接易用性
 
 ## 目标用户
 
