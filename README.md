@@ -201,6 +201,7 @@ pypto-gym/
 │   │   ├── llada2_moe/                      # LLaDA2-MoE 算子测试
 │   │   ├── minimax_m27/                     # MiniMax M2.7 算子测试
 │   │   ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct 算子测试
+│   │   ├── pypto_pro/                       # PyPTO Pro 算子测试
 │   │   ├── qat/                             # QAT 算子测试
 │   │   ├── qwen3_1_7b/                      # Qwen3-1.7B 算子测试
 │   │   ├── qwen3_5/                         # Qwen3.5 算子测试
