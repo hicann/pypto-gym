@@ -180,6 +180,7 @@ pypto-gym/
 │       └── transformers/                    # 各个模型结构定义
 │           ├── gemma4_31b_it/
 │           ├── gutenocr_3b/
+│           ├── kimi_linear_48b_a3b/
 │           ├── llada2_moe/
 │           ├── minimax_m27/
 │           ├── minimax_m3/
