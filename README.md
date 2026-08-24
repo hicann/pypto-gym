@@ -203,6 +203,7 @@ pypto-gym/
 │   │   ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct 算子测试
 │   │   ├── qat/                             # QAT 算子测试
 │   │   ├── qwen3_1_7b/                      # Qwen3-1.7B 算子测试
+│   │   ├── qwen3_5/                         # Qwen3.5 算子测试
 │   │   ├── qwen3_5_9b/                      # Qwen3.5-9B 算子测试
 │   │   ├── qwen3_6_27b/                     # Qwen3.6-27B 算子测试
 │   │   ├── qwen3_next/                      # Qwen3-Next 算子测试
