@@ -200,6 +200,7 @@ pypto-gym/
 │   │   ├── gutenocr_3b/                     # GutenOCR-3B 算子测试
 │   │   ├── llada2_moe/                      # LLaDA2-MoE 算子测试
 │   │   ├── minimax_m27/                     # MiniMax M2.7 算子测试
+│   │   ├── mtgr_segment_attention/          # MTGR 分段注意力算子测试
 │   │   ├── phi_3_mini_4k_instruct/          # Phi-3-mini-4k-instruct 算子测试
 │   │   ├── pypto_pro/                       # PyPTO Pro 算子测试
 │   │   ├── qat/                             # QAT 算子测试
