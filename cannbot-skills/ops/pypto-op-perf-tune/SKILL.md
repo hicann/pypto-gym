@@ -101,6 +101,9 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 - ❌ 禁止跳过编排器的自检流程
 - ❌ 禁止跳过环境检查（S1_SETUP S1a）直接进入精度校验
 - ❌ 禁止卸载编排器后继续调优
+- ❌ 禁止复用旧性能数据进入 SWIMLANE/INCORE（每次进入须重新采集）
+- ❌ 禁止跳过 S-20 检查（max_workspace_kb）进入调优
+- ❌ 禁止 INCORE 收敛后跳过算法级优化直接生成报告（当性能未达标时须先尝试 A-D/A-G）
 
 ---
 
@@ -181,7 +184,7 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 ### 0.3 设置调优终止条件
 
 **自动终止条件**：
-1. ✅ 达到性能目标（执行时间 ≤ 目标值）
+1. ✅ 达到性能目标（AICore E2E Time ≤ 目标值）
 2. ✅ 核心利用率 > 80% 且 气泡率 < 10%
 3. ✅ 达到调优时间限制（默认 12 小时）
 
@@ -328,6 +331,11 @@ def kernel_function(...):
 |------|------|--------|--------|
 | `runtime_debug_mode` | 启用运行时调试模式，生成泳道图、气泡分析等性能数据文件 | 不设置（不生成性能数据） | `1`（启用） |
 
+**⚠️ 关键性能指标：AICore End-to-End Time**：启用 `runtime_debug_mode` 后，运行输出中包含 `-------- AICORE Prof Summary --------` 段，其中 **AICore End-to-End Time** 是核上 compute 时间（所有 AIC/AIV 核执行 span 的最大值），**这是性能调优的核心指标**。端到端 wall time 或 torch.npu.Event 测量的 device time 包含 host 下发开销（如 AICPU gather task），不能反映核上真实计算效率。调优主要以 AICore E2E Time 对比优化效果。
+
+**⚠️ S2 阶段强制检查项：max_workspace_kb 推荐（对应 S-20）**：
+首次运行算子时，检查 stdout 中是否包含 `Recommended: set max_workspace_kb near XXX KB` 提示。若有，必须提取推荐值并设置到 `runtime_options`，同时设置 `host_options={"compile_monitor_enable": 0}`。未设置 max_workspace_kb 可能导致编译器无法激活 memory-driven mode，影响后续所有调优效果。
+
 **影响范围**：
 - 会增加编译时间
 - 会增加输出文件大小（泳道图 JSON 可能有数十 MB）
@@ -401,11 +409,19 @@ Read perf-analyzer/SKILL.md
 **必须记录基准性能**：
 ```markdown
 ## 基准性能（未优化）
-- 执行时间: XXX us
+- AICore End-to-End Time: XXX us  ⚠️ 核心指标，调优优化目标
+- 端到端执行时间(wall time): XXX us  （含 host 下发开销，仅供参考，不作判据）
 - 核心利用率: XX%
 - 气泡率: XX%
 - 负载均衡度: XX%
 ```
+
+**⚠️ 性能指标说明**：
+- **AICore End-to-End Time**（核上 compute）：从 `AICORE Prof Summary` 输出获取，是调优的核心优化目标。反映核上真实计算效率，不受 host 下发开销影响。
+- **端到端执行时间**（wall time）：包含 host 下发开销（AICPU task 调度、gather 等），可能远大于 AICore E2E Time。**禁止仅看 wall time 判断优化效果**——如果优化会降低 wall time 但增加 AICore E2E Time（核上等待增加），属于错误优化方向。
+- **判断优化是否有效**：以 AICore E2E Time 下降为准。若 AICore E2E Time 上升但 wall time 下降，说明优化将开销从 host 转移到了核上，核上计算反而变慢，应回退。
+
+> **⛔ 术语统一声明**：本 skill 全文中「执行时间」「算子实际执行时间」「AICore E2E Time」未特别注明者，均指同一指标——核上 compute 时间（各核 Core Total Work Time 的最大值，从 `AICORE Prof Summary` 或 perf-analyzer 报告获取）。**禁止用 wall time / 端到端执行时间作为调优判据**（wall time 含 host 下发开销，仅作参考）。
 
 ---
 
@@ -421,7 +437,7 @@ Read perf-analyzer/SKILL.md
 第1步：开箱性能调优
 ├─ 加载 tune-frontend 子技能
 ├─ 根据性能基准优化代码写法、TileShape、BLOCK_SIZE
-├─ ⚠️ 不需要查看性能报告的详细分析，只需对比性能基准
+├─ ⚠️ 不需要查看性能报告的详细分析，只需对比 AICore E2E Time 基准
 ├─ 建立性能基准
 └─ 📋 编排器触发 PHASE_SUMMARY（摘要 + Task subagent 隔离）
 
@@ -429,9 +445,16 @@ Read perf-analyzer/SKILL.md
 ├─ 基于上一阶段交接摘要启动
 ├─ 加载 tune-swimlane 子技能
 ├─ 查看性能报告，分析泳道图
-├─ 优化调度策略：Stitch 调优、合图调优、L1Reuse优化
+├─ 优化方向：核使用率分析(S-1~S-3)、Stitch调优(S-9)、合图调优(S-4~S-8)、
+│   A5 Mix合图(S-14)、Mix双scope策略(S-21)、TileShape深度调优(S-11~S-13)、
+│   ooo_sched_mode(S-15)、VF融合增强(S-16~S-18)、ready_on_host_tensors(S-19)、
+│   max_workspace_kb(S-20)、调度策略(S-10)
 ├─ 基于性能报告指导优化方向
 └─ 📋 编排器触发 PHASE_SUMMARY（摘要 + Task subagent 隔离）
+
+⚠️ 回环说明：INCORE 阶段执行 I-10/I-11 或算法级 A-D1~A-D3 修复 CV 通路 DDR 断点后，
+须回退至 SWIMLANE 下一轮重试 S-14 Mix合图。这种"合图未完成→进入 INCORE 修复→回退
+SWIMLANE 重试"的回环是预期行为，不是异常——外循环机制天然支持此场景。
 
 第3步：核内性能调优
 ├─ 基于上一阶段交接摘要启动
@@ -440,17 +463,18 @@ Read perf-analyzer/SKILL.md
 ├─ 指令级优化、核内流水优化
 └─ 特殊 Shape 处理
 
-第4步（可选）：算法级优化
-├─ 前三步配置调优收敛后仍未达标时进行
+第4步（可选）：算法级优化（在 INCORE 阶段内执行）
+├─ INCORE 配置级调优收敛后仍未达标时触发（非独立 PHASE，嵌入 INCORE 内部）
 ├─ 不加载新子技能，按步骤 4.3 的检查清单逐项排查
 ├─ 每次只改一个算法点，改后按步骤 1.3 验证精度 + 重新测性能
+├─ A-D1~A-D3 修复 CV 断点后须回退至 SWIMLANE 下一轮重试 S-14（预期回环行为）
 └─ 精度回归立即回退；无收益记录后尝试下一项
 ```
 
 **⚠️ 关键：每个阶段结束后，编排器自动触发 PHASE_SUMMARY 生成阶段交接摘要并通过 Task subagent 隔离（详见 tune-orchestrator/SKILL.md），避免上下文膨胀导致后续调优质量退化！**
 
 **⚠️ 重要说明**：
-- **开箱性能调优**：不需要查看性能报告**的详细分析**，但需要对比基准执行时间
+- **开箱性能调优**：不需要查看性能报告**的详细分析**，但需对比 AICore E2E Time 基准（从运行 stdout 的 `AICORE Prof Summary` 段获取，或从 perf-analyzer 报告的"算子实际执行时间"获取）
 - **深度性能调优**：需要查看性能报告，分析泳道图和性能瓶颈
 - **核内性能调优**：需要查看性能报告，分析核内指令和流水线
 
@@ -460,34 +484,66 @@ Read perf-analyzer/SKILL.md
 
 **⚠️ 重要：开箱性能调优不需要查看性能报告！**
 
-**开箱性能调优**：直接根据性能基准（执行时间）进行优化，不需要分析详细性能报告
+**开箱性能调优**：直接根据 AICore E2E Time 基准进行优化，不需要分析详细性能报告
 
 **深度/核内性能调优**：根据性能分析报告，使用决策树选择优化方向。编号对应 [shared/optimization_catalog.md](shared/optimization_catalog.md)「二、按症状索引」。
 
+**⚠️ 性能瓶颈定位（决策树前置，必做）**：选择优化方向前，先区分瓶颈来源——核上 compute 还是 host 下发开销：
+
+```
+对比 AICore E2E Time 与 端到端 wall time：
+  ├─ AICore E2E Time ≈ wall time → 瓶颈在核上 compute
+  │   → 按下方症状 A/B/C/D 决策树选择优化方向
+  │   → 核心目标：降低 AICore E2E Time
+  │
+  └─ AICore E2E Time << wall time → 瓶颈在 host 下发开销（AICPU task 调度/gather 等）
+      → 重点优化：减少 task 数量（增大 unroll/loop tile）、减少 gather 操作
+      → ⚠️ 注意：减少 task 数量可能增加 AICore E2E Time（核上等待增加），须以 AICore E2E Time 不恶化为前提
+      → 若 host 开销来自 paged KV cache gather，参考 I-7（Gather/Scatter 搬运方向优化）
+```
+
 ```
 症状A：气泡率 > 10%（对应目录症状A）
+  ├─ ⭐⭐⭐ F-2 循环体计算量 → 增大切块或unroll
   ├─ ⭐⭐⭐ F-3 循环次数优化 → 增大tile size或切块
   ├─ ⭐⭐⭐ F-8 内层unroll → unroll_list=[64,16,4]
+  ├─ ⭐⭐⭐ S-20 max_workspace_kb → 从NPU输出提取推荐值并设置
+  ├─ ⭐⭐   F-6 合并独立loop → 合并无数据依赖的独立loop
   ├─ ⭐⭐   S-9 Stitch调优 → stitch_function_max_num: 128
-  ├─ ⭐⭐   S-4/S-5 合图优化 → sg_set_scope 或 nbuffer
+  ├─ ⭐⭐⭐ S-4/S-5 普通合图 → sg_set_scope 或 nbuffer
+  ├─ ⭐⭐⭐ S-14 A5 Mix合图 → auto_mix_partition=1（自动）和 sg_set_scope（手动）是同一功能的两种开关方式，优先尝试自动，⛔编译超时禁止放弃Mix合图（缩小scope/TileShape后重试，自动超时→切手动），⛔退化禁止直接回退到非Mix优化（走诊断决策树），当前方式充分调优后仍无收益再切换另一种（仅A5 npuarch=='DAV_3510'，⚠️ UB并发须<248KB，须追踪CV间数据流向验证所有CV间数据走CV通路）
+  ├─ ⭐⭐⭐ S-21 Mix双scope策略 → Mix scope放出的V段用独立sg_set_scope做普通合图
+  ├─ ⭐⭐⭐ 主SKILL.md §4.3 A-D1~A-D3 → S-14失败后算法级减少DDR往返（合并gather/view复用/消除中间assemble）
   └─ ⭐     S-10 调度策略 → device_sched_mode调整
 
 症状B：核心利用率 < 50%（对应目录症状B）
   ├─ ⭐⭐⭐ F-1 任务粒度检查 → 增大Matmul M/N轴
   ├─ ⭐⭐⭐ F-9 Cube TileShape → 使用推荐配置
+  ├─ ⭐⭐⭐ F-16 多Matmul差异化Cube TileShape → C1/C2按M/N/K独立配置
+  ├─ ⭐⭐⭐ F-17 V段内多shape分段vec tile → shape变化时重设vec tile
   ├─ ⭐⭐⭐ S-1 核使用率分析 → analyze_core_usage.py
   ├─ ⭐⭐⭐ S-2 核填充 → 减小L0/L1增加任务数
+  ├─ ⭐⭐⭐ S-20 max_workspace_kb → 从NPU输出提取推荐值并设置
   ├─ ⭐⭐   F-4 Reshape全局优化 → reshape(inplace=True)外提+合轴
+  ├─ ⭐⭐   F-7 外层动态轴切块 → 切块增加任务数
+  ├─ ⭐⭐   F-10 Vector TileShape → 设置vec_tile_shapes
+  ├─ ⭐⭐   S-12 Vector TileShape深度调优 → 对齐上下游TileShape/泳道图驱动
+  ├─ ⭐⭐⭐ 主SKILL.md §4.3 A-D1~A-D3 → 核利用率因DDR等待偏低时算法级减少DDR往返
   ├─ ⭐     S-10 调度策略 → device_sched_mode
-  └─ ⭐     S-6/S-7 Cube合图 → L1Reuse或CubeNBuffer（核满后启用）
+  ├─ ⭐⭐   S-6/S-7 Cube合图 → L1Reuse或CubeNBuffer（核满后启用）
+  └─ ⭐⭐⭐ S-14 A5 Mix合图 → auto_mix_partition=1（自动）和 sg_set_scope（手动）是同一功能的两种开关方式，优先尝试自动，⛔编译超时禁止放弃Mix合图（缩小scope/TileShape后重试，自动超时→切手动），⛔退化禁止直接回退到非Mix优化（走诊断决策树），当前方式充分调优后仍无收益再切换另一种（仅A5 npuarch=='DAV_3510'，⚠️ UB并发须<248KB，须追踪CV间数据流向验证所有CV间数据走CV通路）
 
 症状C：负载不均衡（AicoreTime差异 > 20%）（对应目录症状C）
   ├─ ⭐⭐⭐ S-3 负载均衡分析 → 按total(us)排序→调整瓶颈
-  ├─ ⭐⭐   S-11 TileShape深度调优 → 减小瓶颈子图L0/L1
-  └─ ⭐     S-4 手动合图 → sg_set_scope合并子图
+  ├─ ⭐⭐   S-11 Cube TileShape深度调优 → 减小瓶颈子图L0/L1
+  ├─ ⭐⭐   S-12 Vector TileShape深度调优 → 调整Vector TileShape均衡负载
+  ├─ ⭐⭐   S-13 Matmul分核布局优化 → 优化分核布局提升L2命中率
+  ├─ ⭐⭐⭐ S-4 手动合图 → sg_set_scope合并子图
 
 症状D：单task耗时过长（对应目录症状D）
   ├─ ⭐⭐⭐ I-1 小Shape矩阵乘 → Vector预处理reshape
+  ├─ ⭐⭐⭐ I-10 合并gather减少搬运次数 → 拼接source一次gather取多列段
+  ├─ ⭐⭐⭐ I-11 view复用消除重复搬运 → view(已有tensor)替代独立gather
   ├─ ⭐⭐   I-2 L2 Cache策略 → NONE_CACHEABLE（融合算子批量设置权重）
   ├─ ⭐⭐   I-3 冗余计算消依赖 → 复制数据使分支独立
   ├─ ⭐⭐   I-4 尾轴长度优化 → concat/transpose增大尾轴
@@ -506,20 +562,69 @@ Read perf-analyzer/SKILL.md
 
 **进入条件**：步骤 4.0 第 1~3 步配置级调优已收敛，且性能仍未达标（步骤 0.3 的终止条件均未触发）。先收敛配置再改算法——配置未收敛时改算法，无法区分收益来自配置还是算法。
 
+**⛔ 强制前置分析**：进入算法级优化前，必须先确认当前性能瓶颈是否为 **DDR 往返带宽瓶颈**。方法：
+1. 查看 SWIMLANE 阶段的 perf 报告：AIC 等 AIV 产出时间 / AIV 等前驱时间是否占比高（>20% E2E）
+2. 若是 DDR 瓶颈，优先执行下方「A-D1 ~ A-D3」（减少 DDR 往返的代码结构改造），这是配置调优无法解决的结构性问题
+3. 若非 DDR 瓶颈（如纯 compute bound），执行下方「A-G1 ~ A-G7」
+
 **检查清单**（系统性逐项检查，不要跳项）：
-- 中间 tensor 数量能否减少？
-- 数据搬运能否减少？
-- cast 次数能否减少？
-- reuse 能否增加？
-- loop 顺序能否改进？
-- memory-bound 阶段能否简化？
-- view / reshape / assemble 次数能否减少？
+
+> **⚠️ 编号说明**：A-D1↔I-10（合并gather）、A-D2↔I-11（view复用）是同一优化的算法级与核内级两个视角编号。A-D3（消除中间assemble回GM）无对应的 I- 编号。在 INCORE 阶段已尝试 I-10/I-11 的，算法级 A-D1/A-D2 标记为"已尝试"即可，不重复执行。
+
+#### A. 减少 DDR 往返（DDR 瓶颈时优先，⭐⭐⭐）
+
+> **背景**：配置级调优（S-14 Mix合图等）只能在 CV 间数据已走 CV 通路的前提下消除搬运。若代码结构本身引入了多余的 DDR 往返（多次独立 gather、中间 assemble 回 GM），配置无法修复——必须改造代码结构。
+
+- **[A-D1] gather 次数能否减少？** ⭐⭐⭐
+  - **诊断方法**：`grep -nE "gather_in_ub|gather_in_l1"` 统计所有 gather 调用；检查是否有多个 gather 取同一 source tensor 的不同列段
+  - **修改方式**：在算子入口将 source 拼接为 `[rows, col1+col2+...]`，一次 gather 取全部列段
+  - **典型案例**：kn (512维) + kr (64维) 两次 gather → 拼接 key_2d=[kn,kr] (576维) 一次 gather
+  - **对应 INCORE 优化点**：I-10（合并 gather 减少搬运次数）
+
+- **[A-D2] 已 gather 的数据能否 view 复用？** ⭐⭐⭐
+  - **诊断方法**：检查每次 gather 是否取了与已有数据重叠的内容；特别是 V2/C2 阶段是否独立 gather 了 V0 阶段已 gather 的数据的子段
+  - **修改方式**：用 `pypto.view(已有tensor, [shape], [offset])` 切出所需数据，替代独立 gather
+  - **典型案例**：vj 独立 gather kn 的部分段 → `view(kn, [s2_tile, dn])` 复用已 gather 的 kn
+  - **对应 INCORE 优化点**：I-11（view 复用消除重复搬运）
+
+- **[A-D3] CV 段内是否有中间 assemble 回 GM？** ⭐⭐
+  - **诊断方法**：检查 Mix合图 scope 包裹范围内是否有显式 `pypto.assemble` 将中间结果写回 GM
+  - **修改方式**：改为在 UB 内通过 `view`/`reshape` 传递，仅在 scope 结束后 assemble 最终结果
+  - **典型案例**：C1 输出到 GM 再 gather 进 C2 → C1 结果在 UB 内 view 给 C2
+
+#### B. 通用优化（⭐⭐）
+
+- **[A-G1] 中间 tensor 数量能否减少？**
+  - 检查是否有可合并的中间 tensor（如连续 cast 可合并为一次）
+
+- **[A-G2] cast 次数能否减少？**
+  - 检查是否有冗余 cast（如 BF16→FP32→BF16 的往返转换）
+
+- **[A-G3] reuse 能否增加？**
+  - 检查是否有数据被多次搬运到 UB/L1，可用 view 复用替代
+
+- **[A-G4] loop 顺序能否改进？**
+  - 检查 loop 嵌套顺序是否将重计算放到了外层（应移到内层）
+
+- **[A-G5] memory-bound 阶段能否简化？**
+  - 检查 gather/assemble 阶段是否有更高效的替代方式：
+    - `pypto.concat`（分配新内存+搬运）→ `pypto.assemble`（直接写入目标位置，零额外内存分配）
+    - 多次独立 `gather_in_ub` 取同一 source 不同列段 → 合并为一次 `gather_in_ub`（对应 A-D1/I-10）
+    - 独立 `gather_in_ub` 取的数据与已有 tensor 存在内容重叠 → `pypto.view` 复用替代（对应 A-D2/I-11）
+
+- **[A-G6] view / reshape / assemble 次数能否减少？**
+  - 检查是否有冗余的 view→reshape 链
+
+- **[A-G7] CV 通路是否被代码结构打断？**（A5 平台 + Mix合图场景）
+  - 若 S-14 Mix合图配置后性能无收益或退化，须按 [merge-optimization.md §4.7](tune-swimlane/references/merge-optimization.md) 的「Mix合图失败诊断子流程」定位 CV 通路断点
+  - 断点可能是：独立 gather 打断 CV 通路（→ A-D1/A-D2 修复）、中间 assemble 回 GM（→ A-D3 修复）、UB 超限（架构限制，无法修复）
 
 **执行规则**：
 1. 每次只改一个算法点，验证后再改下一个。禁止一次叠加多个算法改动。
 2. 每次修改后按步骤 1.3 的强制检查流程验证精度，并按步骤 2~3 重新采集和对比性能。
 3. 精度回归或性能回退：立即回退修改，将失败尝试记入调优记录（避免重试），再尝试下一项。
 4. 算法级改动追加到已生成的调优报告（`{op_name}_tuning_report.md`）的「已采纳优化」/「已失败优化」表，阶段名填「算法」，并同步更新性能对比数据。
+5. ⛔ A-D1~A-D3（减少 DDR 往返）改造后，须重新评估 S-14 Mix合图——代码结构改变后，原先不生效的 Mix合图可能变为生效（CV 通路断点已被修复）。
 
 ---
 
@@ -606,10 +711,12 @@ Read perf-analyzer/SKILL.md
 
    ## 4. 已采纳优化（代码中已生效）
 
-   | # | 阶段 | 优化项 | 修改内容 | 性能收益 | 代码位置 |
-   |---|------|--------|---------|---------|---------|
-   | 1 | 开箱 | [优化名称] | [具体修改] | +X% | [文件:行号] |
-   | 2 | 深度 | [优化名称] | [具体修改] | +X% | [文件:行号] |
+| # | 阶段 | 优化项 | 修改内容 | 性能收益 | 代码位置 |
+|---|------|--------|---------|---------|---------|
+| 1 | 开箱 | [优化名称] | [具体修改] | +X% | [文件:行号] |
+| 2 | 深度 | [优化名称] | [具体修改] | +X% | [文件:行号] |
+| 3 | 核内 | [优化名称] | [具体修改] | +X% | [文件:行号] |
+| 4 | 算法 | [优化名称] | [具体修改] | +X% | [文件:行号] |
 
    ## 5. 已失败优化（避免重试）
 

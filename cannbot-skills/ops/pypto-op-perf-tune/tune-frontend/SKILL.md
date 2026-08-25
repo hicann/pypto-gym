@@ -31,7 +31,7 @@ description: PyPTO 算子开箱性能调优技能。主要关注代码级的调�
 **⛔ 禁止：未完成阶段A+阶段B的分析就直接进入阶段C逐项优化。**
 **⛔ 禁止：凭直觉选择优化点跳过分析环节。**
 
-## 阶段A: 全局分析（对应优化点 F-1~F-10）
+## 阶段A: 全局分析（对应优化点 F-1~F-10, F-16~F-18）
 
 **目标**：从算子整体结构出发，理解循环组织、常量依赖、Reshape 分布、基本块(TileShape)配置。对应阶段C中的"全局性能优化"（F-1~F-10）。
 
@@ -47,7 +47,7 @@ description: PyPTO 算子开箱性能调优技能。主要关注代码级的调�
 | 2 | range(num_kv_heads) | L272 | Python for | 静态(8) | - | - | - |
 
 **关键检查项**：
-- [ ] 静态轴是否使用了 `pypto.loop`？（应改为 Python for）
+- [ ] 静态轴是否使用了 `pypto.loop`？（应改为 Python for，⚠️ **但 F-18 例外**：n_kv/group 等语义维度循环变量参与 offset 计算时须保留 `pypto.loop`）
 - [ ] 最内层循环次数是否 > 100？（应切块）
 - [ ] 最内层循环体计算量是否太小？（应 unroll 或增大切块）
 - [ ] 是否有可合并的独立 loop？
@@ -105,7 +105,8 @@ description: PyPTO 算子开箱性能调优技能。主要关注代码级的调�
 - [ ] `vec_tile_shapes` 每维是否 ≤ 对应 tensor 实际维度？
 - [ ] `vec_tile_shapes` 数据量是否在 16~64KB 范围内？
 - [ ] `cube_tile_shapes` 的 L1 是否超过实际轴长？
-- [ ] 多个不同 shape 的 matmul 是否各自独立设置了 `cube_tile_shapes`？
+- [ ] 多个不同 shape 的 matmul 是否各自独立设置了 `cube_tile_shapes`？（F-16：多 Matmul 差异化配置）
+- [ ] 同一 V 段内 shape 发生变化时是否重设了 `set_vec_tile_shapes`？（F-17：V 段分段 vec tile）
 - [ ] Decode 场景 M=1 的 matmul 是否使用了 K 轴三维配置 `[kL0, kAL1, kBL1]`？
 - [ ] reshape 前的 vec_tile 是否按源 shape 设？reshape 后是否按目标 shape 重设？
 - [ ] assemble 前的 vec_tile 是否匹配目标 shape？
@@ -205,12 +206,17 @@ description: PyPTO 算子开箱性能调优技能。主要关注代码级的调�
 
 ## 阶段C: 逐项优化
 
-**前提**：阶段A和阶段B的分析已完成，优化点排序清单已生成。
+⛔ **进入门控**：回复中必须已包含以下产出物（缺失则回退到阶段A/B补充）：
+- A1 Loop结构分析表（含循环名/代码行/类型/轴性质/循环次数/最内层?）
+- A3 Reshape全局分析表（含每个reshape的源shape/目标shape/inplace?/冗余?）
+- A4 TileShape审查表（含每个operation的前置TileShape/合理?/拼接模式）
+- B1 数据操作分析表（F-12~F-15逐项判定）
+- **优化点清单：对照 [shared/optimization_catalog.md](../shared/optimization_catalog.md) 的 F-1~F-18 全表逐项标记**，每项标记为 ✅已尝试 / ❌已失败 / ❌不适用(须注明原因) / ⏳待尝试。**禁止仅列出"自己觉得有用"的项，必须覆盖全表。** 清单中存在 ⏳待尝试 项时禁止退出本阶段。
 
 **执行方式**：按优化点排序清单，由编排器的迭代循环（ITER_START → ITER_MODIFY → ITER_VERIFY → ITER_MEASURE → ITER_RECORD → ITER_JUDGE）逐项执行。
 
 **每项优化前必须确认**：
-1. 该优化点来源于阶段A或阶段B的分析结论（有明确的分析表格行号引用）
+1. ⛔ 该优化点来源于阶段A或阶段B的分析结论——ITER_START 时必须在回复中写出"选择 [F-X]，依据：A4表第N行，[分析结论]"。无法写出"依据：XX表第N行" → 该表未完成 → 回退补充
 2. 修改只涉及一个参数
 3. 修改后该参数的依赖项是否需要同步调整（参考 A2 常量依赖关系图）
 4. 如果本项优化涉及代码结构变更（loop合并/拆分、reshape移动、循环切块），必须在修改后重新检查受影响的 A1/A3/A4 表格行，更新过期的分析结论
@@ -244,7 +250,7 @@ description: PyPTO 算子开箱性能调优技能。主要关注代码级的调�
 以下各章节为阶段C逐项优化时的具体操作指南。每个章节对应 optimization_catalog.md 中的优化点编号。
 
 **阶段C 优化顺序规则**：
-1. **先全局后局部**：P0（F-1~F-4）→ P1（F-5~F-8）→ P2（F-9~F-10）→ P3（F-11~F-15）
+1. **先全局后局部**：P0（F-1~F-4, F-16, F-17）→ P1（F-5~F-8, F-18）→ P2（F-9~F-10）→ P3（F-11~F-15）
 2. **每次只执行一个优化点**，按 ITER 循环执行
 3. **优先执行阶段A/B分析中发现的问题**，而非盲目按编号顺序
 
@@ -471,6 +477,162 @@ pypto.experimental.set_operation_options(combine_axis=True)
 ##### 局部§4.5 案例
 
 详见 [尾轴 Broadcast 合轴优化案例](cases/combine-axis-broadcast.md)
+
+### 多 Matmul 差异化 Cube TileShape（对应优化点 F-16）
+
+> **适用场景**：算子含 2 个及以上 Matmul（如 attention 类的 QK^T + PV 模式）。
+
+#### 诊断方法
+
+逐个分析每个 Matmul 的 M/N/K 轴大小，填写下表：
+
+| # | Matmul | M 轴 | N 轴 | K 轴 | 当前 cube tile | 问题 |
+|---|--------|------|------|------|---------------|------|
+| 1 | C1 (QK^T) | 128 | s2_tile | dn+dr | [128,128],[128,128],[128,128] | L1 太小，K 轴数据重复搬运 |
+| 2 | C2 (PV) | 128 | dn | s2_tile | [128,128],[128,128],[128,128] | K_L1 太小，重复载入 |
+
+#### 优化原则
+
+**每个 Matmul 的 cube tile 应根据其 M/N/K 特征独立配置**：
+
+1. **K 轴较大（>128）的 Matmul**：L1 调大（如 256），让 A/B 矩阵驻留 L1，减少重复载入
+2. **K 轴与另一个 Matmul 的 N 轴相同的 Matmul**：K_L1 可调大复用前序加载的数据
+3. **禁忌**：所有 Matmul 使用完全相同的 cube tile 配置（除非 M/N/K 完全一致）
+
+#### 配置示例
+
+```python
+# C1 (QK^T): M=128, N=s2_tile(512), K=576 → L1 调大让 K 驻留
+pypto.set_cube_tile_shapes([128, 128], [256, 256], [128, 128])
+
+# C2 (PV): M=128, N=512, K=s2_tile(512) → K_L1 调大复用
+pypto.set_cube_tile_shapes([128, 128], [128, 128], [256, 256])
+```
+
+### V 段内多 shape 分段 vec tile（对应优化点 F-17）
+
+> **适用场景**：同一 V 段内处理的 tensor shape 发生变化（如 online softmax 中 [M,N]→[M,1]→[M,N] 交替）。
+
+#### 诊断方法
+
+逐行扫描 V 段内每个 operation 的输入/输出 tensor shape，标记所有 shape 变化点：
+
+| # | operation | 输入 shape | 输出 shape | 当前 vec tile | shape 变化? | 问题 |
+|---|-----------|-----------|-----------|-------------|-----------|------|
+| 1 | amax(sij) | [128, 512] | [128, 1] | [32, 512] | ✅ | [128,1] ops 用 [32,512] tile 大量 padding |
+| 2 | sub(sij, max) | [128, 512] | [128, 512] | [32, 512] | 否 | 无问题 |
+| 3 | mul(oi_update, e_old) | [128, 512] | [128, 512] | [32, 512] | 否 | 无问题 |
+
+#### 优化原则
+
+1. **shape 变化时必须重设 vec tile**：每次 tensor shape 从 [M,N] 变为 [M,1] 或反向变化时，必须重新设置匹配的 vec tile
+2. **归约类 [M,1] ops**：用大行数小列数 tile（如 [128, 128]），匹配 reduction 输出 shape
+3. **elementwise [M,N] ops**：用匹配 N 轴的 tile（如 [32, 512]），用满尾轴带宽
+4. **⚠️ 嵌套表达式必须展平后才能分段**：若 V 段内使用嵌套表达式（如 `pypto.add(pypto.mul(a,b), pypto.mul(c,d))`），编译器将整个嵌套视为一个不可分割的 op，无法在中间插入 `set_vec_tile_shapes`。必须先展平为独立中间变量，才能在 shape 切换点插入 vec tile 分段。**展平是分段的必要前置条件，不展平则分段无法生效**。
+
+#### 展平方法
+
+```python
+# ❌ 嵌套表达式：编译器视为一个整体，无法在中间切tile
+# [128,1] ops 和 [128,512] ops 混在嵌套中，编译器用开头设的tile统一处理
+sum_new = pypto.add(pypto.mul(e_old, sum_update),     # [128,1]
+                    pypto.mul(e_local, sum_local))     # [128,1]
+oi_new = pypto.add(pypto.mul(oi_update, e_old),       # [128,512] ← 用[128,128]处理，严重padding
+                    pypto.mul(q1, e_local))            # [128,512]
+
+# ✅ 展平为独立变量：可在shape切换点插入set_vec_tile_shapes
+pypto.set_vec_tile_shapes(128, 128)        # [128,1] ops
+t1 = pypto.sub(max_update, max_new)         # [128,1]
+t2 = pypto.exp(t1)                          # [128,1]
+t6 = pypto.mul(t2, sum_update)              # [128,1]
+t3 = pypto.sub(m_local, max_new)            # [128,1]
+
+pypto.set_vec_tile_shapes(32, 512)         # ← 切换到匹配[128,512]的tile
+t4 = pypto.exp(t3)                          # [128,1]
+t5 = pypto.mul(t4, sum_local)               # [128,1]
+oi_last = pypto.mul(oi_update, t2)          # [128,512] ← tile匹配
+oi_flash = pypto.mul(q1, t4)                # [128,512] ← tile匹配
+oi_tmp = pypto.add(oi_last, oi_flash)       # [128,512] ← tile匹配
+```
+
+**展平的核心价值**：不是为了VF融合，而是为了在 [M,1] ops 和 [M,N] ops 之间插入 vec tile 切换。不展平时编译器用统一tile处理所有ops，导致 [M,N] ops 用 [M,1] 的tile产生严重padding。适用于任何 V 段内存在归约输出 [M,1] 和 elementwise 输出 [M,N] 交替的场景。
+
+#### 配置示例
+
+```python
+# V2 段：先做 [128,1] 归约类操作
+pypto.set_vec_tile_shapes(128, 128)    # 匹配 [128,1] 输出
+max_new = pypto.maximum(max_update, tilda_mij_reduce)
+t1 = pypto.sub(max_update, max_new)
+t2 = pypto.exp(t1)
+
+# 切换到 [128,512] elementwise 操作
+pypto.set_vec_tile_shapes(32, 512)     # 匹配 [128,512] 输出
+oi_last = pypto.mul(oi_update, t2)
+oi_flash = pypto.mul(q1, t4)
+oi_tmp = pypto.add(oi_last, oi_flash)
+```
+
+### 语义维度的静态循环保留（对应优化点 F-18）
+
+> **适用场景**：算子有 n_kv/group 等语义维度的静态循环（即使迭代次数=1）。
+
+#### F-5 的例外原则
+
+F-5 说"静态轴改 Python for"，但以下情况的静态循环应**保留为 `pypto.loop`**：
+
+| 保留条件 | 原因 | 示例 |
+|---------|------|------|
+| 循环变量在 tensor shape 或 view offset 中被使用 | 编译器需要识别这些维度的语义边界 | `cur_offset = ... + n_kv_idx * group + group_idx * cur_group_tile` |
+| 循环代表模型语义维度（n_kv, group, head） | 影响 root function 划分和数据流分析 | `for n_kv_idx in pypto.loop(0, n_kv_sym, 1, ...)` |
+
+#### 判断标准
+
+```
+该循环变量是否在 tensor shape 或 view offset 中被使用？
+├─ 是 → 保留 pypto.loop（即使迭代1次）
+└─ 否 → 可改为 Python for（按 F-5 处理）
+```
+
+#### 代码示例
+
+```python
+# ✅ 保留语义循环（即使 n_kv=1, group_loop=1）
+for n_kv_idx in pypto.loop(0, n_kv_sym, 1, name="LOOP_n_kv"):
+    for group_idx in pypto.loop(0, g_loop_sym, 1, name="LOOP_group"):
+        # 循环变量参与 offset 计算 → 保留
+        cur_offset = batch_idx * s1_n2_gsym + slc_idx * nq + n_kv_idx * group + group_idx * cur_group_tile
+```
+
+## 调优检查清单
+
+**⛔ 必须按以下清单逐项执行。每项标记为 ✅已尝试 或 ❌已失败（附原因），禁止跳过。完整优化点信息参考 [shared/optimization_catalog.md](../shared/optimization_catalog.md)。**
+
+**🔥 P0 - 全局优化（F-1~F-4, F-16, F-17）**：
+- [ ] [F-1] 是否检查了所有 Matmul 的 M/N/K 轴是否充分利用硬件（M 轴 < 8 是常见问题）
+- [ ] [F-2] 是否检查了循环体内部计算量是否太小（应 unroll 或增大切块）
+- [ ] [F-3] 是否检查了循环总次数（>100 应切块减少循环次数）
+- [ ] [F-4] 是否对所有 reshape/squeeze/unsqueeze 逐行分析（原始输入应外提+inplace，冗余应删除）
+- [ ] [F-16] 是否对每个 Matmul 独立配置了 cube tile（含2个及以上 Matmul 时禁止全用相同配置）
+- [ ] [F-17] 是否逐行扫描 V 段内每个 operation 的 shape 变化点并在变化时重设 vec tile
+
+**P1 - 循环与常量优化（F-5~F-8, F-18）**：
+- [ ] [F-5] 是否将静态轴改为 Python for（⚠️ F-18 例外：语义维度循环须保留 pypto.loop）
+- [ ] [F-6] 是否检查了可合并的独立 loop
+- [ ] [F-7] 是否对外层动态轴范围大的循环尝试了切块
+- [ ] [F-8] 是否对内层动态轴尝试了 unroll_list
+- [ ] [F-18] 是否检查了 n_kv/group 等语义维度循环是否被错误改为 Python for（应保留 pypto.loop）
+
+**P2 - TileShape 优化（F-9~F-10）**：
+- [ ] [F-9] 是否为每个 Matmul 设置了 `set_cube_tile_shapes`（配置是否为推荐值，Decode M=1 用 K 轴三维配置）
+- [ ] [F-10] 是否为每个 Vector 计算设置了 `set_vec_tile_shapes`（优先用满尾轴，reshape 前后重设）
+
+**P3 - 局部优化（F-11~F-15）**：
+- [ ] [F-11] 是否检查了常量配置（BLOCK_SIZE 等）
+- [ ] [F-12] 是否检查了权重矩阵格式（大 Shape 可尝试 NZ）
+- [ ] [F-13] 是否检查了 transpose+matmul 模式（可用 a_trans/b_trans 融合）
+- [ ] [F-14] 是否检查了 concat/assemble 搬运（concat 可替换为 assemble）
+- [ ] [F-15] 是否检查了尾轴为 1 的 broadcast 二元运算（可添加 combine_axis=True）
 
 ## 参考资料
 

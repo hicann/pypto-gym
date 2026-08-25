@@ -13,13 +13,20 @@ description: PyPTO 算子核内性能调优技能。通过分析单 task 的实�
 
 ## ⛔ 前置条件（强制门控）
 
-1. **完成深度性能调优**：泳道图分析和合图调优已完成
+1. **完成深度性能调优**：泳道图分析和合图调优已完成，或 S-14 Mix合图因 CV 通路 DDR 断点待修复（此时须先执行 I-10/I-11 修复断点，再回退至 PHASE_SWIMLANE 下一轮重试 S-14）
 2. **精度校验通过**：确保算子计算正确
-3. **识别出单 task 瓶颈**：通过泳道图定位到耗时较长的 task
+3. **识别出单 task 瓶颈**：通过泳道图定位到耗时较长的 task，或 DDR 往返是性能主因
 
 **⛔ ⛔ ⛔ 独立采集数据（强制）：每次进入此阶段时，必须重新运行测试（带 debug_options）采集最新泳道图数据。禁止复用 SWIMLANE 阶段或其他轮次的旧数据！修改代码后性能特征已变，旧数据无法反映当前状态，以此决策会导致错误结论。⛔ ⛔ ⛔**
 
 ## 调优方向
+
+⛔ **进入门控**：进入 ITER 循环前，回复中必须已包含以下产出物（缺失则回退补充）：
+- 泳道图分析结果（当前瓶颈 task 识别 + 耗时排序）
+- 瓶颈来源判定（DDR 往返 / compute bound / 调度开销）
+- **调优点清单：对照 [shared/optimization_catalog.md](../shared/optimization_catalog.md) 的 I-1~I-11 全表逐项标记**，每项标记为 ✅已尝试 / ❌已失败 / ❌不适用(须注明原因) / ⏳待尝试。**禁止仅列出"自己觉得有用"的项，必须覆盖全表。** 清单中存在 ⏳待尝试 项时禁止退出本阶段。
+
+⛔ 每次 ITER_START 选择优化点时，必须在回复中写出"选择 [I-X]，依据：[泳道图分析中的具体数据]"。无法写出依据 → 前置分析未完成 → 回退补充。
 
 ### 1. 特殊 Shape 处理
 
@@ -238,6 +245,75 @@ for i in pypto.loop(range(total_tiles)):
 - 主块（完整 BLOCK_SIZE）不需要 valid_shape
 - 尾轴本身较小（< 32B 对齐）时，优先使用 I-4 尾轴长度优化增大尾轴
 
+### 10. 合并 gather 减少搬运次数
+
+当算子中存在多个 `gather_in_ub`/`gather_in_l1` 调用取同一 source tensor 的不同列段时，可通过拼接 source 后一次 gather 取全部列段，减少 DDR 往返次数。
+
+> **触发场景**：SWIMLANE 分析显示 DDR 往返是性能主因，或 S-14 Mix合图因 CV 通路中间有独立 gather 而无法闭合时，须执行本优化。
+
+**诊断方法**：
+
+1. `grep -nE "gather_in_ub|gather_in_l1"` 统计所有 gather 调用
+2. 逐个检查 gather 的 source tensor 参数，标记取同一 source 的不同列段的 gather 对
+3. 评估这些 gather 是否可以在算子入口拼接后一次完成
+
+**修改方式**：
+
+```python
+# ❌ 原始：两次独立 gather 取同一 source 的不同列段
+kn = pypto.gather_in_ub(key_nope_2d, indices, block_table, block_size, -2)  # 512 维
+kr = pypto.gather_in_ub(key_rope_2d, indices, block_table, block_size, -2)  # 64 维
+# 两次 DDR→UB 往返
+
+# ✅ 优化：入口拼接后一次 gather
+key_2d = pypto.concat([key_nope_2d, key_rope_2d], -1)  # 576 维，GM 中完成
+kj = pypto.gather_in_ub(key_2d, indices, block_table, block_size, -2)       # 一次 DDR→UB 往返
+kn = pypto.view(kj, [s2_tile, dn], [0, 0])       # UB 内 view 切出 kn
+kr = pypto.view(kj, [s2_tile, dr], [0, dn])      # UB 内 view 切出 kr
+```
+
+**约束**：
+- 拼接须在 GM 完成（`pypto.concat`），gather 后数据在 UB 内通过 view 切分
+- gather 结果须满足 UB 248KB 限制（单 tensor ND+NZ < 248KB），否则数据走 DDR 中转
+- view 切出的数据布局须与下游计算期望一致（注意 NZ/ND 格式差异）
+
+**与 S-14 Mix合图的协同**：
+- 合并 gather 后，CV 序列中间不再有独立 gather 打断通路
+- 须在合并 gather 后重新评估 S-14 Mix合图配置（原先不生效的 Mix合图可能变为生效）
+- 参见 [merge-optimization.md §4.7](../tune-swimlane/references/merge-optimization.md)「Mix合图失败诊断子流程」
+- **🔥 案例**：[合并 gather + view 复用消除 DDR 往返](cases/gather-merge-view-reuse.md)（sparse_flash_attention_quant，-40%）
+
+### 11. view 复用消除重复搬运
+
+当后续阶段的 gather 取的数据与已有数据存在内容重叠（如已 gather 的 tensor 的子段），可用 `view` 从已有 tensor 切出所需数据，替代独立 gather。
+
+> **触发场景**：同 I-10，尤其当 V2/C2 阶段独立 gather 了 V0 阶段已 gather 的数据的部分内容时。
+
+**诊断方法**：
+
+1. 逐个分析后续阶段的 gather 调用
+2. 判断其取的数据是否与 V0 阶段已 gather 的 tensor 存在内容重叠
+3. 若重叠，评估是否可以用 view 切出替代独立 gather
+
+**修改方式**：
+
+```python
+# ❌ 原始：V2 阶段独立 gather 取 vj（vj 与 kn 内容完全重叠，kn 已在 V0 阶段 gather）
+vj = pypto.gather_in_ub(key_nope_2d, indices, block_table, block_size, -2)  # 重复搬运
+
+# ✅ 优化：view 复用已有 kn（vj 与 kn 同源同段，直接 view 取全部）
+vj = pypto.view(kn, [s2_tile, dn], [0, 0])  # UB 内 view，零搬运
+```
+
+**约束**：
+- view 的 offset 和 shape 须在已有 tensor 的有效范围内
+- view 后数据布局须与下游计算期望一致
+- 若已有 tensor 的生命周期已结束（被后续操作覆盖），须提前复制或延长生命周期
+
+**与 S-14 Mix合图的协同**：
+- view 复用后，CV 序列中间不再有独立 gather 打断通路
+- 须在 view 复用后重新评估 S-14 Mix合图配置
+
 ## 调优检查清单
 
 **⛔ 必须按以下清单逐项执行。每项标记为 ✅已尝试 或 ❌已失败（附原因），禁止跳过。完整优化点信息参考 [shared/optimization_catalog.md](../shared/optimization_catalog.md)。**
@@ -245,7 +321,8 @@ for i in pypto.loop(range(total_tiles)):
 **优化优先级**：
 1. ⭐⭐⭐ **P0 - 特殊 Shape 处理** → 详见 [I-1]
 2. ⭐⭐ **P1 - L2 Cache + 依赖与搬运优化** → 详见 [I-2][I-3][I-4]
-3. ⭐⭐ **P2 - TileOperation 效率检查** → 详见 [I-5][I-6][I-7][I-8][I-9]
+3. ⭐⭐⭐ **P1+ - DDR 往返优化（DDR 瓶颈场景强制）** → 详见 [I-10][I-11]
+4. ⭐ **P2 - TileOperation 效率检查** → 详见 [I-5][I-6][I-7][I-8][I-9]
 
 **🔥 P0 - 特殊 Shape [I-1]**：
 - [ ] [I-1] Matmul 的 Shape 是否特殊（如 M 很大 N 很小）
@@ -255,6 +332,11 @@ for i in pypto.loop(range(total_tiles)):
 - [ ] [I-2] 只读一次的大型权重矩阵是否设置了 L2 Cache 策略（`NONE_CACHEABLE`）；融合算子中应对所有权重同时设置，避免 L2 争用失衡 → **🔥 案例**：[权重矩阵批量 NONE_CACHEABLE](cases/weight-none-l2-cacheable.md)（-19.1%）
 - [ ] [I-3] 是否存在一对多的子图依赖（可通过冗余计算消除）
 - [ ] [I-4] 尾轴是否过小（< 32B 对齐）；尾轴 TileShape 是否已优先用满，必须切分时是否按 512B 对齐
+
+**🔥 P1+ - DDR 往返优化 [I-10][I-11]**（DDR 瓶颈场景强制，⚠️ 配置级 S-14 Mix合图失败后必做）：
+- [ ] [I-10] 是否存在多个 gather 取同一 source 的不同列段（`grep -nE "gather_in_ub|gather_in_l1"` 统计）→ 拼接后一次 gather
+- [ ] [I-11] 后续阶段的 gather 取的数据是否与已有 tensor 存在内容重叠 → 用 `view` 复用替代独立 gather
+- [ ] ⛔ I-10/I-11 修复后是否重新评估了 S-14 Mix合图（CV 通路断点修复后 Mix合图可能变为生效）
 
 **P2 - TileOperation 效率检查 [I-5~I-9]**：
 - [ ] [I-5] 单个 Operation 是否与 Ascend C 对比过性能

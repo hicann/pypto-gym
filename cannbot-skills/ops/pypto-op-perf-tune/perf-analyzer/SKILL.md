@@ -82,8 +82,8 @@ find . -name "bubble_analysis.log" -type f
 **AIV 核心指标（AI Vector核心）：**
 - 同上指标
 
-**算子实际执行时间：**
-所有核心中 Core Total Work Time 的最大值
+**算子实际执行时间（即 AICore E2E Time，调优核心指标）：**
+所有核心中 Core Total Work Time 的最大值。与运行 stdout `AICORE Prof Summary` 中的 AICore End-to-End Time 为同一指标，调优判据以此为准，非 wall time。
 
 **AicoreTime(核心实际工作时间)：**
 AicoreTime = 核心总工作时间 - 总等待时间
