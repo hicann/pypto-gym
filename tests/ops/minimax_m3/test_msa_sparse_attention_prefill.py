@@ -230,42 +230,42 @@ def do_test(n, seed=42, max_n=None):
     compare(output_npu.cpu(), golden, name=f"msa_main_branch_n{n}")
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_aligned_4096():
     do_test(n=4096, seed=55, max_n=4096)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_aligned_2048():
     do_test(n=2048, seed=42)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_aligned_1024():
     do_test(n=1024, seed=43)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_unaligned_1500():
     do_test(n=1500, seed=45)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_unaligned_500():
     do_test(n=500, seed=47)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_unaligned_1():
     do_test(n=1, seed=52)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_unaligned_64():
     do_test(n=64, seed=53)
 
 
-@pytest.mark.soc("950", "910")
+@pytest.mark.soc("950")
 def test_unaligned_100():
     do_test(n=100, seed=54)
 
