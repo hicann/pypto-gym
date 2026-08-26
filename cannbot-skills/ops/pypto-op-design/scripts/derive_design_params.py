@@ -59,10 +59,19 @@ DTYPE_BYTES = {"fp32": 4, "float32": 4, "fp16": 2, "float16": 2, "bf16": 2, "bfl
 def count_effective_lines(golden: Path) -> int:
     """Delegate to the bundled count_golden_lines.py (single source of truth)."""
     script = Path(__file__).with_name("count_golden_lines.py")
-    out = subprocess.run(
-        [sys.executable, str(script), str(golden)],
-        capture_output=True, text=True, check=True,
-    )
+    try:
+        out = subprocess.run(
+            [sys.executable, str(script), str(golden)],
+            capture_output=True, text=True, check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        # 透传子进程真实报错: CalledProcessError.__str__ 不含 stderr,
+        # 若只抛原异常调用方只能看到 "exit status 1"。这里把 stderr 拼进
+        # 新的错误消息, 让使用者知道具体失败原因 (如 file not found / 解析错误)。
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise RuntimeError(
+            f"count_golden_lines.py 执行失败 (exit={exc.returncode}): {detail or '无额外输出'}"
+        ) from exc
     return int(out.stdout.strip())
 
 
