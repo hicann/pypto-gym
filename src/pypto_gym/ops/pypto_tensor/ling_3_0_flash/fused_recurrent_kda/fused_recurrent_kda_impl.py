@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
+# Please refer to the License for details. You may not use this file except in compliance with the License.a
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
@@ -85,11 +85,12 @@ def _create_fused_recurrent_kda_kernel(H, D, in_dtype, scale, eps,
     # the lint AST walker.)
     # SIG_IMPL: snapshot marker — factory creates kernel with closure params
     @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU,
-                                         "stitch_function_max_num": 256,
-                                         "device_sched_mode": 2,
-                                         "launch_sched_aicpu_num": 3,
+                                         "stitch_function_max_num": 1024,
+                                         "device_sched_mode": 0,
+                                         "launch_sched_aicpu_num": 7,
+                                         "device_sched_parallelism": 8,
                                          },
-                         pass_options={"vec_nbuffer_setting": {"DEFAULT": 8},
+                         pass_options={"vec_nbuffer_setting": {"DEFAULT": 16},
                                        "cube_nbuffer_setting": {-1: 2}}
                          )
     def fused_recurrent_kda_kernel_npu(
@@ -137,11 +138,12 @@ def _create_fused_recurrent_kda_kernel(H, D, in_dtype, scale, eps,
             S_buf = pypto.tensor([V, K], pypto.DT_FP32)
             pypto.set_vec_tile_shapes(V, K)
 
-            if is_spec_decoding:
-                S_buf[:] = state_buf_in[init_slot, h_idx]
-            elif not inplace_final_state:
-                # Non-inplace: init once outside loop, carry via [:] across tokens
-                S_buf[:] = state_buf_in[init_slot, h_idx]
+            # Init once outside loop, carry via [:] across tokens (all modes).
+            # NOTE: inplace non-spec MUST NOT re-read state_buf_in inside LOOP_T:
+            # under PyPTO's in/out-split semantics the slot writeback via
+            # state_buf_out is not visible to state_buf_in within the same
+            # kernel, so a per-token re-read would break multi-token carry.
+            S_buf[:] = state_buf_in[init_slot, h_idx]
 
             # ── LOOP_T: token loop (sequential) ──
             for t_idx in pypto.loop(0, s, 1, name="LOOP_T",
@@ -173,11 +175,6 @@ def _create_fused_recurrent_kda_kernel(H, D, in_dtype, scale, eps,
                 k_sum = pypto.add(k_sum, eps)
                 k_rsqrt = pypto.rsqrt(k_sum)
                 k_i = pypto.mul(k_i, k_rsqrt)
-
-                if inplace_final_state and not is_spec_decoding:
-                    # Inplace: re-read from state_buf_in each iter (in/out split
-                    # avoids RW cycle; same slot read+write = correct carry)
-                    S_buf[:] = state_buf_in[init_slot, h_idx]
 
                 pypto.set_vec_tile_shapes(V, K)
                 gate = pypto.exp(g_i)  # [1, K] — broadcasts over V directly
