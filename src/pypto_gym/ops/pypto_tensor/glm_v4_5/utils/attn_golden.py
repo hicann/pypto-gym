@@ -186,22 +186,23 @@ def ifa_flash_torch(q, k, v, block_table, kv_act_seqs, out, is_fp32=False):
                         bs_ofs = b_idx * s1 + s1_idx
                         n2g_ofs = n2_idx * g + g_idx * g_tile
                         actual_s2_tile = min(s2_tile, cur_seq - s2_idx * s2_tile)
+                        actual_block_num = math.ceil(actual_s2_tile / block_size)
 
                         # 提取qi: shape [g_tile, d]
                         qi_start = bs_ofs * n1 + n2g_ofs
                         qi_end = qi_start + g_tile
                         qi = q_2d[qi_start:qi_end, :]
 
-                        # 组装kj_assemble: 从block_num个block拼出 [s2_tile, d]
+                        # 组装kj_assemble: 从actual_block_num个block拼出 [s2_tile, d]
                         kj_assemble = torch.zeros((s2_tile, d), device=device, dtype=dtype)
-                        for i in range(block_num):
+                        for i in range(actual_block_num):
                             block_idx = block_table[b_idx][idx + i].item()
                             block_idx = max(block_idx, 0)
                             kj_assemble[i * block_size:(i + 1) * block_size, :] = \
                                 k_2d[block_idx * block_size:(block_idx + 1) * block_size, :]
 
                         # ========== 6. 注意力计算 ==========
-                        mm1 = matmul_proxy(qi, kj_assemble.t()).to(fp32)
+                        mm1 = matmul_proxy(qi, kj_assemble[:actual_s2_tile, :].t()).to(fp32)
                         muls_res = mm1 * (d ** -0.5)
                         tilda_mij, _ = torch.max(muls_res, dim=-1, keepdim=True)
 
@@ -212,12 +213,12 @@ def ifa_flash_torch(q, k, v, block_table, kv_act_seqs, out, is_fp32=False):
                             tilda_lij = torch.sum(tilda_pij, dim=-1, keepdim=True)
                             # 组装vj_assemble
                             vj_assemble = torch.zeros((s2_tile, d), device=device, dtype=dtype)
-                            for i in range(block_num):
+                            for i in range(actual_block_num):
                                 block_idx = block_table[b_idx][idx + i].item()
                                 block_idx = max(block_idx, 0)
                                 vj_assemble[i * block_size:(i + 1) * block_size, :] = \
                                     v_2d[block_idx * block_size:(block_idx + 1) * block_size, :]
-                            oi_tmp = matmul_proxy(tilda_pij.to(dtype), vj_assemble).to(fp32)
+                            oi_tmp = matmul_proxy(tilda_pij.to(dtype), vj_assemble[:actual_s2_tile, :]).to(fp32)
                             oi_upd = oi_tmp
                             li_upd = tilda_lij.squeeze(-1)
                             mi_upd = tilda_mij.squeeze(-1)
@@ -236,12 +237,12 @@ def ifa_flash_torch(q, k, v, block_table, kv_act_seqs, out, is_fp32=False):
                             li_upd = sum_new.squeeze(-1)
                             # 组装vj_assemble
                             vj_assemble = torch.zeros((s2_tile, d), device=device, dtype=dtype)
-                            for i in range(block_num):
+                            for i in range(actual_block_num):
                                 block_idx = block_table[b_idx][idx + i].item()
                                 block_idx = max(block_idx, 0)
                                 vj_assemble[i * block_size:(i + 1) * block_size, :] = \
                                     v_2d[block_idx * block_size:(block_idx + 1) * block_size, :]
-                            q1 = matmul_proxy(tilda_pij.to(dtype), vj_assemble).to(fp32)
+                            q1 = matmul_proxy(tilda_pij.to(dtype), vj_assemble[:actual_s2_tile, :]).to(fp32)
                             oi_upd = oi_upd * update_mul + q1
 
                         if s2_idx == s2_loop - 1:
