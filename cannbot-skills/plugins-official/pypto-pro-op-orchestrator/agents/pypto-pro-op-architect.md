@@ -56,7 +56,7 @@ KB `CONTRACT.md` 只用于确认 selection 的产物格式和路径。
 - 动态维度声明与 `docs/` API 文档和官方指定算子样例一致（不含不存在的 API）
 - §3 分配方式使用 `make_tile_group` + `auto_mutex`（非 `make_tile` + 手动 sync）
 - §1 对每个 Vector 步骤填写完整的 `vector_selection`
-- DESIGN.md 含 wrapper 操作清单；非空时每项均记录 API、无法迁入 kernel 的目标版本证据、适用条件、预期代价预算和实现 profile 测量方法，供 `stage3-check` 裁定
+- DESIGN.md 的「Wrapper 边界外操作」正文只有 `空`；DESIGN 不得授权边界外操作
 - `module_interfaces.yaml` 的 `modules[k].golden_steps` 已填写（每个 Module 的数学步骤列表，供 mathematician 切分 golden 用）
 
 ## Handoff

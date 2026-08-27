@@ -10,9 +10,11 @@ may dispatch a real device kernel (`aclnnInplaceCopy_CastAiCore_Cast`,
 So:
 
 > **Casting, slicing, transposing, padding, concatenating, and any other data
-> shape or dtype processing MUST happen inside the `@pl.jit` kernel.
-> The wrapper does argument validation, output allocation, and one kernel
-> launch — nothing else.**
+> shape or dtype processing MUST happen inside the `@pl.jit` kernel. The wrapper
+> may only validate arguments, read `shape`/`ndim`/`dim()`/`size()`/`stride()`/
+> `dtype`/`device`/`layout`/`numel()`/`storage_offset()` metadata, derive Python
+> integers, use `torch.empty` to allocate outputs declared by its current contract,
+> and launch one kernel.**
 
 This is not a style preference. It is the single-kernel delivery boundary and
 it also determines end-to-end device cost for any caller.
@@ -40,14 +42,12 @@ Two consequences follow, and they are the durable part:
   performance unit is wrapper plus kernel together.
 - **Host shaping is not rare.** Across that run's generated kernels the dominant
   calls were `.to()`, `.contiguous()` and `.reshape()`, by a wide margin over
-  everything else. Assume a generated wrapper has one unless the profile says
-  otherwise.
+  everything else. Treat every generated wrapper as requiring a complete static
+  audit; profile output cannot prove this boundary is respected.
 
 > The per-operator figures behind this are a single run on one platform at one
-> revision. They are not reproduced here because a threshold copied out of one
-> run is exactly what this knowledge base is not for: measure your own operator
-> with [`pypto-pro-op-perf-tune`](../../pypto-pro-op-perf-tune/SKILL.md) and
-> read `wrapper_share` from your own profile.
+> revision. They are context, not a portable threshold. End-to-end measurements
+> may quantify impact, but they never authorize a wrapper operation.
 
 ## The anti-pattern
 
@@ -101,15 +101,15 @@ they are supported on the detected target before relying on them, and see
 Moving a cast into the kernel is the rule, but an unsupported API is not a
 migration — escalate rather than leaving the `.to()` on the host.
 
-A reshape that is a pure view of a contiguous tensor costs nothing and does not
-appear in the profile — it is `.contiguous()`, `.to()` and the movement ops
-that are charged. If in doubt, read the profile: anything named `aclnn*` in
-`op_times.device_kernels` is wrapper time.
+A reshape that is a pure view of a contiguous tensor may cost nothing, but that
+does not authorize it in the delivered wrapper. Cost and compliance are separate:
+no profile result can waive this boundary.
 
 ## What this boundary governs
 
-It governs the **delivered wrapper** — the `{op}_wrapper` in `custom/<op>/test_{op}.py`
-that ships with the operator and whose host time is measured.
+It governs every generated implementation wrapper: both staged wrappers and the
+delivered `{op}_wrapper` in `custom/<op>/test_{op}.py`. Applying it to staged
+files prevents a forbidden operation from being stitched into the final product.
 
 It does **not** govern the driver functions in this KB's study samples under
 `examples/samples/`. Those exist to make a sample runnable on its own, and they allocate,
@@ -117,21 +117,22 @@ reshape and synchronize to do that. They are harnesses, not delivery shapes — 
 [examples/README.md](../examples/README.md). Do not copy one into a delivery and do not
 read one as evidence that a call is permitted here.
 
-## There is no pre-approval exception
+## There is no exception
 
-`torch.empty` for output allocation is the only Torch call a delivered wrapper
-may make. Nothing in `DESIGN.md` can widen that: an earlier revision of this
+`torch.empty` is the only `torch.*` function a generated wrapper may call, and
+only to allocate outputs declared by that wrapper's contract. For an L1 staged
+wrapper, those are its current Module outputs. The read-only metadata listed in
+the rule returns attributes or Python scalars; it must not read tensor data,
+create a tensor, or dispatch a device operation. Nothing in `DESIGN.md` can widen that: an earlier revision of this
 page let a transformation stay if the reason was recorded, which turns a hard
 boundary into a promise and is how host-side `.t().contiguous()`, `torch.zeros`
 and `torch.npu.synchronize` reached delivered wrappers.
 
-If a transformation appears impossible to express in the kernel, that is a
-design problem to escalate at Stage 3, not something a wrapper may absorb.
-Record the blocker and the measured cost of the alternative in `DESIGN.md` so it
-can be judged -- but the recording is the escalation, never the authorization,
-and the wrapper stays inside the boundary while it is judged.
+If a transformation appears impossible to express in the kernel, the design is
+not deliverable: report a design/capability blocker with evidence. Recording a
+reason, cost or profile never authorizes the wrapper to absorb the transformation.
 
-### A bit reinterpretation is never that exception
+### Bit reinterpretation also stays in the kernel
 
 `pl.Ptr` formal parameters are **not dtype-checked at all**, so a tensor may be
 handed to the kernel under one dtype and read under another. Whatever
@@ -139,8 +140,9 @@ reinterpretation the kernel needs — signed data carried through a `UINT32`
 tile, an int64 pair viewed as two 32-bit words — happens **inside** the kernel,
 and the wrapper needs no `.view()`.
 
-This matters beyond tidiness. A host-side `.view()` or `.to()` is measured
-time, and an `aclnn`-dispatching host op is also a **compatibility** risk on any
+This matters beyond tidiness. A host-side `.view()` still violates the delivery
+boundary even when it is only a view; `.to()` and any other device-dispatching
+host op also add measured work and are a **compatibility** risk on any
 machine whose CANN inventory differs from the dev box -- the op set is not
 guaranteed to be a superset. A kernel-side reinterpretation
 depends on nothing outside the delivered kernel itself. (Measured on
@@ -148,8 +150,8 @@ Ascend950PR / CANN 9.2.0.)
 
 ## How this is checked
 
-`KB_USAGE.json` must record the invariant, and the verifier runs a wrapper
-audit that fails a class whose wrapper performs data shaping without a recorded
-justification. Anti-cheat rules still apply in the other direction: the wrapper
-must not perform the operator's *arithmetic* either, and there is still exactly
-one `@pl.jit` kernel launched once.
+`KB_USAGE.json` must record the invariant, and the verifier fails any class whose
+wrapper performs an action outside the allowlist. `DESIGN.md`, `KB_USAGE.json`, `deviated`, a
+justification or a profile cannot override the rule. Anti-cheat rules still apply
+in the other direction: the wrapper must not perform the operator's *arithmetic*
+either, and there is still exactly one `@pl.jit` kernel launched once.

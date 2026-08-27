@@ -7,9 +7,9 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Contract test: what gen_module_interfaces.py emits must pass validate_module_yaml.py.
+"""Design contract regressions for Module interfaces and wrapper boundaries.
 
-This existed as a gap, not a test. The generator and SKILL.md documented
+The Module test covers a former gap: the generator and SKILL.md documented
 `module_<j>` while the validator's regex accepted only the pre-rename `phase_<j>`,
 so every artifact produced by following the skill failed the mandatory Stage-3
 self-check with rule2/rule3 violations -- and the validator's own self-test passed,
@@ -38,6 +38,8 @@ _LOGGER = logging.getLogger("test_module_contract")
 _HERE = Path(__file__).resolve().parent
 _GEN = _HERE / "gen_module_interfaces.py"
 _VALIDATE = _HERE / "validate_module_yaml.py"
+_DESIGN_TEMPLATE = _HERE.parent / "templates" / "design-template.md"
+_WRAPPER_BOUNDARY_HEADING = re.compile(r"^###\s+Wrapper 边界外操作\s*$", re.MULTILINE)
 
 _GOLDEN = '''\
 import torch
@@ -136,9 +138,43 @@ def _validate(path: Path) -> subprocess.CompletedProcess:
     )
 
 
+def _wrapper_boundary_errors(markdown: str) -> list[str]:
+    """Require one boundary section whose body is exactly ``空``."""
+    headings = list(_WRAPPER_BOUNDARY_HEADING.finditer(markdown))
+    if len(headings) != 1:
+        return [f"expected one Wrapper 边界外操作 heading, found {len(headings)}"]
+    tail = markdown[headings[0].end():]
+    next_heading = re.search(r"^#{1,6}\s+", tail, re.MULTILINE)
+    body = tail[:next_heading.start() if next_heading else len(tail)].strip()
+    return [] if body == "空" else ["Wrapper 边界外操作 body must be exactly `空`"]
+
+
+def _check_wrapper_boundary_template(failures: list[str]) -> None:
+    """Check that the design template cannot authorize out-of-bound operations."""
+    template = _DESIGN_TEMPLATE.read_text(encoding="utf-8")
+    empty_errors = _wrapper_boundary_errors(template)
+    if empty_errors:
+        failures.extend(empty_errors)
+        _LOGGER.warning("FAIL wrapper_empty_boundary_valid")
+    else:
+        _LOGGER.info("PASS wrapper_empty_boundary_valid")
+
+    heading = _WRAPPER_BOUNDARY_HEADING.search(template)
+    non_empty = template if heading is None else (
+        template[:heading.end()] + "\n\n`.reshape()`" + template[heading.end():]
+    )
+    if heading is None or not _wrapper_boundary_errors(non_empty):
+        failures.append("a non-empty Wrapper 边界外操作 section was accepted")
+        _LOGGER.warning("FAIL wrapper_non_empty_boundary_refused")
+    else:
+        _LOGGER.info("PASS wrapper_non_empty_boundary_refused")
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     failures: list[str] = []
+    _check_wrapper_boundary_template(failures)
+
     with tempfile.TemporaryDirectory() as raw_tmp:
         tmp = Path(raw_tmp)
 

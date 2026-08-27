@@ -84,7 +84,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 SPEC、Golden
 
 在切 Module 之前先确认 kernel 的输入/输出维度契约——这是后续所有轮（Tile 规划、循环结构）的前提，不属于 Module 划分本身。
 
-明确 kernel 固定处理的维度（如"kernel 只处理 2D `[M,N]`"）。若 SPEC.md 要求支持 1D 或任意多维，必须在此定义 host 端适配方案（如 1D `[L]` → host reshape `[L,1]` → kernel `[M,N]` → 输出 reshape 回 `[L]`），不能默默只实现 2D 而遗漏 SPEC 要求的其他维度。产出填入 DESIGN.md §0 的维度契约栏（kernel 固定维度 + host 适配规则表）。
+按 SPEC 明确 kernel 接收的真实 rank、shape、stride 和输出形态。SPEC 要求支持 1D 或任意多维时，必须设计 kernel 内的索引/stride 映射，不能让 host 通过 reshape 等张量操作把输入归一化，也不能默默只实现 2D。产出填入 DESIGN.md §0 的维度契约栏（真实输入 + kernel 内适配规则）。
 
 ---
 
@@ -345,15 +345,14 @@ R8 评估通过后，将 R0-R7 各轮的分散产出串成一张全景图（填�
 
 ## 强制规则：wrapper 边界（每个 class 都适用）
 
-公开 callable 是实现边界的一部分。host 侧张量操作会被下发成真实的 device kernel
+公开 callable 是实现边界的一部分。host 侧张量操作可能被下发成真实的 device kernel
 （`aclnnInplaceCopy_CastAiCore_Cast`、
 `..._TransposeAiCore_Transpose`、`..._SliceAiCore_Slice`、`aclnnCat_ConcatD_ConcatD`
-等），和 kernel 本身一样计入耗时。
+等）并计入耗时；纯 view 即使不下发 device kernel，也仍越过交付边界。
 
 > **cast、slice、transpose、pad、concat 以及任何数据形状/dtype 处理，
-> 默认必须放进 `@pl.jit` kernel 内部。
-> wrapper 只做参数校验、输出分配、一次 kernel 启动。只有目标框架确实无法迁移且
-> 设计中已记录原因、证据、预期代价预算和实现测量方法的操作，才可作为明确例外。**
+> 必须放进 `@pl.jit` kernel 内部。wrapper 只做参数校验、读取 KB 约束列明的只读
+> 元数据、纯 Python 整数推导、`torch.empty` 分配当前 wrapper 合同声明的输出和一次 kernel 启动。**
 
 必读 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md)，
 它是 `required_constraints` 中的全局约束，不占用可选 pattern 名额。
@@ -362,9 +361,9 @@ R8 评估通过后，将 R0-R7 各轮的分散产出串成一张全景图（填�
 
 1. **kernel 接口按真实输入定义**，不要为了 kernel 好写而要求 host 先归一化。
    kernel 应当直接接收原始 dtype、原始 layout、原始 rank。
-2. 在 `DESIGN.md` 中列出一张 **wrapper 操作清单**：清单为空是正常且期望的结果；
-   若确有无法迁移的 host 张量操作，逐项记录 API、无法迁入 kernel 的目标版本证据、
-   适用条件、预期代价预算和实现 profile 测量方法，交设计验收裁定，不能只写一句理由。
+2. `DESIGN.md` 的 **Wrapper 边界外操作**正文必须只有 `空`。DESIGN、usage、`deviated` 或
+   profile 都不能授权边界外操作；无法迁入 kernel 时须附证据上报
+   `design_violation`，不得交付放宽边界的设计。
 3. 需要的轴变换用 **stride/offset 索引**在 tile 循环里表达，不要用
    `movedim` / `permute` / `contiguous`。
 4. dtype 转换在 **tile load / store 时**用 `pl.cast`（tile 级）或

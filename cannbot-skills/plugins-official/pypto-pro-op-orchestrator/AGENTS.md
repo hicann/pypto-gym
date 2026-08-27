@@ -171,32 +171,33 @@ Stage 3 → 调度 pypto-pro-op-architect（加载 skill pypto-pro-op-design）
        → 编排器读 module_interfaces.yaml 的 is_fusion，调 state_transition(plan_stage4, module_count=N, is_fusion=bool)
          设置 stage4_path（L0 或 L1），L1 时初始化 stage4_modules
 
-Stage 4 → 据 stage4_path 选择调度路径：
-       ├─ L0（is_fusion=false）：调度 pypto-pro-op-coder → 产出 test_{op}.py → verifier（stage4-check）
-       │   → PASS: complete_stage(4)（随后按「Stage 5 进入确认」决定是否继续）/ FAIL 回退 / env_error 分流
+Stage 4 → 将已验证的 selection、`DESIGN_BINDINGS.json` 与 `DESIGN.md` 作为冻结、只读的必选上游输入，再据 stage4_path 选择调度路径：
+       ├─ L0（is_fusion=false）：调度 pypto-pro-op-coder → 产出 test_{op}.py → verifier（stage4-check, stage4_path=L0）
+       │   → PASS: complete_stage(4)（随后按「Stage 5 进入确认」决定是否继续）/ FAIL 按分类回退或定点修复 / env_error 分流
        └─ L1（is_fusion=true）：
            0. 调度 pypto-pro-op-mathematician（staging 模式）→ 产出 modules/{op}_golden_stage*.py × N
               → FAIL: rollback_to_stage(3)
            for module_k in (1..N):
              1. state_transition(start_module, module=module_k)
-             2. 调度 pypto-pro-op-coder（带 module_k 参数）→ 产出 modules/test_{op}_module<suffix_k>.py
-                → 三分流：环境异常→换卡 / capability_gap→verifier 验证后据结论路由 / 正常交付
+             2. 调度 pypto-pro-op-coder（带 `module_k`）→ 产出 modules/test_{op}_module<suffix_k>.py；可同步更新指向该文件的 staged usage
+                 → 按环境、上游、能力或正常交付分类处理
              3. state_transition(submit_for_verify, module=module_k)
              4. 调度 pypto-pro-op-verifier（module-check, module_k）
                 → PASS: complete_module / FAIL: 按 failure_category 路由
-             5. [仅 impl 问题] 调度 coder 自包 debug → 回 3
+             5. [当前 Module 实现或 staged usage 问题] 重派 coder 修正 → 回 3
              6. state_transition(complete_module, module=module_k)
            all modules verified:
               7. cleanup: 用脚本 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py 从最后一个 staged 文件生成 test_{op}.py（staged 文件链全部保留；直接按路径调用脚本）
-             8. 调度 pypto-pro-op-verifier（stage4-check）
-              9. PASS: complete_stage(4)（随后按「Stage 5 进入确认」决定是否继续）/ FAIL 回退 / env_error 分流
+              8. 调度 pypto-pro-op-coder（finalize=true）→ 完成最终文件和 usage
+              9. 调度 pypto-pro-op-verifier（stage4-check, stage4_path=L1）
+             10. PASS: complete_stage(4)（随后按「Stage 5 进入确认」决定是否继续）/ FAIL 回退或定点修复 / env_error 分流
 
 Stage 5 → 冻结 PERFORMANCE_CASES.json
        → 调度 pypto-pro-op-optimizer（加载 pypto-pro-op-perf-tune；默认目标时使用该 skill 的 Stage 5 Golden 采集器）
        → 若 SPEC 未记录用户提供的数值目标：optimizer 直接采集并冻结 GOLDEN_PERF_REPORT.md/JSON
        → 优化 test_{op}.py，产出 PERFORMANCE_REPORT.md + performance.json/log/perf_report.md
-       → 调度 pypto-pro-op-verifier（stage5-check）
-       → PASS: complete_stage(5) / FAIL: 据证据或目标类别继续优化 / env_error 分流
+       → 调度 pypto-pro-op-verifier（stage5-check，传状态机保存的 stage4_path=L0|L1）
+       → PASS: complete_stage(5) / FAIL: 按 failure_category 继续优化或回退 / env_error 分流
 ```
 
 正常流程下编排者只需 **init → complete_stage(1) → complete_stage(2) → complete_stage(3) → complete_stage(4)**，随后**先按「Stage 5 进入确认」与用户确认，再决定是否继续执行 Stage 5**。跨 Stage 回退用 `rollback_to_stage`。
@@ -315,26 +316,28 @@ artifact 哈希、回滚历史）。**只有编排者能通过 `state_transition
 
 ## Stage 4：Kernel 实现与验证
 
-Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路径判断**——L0 的 dispatch prompt 不带 module 参数，L1 的带 module 参数。
+Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路径判断**——L0 不带 `module_k` 且无 `finalize`；L1 Module 轮次带 `module_k`，cleanup 尝试后的最终交接不带 `module_k`、显式传 `finalize=true`。
+
+**coder 返回处理（三种模式共用）**：出现下方①–③的有证据报告时，即使产物已修改也先按对应规则处理；否则仅在本模式允许的产物实际更新，或明确“无需修改”并附完整检查证据时视为正常交付，其余按原模式重派。
 
 ### L0 路径（`stage4_path == "L0"`，`is_fusion == false`）
 
 纯 vec / 纯 cube 算子，一口气开发完毕。
 
-**调度**：`pypto-pro-op-coder` 子代理（不带 module 参数）。子代理加载 skill `pypto-pro-op-develop`。
+**调度**：`pypto-pro-op-coder`（不带 `module_k`）。首次进入或因上游变化重入时，dispatch 明确说明，由 Coder 按 Develop 生命周期重建 usage。
 
-**子代理空返回处理**：若子代理返回空结果（`<task_result>` 为空或 test 文件未更新），立即按原 prompt 重新调度同一任务（不修改 prompt、不简化）。
-
-**coder 返回后的分流**（按返回信号分三类）：
+**coder 返回后的分流**（先处理直接返回，只有正常交付才调 stage4-check）：
 
 **① 反馈环境异常**（附 smoke 测试等证据）→ 环境分流（不调 state_transition）：**所有环境问题（硬件 / 软件 / hang）一律指示子代理加载 skill `pypto-pro-environment-check` 统一检测与评定**，编排器据其评定结论决策——硬件问题（卡 bad state / 不可见 / hang）→ 换卡重新调度 coder（`TILE_FWK_DEVICE_ID` 指定其他可用卡）；软件问题（torch_npu / pypto_pro 未安装、CANN 未配置等）→ 停机向用户反馈。
 
-**② 返回 `capability_gap` verdict**（附编译错误原文 / 精度报告 / 已尝试的冻结实现及替代组合）→ 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：
+**② 疑似 `kb_selection_invalid` / `design_violation`**：先把当前 Coder dispatch、完整报告和证据交 Verifier 执行 `upstream-contract-check`，不得直接回退。`UPSTREAM_CONFIRMED` 按 Verifier 最终分类回退 Stage 1/3；`UPSTREAM_REJECTED` 保持当前模式并将反证交回 Coder；`UPSTREAM_INCONCLUSIVE` 保持当前模式，由 Coder 补齐指定证据（不得改上游）后复核；`env_error` 按①处理。
+
+**③ 返回 `capability_gap` verdict**（附编译错误原文 / 精度报告 / 已尝试的冻结实现及替代组合）→ 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：
    - **false_gap**（虚假）：将 verifier 分析结果原样告知 coder，让其继续开发
    - **confirmed_gap**（成立）：`rollback_to_stage(target_stage=3, failure_category="capability_gap")` 回退 Stage 3 重新设计或上报用户
    - **capability_inconclusive**（证据不足）：保持当前 Stage，不推进、不回退；补齐 verifier 指定证据后重新调查
 
-**③ 正常交付**（test_{op}.py 已产）→ 调度 `pypto-pro-op-verifier`（模式 `stage4-check`）执行检查清单（verifier 先静态扫描，后动态运行 `python custom/<op>/test_{op}.py`）。verifier 裁决后再分三类：
+**④ 正常交付**：调度 verifier（`stage4-check, stage4_path=L0`），再按 verdict 处理：
 
 - **verifier PASS** → `complete_stage(4)`；是否继续 Stage 5 按下方「Stage 5 进入确认」执行。
 - **verifier env_error** → 按①环境分流处理。
@@ -345,7 +348,8 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 | `cheating` | 作弊红线 | Stage 4 保持 `in_progress`（current=4 无法 rollback），re-dispatch coder 红线重写：dispatch prompt 引用 verifier 证据原文，要求从 DESIGN.md 诚实方案重新实现，禁止复用作弊代码 |
 | `design_violation` | 根因在 Stage 3 设计 | `rollback_to_stage(target_stage=3, ...)` 回退后重新调度 architect |
 | `kb_selection_invalid` | Stage 1 的知识选择缺失或不合规 | `rollback_to_stage(target_stage=1, ...)` 回退后重新调度 planner |
-| `kb_usage_invalid` / `wrapper_boundary_violation` / `signature_mismatch` / `delivery_import_unsafe` | 根因在 Stage 4 实现 | Stage 保持 `in_progress`，重新调度 coder 修正 |
+| `dispatch_invalid` | verifier dispatch 缺少合法 `stage4_path` | 不修改产物、不重派 coder；从状态机读取实际 `stage4_path`，补入 Verifier dispatch 后重派 `stage4-check` |
+| `kb_usage_invalid` / `wrapper_boundary_violation` / `signature_mismatch` / `delivery_import_unsafe` | 根因在 Stage 4 实现或交接 | Stage 保持 `in_progress`，重新调度 coder 修正 |
 | `golden_failure` | 根因在 Stage 2 golden | `rollback_to_stage(target_stage=2, ...)` 回退后重新调度 mathematician |
 | `precision_failure` / `runtime_failure` / 其他 | 根因在当前 Stage | Stage 保持 `in_progress`，重新调度 coder 修正 |
 
@@ -363,16 +367,13 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 **Module 循环**（`for module_k in (1..N)`）：
 
 1. `state_transition(start_module, module=module_k)`（状态机设 `active_module`，确保后续 dispatch 针对当前 Module）
-2. 调度 `pypto-pro-op-coder`（带 module_k 参数）→ 产 `modules/test_{op}_module<suffix_k>.py`（完整独立算子，实现 Module 1..k，输出 Module k 结果，参考前一轮的 `test_{op}_module<suffix_{k-1}>.py` 追加实现）
-   - ↩ coder 返回 → 编排器读 `active_module` 确认仍在 module_k，按返回信号三分流：
-      - ① 环境异常 → 环境分流（不调 state_transition，`active_module` 不变）：指示子代理加载 skill `pypto-pro-environment-check` 统一检测与评定，编排器据结论决策（硬件→换卡重派 coder 仍带 module_k；软件→停机反馈用户）
-     - ② `capability_gap` → 编排器将完整内容传达给 verifier 执行 `capability_gap_check`（见注意事项第 7 条）。据 verifier 结论：**false_gap**（虚假）→ 将 verifier 分析结果原样告知 coder，让其继续开发（仍带 module_k）；**confirmed_gap**（成立）→ `rollback_to_stage(3)`（回 architect 重审候选、数据流或 Module 契约）；**capability_inconclusive**（证据不足）→ 保持当前 Module，补齐指定证据后重新调查
-     - ③ 正常交付 → 进入第 3 步
+2. 调度 `pypto-pro-op-coder`（带 `module_k`）；首次进入或因上游变化重入的 Module 1，dispatch 明确要求按 Develop 生命周期重建 usage。
+   - coder 返回按上方共用规则分流；若结论留在当前 Module，重派时继续携带 `module_k`；正常交付进入第 3 步。
 3. `state_transition(submit_for_verify, module=module_k)`
-4. 调度 `pypto-pro-op-verifier`（模式 `module-check, module_k`）→ 跑 `python custom/<op>/modules/test_{op}_module<suffix_k>.py`，比对 staged impl vs `modules/{op}_golden_stage<suffix_k>.py`
+4. 调度 verifier（`module-check, module_k`）运行并比对当前 staged/golden。
    - **PASS** → 第 6 步
    - **FAIL** → 按 `failure_category` 路由（见下方 module-check FAIL 路由表）
-5. [仅当前 Module impl 问题] 调度 `pypto-pro-op-coder`（自包 debug，带 module_k 参数）：编排器传 `failure_category` + 失败文件路径 + 失败证据 → coder 返回更新后的 staged 文件 → 回第 3 步
+5. [当前 Module 实现或 usage 问题] 携带分类、文件和证据重派 coder（带 `module_k`）修正后回第 3 步。
 6. `state_transition(complete_module, module=module_k)`（状态机清空 `active_module`，`modules_verified` 追加 suffix_k）
 
 **module-check FAIL 路由表**：
@@ -381,8 +382,11 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 |---|---|---|
 | `precision_failure` / `runtime_failure` / `perf_violation` | 当前 Module impl | `fail_module(module_k)` → 第 5 步 dispatch coder debug → 回 3 |
 | `import_violation` / `missing_file` | 当前 Module impl | 同上 |
+| `kb_usage_invalid` | 当前 staged 实现或 usage 不合规 | `fail_module(module_k)` → 第 5 步 dispatch coder 修正当前 staged 实现或 usage → 回 3 |
 | `cheating` | 作弊红线 | `fail_module(module_k)` → re-dispatch coder 红线重写（引用 verifier 证据，禁止复用作弊代码） |
-| `design_violation` | Stage 3 设计（Module 契约/边界有误） | `rollback_to_stage(3)` 回 architect |
+| `dispatch_invalid` | verifier dispatch 缺少合法 `module_k` | 不修改产物、不重派 coder；从状态机读取当前 Module，补入 Verifier dispatch 后重派 `module-check` |
+| `kb_selection_invalid` | selection 布局、引用或整体适用前提错误 | `rollback_to_stage(target_stage=1, ...)` 回 planner |
+| `design_violation` | Stage 3 的 `DESIGN_BINDINGS.json`、DESIGN 或 Module 契约/边界有误 | `rollback_to_stage(target_stage=3, ...)` 回 architect |
 | `golden_failure` | per-Module golden 有误（mathematician 切分错） | `rollback_to_stage(3)` 回 architect（Module 边界划分问题） |
 | `env_error` | 环境问题 | 环境分流：指示子代理加载 skill `pypto-pro-environment-check` 统一检测与评定，编排器据结论决策 |
 
@@ -393,9 +397,11 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 7. **cleanup**：从最后一个 staged 文件生成交付件 `test_{op}.py`（staged 文件链全部保留）
    - `modules/test_{op}_module1…N.py` 已是完整 kernel（累积实现到最后一轮）
    - 复制一份为 `test_{op}.py`，在副本上做交付整理（不动 staged 原文件）：wrapper 函数名从 `{op}_wrapper_module<suffix_N>` 改为 `{op}_wrapper`；test 函数从比对 Module N 的 `golden_stage` 改为比对 `{op}_golden_cpu`
-   - 方式：用脚本 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py` 直接调用（机械 rename + copy，秒级产出）。**脚本路径固定，直接调用，不得用 Glob 搜索**——skills 以 symlink 安装，Glob/find 不跟随符号链接会搜不到。脚本产出 `custom/<op>/test_<op>.py`，staged 文件链保留不动。仅当脚本因 staged 文件结构与脚本假设不符（如 wrapper 命名不匹配）报错时，才回退 dispatch coder 做一次 cleanup
-8. 调度 `pypto-pro-op-verifier`（模式 `stage4-check`）→ 15 项检查（对最终 `test_{op}.py`）
-9. **PASS** → `complete_stage(4)`（是否继续 Stage 5 按「Stage 5 进入确认」执行）/ **FAIL** → 据 `failure_category` 路由（与 L0 路径 FAIL 路由一致）/ **env_error** → 环境分流
+   - 直接调用固定路径 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py` 做机械 rename + copy。
+   - 若脚本因结构不符失败，编排器不修改或重跑脚本；保留原始错误交给第 8 步 Coder。
+8. 调度 Coder（`finalize=true`，无 `module_k`）完成最终文件和 usage；返回按上方共用规则处理，正常交付进入第 9 步。
+9. 调度 Verifier（`stage4-check, stage4_path=L1`）。
+10. 按 L0 verdict 表处理；需重派 Coder 的 Stage 4 本地错误携带原始证据重派 finalize，再回第 9 步。
 
 ### 放弃路径（诚实失败出口）
 
@@ -431,18 +437,22 @@ Stage 4 通过后，**默认不直接开始 Stage 5**，先按以下顺序确认
 - `PERFORMANCE_REPORT.md`：总报告，含冻结配置、两次独立 formal compare 的 baseline/final collection id 与 round、逐 case speedup、目标判定、正确性证据，以及逐 case `roofline_terminal` / `pipeline_evidence` / `scalar_evidence`
 - `performance.json`、`performance.log`、`perf_report.md`：perf skill 的 compare 产物；quick 仅用于候选筛选，最终证据另闭环到 `docs/perf/round_NNN/case_<id>/repeat_NNN/`
 
-optimizer 返回后，调度 verifier 模式 `stage5-check`。verifier 必须重跑 Stage 4 全部 15 项，再验证 P1–P6 与 P8：四件套存在、逐 case 基线/终态可比、原始证据闭环、同协议 PyPTO speedup 与默认 Golden 参考比值可复算，以及每个 P0 case 的健康 Roofline/Scalar/流水终态。可接受终态只有有效计算 bound、必要搬运 bound 或二者平衡；Scalar/等待主导、流水 `unverified`、模型证据不足都不能完成。P6/P8 均通过时无需继续穷举；任一未通过而准备声明穷尽时，另核 P7 候选覆盖账本是否闭合。
+optimizer 返回后，调度 `stage5-check`（`stage4_path=<状态机保存值>`），再按下表分流。
 
 | verifier 结果 | 编排动作 |
 |---|---|
 | PASS | 调用普通 `complete_stage(5)` 完成工作流 |
+| `dispatch_invalid` | 不修改产物、不重派 optimizer；从状态机读取 `stage4_path`，补入 Verifier dispatch 后重派 `stage5-check` |
 | `performance_evidence_invalid` | Stage 5 保持 `in_progress`；把缺失/矛盾/不可比证据原文交回 optimizer 补采，禁止只改口头摘要 |
 | `performance_target_miss` | 证据有效但目标未达；把逐 case 差距和未闭合候选/组合交回 optimizer 继续优化，不得因连续少数候选无收益结束 |
 | `performance_pipeline_invalid` | 数值证据可读但 P8 未过；把 Roofline、Scalar 或 overlap 缺口及证据路径原文交回 optimizer 继续分析、优化或重采，禁止用 ratio 标签补证 |
 | `precision_failure` / `runtime_failure` / `cheating` / `perf_violation` | Stage 5 保持 `in_progress`，要求 optimizer 恢复最近正确版本并修复；不得以性能收益豁免 Stage 4 铁律 |
+| `kb_selection_invalid` | `rollback_to_stage(target_stage=1, ...)` 回 planner 修正 selection；随后重走 Stage 1–5 |
 | `design_violation` | `rollback_to_stage(target_stage=3, ...)`；重新设计后必须重走 Stage 4 和 Stage 5 |
 | `golden_failure` | 仅指既有 `{op}_golden.py` 的数学结果或自验证本身失败，此时 `rollback_to_stage(target_stage=2, ...)` 修复上游产物后重走下游；Golden 性能采集失败、报告缺失或协议不一致均归 `performance_evidence_invalid`，留在 Stage 5 补采，不得借此回退 Stage 2 |
+| `kb_usage_invalid` / `wrapper_boundary_violation` / `import_violation` / `signature_mismatch` / `delivery_import_unsafe` / `missing_file` / `incomplete_structure` | `rollback_to_stage(target_stage=4, ...)`；按状态机保存的 `stage4_path`，L0 重派 coder，L1 重派 `finalize=true`，重新通过 `stage4-check` 后再进入 Stage 5；仅最终实现或测试入口发生变化时作废旧性能证据 |
 | `env_error` | 按统一环境分流处理，不伪造性能结论 |
+| `other` | 保持当前状态，依据完整失败证据确定最早责任 Stage 后再按该 Stage 的既有路由处理；不得完成、盲目重派或丢弃证据 |
 
 ### Stage 5 放弃路径（诚实失败出口）
 

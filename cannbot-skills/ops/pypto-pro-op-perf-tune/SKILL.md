@@ -5,7 +5,7 @@ description: 采集、比较和分析 PyPTO-Pro 算子在 NPU 上的性能。当
 
 # PyPTO-pro 上板性能采集与分析
 
-在真实 NPU 上采集 PyPTO 算子性能数据，系统化解读指标文件，判定性能是否达标，定位瓶颈类型。本技能为 **PyPTO-Pro Stage 4 的按需性能诊断**与 **Stage 5 性能优化工作流**提供独立、公正的性能数据采集能力（Stage 4 的 wrapper 边界门禁动态检查即由此采集 `op_times.device_kernels`；Stage 5 的基线/对比采集与证据验收见下文「Stage 5 性能优化工作流」）；PyPTO classic 的 Stage 7 调优同样可以调用它。
+在真实 NPU 上采集 PyPTO 算子性能数据，系统化解读指标文件，判定性能是否达标，定位瓶颈类型。本技能为 **PyPTO-Pro Stage 5 性能优化工作流**提供独立、公正的性能数据，也可用于用户明确要求的按需诊断；PyPTO classic 的 Stage 7 调优同样可以调用它。对 PyPTO-Pro，wrapper 合规由 Stage 4 Verifier 按 [wrapper-boundary.md](../pypto-pro-op-kb/constraints/wrapper-boundary.md) 静态合同裁决；profile 只作性能证据，不能授权越界。
 
 本技能基于 **msprof** 工具链，统一入口为两个脚本：
 - **`msprof_profile_run.sh`** — 性能采集（标准采集 / 对比测试 / 快速采集 / 批量并行）
@@ -173,36 +173,19 @@ Markdown 报告包含：
 | PyPTO 算子 vs golden 标杆对比 | `msprof_profile_run.sh --compare` | 从 GOLDEN_PERF_REPORT.md 读 golden 数据 + msprof 采集 PyPTO 算子 → 加速比 |
 | 性能问题定位 | `msprof_profile_run.sh` + `msprof_perf_summary.py` | 深度瓶颈分析（pipe ratio / 带宽 / L2Cache / 逐核负载均衡） |
 | 优化效果验证 | `msprof_profile_run.sh` + `msprof_perf_summary.py` | 对比优化前后的归档数据（round_NNN/） |
-| PyPTO-Pro Stage 4 按需诊断 | `msprof_profile_run.sh` | wrapper 边界门禁取 `aclnn*` 占比；coder 定位瓶颈 |
+| 可运行 kernel 按需诊断 | `msprof_profile_run.sh` | 仅定位性能瓶颈，不裁决 wrapper 合规性 |
 | PyPTO-Pro Stage 5 优化验收 | `msprof_profile_run.sh` + `msprof_perf_summary.py` | 冻结 manifest 后逐 case 采集/对比，产出 baseline、final 与证据归档（见下文「Stage 5 性能优化工作流」） |
 | PyPTO classic Stage 7 基线采集 | `msprof_profile_run.sh` | 集成到 pypto-op-orchestrator Stage 7 调优流程 |
 | 批量性能测试 | `msprof_profile_run.sh --batch` | 多 NPU 并行批量测试 |
 
-## 优化第一顺位：先把 wrapper 清零
+## PyPTO-Pro 调优前确认 wrapper 边界
 
-**测量口径**：计时覆盖**整个交付入口**——外部驱动调用的那个可调用对象，
-而不只是 kernel 本身。profile 里 `op_times.device_kernels` 中以 `aclnn` 开头的条目
-全部是 wrapper 开销，以 `_Z` 开头的才是你的 kernel。
+进入 PyPTO-Pro 调优前，确认实现已通过 Stage 4 wrapper 静态门禁；发现越界时停止调优并
+交回实现流程移入 kernel。profile 不能授权越界。
 
-因此**在调 kernel 内部之前，先看 wrapper 占比**：
-
-```
-wrapper_share = sum(aclnn*) / sum(all device_kernels)
-```
-
-`wrapper_share ≥ 35%` 时，任何 tile size / double buffer / VF 改写的收益都
-小于直接消除 wrapper。此时唯一正确的第一根杠杆是
-`remove-wrapper-ops`：按 [`pypto-pro-op-kb/constraints/wrapper-boundary.md`](../pypto-pro-op-kb/constraints/wrapper-boundary.md)
-把 cast / transpose / slice / pad / concat 搬进 kernel。
-
-两条经反复观察成立的判断，按此排杠杆顺序：
-
-1. **wrapper 占比越过约三分之一时，消除 wrapper 的收益大于任何 kernel 内调优。**
-   具体阈值随算子与平台变化，不要照搬——用本 skill 采集自己算子的 `wrapper_share` 再判断。
-
-2. **同一个 kernel 可以变快，而按交付入口计的耗时反而变差。** 两者可以反向变动：
-   wrapper 的增长会吃掉 kernel 的收益，只看 kernel 时间调优会得出完全相反的结论。
-   唯一可用的口径是 wrapper + kernel 合计，即完整交付入口的耗时。
+完整 `test_{op}.py` 的 msprof 数据会混入输入生成、Golden 和精度检查，不能把其中的
+`aclnn*` 直接归因给 wrapper，也不能据此计算 wrapper 占比。性能结论只使用本 skill 明确定义、
+可唯一归属到目标 kernel 或冻结 case 的字段和计时口径。
 
 ---
 
