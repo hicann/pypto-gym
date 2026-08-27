@@ -244,9 +244,13 @@ def run_test(batch_size=None, num_heads=None, s1_size=None,
         k_off += sk
 
     logging.info("  Running kernel...")
-    flash_attention_fp8_varlen_forward_kernel(
-        q_hf8, k_hf8, v_hf8, d_scale_q, d_scale_k, d_scale_v, p_scale,
-        out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k)
+    for _ in range(1):
+        a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
+        for _ in range(100):
+            _a_max = torch.max(a)
+        flash_attention_fp8_varlen_forward_kernel(
+            q_hf8, k_hf8, v_hf8, d_scale_q, d_scale_k, d_scale_v, p_scale,
+            out_npu, l_out_npu, m_out_npu, cu_seqlens_q, cu_seqlens_k)
 
     torch.set_printoptions(precision=6)
     passed = True

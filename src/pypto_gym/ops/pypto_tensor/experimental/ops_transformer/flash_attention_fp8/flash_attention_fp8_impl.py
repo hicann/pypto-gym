@@ -21,20 +21,26 @@ using p_scale before the P@V matmul; p_scale cancels in the final output O = O /
 import pypto
 
 
-Q_TILE = 320
-K_TILE = 320
+Q_TILE = 256
+K_TILE = 256
 
 
 @pypto.frontend.jit(
     runtime_options={
-        "device_sched_mode": 0,
-        "stitch_function_max_num": 1024,
+        "device_sched_mode": 1,
+        "max_workspace_kb": 4194304,
+        "ready_on_host_tensors": ["cu_seqlens_q", "cu_seqlens_k"]
     },
     pass_options={
         "cube_l1_reuse_setting": {-1: 8},
         "vec_nbuffer_setting": {-1: 8},
-        "cube_nbuffer_setting": {-1: 8},
+        "cube_nbuffer_setting": {-1: 1},
+        "ooo_sched_mode": "HLF",
     },
+    host_options={"compile_monitor_enable": 0},
+    codegen_options={
+        "vf_options": "-mllvm -cce-vf-enable-vloopv2-recognizer=true -mllvm -enable-pto-colop-fusion=true"
+    }
 )
 def flash_attention_fp8_varlen_forward_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_HF8, format=pypto.TileOpFormat.TILEOP_ND),
@@ -89,15 +95,13 @@ def flash_attention_fp8_varlen_forward_kernel(
     d_scale_v_2d = pypto.reshape(d_scale_v, [total_kv, num_heads], inplace=True)
     p_scale_2d = pypto.reshape(p_scale, [1, 1], inplace=True)
 
-    v1_tile = [64, 512]
-    v2_tile = [512, 64]
+    v1_tile = [64, 128]
+    v2_tile = [64, 128]
 
     q_tile = Q_TILE
     k_tile = K_TILE
 
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 128])
-    pypto.set_vec_tile_shapes(64, 256)
 
     batch_size = cu_seqlens_q.shape[0] - 1
     for b_idx in pypto.loop(batch_size, name="batch_loop"):
@@ -114,140 +118,110 @@ def flash_attention_fp8_varlen_forward_kernel(
         q_tile_count = (seq_len_q + q_tile - 1) // q_tile
         k_tile_count = (seq_len_k + k_tile - 1) // k_tile
 
-        h_num = num_heads // 2
-        for h_idx in pypto.loop(h_num, name="head_loop"):
+        for h_idx in pypto.loop(num_heads, name="head_loop"):
 
             for q_tile_idx in pypto.loop(q_tile_count, name="q_tile_loop"):
-                oi_update_0 = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
-                li_update_0 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
-                mi_update_0 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
-                oi_update_1 = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
-                li_update_1 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
-                mi_update_1 = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
-
+                oi_update = pypto.tensor([q_tile, head_dim], pypto.DT_FP32, "oi_update")
+                li_update = pypto.tensor([q_tile, 1], pypto.DT_FP32, "li_update")
+                mi_update = pypto.tensor([q_tile, 1], pypto.DT_FP32, "mi_update")
                 q_tile_start = q_tile_idx * q_tile
                 q_tile_end = pypto.min(q_tile_start + q_tile, seq_len_q)
                 q_tile_len = q_tile_end - q_tile_start
 
-                for k_tile_idx in pypto.loop(k_tile_count, name="k_tile_loop"):
+                for k_tile_idx in pypto.loop(k_tile_count, name="k_tile_loop", unroll_list=[16]):
                     k_tile_start = k_tile_idx * k_tile
                     k_tile_end = pypto.min(k_tile_start + k_tile, seq_len_k)
                     k_tile_len = k_tile_end - k_tile_start
 
-                    for h_s_idx in range(2):
-                        h_act_idx = h_idx * 2 + h_s_idx
-                        h_offset = h_act_idx * head_dim
+                    h_offset = h_idx * head_dim
+                    pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128])
+                    pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_scope=5001)
 
-                        if h_s_idx == 0:
-                            li_update = li_update_0
-                            mi_update = mi_update_0
-                            oi_update = oi_update_0
+                    q_tile_view = pypto.view(q_2d, [q_tile, head_dim],
+                                                [q_start + q_tile_start, h_offset],
+                                                valid_shape=[q_tile_len, head_dim])
+                    k_tile_view = pypto.view(k_2d, [k_tile, head_dim],
+                                                [k_start + k_tile_start, h_offset],
+                                                valid_shape=[k_tile_len, head_dim])
+                    v_tile_view = pypto.view(v_2d, [k_tile, head_dim],
+                                                [k_start + k_tile_start, h_offset],
+                                                valid_shape=[k_tile_len, head_dim])
+                    dscale_q_view = pypto.view(d_scale_q_2d, [q_tile, 1],
+                                                [q_start + q_tile_start, h_idx],
+                                                valid_shape=[q_tile_len, 1])
+                    dscale_k_view = pypto.view(d_scale_k_2d, [k_tile, 1],
+                                                [k_start + k_tile_start, h_idx],
+                                                valid_shape=[k_tile_len, 1])
+                    dscale_v_view = pypto.view(d_scale_v_2d, [k_tile, 1],
+                                                [k_start + k_tile_start, h_idx],
+                                                valid_shape=[k_tile_len, 1])
+
+                    q_fp32 = pypto.cast(q_tile_view, pypto.DT_FP32) * dscale_q_view
+                    k_fp32 = pypto.cast(k_tile_view, pypto.DT_FP32) * dscale_k_view
+                    v_fp32 = pypto.cast(v_tile_view, pypto.DT_FP32) * dscale_v_view
+
+                    scores = pypto.matmul(q_fp32, k_fp32, out_dtype=pypto.DT_FP32, b_trans=True)
+
+                    scores_scaled = pypto.mul(scores, scale)
+                    mij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
+                    s_shifted = pypto.sub(scores_scaled, mij)
+                    pij = pypto.exp(s_shifted)
+                    pij_scaled = pypto.mul(pij, p_scale_2d)
+                    pij_hf8 = pypto.cast(pij_scaled, pypto.DT_HF8)
+                    pij = pypto.cast(pij_hf8, pypto.DT_FP32)
+                    lij = pypto.sum(pij, dim=-1, keepdim=True)
+
+                    pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
+                    v_bf16 = pypto.cast(v_fp32, pypto.DT_BF16)
+                    oij = pypto.matmul(pij_bf16, v_bf16, out_dtype=pypto.DT_FP32)
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_scope=-1)
+
+                        pypto.set_pass_options(sg_set_scope=1)
+                    pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
+                    if pypto.is_loop_begin(k_tile_idx):
+                        if pypto.is_loop_end(k_tile_idx):
+                            oij_tmp = pypto.div(oij, lij, precision_type=pypto.PrecisionType.INTRINSIC)
+                            oij_final = pypto.cast(oij_tmp, pypto.DT_BF16)
+                            pypto.assemble(lij, [q_start + q_tile_start, h_idx], l_output)
+                            pypto.assemble(mij, [q_start + q_tile_start, h_idx], m_output)
+                            pypto.assemble(oij_final, [q_start + q_tile_start, h_offset], output)
+
                         else:
-                            li_update = li_update_1
-                            mi_update = mi_update_1
-                            oi_update = oi_update_1
+                            oi_update[:] = oij
+                            li_update[:] = lij
+                            mi_update[:] = mij
+                    else:
+                        li = pypto.view(li_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
+                        mi = pypto.view(mi_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
+                        oi = pypto.view(oi_update, [q_tile, head_dim], [0, 0], valid_shape=[q_tile_len, head_dim])
 
-                        q_tile_view = pypto.view(q_2d, [q_tile, head_dim],
-                                                 [q_start + q_tile_start, h_offset],
-                                                 valid_shape=[q_tile_len, head_dim])
+                        mi_new = pypto.maximum(mi, mij)
+                        t1 = pypto.sub(mi, mi_new)
+                        t2 = pypto.exp(t1)
+                        t3 = pypto.sub(mij, mi_new)
+                        t4 = pypto.exp(t3)
 
-                        k_tile_view = pypto.view(k_2d, [k_tile, head_dim],
-                                                 [k_start + k_tile_start, h_offset],
-                                                 valid_shape=[k_tile_len, head_dim])
-                        v_tile_view = pypto.view(v_2d, [k_tile, head_dim],
-                                                 [k_start + k_tile_start, h_offset],
-                                                 valid_shape=[k_tile_len, head_dim])
+                        t2_li = pypto.mul(t2, li)
+                        t4_lij = pypto.mul(t4, lij)
+                        li_new = pypto.add(t2_li, t4_lij)
 
-                        dscale_q_view = pypto.view(d_scale_q_2d, [q_tile, 1],
-                                                    [q_start + q_tile_start, h_act_idx],
-                                                    valid_shape=[q_tile_len, 1])
-                        dscale_k_view = pypto.view(d_scale_k_2d, [k_tile, 1],
-                                                    [k_start + k_tile_start, h_act_idx],
-                                                    valid_shape=[k_tile_len, 1])
-                        dscale_v_view = pypto.view(d_scale_v_2d, [k_tile, 1],
-                                                    [k_start + k_tile_start, h_act_idx],
-                                                    valid_shape=[k_tile_len, 1])
+                        oi_t2 = pypto.mul(oi, t2)
+                        oij_t4 = pypto.mul(oij, t4)
+                        oi_tmp = pypto.add(oi_t2, oij_t4)
 
-                        q_fp32 = pypto.cast(q_tile_view, pypto.DT_FP32) * dscale_q_view
-                        k_fp32 = pypto.cast(k_tile_view, pypto.DT_FP32) * dscale_k_view
-                        v_fp32 = pypto.cast(v_tile_view, pypto.DT_FP32) * dscale_v_view
+                        if pypto.is_loop_end(k_tile_idx):
+                            out_fp32 = pypto.div(oi_tmp, li_new, precision_type=pypto.PrecisionType.INTRINSIC)
+                            out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
 
-                        pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128])
-                        pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-
-                        if pypto.platform.npuarch == 'DAV_3510':
-                            pypto.set_pass_options(sg_set_scope=5001)
-
-                        scores = pypto.matmul(q_fp32, k_fp32, out_dtype=pypto.DT_FP32, b_trans=True)
-
-                        scores_scaled = pypto.mul(scores, scale)
-                        mij = pypto.amax(scores_scaled, dim=-1, keepdim=True)
-                        s_shifted = pypto.sub(scores_scaled, mij)
-                        pij = pypto.exp(s_shifted)
-                        pij = pypto.cast(pypto.cast(pij * p_scale_2d, pypto.DT_HF8), pypto.DT_FP32)
-                        lij = pypto.sum(pij, dim=-1, keepdim=True)
-
-                        pypto.set_cube_tile_shapes([128, 512], [256, 512], [64, 64])
-
-                        if pypto.is_loop_begin(k_tile_idx):
-                            if pypto.is_loop_end(k_tile_idx):
-                                pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                                pij_div = pypto.div(pij, lij, precision_type=pypto.PrecisionType.INTRINSIC)
-                                pij_bf16 = pypto.cast(pij_div, pypto.DT_BF16)
-                                v_bf16 = pypto.cast(v_fp32, pypto.DT_BF16)
-                                oij = pypto.matmul(pij_bf16, v_bf16, out_dtype=pypto.DT_BF16)
-
-                                if pypto.platform.npuarch == 'DAV_3510':
-                                    pypto.set_pass_options(sg_set_scope=-1)
-
-                                pypto.assemble(lij, [q_start + q_tile_start, h_act_idx], l_output)
-                                pypto.assemble(mij, [q_start + q_tile_start, h_act_idx], m_output)
-                                pypto.assemble(oij, [q_start + q_tile_start, h_offset], output)
-
-                            else:
-                                pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                                pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
-                                v_bf16 = pypto.cast(v_fp32, pypto.DT_BF16)
-                                oij = pypto.matmul(pij_bf16, v_bf16, out_dtype=pypto.DT_FP32)
-
-                                if pypto.platform.npuarch == 'DAV_3510':
-                                    pypto.set_pass_options(sg_set_scope=-1)
-
-                                oi_update[:] = oij
-                                li_update[:] = lij
-                                mi_update[:] = mij
+                            pypto.assemble(li_new, [q_start + q_tile_start, h_idx], l_output)
+                            pypto.assemble(mi_new, [q_start + q_tile_start, h_idx], m_output)
+                            pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
                         else:
-                            pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
-                            pij_bf16 = pypto.cast(pij, pypto.DT_BF16)
-                            v_bf16 = pypto.cast(v_fp32, pypto.DT_BF16)
-                            oij = pypto.matmul(pij_bf16, v_bf16, out_dtype=pypto.DT_FP32)
-
-                            if pypto.platform.npuarch == 'DAV_3510':
-                                pypto.set_pass_options(sg_set_scope=-1)
-
-                            pypto.set_vec_tile_shapes(v2_tile[0], v2_tile[1])
-
-                            li = pypto.view(li_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-                            mi = pypto.view(mi_update, [q_tile, 1], [0, 0], valid_shape=[q_tile_len, 1])
-                            oi = pypto.view(oi_update, [q_tile, head_dim], [0, 0], valid_shape=[q_tile_len, head_dim])
-
-                            mi_new = pypto.maximum(mi, mij)
-                            t1 = pypto.sub(mi, mi_new)
-                            t2 = pypto.exp(t1)
-                            t3 = pypto.sub(mij, mi_new)
-                            t4 = pypto.exp(t3)
-
-                            li_new = pypto.add(pypto.mul(t2, li), pypto.mul(t4, lij))
-                            oi_tmp = pypto.add(pypto.mul(oi, t2), pypto.mul(oij, t4))
-
-                            if pypto.is_loop_end(k_tile_idx):
-                                out_fp32 = pypto.div(oi_tmp, li_new, precision_type=pypto.PrecisionType.INTRINSIC)
-                                out_bf16 = pypto.cast(out_fp32, pypto.DT_BF16)
-
-                                pypto.assemble(li_new, [q_start + q_tile_start, h_act_idx], l_output)
-                                pypto.assemble(mi_new, [q_start + q_tile_start, h_act_idx], m_output)
-                                pypto.assemble(out_bf16, [q_start + q_tile_start, h_offset], output)
-                            else:
-                                oi_update[:] = oi_tmp
-                                li_update[:] = li_new
-                                mi_update[:] = mi_new
+                            oi_update[:] = oi_tmp
+                            li_update[:] = li_new
+                            mi_update[:] = mi_new
+                    if pypto.platform.npuarch == 'DAV_3510':
+                        pypto.set_pass_options(sg_set_scope=-1)
