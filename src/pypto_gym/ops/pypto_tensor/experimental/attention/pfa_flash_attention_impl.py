@@ -122,30 +122,30 @@ def assemble_kv_j(idx, actual_s2_tile, ctx_params):
     k_2d = ctx_params.loop_tensors.k_2d
     v_2d = ctx_params.loop_tensors.v_2d
     block_table = ctx_params.loop_tensors.block_table
-    
+
     s2_tile = ctx_params.tile_cfg.s2_tile
     block_size = ctx_params.kernel_params.block_size
     d = ctx_params.kernel_params.d
     b_idx = ctx_params.loop_index.b_idx
-    
+
     block_num = s2_tile // block_size
-    
+
     kj_assemble = pypto.tensor([s2_tile, d], k_2d.dtype, "kj_assemble")
     vj_assemble = pypto.tensor([s2_tile, d], v_2d.dtype, "vj_assemble")
-    
+
     for i in range(block_num):
         block_idx = block_table[b_idx, idx + i]
         block_idx_valid = block_idx.max(0)
         base_offset = block_idx_valid * block_size
-        
+
         kj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
             pypto.view(k_2d, [block_size, d], [base_offset, 0])
         vj_assemble[i * block_size:(i + 1) * block_size, 0:] = \
             pypto.view(v_2d, [block_size, d], [base_offset, 0])
-    
+
     kj_assemble = pypto.view(kj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
     vj_assemble = pypto.view(vj_assemble, [s2_tile, d], [0, 0], valid_shape=[actual_s2_tile, d])
-    
+
     return kj_assemble, vj_assemble
 
 
@@ -245,7 +245,7 @@ def init_kernel_params(q, k, block_table):
     group = n1 // n2
     softmax_scale = d ** -0.5
     kernel_params = PFAKernelParams(
-        n1=n1, d=d, block_num=block_num, n2=n2, block_size=block_size, 
+        n1=n1, d=d, block_num=block_num, n2=n2, block_size=block_size,
         b=b, s1=s1, group=group, softmax_scale=softmax_scale
     )
     return kernel_params
@@ -278,35 +278,35 @@ def compute_loop_b_optimized(dtype, ctx_params):
     b_idx = ctx_params.loop_index.b_idx
     loop_size = ctx_params.loop_size
 
-    s1_block_step = 16  
+    s1_block_step = 16
 
     s1_block_num = (s1 + s1_block_step - 1) // s1_block_step
-    
+
     for s1_block_idx in pypto.loop(s1_block_num, name="LOOP_s1_block", idx_name="s1_block_idx"):
         s1_start = s1_block_idx * s1_block_step
         s1_end = (s1_block_idx + 1) * s1_block_step
         actual_s1_in_block = (s1 - s1_start).min(s1_block_step)
-        
+
         s2_max_for_block = s1_start + actual_s1_in_block
 
         s2_loop_for_block = pypto.ceildiv(
-            kv_act_seqs[b_idx] - (s1 - s2_max_for_block), 
+            kv_act_seqs[b_idx] - (s1 - s2_max_for_block),
             s2_tile
         )
-        
+
         loop_size = replace(loop_size, s2_loop=s2_loop_for_block)
-        
+
         for s1_offset in pypto.loop(actual_s1_in_block, name="LOOP_s1_offset", idx_name="s1_offset"):
             s1_idx = s1_start + s1_offset
-            
+
             cur_seq_len = kv_act_seqs[b_idx] - (s1 - 1 - s1_idx)
-            
+
             bs_ofs = b_idx * s1 + s1_idx
             loop_ofs = LoopOfs(bs_ofs=bs_ofs)
-            
+
             ctx_params = replace(
-                ctx_params, 
-                loop_size=loop_size, 
+                ctx_params,
+                loop_size=loop_size,
                 loop_ofs=loop_ofs,
                 loop_index=replace(ctx_params.loop_index, s1_idx=s1_idx)
             )
@@ -322,30 +322,30 @@ def compute_loop_n2_group_merged(ctx_params, cur_seq_len, dtype, s2_loop_for_blo
     loop_ofs = ctx_params.loop_ofs
     bs_ofs = loop_ofs.bs_ofs
     group_loop = ctx_params.loop_size.group_loop
-    
+
     g_loop_merged = group_loop * n2
-    
+
     for g_idx_merged in pypto.loop(g_loop_merged, name="LOOP_n2_group_merged", idx_name="g_idx_merged"):
         n2_idx = g_idx_merged // group_loop
         group_idx = g_idx_merged % group_loop
-        
+
         n1g_ofs = n2_idx * group + group_idx * g_tile
         out_ofs = [bs_ofs, n1g_ofs, 0]
         loop_ofs_merged = replace(loop_ofs, n1g_ofs=n1g_ofs, out_ofs=out_ofs)
-        
+
         out_update = pypto.tensor([g_tile, d], pypto.DT_FP32, "out_update")
         sum_update = pypto.tensor([g_tile, 1], pypto.DT_FP32, "sum_update")
         max_update = pypto.tensor([g_tile, 1], pypto.DT_FP32, "max_update")
         temp_update_tensors = TempUpdateTensor(out_update, sum_update, max_update)
-        
+
         loop_index = replace(ctx_params.loop_index, n2_idx=n2_idx, group_idx=group_idx)
         ctx_params_merged = replace(
-            ctx_params, 
+            ctx_params,
             loop_index=loop_index,
-            temp_update_tensors=temp_update_tensors, 
+            temp_update_tensors=temp_update_tensors,
             loop_ofs=loop_ofs_merged
         )
-        
+
         compute_loop_s2_optimized(ctx_params_merged, cur_seq_len, dtype, s2_loop_for_block)
 
 
@@ -368,7 +368,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
 
     for s2_idx in pypto.loop(s2_loop_for_block, name="LOOP_s2", idx_name="s2_idx", unroll_list=[8, 4, 2, 1]):
         idx = s2_idx * block_num
-        
+
         actual_s2_tile = (cur_seq_len - s2_idx * s2_tile).min(s2_tile)
 
         pypto.set_vec_tile_shapes(v1_tile[0], v1_tile[1])
@@ -382,13 +382,12 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
             compute_first_tile(sij, vj_assemble, dtype, ctx_params)
         else:
             compute_other_tile(sij, vj_assemble, dtype, ctx_params)
-        
+
         if pypto.cond(pypto.is_loop_end(s2_idx)):
             finalize_output(out_ofs, dtype, ctx_params)
 
 
 @pypto.frontend.jit(
-    new_ir=False,
     runtime_options={
         "stitch_function_max_num": 128,
         "device_sched_mode": 1
@@ -407,7 +406,7 @@ def pfa_optimized_kernel(
     atten_out: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16)
 ):
     """PFA Kernel"""
-    
+
     dtype = q.dtype
     kernel_params = init_kernel_params(q, k, block_table)
     tile_cfg = get_pfa_tile_cfg()

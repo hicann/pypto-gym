@@ -154,7 +154,7 @@ class ContextParams:
     tile_config: AttentionTileConfig = None
     loop_tensors: LoopTensor = None
     temp_update_tensors: TempUpdateTensor = None
-    
+
 
 def reshape_qkv_to_2d(query, key, query_rope, key_rope, kp):
     """
@@ -293,7 +293,7 @@ def compute_c1(query_assemble, key_assemble, ctx, actual_s2_tile):
     c1_tile = ctx.tile_config.c1_tile
     g_tile = ctx.tile_config.g_tile
     s2_tile = ctx.tile_config.s2_tile
-    
+
     pypto.set_cube_tile_shapes(c1_tile[0], c1_tile[1], c1_tile[2])
     score = pypto.matmul(query_assemble, key_assemble, pypto.DT_FP32, a_trans=False, b_trans=True)
     pypto.set_vec_tile_shapes(v0_tile[0], v0_tile[1])
@@ -403,7 +403,7 @@ def handle_other_tile(wv, lse, max_score, ctx):
     out_tmp = pypto.add(old_scaled, new_scaled)
 
     if pypto.cond(pypto.is_loop_end(ctx.s2_idx)):
-        tt.out_update[:] = pypto.div(out_tmp, pypto.reshape(new_lse, [tc.g_tile, 1]), 
+        tt.out_update[:] = pypto.div(out_tmp, pypto.reshape(new_lse, [tc.g_tile, 1]),
                                      precision_type=pypto.PrecisionType.INTRINSIC)
         pypto.set_vec_tile_shapes(1, 1, tc.v2_tile[0], tc.v2_tile[1])
         out_4d = pypto.cast(pypto.reshape(tt.out_update, [1, 1, tc.g_tile, kp.q_d]), dtype)
@@ -464,7 +464,7 @@ def compute_loop_group(ctx):
             pypto.tensor([1, tc.g_tile], pypto.DT_FP32, "max_update")
         )
         ctx = replace(ctx, temp_update_tensors=tt)
-        for s2_idx in pypto.loop(ctx.s2_loop, name="FLASH_LOOP_L4_s2_SA", 
+        for s2_idx in pypto.loop(ctx.s2_loop, name="FLASH_LOOP_L4_s2_SA",
                                  idx_name="s2_idx", unroll_list=[8, 2, 1]):
             ctx = replace(ctx, s2_idx=s2_idx)
             compute_loop_s2(ctx)
@@ -515,14 +515,13 @@ def compute_loop_b(ctx):
 
 
 @pypto.frontend.jit(
-    new_ir=False,
     pass_options={
-        "vec_nbuffer_setting": {-1: 2, 0: 8}, 
+        "vec_nbuffer_setting": {-1: 2, 0: 8},
         "cube_l1_reuse_setting": {-1: 2, 1: 1},
         "cube_nbuffer_setting": {-1: 2}
     },
     runtime_options={
-        "stitch_function_max_num": 256, 
+        "stitch_function_max_num": 256,
         "device_sched_mode": 3,
         "ready_on_host_tensors": ["block_table", "kv_actual_seqs"]
     }
@@ -539,7 +538,7 @@ def incre_flash_attention_mla_kernel(
     kernel_config, tile_config
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
-    
+
     qnope_2d, knope_2d, qrope_2d, krope_2d = reshape_qkv_to_2d(
         query, key, query_rope, key_rope, kernel_config
     )
@@ -556,12 +555,12 @@ def incre_flash_attention_mla_kernel(
 
 @allow_in_graph
 def incre_flash_attention_mla(
-    query: torch.Tensor, 
-    key: torch.Tensor, 
+    query: torch.Tensor,
+    key: torch.Tensor,
     value: torch.Tensor,
-    query_rope: torch.Tensor, 
+    query_rope: torch.Tensor,
     key_rope: torch.Tensor,
-    kv_actual_seqs: torch.Tensor, 
+    kv_actual_seqs: torch.Tensor,
     block_table: torch.Tensor,
     kernel_config, tile_config
 ):
