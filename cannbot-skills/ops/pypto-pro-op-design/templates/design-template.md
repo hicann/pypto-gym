@@ -135,7 +135,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 | TileGroup | depth | 每个Tile的mutex ID | 访问方式 | 槽位表达式 | 同步及有界/游标说明 |
 |---|---:|---|---|---|---|
-| `{group_name}` | {1/2/N} | {如 `[[0, 1], [2, 3]]` / 不配置} | {`current()` / `next()` / `group[i]`} | {如 `task_idx % 2`} | {多ID用途；不配置时的手工同步；下标范围；与`next()`混用时的游标状态} |
+| `{group_name}` | {1/2/N} | {如 `[[0, 1], [2, 3]]` / 不配置} | {`current()` / `next()` / `group[i]`} | {如 `task_idx % 2`} | {多ID用途；不配置时的手动同步；下标范围；与`next()`混用时的游标状态} |
 
 ### tile_dims stride 注意事项
 
@@ -167,9 +167,9 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 > **性能强制**：所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`；`make_tile` 仅限单次使用 scratch tile（不参与 buffer 轮转）。禁止用 `make_tile` + 手动 `sync_src`/`sync_dst` 管理 buffer 轮转。
 
-- **方案**: make_tile_group + auto_mutex（由框架自动管理 buffer 切换与 core 内互斥）；若有单次使用 scratch tile 用 make_tile
+- **方案**: make_tile_group + auto_mutex（TileGroup提供多槽buffer，通过`next()`或显式下标选择槽位；auto_mutex根据mutex信息管理core内跨Pipe依赖）；若有单次使用 scratch tile 用 make_tile
 - **依据算子**: {EXPLORE_REPORT §4 定位的最相似官方指定算子路径}
-- **理由**: {基于 R0 Module 划分，说明 auto_mutex 如何覆盖本算子的 buffer 切换/互斥边界}
+- **理由**: {基于 R0 Module 划分，说明槽位选择方式，以及auto_mutex如何覆盖本算子的core内跨Pipe依赖}
 
 ### double buffer 地址规划
 
@@ -205,6 +205,18 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 > 同步点见 §6（R6），尾块处理见 §7（R7）。
 
+### CV 手动预加载流水设计（`is_fusion=true`时必填）
+
+> 依据[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)。先确定第一阶段每次交给下一阶段的数据范围，以及哪些循环索引会产生下一份数据，再为这些数据分配连续编号，并展示稳定运行时Cube与Vector同时处理不同编号数据的时序。
+
+- **流水编号**: {第一阶段每次交给下一阶段的数据范围；共同确定该数据位置的循环索引；`task_id`递增位置；Cube/Vector两侧的编号关系}
+- **阶段链**: {按声明顺序列出阶段及所属Cube/Vector执行域；相邻同执行域计算的合并方式}
+- **阶段延迟表**: {`preload`取值；每个阶段所属Section、同执行域上一个阶段、delay计算式、执行条件和处理的数据编号}
+- **上下文循环缓冲（按需）**: {迭代信息能直接由`task_id`推导时填“不使用”；否则记录字段、深度、当前写槽、各阶段读槽表达式和信息生存期}
+- **预加载轮数与缓冲深度**: {候选预加载轮数、计划采用的轮数和性能依据；各共享数据与状态缓冲的深度及推导过程}
+- **流水启动、稳定运行和末尾剩余阶段**: {两侧的启动条件；最后一个新任务进入后各自还需执行的轮数；画出稳定运行时不同编号数据的Cube/Vector重叠}
+- **槽位的初始可写状态**: {Vector Section主循环前发送的释放事件，或首次写使用的单独启动路径}
+
 ---
 
 ## §5 分核策略（R5 输出）
@@ -220,7 +232,8 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ## §6 核间同步（R6 输出）
 
-> 带非空`mutex_ids`的TileGroup由`auto_mutex`管理核内跨Pipe依赖；未配置`mutex_ids`时，按§2记录的数据路径手工插入核内同步。两种方式都不能替代Cube与Vector之间的cross_core同步。跨执行域依赖使用`set_cross_core`/`wait_cross_core`，具体规则见[跨核同步](../references/cross_core_synchronization.md)。
+> 带非空`mutex_ids`的TileGroup由`auto_mutex`管理执行区内部的跨Pipe依赖；未配置`mutex_ids`时，按§2记录的数据路径手动插入核内同步。Cube与Vector之间的数据交接使用`set_cross_core`/`wait_cross_core`，具体规则见[跨核同步](../references/cross_core_synchronization.md)。
+> CV融合的手动编号错位、通用多阶段delay计算、预加载和末尾剩余阶段执行规则见[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)。跨核事件放在共享缓冲区的实际第一次读、最后一次写和槽位复用位置。
 >
 > **条件性**：Cube与Vector之间有数据依赖，或存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`、`UNICAST_BLOCK`处理的依赖时填写；否则填“不涉及cross_core”。Section数量本身不是判断依据。
 
@@ -228,21 +241,22 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 - **是否涉及 cross_core**: {是 / 不涉及}
 - **依据**: {依赖是否跨Cube/Vector执行域或跨Block/subblock；若跨Block/subblock，说明为何不能用普通核内同步或算法重构处理}
+- **流水实现**: {`manual_preload`；列出阶段延迟表、最后一个新任务进入后两侧还需执行的轮数和稳定运行时序的引用位置；使用上下文缓冲时补充其深度}
 
 > 若"不涉及"，以下各表填"不涉及"或省略。
 
 ### 共享数据与槽位映射
 
-| 共享数据/TileGroup | depth或槽位数 | 生产者/Section | 消费者/Section | 生产者访问 | 消费者访问 | 槽位一致性依据 |
-|---|---:|---|---|---|---|---|
-| `{group_name}` | {2/N} | {Cube/...} | {Vector/...} | {`group[slot_idx]`} | {`group[slot_idx]`} | {`slot_idx = task_idx % depth`及范围证明} |
-| `{workspace_name}` | {1/N} | {Cube/...} | {Vector/...} | {地址/offset表达式} | {地址/offset表达式} | {同一逻辑块映射到同一地址} |
+| 共享数据/TileGroup | depth或槽位数 | 生产者/Section | 消费者/Section | 生产者访问 | 消费者访问 | 就绪/释放事件 | 槽位一致性依据 |
+|---|---:|---|---|---|---|---|---|
+| `{group_name}` | {2/N} | {Cube/...} | {Vector/...} | {`group[slot_idx]`} | {`group[slot_idx]`} | {就绪事件ID；复用时的释放事件ID} | {`slot_idx = task_idx % depth`及范围证明} |
+| `{workspace_name}` | {1/N} | {Cube/...} | {Vector/...} | {地址/offset表达式} | {地址/offset表达式} | {逐任务的就绪/释放事件，或单次使用依据} | {同一逻辑块映射到同一地址} |
 
 > `group[i]`不读取也不推进轮转游标。若一侧或两侧使用`next()`，必须说明初始游标、调用次数和分支路径为何仍选中同一物理槽位。
 
 ### 同步点
 
-> 逐方向、逐槽位记录READY/RELEASE；同步点规则以参考文档为准，官方指定算子用于核对完整调用方式。
+> 按数据方向和物理槽位记录就绪/释放事件；同步点规则以参考文档为准，官方指定算子用于核对完整调用方式。
 
 | 事件组 | 共享缓冲/槽位表达式 | 方向 | set位置/pipe | wait位置/pipe | `sync_mode` | `event_id` | 复用条件 |
 |---|---|---|---|---|---|---:|---|

@@ -16,7 +16,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 SPEC、Golden
 ## 两条实现约束（设计阶段须落实）
 
 > 完整定义与证据门槛见`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`。进入 R0 前必须读取；设计阶段须在 R3（地址分配）和 R1（API 映射）中落实：
-> 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动 sync 的严格界限见 `pypto-pro-material-explore` SKILL「实现选择规则」节。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
+> 1. 所有需要 buffer 切换/轮转的 tile 一律用 `make_tile_group` + `auto_mutex`，`make_tile` 仅限单次使用 scratch tile。手动同步的适用范围见 `pypto-pro-material-explore` SKILL「实现选择规则」节。R3 落实 buffer 管理方式，R6 落实 cross_core 同步方案。
 > 2. Vector 选择按该规范写入 DESIGN.md §1：已选 KB 模板明确要求当前步骤使用 `pl.*` 时按模板，否则使用 `vf.*`；本阶段不运行候选实验。
 
 ## 知识库
@@ -142,7 +142,7 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 - 关键常量表，包括所有Tile尺寸和公式使用的派生常量
 - R1调用链中全部输入、输出、跨迭代状态和临时Tile的属性表：变量名、用途、shape、dtype、MemorySpace、layout、`valid_shape`、缓冲数和单槽字节数
 - 每个Tile使用`make_tile`或`make_tile_group`的结论；缓冲槽位数量按流水重叠关系确定
-- TileGroup的`depth`、逐Tile mutex配置和访问方式；采用多ID时写清每个Tile对应的ID组，不配置`mutex_ids`时记录需要手工插入的核内跨Pipe同步；采用`group[i]`时记录下标表达式和`[0, depth)`有界依据
+- TileGroup的`depth`、逐Tile mutex配置和访问方式；采用多ID时写清每个Tile对应的ID组，不配置`mutex_ids`时记录需要手动插入的核内跨Pipe同步；采用`group[i]`时记录下标表达式和`[0, depth)`有界依据
 - Tile总占用的初步估算；容量不足时回查Tile尺寸、缓冲数量和API临时空间，实际地址与逐空间容量在R3确认
 
 **输出**：DESIGN.md §2（引用`api_mapping_and_tile_planning.md`，填写关键常量和Tile属性表）
@@ -163,7 +163,7 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 1. 按 `target_memory` 把 R2 的 tile 分组，**每个内存空间各自从 `0x00000` 开始**连续排列地址，不重叠。UB/L1 首地址须 32 字节对齐；L0A/L0B/L0C 的对齐以对应 API 文档 / 官方指定算子为准。
 2. 标注同地址不同 layout 的 tile 对（如有）
-3. 分配方式应使用 `make_tile_group` + `auto_mutex`，由框架自动管理 buffer 切换与同步（见上方「实现约束」）。
+3. 分配方式应使用 `make_tile_group` + `auto_mutex`：TileGroup提供多槽buffer，代码通过`next()`或显式下标选择槽位，`auto_mutex`根据mutex信息管理执行域内部的跨Pipe依赖（见上方「实现约束」）。
 4. **逐空间**验证该空间上的 tile 总大小不超过其容量上限。容量值以 EXPLORE_REPORT §7 探测记录为准——§7 必含 UB 容量；含 cube 时须补探 L1/L0 各空间容量（§7 未记录则回退 material-explore 补测，不得在此臆测数值）
 5. **double buffer 地址规划**：`make_tile_group` 的 buffer 数 > 1 时地址占用按倍数放大，须在地址表中显式反映（buffer 数、受影响 tile、是否需 PONG 地址）。buffer 数取值参照官方指定算子中相似算子的实际配置
 
@@ -188,11 +188,12 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 **核心问题**：R0确定的Module如何放入Section，循环嵌套、跨Tile状态和分核信息应如何组织？
 
-> 📌 **权威依据（必读）**：读取[循环与Section结构设计](references/loop_design.md)。R4不重新划分Module，负责把R0的Module落到具体Section代码结构，并确定结果单元、循环层次、跨Tile状态生命周期、动态循环上界和分核信息的获取位置。
+> 📌 **权威依据（必读）**：读取[循环与Section结构设计](references/loop_design.md)。R4不重新划分Module，负责把R0的Module落到具体Section代码结构，并确定结果单元、循环层次、跨Tile状态生命周期、动态循环上界和分核信息的获取位置。若`is_fusion=true`，同时读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)，确定第一阶段每次交给下一阶段的数据范围、产生下一份数据的循环索引和连续编号递增位置。多阶段链按Cube/Vector交替顺序列出，计算各阶段延迟、启动时序以及最后一个新任务进入后需要继续执行的轮数。
 
 **输出**：填入模板 §4：
 - 参考样例路径与可复用结构点
 - 本算子的Section代码结构、结果单元、跨Tile状态生命周期、动态循环上界、各Module内的循环嵌套和分核信息的获取位置
+- `is_fusion=true`时补充第一阶段每次交给下一阶段的数据范围、产生下一份数据的循环索引、`task_id`递增位置、交替阶段链、候选预加载轮数、逐阶段delay计算表，以及启动、稳定运行和末尾剩余阶段的执行时序；使用上下文缓冲时补充字段、深度和索引
 - 引用`loop_design.md`，说明采用的Section和循环组织方式
 
 ---
@@ -227,17 +228,18 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 ### R6：核间同步（cross_core）
 
-**核心问题**：Cube与Vector之间，或不同Block/subblock之间存在数据依赖时，是否需要cross_core，事件应如何成对放置？
+**核心问题**：Cube与Vector之间，或不同Block/subblock之间存在数据依赖时，如何使用手动跨核事件和多槽缓冲，让Cube与Vector同时处理不同编号的数据？
 
-> 📌 **权威依据（必读，官方标准）**：读取[跨核同步](references/cross_core_synchronization.md)。是否需要cross_core、pipe与`sync_mode`、`event_id`规划、正反向事件和set/wait配对全部照该文档执行，与经验推断或样例片段冲突时以该文档为准。
+> 📌 **权威依据（必读，官方标准）**：读取[跨核同步](references/cross_core_synchronization.md)。若`is_fusion=true`，同时读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)。根据阶段延迟和共享TileGroup槽位放置`set_cross_core`/`wait_cross_core`，并记录槽位的初始可写状态、稳定运行时的复用顺序和最后一批数据完成消费的方式。事件方向、pipe、`sync_mode`和`event_id`以跨核同步文档及目标分支当前实现为准。
 
 **DESIGN.md §6须记录的设计内容**：
 - 是否涉及cross_core；Cube与Vector之间无数据依赖，并且不存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`或`UNICAST_BLOCK`处理的依赖时，填写“不涉及cross_core”。不能仅凭Section数量判定
+- `is_fusion=true`时记录手动预加载流水：Cube/Vector之间传递数据的连续编号、各阶段延迟、预加载轮数、最后一个新任务进入后两侧需要继续执行的轮数、跨核TileGroup的就绪/释放事件和初始释放事件位置；使用上下文缓冲时同时记录其深度与索引
 - 生产者、消费者和共享数据；共享数据是多槽TileGroup时，补充缓冲深度和两侧的槽位访问表达式
 - 手动同步方案的同步点表：方向、共享缓冲、槽位表达式、set/wait位置、pipe、`sync_mode`和`event_id`
 - 循环复用缓冲时的正向与反向同步，以及最后一次消费完成后生产者侧的等待位置
 
-**完成设计后校验**：先核对生产者、消费者和READY/RELEASE是否按同一表达式选择物理槽位，再逐槽位、逐轮次核对set/wait是否一一对应。检查动态下标是否始终落在`[0, depth)`，以及零次、一次、整除和尾块分支中的事件是否都能配对，并确认生产者结束前已经等待最后一次消费完成。任一项不满足时，重新设计本轮同步方案。
+**完成设计后校验**：先核对生产者、消费者和就绪/释放事件是否按同一表达式选择物理槽位，再逐槽位、逐轮次核对set/wait是否一一对应。检查动态下标是否始终落在`[0, depth)`，以及零次、一次、整除和尾块分支中的事件是否都能配对，并确认生产者结束前已经等待最后一次消费完成。任一项不满足时，重新设计本轮同步方案。
 
 EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不能代替权威文档中的同步规则。
 
@@ -295,6 +297,7 @@ EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不�
 | **准确性** | API 调用链是否完整实现了数学公式的每一步 | 回到 R1 补充 |
 | | §4 已参照官方样例确定循环结构（含参考样例路径与结构说明） | 回到 R4 补充 |
 | | 数据依赖是否正确（Module 顺序、sync 位置） | 回到 R0 或 R4 调整 |
+| | CV融合是否给出Cube/Vector之间传递数据的连续编号、交替阶段链、逐阶段delay计算、上下文缓冲、启动时序、末尾剩余阶段时序，以及稳定运行时Cube与Vector的重叠 | 回到 R4/R6 重构流水 |
 | | dtype 选择是否能保证精度（如 matmul 累加用 FP32） | 回到 R2 调整 |
 | | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设合适的 `layout` | 回到 R2 补 layout |
 | **泛化性** | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（R7.5 已完成） | 回到 R7.5 补充 / 回溯适配不了的轮次 |
@@ -303,7 +306,7 @@ EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不�
 | | 超越函数（exp/log/sqrt 等）在目标 dtype 范围内无溢出（§1 数值安全边界已分析） | 回到 R1 补溢出防护 |
 | | 窄 dtype（fp16/bf16）下的平方、同量级相乘、长轴累加，其**中间值**量级上界在该 dtype 范围内；若不在，升位宽的 `vf.astype` 已落在产生增长的那一步之前而非归约之前（§1 数值安全边界已分析） | 回到 R1 调整 cast 位置 / 回到 R2 改累加 dtype |
 | | 跨 tile 状态是否正确初始化和持久化 | 回到 R0 或 R1 修正 |
-| | cross_core 同步方案是否正确（存在跨执行域或跨Block/subblock依赖时）：共享TileGroup槽位访问、同步点位置与 event_id 隔离是否参照权威文档和官方指定算子 | 回到 R6 修正 |
+| | cross_core 同步方案是否正确（存在跨执行域或跨Block/subblock依赖时）：手动预加载流水的阶段延迟、上下文槽位、就绪/释放事件、初始释放事件、同步点和event_id是否参照权威文档与当前实现 | 回到 R4/R6 修正 |
 | **一致性** | R0-R7 各轮输出是否存在矛盾（如 API 需要的 tile 在 R2 中缺失） | 回溯到矛盾产生的轮次修正 |
 | | 证据链是否完整（每个决策都有来源） | 补充缺失的文档引用或官方指定算子路径 |
 | | 每个内存空间（UB/L1/L0A/L0B/L0C）的 tile 总用量分别不超过各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | 回到 R3 重排地址 / R2 缩 tile |
