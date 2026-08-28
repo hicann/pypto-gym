@@ -596,7 +596,7 @@ def _require_output_dir(argv: List[str]) -> str:
 
     output_dir = argv[1]
     if not os.path.exists(output_dir):
-        logging.info(f"Error: directory not found: {output_dir}")
+        logging.error(f"Error: directory not found: {output_dir}")
         logging.info("")
         logging.info("Hint: output directory is relative to where you ran the operator command.")
         logging.info("  If you ran 'python3 custom/op/op.py --run-mode npu' from project root:")
@@ -614,7 +614,7 @@ def _require_bubble_log(output_dir: str) -> str:
     if bubble_log_path is not None:
         return bubble_log_path
 
-    logging.info(f"Error: bubble_analysis.log not found in {output_dir}")
+    logging.error(f"Error: bubble_analysis.log not found in {output_dir}")
     logging.info("")
     logging.info("Possible reasons:")
     logging.info("  1. The operator has not been run with debug_options={'runtime_debug_mode': 1}")
@@ -635,12 +635,12 @@ def _save_report(report: str, output_dir: str) -> str:
 
 
 def _log_metrics_summary(metrics: Dict, bottlenecks: List[Dict]) -> None:
-    logging.info("\n=== 性能指标摘要 ===")
-    logging.info(f"平均核心利用率: {metrics['avg_core_utilization']:.2f}%")
-    logging.info(f"平均气泡率: {metrics['avg_bubble_rate']:.2f}%")
-    logging.info(f"核心负载均衡度: {metrics['load_balance']:.2f}%")
-    logging.info(f"算子实际执行时间: {metrics['max_work_time']:.2f} us")
-    logging.info(f"发现 {len(bottlenecks)} 个性能瓶颈")
+    logging.info("\n=== Performance metrics summary ===")
+    logging.info(f"Average core utilization: {metrics['avg_core_utilization']:.2f}%")
+    logging.info(f"Average bubble rate: {metrics['avg_bubble_rate']:.2f}%")
+    logging.info(f"Core load balance: {metrics['load_balance']:.2f}%")
+    logging.info(f"Operator actual execution time: {metrics['max_work_time']:.2f} us")
+    logging.info(f"Found {len(bottlenecks)} performance bottlenecks")
 
 
 def main() -> int:
@@ -653,11 +653,11 @@ def main() -> int:
         return 1
 
     real_output_dir = os.path.dirname(bubble_log_path)
-    logging.info(f"正在分析性能数据: {bubble_log_path}")
+    logging.info(f"Analyzing performance data: {bubble_log_path}")
 
     # 解析性能数据
     cores = parse_bubble_analysis(bubble_log_path)
-    logging.info(f"找到 {len(cores)} 个核心")
+    logging.info(f"Found {len(cores)} cores")
 
     # 计算性能指标
     metrics = calculate_performance_metrics(cores)
@@ -672,7 +672,7 @@ def main() -> int:
     report = generate_report(metrics, bottlenecks, suggestions, real_output_dir)
 
     report_path = _save_report(report, real_output_dir)
-    logging.info(f"性能分析报告已生成: {report_path}")
+    logging.info(f"Performance analysis report generated: {report_path}")
     _log_metrics_summary(metrics, bottlenecks)
     return 0
 

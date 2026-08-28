@@ -148,7 +148,7 @@ def _check_devices_via_torch_npu(rep: Report) -> bool:
     except ImportError:
         return False
     except Exception as error:
-        rep.warning(f"torch_npu 回退后端初始化失败: {error}")
+        rep.warning(f"torch_npu fallback backend initialization failed: {error}")
         return False
 
     try:
@@ -156,30 +156,30 @@ def _check_devices_via_torch_npu(rep: Report) -> bool:
             return False
         count = torch.npu.device_count()
     except Exception as e:
-        rep.warning(f"torch_npu 设备查询异常: {e}")
+        rep.warning(f"torch_npu device query failed: {e}")
         return False
 
     if not count or count <= 0:
         return False
 
     rep.npu_usable = True  # [1] 层裁决：torch_npu 后端确认有可用卡
-    rep.warning("npu-smi 枚举为空（疑似 npu-smi 残缺 stub 环境，如 a5），"
-                "回退 torch_npu 后端枚举设备")
-    rep.success(f"检测到 {count} 个 NPU 设备 (via torch_npu): "
+    rep.warning("npu-smi enumeration is empty (possibly a broken npu-smi stub environment, e.g. a5), "
+                "falling back to torch_npu backend for device enumeration")
+    rep.success(f"Detected {count} NPU devices (via torch_npu): "
                 f"{list(range(count))}")
 
     for index in range(count):
         name, device = _torch_npu_device(torch, index)
         rep.devices.append(device)
         rep.success(
-            f"  NPU {index}: {name} | 可用 (via torch_npu.is_available)"
+            f"  NPU {index}: {name} | available (via torch_npu.is_available)"
         )
 
     return True
 
 
 def check_devices(rep: Report):
-    rep.section("[1/4] NPU 设备检测 (主: npu-smi / 回退: torch_npu)...")
+    rep.section("[1/4] NPU device detection (primary: npu-smi / fallback: torch_npu)...")
 
     npu_ids = None
     collector = None
@@ -190,17 +190,17 @@ def check_devices(rep: Report):
         npu_ids = collector.get_npu_ids()
     except Exception as e:
         # _npu_info 导入或枚举异常，不立即失败，尝试 torch_npu 回退
-        rep.warning(f"npu-smi 后端不可用: {e}，尝试 torch_npu 回退")
+        rep.warning(f"npu-smi backend unavailable: {e}, trying torch_npu fallback")
 
     # 主路径成功枚举到设备
     if npu_ids:
         rep.npu_usable = True  # [1] 层裁决：有可用卡
-        rep.success(f"检测到 {len(npu_ids)} 个 NPU 设备 (via npu-smi): {npu_ids}")
+        rep.success(f"Detected {len(npu_ids)} NPU devices (via npu-smi): {npu_ids}")
         for npu_id in npu_ids:
             try:
                 info = collector.get_all_info(npu_id)
             except Exception as e:
-                rep.warning(f"NPU {npu_id} 信息查询失败: {e}")
+                rep.warning(f"NPU {npu_id} info query failed: {e}")
                 rep.devices.append({"npu_id": npu_id, "health": "unknown",
                                     "error": str(e)})
                 continue
@@ -215,13 +215,13 @@ def check_devices(rep: Report):
             #   npu-smi: `Health : OK`      (references/npu_commands.md:69)
             #   asys:    `Healthy | 可用`   (references/asys_commands.md:22)
             if str(health).lower() in ("ok", "healthy"):
-                rep.success(f"  NPU {npu_id}: {chip} | 健康={health}")
+                rep.success(f"  NPU {npu_id}: {chip} | health={health}")
             else:
-                rep.warning(f"  NPU {npu_id}: {chip} | 健康={health} (非 OK)")
+                rep.warning(f"  NPU {npu_id}: {chip} | health={health} (not OK)")
 
         # npu-smi 解析告警透传
         for w in collector.get_all_warnings():
-            rep.warning(f"npu-smi 解析告警: {w}")
+            rep.warning(f"npu-smi parse warning: {w}")
         return
 
     # 主路径枚举为空（真实无卡 或 npu-smi 残缺 stub 环境如 a5）→ 回退 torch_npu
@@ -229,8 +229,8 @@ def check_devices(rep: Report):
         return
 
     # 两条路径都拿不到设备
-    rep.error("未检测到任何 NPU 设备 "
-              "(npu-smi 枚举为空，torch_npu 回退也不可用)")
+    rep.error("No NPU devices detected "
+              "(npu-smi enumeration empty, torch_npu fallback also unavailable)")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -238,10 +238,10 @@ def check_devices(rep: Report):
 # ─────────────────────────────────────────────────────────────
 
 def check_arch(rep: Report):
-    rep.section("[2/4] NPU 架构探测 (libascend_hal.so via get_npu_arch.py)...")
+    rep.section("[2/4] NPU arch detection (libascend_hal.so via get_npu_arch.py)...")
     arch_script = os.path.join(_SCRIPT_DIR, "get_npu_arch.py")
     if not os.path.isfile(arch_script):
-        rep.warning("get_npu_arch.py 不存在，跳过架构探测")
+        rep.warning("get_npu_arch.py not found, skipping arch detection")
         return
     try:
         out = subprocess.run(
@@ -249,10 +249,10 @@ def check_arch(rep: Report):
             capture_output=True, text=True, timeout=30,
         )
     except subprocess.TimeoutExpired:
-        rep.warning("架构探测超时 (30s)")
+        rep.warning("Arch detection timed out (30s)")
         return
     except Exception as e:
-        rep.warning(f"架构探测执行失败: {e}")
+        rep.warning(f"Arch detection failed: {e}")
         return
 
     # get_npu_arch.py 通过 logging 输出，默认写 stderr；成功时 exit=0。
@@ -262,13 +262,13 @@ def check_arch(rep: Report):
         if combined:
             arch = combined.splitlines()[-1].strip()
             rep.npu_arch = arch
-            rep.success(f"NPU 架构 = {arch}")
+            rep.success(f"NPU arch = {arch}")
         else:
-            rep.warning("架构探测无输出")
+            rep.warning("Arch detection produced no output")
     else:
         msg = (out.stderr or out.stdout).strip().splitlines()
-        detail = msg[-1] if msg else "无输出"
-        rep.warning(f"架构探测未成功: {detail}")
+        detail = msg[-1] if msg else "no output"
+        rep.warning(f"Arch detection not successful: {detail}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -276,14 +276,14 @@ def check_arch(rep: Report):
 # ─────────────────────────────────────────────────────────────
 
 def check_runtime(rep: Report):
-    rep.section("[3/4] 运行时依赖检测 (torch_npu / pypto_pro)...")
+    rep.section("[3/4] Runtime dependency check (torch_npu / pypto_pro)...")
 
     # torch
     try:
         import torch  # noqa
         rep.success(f"torch {torch.__version__}")
     except Exception as e:
-        rep.error(f"import torch 失败: {e}")
+        rep.error(f"import torch failed: {e}")
         return
 
     # torch_npu —— [3] 层只裁决"库能否 import"，不重复裁决"设备可用性"
@@ -293,9 +293,9 @@ def check_runtime(rep: Report):
     try:
         import torch_npu  # noqa
     except ImportError as e:
-        rep.error(f"torch_npu 未安装: {e}")
+        rep.error(f"torch_npu not installed: {e}")
     except Exception as e:
-        rep.error(f"torch_npu 已安装但初始化失败: {e}")
+        rep.error(f"torch_npu installed but initialization failed: {e}")
     else:
         # import 成功 = [3] 层通过。is_available() 仅作辅助信号，不阻断。
         try:
@@ -303,20 +303,21 @@ def check_runtime(rep: Report):
             count = torch.npu.device_count()
         except Exception as e:
             avail, count = None, None
-            rep.warning(f"torch.npu 状态查询异常（不阻断）: {e}")
+            rep.warning(f"torch.npu status query raised an exception (non-blocking): {e}")
         rep.torch_npu_ok = True
         if avail and count and count > 0:
-            rep.success(f"torch_npu 可用 (device_count={count})")
+            rep.success(f"torch_npu available (device_count={count})")
         elif rep.npu_usable:
             # [1] 层已确认有卡，但此处 is_available() 说不可用 → 以 [1] 为准，仅告警
             rep.warning(
-                f"torch_npu 已导入且 [1] 层确认有卡，但 is_available={avail} "
-                f"(可能 ASCEND_RT_VISIBLE_DEVICES 屏蔽或初始化时序)；以 [1] 层为准，不阻断"
+                f"torch_npu imported and layer [1] confirmed available devices, but is_available={avail} "
+                "(possibly masked by ASCEND_RT_VISIBLE_DEVICES or init timing); "
+                "layer [1] takes precedence, non-blocking"
             )
         else:
             rep.warning(
-                f"torch_npu 已导入但 is_available={avail}, device_count={count}"
-                f"（[1] 层亦未确认可用卡，详见 [1] 层结论）"
+                f"torch_npu imported but is_available={avail}, device_count={count}"
+                f"(layer [1] also did not confirm available devices, see layer [1] conclusion)"
             )
 
     # pypto_pro.language — 对齐本仓算子代码真实入口
@@ -326,16 +327,16 @@ def check_runtime(rep: Report):
     try:
         import pypto_pro.language as pl  # type: ignore  # noqa: PLC0415
         rep.pypto_pro_ok = True
-        rep.success("pypto_pro.language 可导入")
+        rep.success("pypto_pro.language importable")
         # pl.jit 可用性（算子实现依赖 @pl.jit 装饰器）
         if hasattr(pl, "jit"):
-            rep.success("pl.jit 可用")
+            rep.success("pl.jit available")
         else:
-            rep.error("pypto_pro.language 无 jit 属性，无法编译 PyPTO-Pro 算子")
+            rep.error("pypto_pro.language has no jit attribute, cannot compile PyPTO-Pro operators")
     except ImportError as e:
-        rep.error(f"import pypto_pro.language 失败: {e}")
+        rep.error(f"import pypto_pro.language failed: {e}")
     except Exception as e:
-        rep.error(f"pypto_pro.language 已安装但初始化失败: {e}")
+        rep.error(f"pypto_pro.language installed but initialization failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -405,26 +406,26 @@ def _version_from_file(version_file):
 
 
 def check_cann(rep: Report):
-    rep.section("[4/4] CANN Toolkit 检测...")
+    rep.section("[4/4] CANN Toolkit check...")
     opp = os.environ.get("ASCEND_OPP_PATH", "")
     toolkit = _toolkit_from_environment(opp)
 
     if not toolkit:
-        rep.error("无法定位 CANN Toolkit 目录 "
-                  "(检查 ASCEND_HOME_PATH / 是否 source set_env.sh)")
+        rep.error("Cannot locate CANN Toolkit directory "
+                  "(check ASCEND_HOME_PATH / whether set_env.sh was sourced)")
         return
 
     rep.success(f"CANN Toolkit = {toolkit}")
 
     version = _read_cann_version(toolkit)
     rep.cann_version = version
-    rep.success(f"CANN 版本 = {version}")
+    rep.success(f"CANN version = {version}")
 
     # ASCEND_OPP_PATH（运行时依赖）
     if not opp:
-        rep.warning("ASCEND_OPP_PATH 未设置 (运行算子时必需)")
+        rep.warning("ASCEND_OPP_PATH not set (required when running operators)")
     elif not os.path.isdir(opp):
-        rep.warning(f"ASCEND_OPP_PATH 指向不存在的目录: {opp}")
+        rep.warning(f"ASCEND_OPP_PATH points to a non-existent directory: {opp}")
     else:
         rep.success(f"ASCEND_OPP_PATH = {opp}")
 
@@ -443,7 +444,7 @@ def main():
 
     if not args.json:
         LOGGER.info("=" * 64)
-        LOGGER.info("PyPTO-Pro 环境 Preflight")
+        LOGGER.info("PyPTO-Pro Environment Preflight")
         LOGGER.info("=" * 64)
 
     check_devices(rep)
@@ -461,24 +462,24 @@ def main():
                   if ("NPU 不可用" in e or "未检测到任何 NPU" in e)]
         if leaked:
             rep.warning(
-                "一致性自检：[1] 层已确认可用卡，但 errors 中存在设备不可用类"
-                f"条目 {leaked}，判定为误报信号，请检查检测逻辑"
+                "Consistency self-check: layer [1] confirmed available devices, but errors contains device-unavailable "
+                f"entries {leaked}, judged as false positive signals, please check detection logic"
             )
 
     if not args.json:
         LOGGER.info("\n" + "=" * 64)
-        LOGGER.info("Preflight 结果")
+        LOGGER.info("Preflight Results")
         LOGGER.info("=" * 64)
         if rep.errors:
-            LOGGER.error("%s✗ 环境检测未通过：%d 个错误, %d 个警告%s",
+            LOGGER.error("%s✗ Environment check failed: %d errors, %d warnings%s",
                          _RED, len(rep.errors), len(rep.warnings), _NC)
             for e in rep.errors:
                 LOGGER.error("  %s✗%s %s", _RED, _NC, e)
         elif rep.warnings:
-            LOGGER.warning("%s⚠ 环境检测通过（含 %d 个警告）%s",
+            LOGGER.warning("%s⚠ Environment check passed (with %d warnings)%s",
                            _YELLOW, len(rep.warnings), _NC)
         else:
-            LOGGER.info("%s✓ 环境检测全部通过%s", _GREEN, _NC)
+            LOGGER.info("%s✓ All environment checks passed%s", _GREEN, _NC)
 
     payload = json.dumps(rep.to_dict(), ensure_ascii=False)
     if args.json:

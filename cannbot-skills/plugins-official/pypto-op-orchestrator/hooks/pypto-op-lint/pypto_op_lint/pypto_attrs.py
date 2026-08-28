@@ -72,7 +72,7 @@ def _read_cache() -> Optional[set[str]]:
         with open(_CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        logger.debug("[OL55] 缓存文件读取失败, 将重新探测: %s", e)
+        logger.debug("[OL55] cache file read failed, will re-probe: %s", e)
         return None
     ts = data.get("ts", 0)
     if time.time() - ts > _CACHE_TTL_SECONDS:
@@ -92,7 +92,7 @@ def _write_cache(attrs: set[str]) -> None:
             json.dump({"ts": time.time(), "attrs": sorted(attrs)}, f)
         os.replace(tmp_path, _CACHE_FILE)
     except OSError as e:
-        logger.debug("[OL55] 缓存写入失败 (非致命): %s", e)
+        logger.debug("[OL55] cache write failed (non-fatal): %s", e)
 
 
 def _append_unique(candidates: list[str], seen: set[str], path: str) -> None:
@@ -114,7 +114,7 @@ def _conda_env_python_paths(conda_bin: str) -> list[str]:
             return []
         data = json.loads(result.stdout)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-        logger.debug("[OL55] conda info --envs --json 失败: %s", exc)
+        logger.debug("[OL55] conda info --envs --json failed: %s", exc)
         return []
     return [
         os.path.join(path, "bin", "python")
@@ -174,15 +174,15 @@ def _probe_one_python(python_path: str) -> Optional[set[str]]:
             timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        logger.debug("[OL55] %s pypto 探测超时", python_path)
+        logger.debug("[OL55] pypto probe timed out for %s", python_path)
         return None
     except OSError as e:
-        logger.debug("[OL55] %s 启动失败: %s", python_path, e)
+        logger.debug("[OL55] %s failed to start: %s", python_path, e)
         return None
 
     if result.returncode != 0:
         logger.debug(
-            "[OL55] %s pypto import 失败: %s",
+            "[OL55] pypto import failed for %s: %s",
             python_path, (result.stderr or "")[:200],
         )
         return None
@@ -190,7 +190,7 @@ def _probe_one_python(python_path: str) -> Optional[set[str]]:
     try:
         attrs = json.loads(result.stdout.strip())
     except json.JSONDecodeError as e:
-        logger.debug("[OL55] %s 输出解析失败: %s", python_path, e)
+        logger.debug("[OL55] failed to parse output from %s: %s", python_path, e)
         return None
     if not isinstance(attrs, list):
         return None
@@ -205,7 +205,7 @@ def _probe_pypto_attrs_subprocess() -> Optional[set[str]]:
     for cand in _enumerate_python_candidates():
         attrs = _probe_one_python(cand)
         if attrs is not None:
-            logger.debug("[OL55] pypto 在 %s 中找到 (%d attrs)", cand, len(attrs))
+            logger.debug("[OL55] pypto found in %s (%d attrs)", cand, len(attrs))
             return attrs
     return None
 

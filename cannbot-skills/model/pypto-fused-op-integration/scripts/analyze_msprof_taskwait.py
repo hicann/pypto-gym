@@ -80,14 +80,14 @@ def _print_global_stats(prefix, total_wait, total_dur, op_stats, n_rows):
     total = total_wait + total_dur
     wait_pct = total_wait / total * 100 if total > 0 else 0
     _output(f"\n{'=' * 70}")
-    _output(f"{prefix}全局统计")
+    _output(f"{prefix}Overall Statistics")
     _output(
-        f"  总任务数: {n_rows:,}  总 Wait: {total_wait / 1e6:.2f}s  "
-        f"总 Duration: {total_dur / 1e6:.3f}s  Wait 占比: {wait_pct:.1f}%"
+        f"  Total Tasks: {n_rows:,}  Total Wait: {total_wait / 1e6:.2f}s  "
+        f"Total Duration: {total_dur / 1e6:.3f}s  Wait Ratio: {wait_pct:.1f}%"
     )
     sorted_ops = sorted(op_stats.items(), key=lambda x: x[1]["wait"], reverse=True)
     _output(f"\n{'=' * 70}")
-    _output(f"{prefix}Task Wait 按算子类型排行")
+    _output(f"{prefix}Task Wait Ranking by OP Type")
     _output(f"{'OP Type':28s} {'Count':>7s} {'Wait(s)':>8s} {'Dur(s)':>8s} {'AvgWait':>8s}")
     _output("-" * 62)
     for op_type, s in sorted_ops[:15]:
@@ -102,8 +102,8 @@ def _analyse_single_layer_delay(rows, prefix):
         quarter = len(fa_indices) // 4
         anchor = fa_indices[quarter * 2:quarter * 2 + 5]  # 中间区域取 5 个
         _output(f"\n{'=' * 70}")
-        _output(f"{prefix}单层延迟分析 (FlashAttentionScore 分段, 总FA数={len(fa_indices)})")
-        _output(f"{'段':>4s} {'任务数':>6s} {'计算总和':>8s} {'wait avg':>8s} {'median':>8s} {'max':>8s} {'min':>8s}")
+        _output(f"{prefix}Per-Layer Latency Analysis (FlashAttentionScore segments, Total FA Count={len(fa_indices)})")
+        _output(f"{'Seg':>4s} {'Tasks':>6s} {'TotalDur':>8s} {'wait avg':>8s} {'median':>8s} {'max':>8s} {'min':>8s}")
         seg_stats = []
         for seg_id in range(len(anchor) - 1):
             seg = rows[anchor[seg_id] + 1:anchor[seg_id + 1]]
@@ -131,18 +131,18 @@ def _analyse_single_layer_delay(rows, prefix):
             type_dist = defaultdict(int)
             for r in first_seg:
                 type_dist[r.get("OP Type", "?")] += 1
-            _output(f"\n  每层算子分布 (首段): {dict(type_dist)}")
+            _output(f"\n  Per-Layer OP Distribution (first segment): {dict(type_dist)}")
         return seg_stats
     elif fa_indices:
-        _output(f"\n  FlashAttentionScore 不足 5 个 ({len(fa_indices)}), 跳过单层分析")
+        _output(f"\n  FlashAttentionScore count < 5 ({len(fa_indices)}), skipping per-layer analysis")
         return []
     else:
-        _output("\n  未找到 FlashAttentionScore, 跳过单层分析")
+        _output("\n  FlashAttentionScore not found, skipping per-layer analysis")
         return []
 
 
 def analyse_single(rows, label=""):
-    """分析单个 op_summary"""
+    """Analyze a single op_summary"""
     prefix = f"[{label}] " if label else ""
     total_wait, total_dur, op_stats = _compute_op_stats(rows)
     _print_global_stats(prefix, total_wait, total_dur, op_stats, len(rows))
@@ -164,14 +164,14 @@ def main():
             continue
 
     if not csv_paths:
-        _output("无可用 op_summary CSV")
+        _output("No usable op_summary CSV")
         sys.exit(1)
 
     all_seg_stats = []
     for csv_path in csv_paths:
         label = os.path.basename(os.path.dirname(os.path.dirname(csv_path))) if len(csv_paths) > 1 else ""
         label = label[-20:] if label else ""
-        _output(f"源: {csv_path}")
+        _output(f"Source: {csv_path}")
         rows = load_csv(csv_path)
         segs = analyse_single(rows, label)
         if segs:
@@ -180,8 +180,8 @@ def main():
     # 对比模式
     if len(all_seg_stats) >= 2:
         _output(f"\n{'=' * 70}")
-        _output("对比汇总")
-        _output(f"{'标签':>20s} {'每层任务':>8s} {'计算(us)':>9s} {'avgWait':>8s} {'medWait':>8s}")
+        _output("Comparison Summary")
+        _output(f"{'Label':>20s} {'PerLayer':>8s} {'Compute(us)':>9s} {'avgWait':>8s} {'medWait':>8s}")
         _output("-" * 62)
         for label, segs in all_seg_stats:
             avg_tasks = statistics.mean([s["tasks"] for s in segs])

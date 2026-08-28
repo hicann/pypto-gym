@@ -13,6 +13,7 @@ Batch Size性能对比测试脚本
 对比Baseline ACLGraph和PyPTO ACLGraph在不同BS组合下的性能
 """
 
+import logging
 import subprocess
 import json
 import time
@@ -62,7 +63,7 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
     
     mode_name = "PyPTO ACLGraph" if use_kv_fusion else "Baseline ACLGraph"
     print(f"\n{'='*60}")
-    print(f"测试: {mode_name}, OutputLen={output_length}")
+    logging.info(f"{'='*60}")
     print(f"{'='*60}")
     
     start_time = time.time()
@@ -82,7 +83,7 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
         inference_time = float(inference_match.group(1))
         tokens = int(tokens_match.group(1))
         
-        print(f"✓ 成功: {tokens} tokens, {inference_time:.2f}s, {throughput:.1f} tokens/s")
+        print(f"✓ Success: {tokens} tokens, {inference_time:.2f}s, {throughput:.1f} tokens/s")
         
         return {
             'throughput': throughput,
@@ -93,8 +94,8 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
             'mode': mode_name,
         }
     else:
-        print(f"✗ 失败: 无法解析性能指标")
-        print(f"输出片段:\n{output[-500:]}")
+        print(f"✗ Failed: unable to parse performance metrics")
+        print(f"Output snippet:\n{output[-500:]}")
         return {
             'success': False,
             'mode': mode_name,
@@ -106,8 +107,8 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
 
 def main():
     print("\n" + "="*80)
-    print("Batch Size性能对比测试")
-    print("对比Baseline ACLGraph vs PyPTO ACLGraph")
+    print("Batch Size Performance Comparison Test")
+    print("Comparing Baseline ACLGraph vs PyPTO ACLGraph")
     print("="*80)
     
     results = []
@@ -118,7 +119,7 @@ def main():
         prompt = config['prompt']
         
         print(f"\n{'#'*80}")
-        print(f"配置: BS={bs}, OutputLen={output_length}, Prompt='{prompt[:30]}...'")
+        print(f"Config: BS={bs}, OutputLen={output_length}, Prompt='{prompt[:30]}...'")
         print(f"{'#'*80}")
         
         # 测试Baseline ACLGraph
@@ -150,7 +151,7 @@ def main():
     
     # 生成对比报告
     print("\n" + "="*80)
-    print("性能对比汇总")
+    print("Performance Comparison Summary")
     print("="*80)
     
     print(f"\n{'BS':>4} {'OutputLen':>10} {'Baseline':>12} {'PyPTO':>12} {'Speedup':>10} {'Status':>10}")
@@ -172,11 +173,11 @@ def main():
                 speedup_str = "N/A"
             
             if abs(speedup) < 5:
-                status = "≈相同"
+                status = "~Same"
             elif speedup > 0:
-                status = "✓ PyPTO快"
+                status = "✓ PyPTO Faster"
             else:
-                status = "⚠ Baseline快"
+                status = "Warning Baseline Faster"
             
             print(f"{config['bs']:>4} {config['output_length']:>10} "
                   f"{baseline_tps:>12.1f} {pypto_tps:>12.1f} "
@@ -190,11 +191,11 @@ def main():
     with open(result_file, 'w') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
-    print(f"\n✓ 结果已保存到: {result_file}")
+    print(f"\n✓ Results saved to: {result_file}")
     
     # 详细分析
     print("\n" + "="*80)
-    print("详细分析")
+    print("Detailed Analysis")
     print("="*80)
     
     for r in results:
@@ -202,23 +203,23 @@ def main():
         baseline = r['baseline']
         pypto = r['pypto']
         
-        print(f"\n配置: BS={config['bs']}, OutputLen={config['output_length']}")
+        print(f"\nConfig: BS={config['bs']}, OutputLen={config['output_length']}")
         
         if baseline['success']:
             print(f"  Baseline ACLGraph:")
-            print(f"    - 吞吐量: {baseline['throughput']:.2f} tokens/s")
-            print(f"    - 推理耗时: {baseline['inference_time']:.2f}s")
-            print(f"    - 生成token数: {baseline['tokens']}")
+            print(f"    - Throughput: {baseline['throughput']:.2f} tokens/s")
+            print(f"    - Inference time: {baseline['inference_time']:.2f}s")
+            print(f"    - Generated tokens: {baseline['tokens']}")
         
         if pypto['success']:
             print(f"  PyPTO ACLGraph:")
-            print(f"    - 吞吐量: {pypto['throughput']:.2f} tokens/s")
-            print(f"    - 推理耗时: {pypto['inference_time']:.2f}s")
-            print(f"    - 生成token数: {pypto['tokens']}")
+            print(f"    - Throughput: {pypto['throughput']:.2f} tokens/s")
+            print(f"    - Inference time: {pypto['inference_time']:.2f}s")
+            print(f"    - Generated tokens: {pypto['tokens']}")
             
             if baseline['success'] and baseline['throughput'] > 0:
                 speedup = (pypto['throughput'] / baseline['throughput'] - 1) * 100
-                print(f"  性能差异: {speedup:+.2f}%")
+                print(f"  Performance diff: {speedup:+.2f}%")
 
 if __name__ == '__main__':
     main()

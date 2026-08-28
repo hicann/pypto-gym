@@ -160,15 +160,15 @@ def read_jit_data(filename):
     dtype, shape = _read_jit_metadata(filename.replace('.data', '.csv'))
 
     if dtype is None:
-        logger.warning("  警告: 未找到 CSV 文件，无法确定数据类型")
+        logger.warning("  Warning: CSV file not found, cannot determine data type")
         return None, None
 
     if dtype not in DTYPE_MAP:
-        logger.warning(f"  警告: 未知的数据类型 {dtype}")
+        logger.warning(f"  Warning: unknown data type {dtype}")
         return None, None
     if dtype in UNSUPPORTED_PACKED_DTYPES:
         type_name = DTYPE_MAP[dtype][0]
-        logger.warning(f"  警告: 暂不支持解包数据类型 {type_name} (dtype={dtype})")
+        logger.warning(f"  Warning: unpacking data type {type_name} not supported yet (dtype={dtype})")
         return None, dtype
 
     _type_name, torch_dtype, _bytes_per_element = DTYPE_MAP[dtype]
@@ -180,7 +180,7 @@ def read_jit_data(filename):
         expected_elements = math.prod(shape)
         if data_tensor.numel() != expected_elements:
             logger.warning(
-                "  警告: 数据元素数与 shape 不匹配: file=%s, shape=%s",
+                "  Warning: data element count does not match shape: file=%s, shape=%s",
                 data_tensor.numel(), shape,
             )
             return None, dtype
@@ -215,12 +215,12 @@ def _resolve_comparison_options(options, legacy_values, legacy_options):
 
 def _check_tensor_layout(jit_data, golden_data, name):
     if jit_data.dtype != golden_data.dtype:
-        logger.info(f"\n{name}: ✗ FAIL")
-        logger.info(f"  数据类型不一致: jit={jit_data.dtype}, golden={golden_data.dtype}")
+        logger.warning(f"\n{name}: ✗ FAIL")
+        logger.info(f"  Data type mismatch: jit={jit_data.dtype}, golden={golden_data.dtype}")
         return False
     if jit_data.shape != golden_data.shape:
-        logger.info(f"\n{name}: ✗ FAIL")
-        logger.info(f"  数据形状不一致: jit={jit_data.shape}, golden={golden_data.shape}")
+        logger.warning(f"\n{name}: ✗ FAIL")
+        logger.info(f"  Data shape mismatch: jit={jit_data.shape}, golden={golden_data.shape}")
         return False
     return True
 
@@ -303,7 +303,7 @@ def _log_comparison(name, stats, options, rtol, atol):
 
 
 def _log_mismatched_elements(jit_data, golden_data, total_count):
-    logger.info("  前10个元素对比:")
+    logger.info("  First 10 elements comparison:")
     jit_flat = jit_data.flatten()
     golden_flat = golden_data.flatten()
     for index in range(min(10, total_count)):
@@ -320,8 +320,8 @@ def compare_with_golden(
 ):
     """对比 jit 结果与 golden 结果；旧位置参数和关键字参数均保持兼容。"""
     if jit_data is None or golden_data is None:
-        logger.info("\n%s: ✗ FAIL", name)
-        logger.info("  未能读取待对比的数据")
+        logger.warning("\n%s: ✗ FAIL", name)
+        logger.info("  Failed to read the data to be compared")
         return False
     if not _check_tensor_layout(jit_data, golden_data, name):
         return False
@@ -331,8 +331,8 @@ def compare_with_golden(
     else:
         rtol, atol = get_tolerance_by_dtype(options.dtype, options.custom_rtol, options.custom_atol)
     if options.verbose:
-        logger.info(f"  数据类型: {jit_data.dtype}")
-        logger.info(f"  数据形状: {jit_data.shape}")
+        logger.info(f"  Data type: {jit_data.dtype}")
+        logger.info(f"  Data shape: {jit_data.shape}")
     stats = _calculate_comparison(jit_data, golden_data, rtol, atol)
     _log_comparison(name, stats, options, rtol, atol)
     if options.verbose and not stats["match"]:
@@ -341,9 +341,9 @@ def compare_with_golden(
 
 
 def analyze_results(results):
-    """分析对比结果，给出二分建议"""
+    """Analyze comparison results and provide bisection suggestions"""
     logger.info("\n" + "=" * 80)
-    logger.info("步骤 5：根据结果继续二分")
+    logger.info("Step 5: continue bisection based on results")
     logger.info("=" * 80)
 
     first_fail_idx = -1
@@ -353,25 +353,25 @@ def analyze_results(results):
             break
 
     if first_fail_idx == -1:
-        logger.info("✓ 所有检查点都匹配")
-        logger.info("→ 问题可能在：检查点之后的操作")
+        logger.info("✓ All checkpoints match")
+        logger.info("→ The problem may be in: operations after the checkpoint")
         return
 
     fail_name = results[first_fail_idx][0]
 
     if first_fail_idx == 0:
-        logger.info(f"✗ 第一个检查点 ({fail_name}) 就不匹配")
-        logger.info("→ 问题可能在：输入数据或第一个计算步骤")
-        logger.info("→ 建议：检查输入数据是否正确，或在更早的位置插入检查点")
+        logger.info(f"✗ The first checkpoint ({fail_name}) already mismatches")
+        logger.info("→ The problem may be in: input data or the first computation step")
+        logger.info("→ Suggestion: check whether the input data is correct, or insert checkpoints earlier")
     else:
         prev_name = results[first_fail_idx - 1][0]
-        logger.info(f"✗ 检查点 {prev_name} 匹配，但 {fail_name} 不匹配")
-        logger.info(f"→ 问题位置：{prev_name} 和 {fail_name} 之间的操作")
-        logger.info("→ 建议：在这两个检查点之间插入新的检查点，进一步定位问题")
+        logger.info(f"✗ Checkpoint {prev_name} matches, but {fail_name} does not")
+        logger.info(f"→ Problem location: operations between {prev_name} and {fail_name}")
+        logger.info("→ Suggestion: insert new checkpoints between these two checkpoints to further locate the problem")
 
 
 def setup_logging(work_dir, golden_dir):
-    """配置日志输出"""
+    """Configure log output"""
     log_formatter = logging.Formatter('%(message)s')
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_formatter)
@@ -412,15 +412,15 @@ def _find_golden_file(golden_base_dir, checkpoint_name):
 def _compare_checkpoint(tensor_dir, golden_base_dir, checkpoint_name, options):
     jit_files = sorted(glob.glob(os.path.join(tensor_dir, f"{checkpoint_name}_*.data")))
     if not jit_files:
-        logger.warning(f"\n{checkpoint_name}: ✗ 未找到 jit 文件")
+        logger.warning(f"\n{checkpoint_name}: ✗ jit file not found")
         return False
     golden_file, golden_pattern = _find_golden_file(golden_base_dir, checkpoint_name)
     if golden_file is None:
-        logger.warning(f"\n{checkpoint_name}: ✗ 未找到 golden 文件 ({golden_pattern})")
+        logger.warning(f"\n{checkpoint_name}: ✗ golden file not found ({golden_pattern})")
         return False
 
     jit_file = jit_files[0]
-    logger.info("\n使用文件:")
+    logger.info("\nFiles used:")
     logger.info(f"  jit: {os.path.basename(jit_file)}")
     logger.info(f"  golden: {os.path.basename(golden_file)}")
     jit_data, dtype = read_jit_data(jit_file)
@@ -434,7 +434,7 @@ def _compare_checkpoint(tensor_dir, golden_base_dir, checkpoint_name, options):
 
 
 def _show_checkpoints(checkpoints):
-    logger.info("\n检查点列表:")
+    logger.info("\nCheckpoint list:")
     for index, checkpoint in enumerate(checkpoints, 1):
         logger.info(f"  {index}. {checkpoint}")
 
@@ -442,25 +442,25 @@ def _show_checkpoints(checkpoints):
 def run(args):
     latest_dir = args.output_dir or find_latest_output_dir(args.work_dir)
     if not latest_dir:
-        logging.error("✗ 未找到 output 目录")
+        logging.error("✗ output directory not found")
         return 1
     setup_logging(args.work_dir, args.golden_dir)
     logger.info("=" * 80)
-    logger.info("PyPTO 精度检查点文件对比工具")
+    logger.info("PyPTO precision checkpoint file comparison tool")
     logger.info("=" * 80)
     golden_base_dir = args.golden_dir if args.golden_dir else args.work_dir
     tensor_dir = os.path.join(args.work_dir, "output", latest_dir, "tensor")
     checkpoints = scan_checkpoints_from_dir(tensor_dir)
     if not checkpoints:
-        logger.error(f"✗ 未在 {tensor_dir} 找到检查点文件")
+        logger.error(f"✗ No checkpoint files found in {tensor_dir}")
         return 1
-    logger.info(f"✓ 找到 output 目录: {latest_dir}")
-    logger.info(f"✓ 找到 {len(checkpoints)} 个检查点: {checkpoints}")
+    logger.info(f"✓ Found output directory: {latest_dir}")
+    logger.info(f"✓ Found {len(checkpoints)} checkpoints: {checkpoints}")
     if args.list:
         _show_checkpoints(checkpoints)
         return 0
     logger.info("\n" + "=" * 80)
-    logger.info("步骤 4：对比 jit 和 golden 数据")
+    logger.info("Step 4: compare jit and golden data")
     logger.info("=" * 80)
     options = ComparisonOptions(
         verbose=args.verbose,

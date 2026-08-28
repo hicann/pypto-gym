@@ -172,7 +172,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _require_op_dir(parser: argparse.ArgumentParser, args: argparse.Namespace, option: str) -> str:
     if not args.op_dir:
-        parser.error(f"{option} 需要 --op-dir")
+        parser.error(f"{option} requires --op-dir")
     return args.op_dir
 
 
@@ -204,7 +204,7 @@ def _dispatch_command(parser: argparse.ArgumentParser, args: argparse.Namespace)
     if args.check_phase_gate:
         op_dir = _require_op_dir(parser, args, "--check-phase-gate")
         if not args.phase:
-            parser.error("--check-phase-gate 需要 --phase (如 M1, M2, ...)")
+            parser.error("--check-phase-gate requires --phase (e.g. M1, M2, ...)")
         return cmd_check_phase_gate(op_dir, args.phase, args.stage)
 
     if args.check_design_gate:

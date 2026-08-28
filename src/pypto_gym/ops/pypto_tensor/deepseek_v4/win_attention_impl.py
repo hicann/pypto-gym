@@ -10,6 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """
 """
+import logging
 import torch
 import pypto
 from torch._dynamo import allow_in_graph
@@ -273,9 +274,9 @@ try:
             mask, cu_seqlens_q)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'sliding_window_attention'")
+        logging.warning(f"Skip: torchair not installed, skip NPU registration for operator 'sliding_window_attention'")
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def sliding_win_atten_graph(q: torch.Tensor,

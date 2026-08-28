@@ -284,7 +284,7 @@ def _log_and_save_compare_reports_legacy(summary, out_dir, speedups, n_cases):
     LOGGER.info("-" * 100)
     if speedups:
         LOGGER.info("--- Speedup ---")
-        LOGGER.info(f"  Geomean : {summary['geomean_speedup']:.2f}x  ← 主指标")
+        LOGGER.info(f"  Geomean : {summary['geomean_speedup']:.2f}x  ← primary metric")
         LOGGER.info(f"  Mean    : {summary['mean_speedup']:.2f}x")
         LOGGER.info(f"  Median  : {summary['median_speedup']:.2f}x")
         LOGGER.info(f"  Min/Max : {summary['min_speedup']:.2f}x / {summary['max_speedup']:.2f}x")
@@ -521,9 +521,9 @@ def _run_compare_mode_legacy(args, out_dir, device_id, device_src):
 
 
 def _run_quick_mode_legacy(args, out_dir, device_id, device_src):
-    """既有快速模式：每次 repeat 只获取 kernel 时间。
+    """Legacy quick mode: only fetch kernel time for each repeat.
 
-    保持既有行为；未传 --case-manifest 时由 run_quick_mode 分发到此。
+    Keeps existing behavior; dispatched here by run_quick_mode when --case-manifest is not passed.
     """
     LOGGER.info(f"[INFO] Using NPU device {device_id} (source={device_src})")
     LOGGER.info("[INFO] Quick mode: kernel timing only (no aic-metrics)")

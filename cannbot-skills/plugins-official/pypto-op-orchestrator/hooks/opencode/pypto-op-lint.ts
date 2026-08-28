@@ -15,7 +15,7 @@ function appendMessage(output: { output?: string }, message: string): void {
 
 function formatPluginError(scope: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  return `[pypto-op-lint plugin-error] ${scope} 自动检查失败：${detail}`;
+  return `[pypto-op-lint plugin-error] ${scope} auto-check failed: ${detail}`;
 }
 
 function parseHookOutput(raw: string): { additionalContext: string; decision: "allow" | "block"; reason: string } {
@@ -30,7 +30,7 @@ function parseHookOutput(raw: string): { additionalContext: string; decision: "a
     };
   } catch (error) {
     return {
-      additionalContext: formatPluginError("post-edit 输出解析", error),
+      additionalContext: formatPluginError("post-edit output parsing", error),
       decision: "allow",
       reason: "",
     };

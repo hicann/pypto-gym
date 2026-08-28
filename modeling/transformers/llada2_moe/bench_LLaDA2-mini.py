@@ -138,7 +138,7 @@ def run_forward_benchmark(model, input_ids, attention_mask):
     print(f"\nWarmup forward ({args.warmup} iterations)...")
     for idx in range(args.warmup):
         _, elapsed = timed_call(lambda: model(input_ids=input_ids, attention_mask=attention_mask))
-        print(f"  warmup {idx + 1}: {elapsed:.3f}s")
+        logging.info(f"  warmup {idx + 1}: {elapsed:.3f}s")
 
     print(f"\nMeasurement forward ({args.iters} iterations)...")
     times, logits_shape, argmax_token = [], None, None
@@ -148,7 +148,7 @@ def run_forward_benchmark(model, input_ids, attention_mask):
         logits_shape = list(logits.shape)
         argmax_token = int(logits[:, -1, :].argmax(dim=-1)[0].item())
         times.append(elapsed)
-        print(f"  iter {idx + 1:2d}: {elapsed * 1000:.3f} ms, logits={logits_shape}, argmax={argmax_token}")
+        logging.info(f"  iter {idx + 1:2d}: {elapsed * 1000:.3f} ms, logits={logits_shape}, argmax={argmax_token}")
     return times, logits_shape, argmax_token
 
 
@@ -175,7 +175,7 @@ def run_generate_benchmark(model, input_ids, input_len):
     print(f"\nWarmup ({args.warmup} iterations)...")
     for idx in range(args.warmup):
         _, elapsed = timed_call(lambda: model.generate(input_ids, **gen_kwargs))
-        print(f"  warmup {idx + 1}: {elapsed:.2f}s")
+        logging.info(f"  warmup {idx + 1}: {elapsed:.2f}s")
 
     print(f"\nMeasurement ({args.iters} iterations)...")
     times, tokens_list = [], []
@@ -185,7 +185,7 @@ def run_generate_benchmark(model, input_ids, input_len):
         tps = n_tokens / elapsed if elapsed > 0 else 0
         times.append(elapsed)
         tokens_list.append(n_tokens)
-        print(f"  iter {idx + 1:2d}: {elapsed:.3f}s, {n_tokens} tokens, {tps:.1f} tok/s")
+        logging.info(f"  iter {idx + 1:2d}: {elapsed:.3f}s, {n_tokens} tokens, {tps:.1f} tok/s")
     return times, tokens_list
 
 
@@ -212,26 +212,26 @@ def build_generate_result(context, times, tokens_list):
 
 def print_summary(mode, result):
     if result.get("benchmark") == "forward":
-        print(f"\n--- {mode.upper()} FORWARD Summary ---")
-        print(f"  Time:     {result['time_mean_ms']:.3f} +/- {result['time_std_ms']:.3f} ms "
+        logging.info(f"\n--- {mode.upper()} FORWARD Summary ---")
+        logging.info(f"  Time:     {result['time_mean_ms']:.3f} +/- {result['time_std_ms']:.3f} ms "
               f"(min={result['time_min_ms']:.3f}, max={result['time_max_ms']:.3f})")
-        print(f"  Peak mem: {result['forward_peak_mem_mb']:.0f} MB")
-        print(f"  Logits:   {result['logits_shape']}, argmax={result['argmax_token']}")
+        logging.info(f"  Peak mem: {result['forward_peak_mem_mb']:.0f} MB")
+        logging.info(f"  Logits:   {result['logits_shape']}, argmax={result['argmax_token']}")
         return
 
-    print(f"\n--- {mode.upper()} Summary ---")
-    print(f"  Time:       {result['time_mean_s']:.3f} +/- {result['time_std_s']:.3f}s "
+    logging.info(f"\n--- {mode.upper()} Summary ---")
+    logging.info(f"  Time:       {result['time_mean_s']:.3f} +/- {result['time_std_s']:.3f}s "
           f"(min={result['time_min_s']:.3f}, max={result['time_max_s']:.3f})")
-    print(f"  Throughput: {result['tps_mean']:.1f} +/- {result['tps_std']:.1f} tok/s "
+    logging.info(f"  Throughput: {result['tps_mean']:.1f} +/- {result['tps_std']:.1f} tok/s "
           f"(min={result['tps_min']:.1f}, max={result['tps_max']:.1f})")
-    print(f"  Peak mem:   {result['generate_peak_mem_mb']:.0f} MB")
+    logging.info(f"  Peak mem:   {result['generate_peak_mem_mb']:.0f} MB")
 
 
 def run_benchmark():
     mode = "pypto" if args.use_pypto else "baseline"
-    print(f"\n{'='*70}")
-    print(f"  LLaDA2.0-mini E2E Benchmark — {mode.upper()}")
-    print(f"{'='*70}")
+    logging.info(f"\n{'='*70}")
+    logging.info(f"  LLaDA2.0-mini E2E Benchmark — {mode.upper()}")
+    logging.info(f"{'='*70}")
 
     setup_device(args.device)
     if args.use_pypto:
@@ -240,7 +240,7 @@ def run_benchmark():
     tokenizer, model, model_load_s, peak_load_mem = load_model_and_tokenizer(args.model_path, args.device)
     input_ids, attention_mask = prepare_inputs(tokenizer, args.prompt, args.device)
     input_len = input_ids.shape[1]
-    print(f"Input tokens: {input_len}, Output length (gen_length): {args.output_length}")
+    logging.info(f"Input tokens: {input_len}, Output length (gen_length): {args.output_length}")
 
     context = {
         "model": "LLaDA2.0-mini",
@@ -378,8 +378,8 @@ def _measure_and_report(run_once, mode, device, dims):
         "warmup_iters": dims["warmup"], "num_iters": dims["iters"],
         "generate_peak_mem_mb": round(torch.npu.max_memory_allocated() / 1024 ** 2, 1),
     }
-    print(f"\n--- {mode.upper()} Summary ---")
-    print(f"  Throughput: {tps_mean:.1f} +/- {tps_std:.1f} tok/s "
+    logging.info(f"\n--- {mode.upper()} Summary ---")
+    logging.info(f"  Throughput: {tps_mean:.1f} +/- {tps_std:.1f} tok/s "
           f"(avg of {dims['iters']}, mean {result['time_mean_s']:.3f}s/block)")
     return result
 
@@ -476,4 +476,4 @@ if __name__ == "__main__":
 
     with open(report_path, "w") as f:
         json.dump(result, f, indent=2)
-    print(f"\nReport saved: {report_path}")
+    logging.info(f"\nReport saved: {report_path}")

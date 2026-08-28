@@ -89,12 +89,12 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\n".join(lines)
-    logging.info(f"从文件读取提示词: {args.sentence_file} ({len(prompt)} 字符)")
+    logging.info(f"Prompt read from file: {args.sentence_file} ({len(prompt)} chars)")
 else:
-    prompt = "你好"
+    prompt = "Hello"
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 
@@ -117,7 +117,7 @@ torch.npu.reset_peak_memory_stats()
 
 # ---- KV融合算子预热（多场景编译缓存） ----
 if pto_kernels and pto_kernels.USE_PTO_MLA_PROLOG:
-    logging.info("预热KV融合算子（多场景编译缓存）...")
+    logging.info("Warming up KV fusion op (multi-scenario compile cache)...")
     warmup_start = time.perf_counter()
 
     first_layer = model.model.layers[0].self_attn
@@ -142,22 +142,25 @@ if pto_kernels and pto_kernels.USE_PTO_MLA_PROLOG:
                 warmup_ln_weight, first_layer.kv_a_layernorm.variance_epsilon,
                 warmup_cos, warmup_sin, warmup_pos_ids
             )
-            logging.info(f"  ✓ seq_len={warmup_seq} 预热成功")
+            logging.info(f"  ✓ seq_len={warmup_seq} warmup succeeded")
         except Exception as e:
             warmup_errors.append(f"seq_len={warmup_seq}: {str(e)[:50]}")
-            logging.warning(f"  ⚠️ seq_len={warmup_seq} 预热失败: {str(e)[:50]}")
+            logging.warning(f"  ⚠️ seq_len={warmup_seq} warmup failed: {str(e)[:50]}")
 
     warmup_time = time.perf_counter() - warmup_start
     metrics["warmup_s"] = round(warmup_time, 3)
 
     if warmup_errors:
-        logging.warning(f"预热部分失败（{len(warmup_errors)}/{len(warmup_seq_lens)}），耗时: {warmup_time:.3f}s")
+        logging.warning(
+            f"Partial warmup failure ({len(warmup_errors)}/{len(warmup_seq_lens)}), "
+            f"elapsed: {warmup_time:.3f}s"
+        )
     else:
-        logging.info(f"✓ KV融合算子预热完成（{len(warmup_seq_lens)}场景），耗时: {warmup_time:.3f}s")
+        logging.info(f"✓ KV fusion op warmup complete ({len(warmup_seq_lens)} scenarios), elapsed: {warmup_time:.3f}s")
 
 # ---- aclgraph 编译（可选） ----
 if pto_kernels is not None and pto_kernels.USE_ACL_GRAPH:
-    logging.info("启用 aclgraph 图编译模式（reduce-overhead）")
+    logging.info("Enabling aclgraph graph compilation mode (reduce-overhead)")
     try:
         import torchair as tng
         from torchair.configs.compiler_config import CompilerConfig
@@ -171,15 +174,15 @@ if pto_kernels is not None and pto_kernels.USE_ACL_GRAPH:
         t0_compile = time.perf_counter()
         model = torch.compile(model, dynamic=False, fullgraph=True, backend=npu_backend)
         compile_time = time.perf_counter() - t0_compile
-        logging.info(f"aclgraph 编译耗时: {compile_time:.2f}s (torchair)")
+        logging.info(f"aclgraph compile time: {compile_time:.2f}s (torchair)")
         metrics["aclgraph_compile_s"] = round(compile_time, 3)
         metrics["aclgraph_backend"] = "torchair"
     except ImportError:
-        logging.info("torchair未安装，使用原生torch.compile")
+        logging.info("torchair not installed, using native torch.compile")
         t0_compile = time.perf_counter()
         model = torch.compile(model, dynamic=False, fullgraph=False)
         compile_time = time.perf_counter() - t0_compile
-        logging.info(f"torch.compile编译耗时: {compile_time:.2f}s (native)")
+        logging.info(f"torch.compile compile time: {compile_time:.2f}s (native)")
         metrics["aclgraph_compile_s"] = round(compile_time, 3)
         metrics["aclgraph_backend"] = "native"
 
@@ -189,7 +192,7 @@ inputs = tokenizer(prompt, return_tensors="pt").to(f"npu:{args.device}")
 metrics["tokenize_s"] = round(time.perf_counter() - t0, 3)
 input_len = inputs.input_ids.shape[1]
 metrics["input_tokens"] = input_len
-logging.info(f"输入token数: {input_len}")
+logging.info(f"Input token count: {input_len}")
 
 # ---- Generate ----
 torch.npu.synchronize()
@@ -220,14 +223,14 @@ else:
 metrics["model"] = "DeepSeek-V2-Lite-Chat"
 
 logging.info(f"\n--- Performance ---")
-logging.info(f"  模式:           {metrics['mode']}")
-logging.info(f"  模型加载:       {metrics['model_load_s']}s (峰值显存 {metrics['model_load_peak_mem_mb']}MB)")
-logging.info(f"  推理耗时:       {metrics['generate_s']}s")
-logging.info(f"  生成token数:    {metrics['generated_tokens']}")
-logging.info(f"  吞吐量:         {metrics['tokens_per_second']} tokens/s")
-logging.info(f"  推理峰值显存:   {metrics['generate_peak_mem_mb']}MB")
+logging.info(f"  Mode:           {metrics['mode']}")
+logging.info(f"  Model load:     {metrics['model_load_s']}s (peak memory {metrics['model_load_peak_mem_mb']}MB)")
+logging.info(f"  Inference time: {metrics['generate_s']}s")
+logging.info(f"  Generated tokens: {metrics['generated_tokens']}")
+logging.info(f"  Throughput:     {metrics['tokens_per_second']} tokens/s")
+logging.info(f"  Inference peak memory: {metrics['generate_peak_mem_mb']}MB")
 
 if args.report_file:
     with open(args.report_file, "w") as f:
         json.dump(metrics, f, indent=2)
-    logging.info(f"  报告已写入:     {args.report_file}")
+    logging.info(f"  Report written to:     {args.report_file}")

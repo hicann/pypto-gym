@@ -168,12 +168,12 @@ def _require_program(path):
 
 def _log_input_summary(output_dir, prog_info, topo_info):
     logging.info("=" * 80)
-    logging.info("leafHash → 前端代码行映射")
+    logging.info("leafHash → Frontend Code Line Mapping")
     logging.info("=" * 80)
-    logging.info(f"\n数据: {output_dir}")
-    logging.info(f"program.json 函数数: {len(prog_info)}")
+    logging.info(f"\nData: {output_dir}")
+    logging.info(f"program.json function count: {len(prog_info)}")
     if topo_info:
-        logging.info(f"dyn_topo.txt leafHash 数: {len(topo_info)}")
+        logging.info(f"dyn_topo.txt leafHash count: {len(topo_info)}")
 
 
 def _leaf_details(leaf_hash, info, topo_info):
@@ -197,22 +197,22 @@ def _leaf_details(leaf_hash, info, topo_info):
 def _log_leaf(leaf_hash, info, details):
     cube_suffix = " (cube)" if details["is_cube"] else ""
     logging.info(f"\n--- {leaf_hash} ---")
-    logging.info(f"  类型: {details['coreTypeName']}{cube_suffix}")
-    logging.info(f"  函数: {info['name']}")
+    logging.info(f"  Type: {details['coreTypeName']}{cube_suffix}")
+    logging.info(f"  Function: {info['name']}")
     if details["taskCount"]:
         logging.info(
-            f"  执行次数: {details['taskCount']}, "
+            f"  Execution count: {details['taskCount']}, "
             f"rootIndex: {details['rootIndex']}, psgId: {details['psgIds']}"
         )
-    compute_text = ' + '.join(details["compute_ops"]) if details["compute_ops"] else '(无)'
-    logging.info(f"  计算指令: {compute_text}")
-    logging.info(f"  代码位置: {details['location']}")
+    compute_text = ' + '.join(details["compute_ops"]) if details["compute_ops"] else '(none)'
+    logging.info(f"  Compute ops: {compute_text}")
+    logging.info(f"  Code location: {details['location']}")
 
     if info["subfunc_symbols"]:
-        logging.info(f"  子函数 tensor: {info['subfunc_symbols']}")
+        logging.info(f"  Subfunction tensor: {info['subfunc_symbols']}")
     for file_path, code_range in details["code_ranges"].items():
         file_name = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
-        logging.info(f"  {file_name} 行号详情:")
+        logging.info(f"  {file_name} line details:")
         for line in sorted(code_range["lines"]):
             operations = ", ".join(code_range["lines"][line])
             logging.info(f"    L{line}: {operations}")
@@ -264,10 +264,10 @@ def main():
         out = Path(args.json)
         with open(out, "w") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        logging.info(f"\nJSON 已写入: {out}")
+        logging.info(f"\nJSON written to: {out}")
 
     logging.info(f"\n{'=' * 80}")
-    logging.info("映射完成")
+    logging.info("Mapping complete")
 
 
 if __name__ == "__main__":

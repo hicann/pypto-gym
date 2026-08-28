@@ -482,7 +482,7 @@ except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
         logging.warning("Skip: torchair not installed, skip NPU registration for operator 'mla_prolog'")
     else:
-        logging.warning("Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def mla_prolog_pypto(token_x, wq_a, wq_b, wkv, rope_cos, rope_sin, gamma_cq, gamma_ckv):

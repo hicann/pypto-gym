@@ -1320,7 +1320,7 @@ def main() -> int:
         errors = [e for e in errors if not e.startswith("SKIP:")]
         if errors:
             failed += len(errors)
-            LOGGER.info(f"FAIL  {label} ({len(errors)})")
+            LOGGER.error(f"FAIL  {label} ({len(errors)})")
             for message in errors:
                 LOGGER.info(f"        {message}")
         elif skips:
@@ -1334,7 +1334,7 @@ def main() -> int:
     if skipped:
         LOGGER.info(f"\n{skipped} check(s) SKIPPED -- they examined nothing, so they confirm nothing.")
     if failed:
-        LOGGER.info(f"\n{failed} KB integrity violation(s)")
+        LOGGER.error(f"\n{failed} KB integrity violation(s)")
     return 1 if failed else 0
 
 

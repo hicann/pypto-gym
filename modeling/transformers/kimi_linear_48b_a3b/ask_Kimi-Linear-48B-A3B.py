@@ -51,7 +51,7 @@ elif args.sentence_file and os.path.exists(args.sentence_file):
     with open(args.sentence_file) as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = lines[0] if lines else "Explain what a large language model is in two sentences."
-    logging.info(f"从文件读取提示词: {args.sentence_file}")
+    logging.info(f"Prompt read from file: {args.sentence_file}")
 else:
     prompt = "Explain what a large language model is in two sentences."
 
@@ -75,7 +75,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 n = min(args.num_npus, torch.npu.device_count())
 logging.info(f"NPUs available: {torch.npu.device_count()}, using {n}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Model path: {args.model_path}")
 if args.use_pypto and n > 1:
     logging.warning(
         "[PyPTO coverage] single-process + %d-way sharding: PyPTO binds to ONE NPU, "
@@ -126,7 +126,7 @@ input_ids = inputs["input_ids"].to("npu:0")
 attention_mask = inputs.get("attention_mask")
 if attention_mask is not None:
     attention_mask = attention_mask.to("npu:0")
-logging.info(f"输入 token 数: {input_ids.shape[1]}")
+logging.info(f"Input token count: {input_ids.shape[1]}")
 if args.use_pypto and input_ids.shape[1] <= 64:
     logging.warning(
         "[PyPTO] prompt is %d tokens (<=64): KDA takes the fused_recurrent (decode) "

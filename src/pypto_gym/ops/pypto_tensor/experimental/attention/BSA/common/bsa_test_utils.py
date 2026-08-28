@@ -381,10 +381,10 @@ def _print_perf_summary():
 
     logger.info(sep)
     logger.info("")
-    logger.info("指标说明 (与 PyPTO toolkit 定义一致):")
-    logger.info("  Task Time   = 首 task 到末 task 的 wall-clock 耗时")
-    logger.info("  AICore Time = 所有 task 的 dur 之和（总计算量）")
-    logger.info("  AICore Util = AICoreTime / (TaskTime × 活跃物理核数) × 100%")
+    logger.info("Metric description (consistent with PyPTO toolkit definitions):")
+    logger.info("  Task Time   = wall-clock elapsed time from the first task to the last task")
+    logger.info("  AICore Time = sum of dur of all tasks (total computation)")
+    logger.info("  AICore Util = AICoreTime / (TaskTime × active physical core count) × 100%")
     logger.info("=" * len(sep))
 
 

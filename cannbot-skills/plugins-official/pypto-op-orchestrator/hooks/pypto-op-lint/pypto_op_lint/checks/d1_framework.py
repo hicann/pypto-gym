@@ -112,24 +112,26 @@ def _ol01_failure(
         return ctx.make_finding(
             "OL01",
             "FAIL",
-            f"{impl_file} 中存在 {len(jit_funcs)} 个 @pypto.frontend.jit 装饰的函数 "
-            f"({names})；项目惯例要求每个 impl 文件有且仅有 1 个 JIT 入口（Layer J）。"
-            f"请将多余的 JIT 入口合并为单一 kernel，子计算用普通函数（Layer H/I）承担。",
+            f"{impl_file} contains {len(jit_funcs)} functions decorated with @pypto.frontend.jit "
+            f"({names}); project convention requires exactly 1 JIT entry (Layer J) per impl file."
+            "Please merge redundant JIT entries into a single kernel; "
+            "sub-computations should be handled by plain functions (Layer H/I).",
             file=impl_file,
             line=jit_funcs[0].lineno,
         )
     return ctx.make_finding(
         "OL01",
         "FAIL",
-        f"{impl_file} 中未找到字面 @pypto.frontend.jit 装饰的函数。"
-        f"OL01 仅接受唯一正规形 **@pypto.frontend.jit**（允许 @pypto.frontend.jit(...) "
-        f"带参数调用语法）。**任何别名形式都被拒绝**，包括但不限于:\n"
-        f"  - `import pypto as pt` + @pt.frontend.jit        ← 顶层包别名禁用\n"
-        f"  - `import pypto.frontend as F` + @F.jit          ← 子模块别名禁用\n"
-        f"  - `from pypto import frontend` + @frontend.jit   ← 子模块直接绑定禁用\n"
-        f"  - `from pypto.frontend import jit` + @jit        ← 函数级 from-import 禁用\n"
-        f"修复方式：导入语句改为 `import pypto`，装饰器严格写成 @pypto.frontend.jit。"
-        f"不要保留任何别名。这是项目唯一约定，使 AST 静态分析、grep、IDE 跳转保持一致。",
+        f"Literal @pypto.frontend.jit decorated function not found in {impl_file}."
+        f"OL01 only accepts the single canonical form **@pypto.frontend.jit** (allows @pypto.frontend.jit(...) "
+        f"with-argument call syntax). **Any alias form is rejected**, including but not limited to:\n"
+        f"  - `import pypto as pt` + @pt.frontend.jit        ← top-level package alias forbidden\n"
+        f"  - `import pypto.frontend as F` + @F.jit          ← submodule alias forbidden\n"
+        f"  - `from pypto import frontend` + @frontend.jit   ← submodule direct binding forbidden\n"
+        f"  - `from pypto.frontend import jit` + @jit        ← function-level from-import forbidden\n"
+        f"Fix: change the import statement to `import pypto` and write the decorator strictly as @pypto.frontend.jit."
+        "Do not keep any aliases. This is the project's single convention, "
+        "keeping AST static analysis, grep, and IDE navigation consistent.",
         file=impl_file,
     )
 
@@ -144,7 +146,7 @@ def check_ol01(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL01", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL01", "SKIP", "no impl files to check")
     last_pass: tuple[str, ast.FunctionDef] | None = None
     for impl_file, tree, aliases in _iter_parsed_impls(ctx, impl_files):
         jit_funcs = _get_jit_functions(tree, aliases)
@@ -153,12 +155,12 @@ def check_ol01(ctx: CheckContext) -> Finding:
             return failure
         last_pass = impl_file, jit_funcs[0]
     if last_pass is None:
-        return ctx.make_finding("OL01", "SKIP", "无 impl 文件可解析")
+        return ctx.make_finding("OL01", "SKIP", "no impl files to parse")
     impl_file, func = last_pass
     return ctx.make_finding(
         "OL01",
         "PASS",
-        f"所有 impl 文件均含单一 @pypto.frontend.jit 入口（共 {len(impl_files)} 个）",
+        f"all impl files contain a single @pypto.frontend.jit entry ({len(impl_files)} in total)",
         file=impl_file,
         line=func.lineno,
     )
@@ -172,7 +174,7 @@ def check_ol02(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL02", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL02", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, _, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -181,8 +183,8 @@ def check_ol02(ctx: CheckContext) -> Finding:
             if failure is not None:
                 return failure
     if not saw_jit:
-        return ctx.make_finding("OL02", "SKIP", "无 jit 函数")
-    return ctx.make_finding("OL02", "PASS", "所有 impl 文件的输出写回方式正确")
+        return ctx.make_finding("OL02", "SKIP", "no jit functions")
+    return ctx.make_finding("OL02", "PASS", "all impl files use correct output write-back")
 
 
 def _ol02_function_failure(
@@ -201,8 +203,8 @@ def _ol02_function_failure(
                 return ctx.make_finding(
                     "OL02",
                     "FAIL",
-                    f"{impl_file} 中禁止 `{target.id} = expr` 写回，"
-                    f"应使用 `{target.id}[:] = ...` 或 `{target.id}.move(...)`",
+                    f"writing back with `{target.id} = expr` is forbidden in {impl_file}, "
+                    f"use `{target.id}[:] = ...` or `{target.id}.move(...)` instead",
                     file=impl_file,
                     line=node.lineno,
                 )
@@ -212,8 +214,8 @@ def _ol02_function_failure(
                 return ctx.make_finding(
                     "OL02",
                     "FAIL",
-                    f"{impl_file} 中禁止 `{target.id} += expr` 写回，"
-                    f"应使用 `{target.id}[:] = {target.id} + ...`",
+                    f"writing back with `{target.id} += expr` is forbidden in {impl_file}, "
+                    f"use `{target.id}[:] = {target.id} + ...` instead",
                     file=impl_file,
                     line=node.lineno,
                 )
@@ -228,7 +230,7 @@ def check_ol03(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL03", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL03", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, _, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -238,13 +240,13 @@ def check_ol03(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL03",
                     "FAIL",
-                    f"{impl_file} 中 jit 函数 {func.name} 内存在 return 语句",
+                    f"return statement found inside jit function {func.name} in {impl_file}",
                     file=impl_file,
                     line=return_node.lineno,
                 )
     if not saw_jit:
-        return ctx.make_finding("OL03", "SKIP", "无 jit 函数")
-    return ctx.make_finding("OL03", "PASS", "所有 impl 文件的 jit 函数均无 return 语句")
+        return ctx.make_finding("OL03", "SKIP", "no jit functions")
+    return ctx.make_finding("OL03", "PASS", "no jit function in any impl file has a return statement")
 
 
 @register("OL04")
@@ -258,7 +260,7 @@ def check_ol04(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL04", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL04", "SKIP", "no impl files to check")
     saw_jit = False
     last_pass = None
     for impl_file, tree, _, jit_funcs in _iter_jit_impls(ctx, impl_files):
@@ -277,20 +279,21 @@ def check_ol04(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL04",
                 "FAIL",
-                f"{impl_file} 中 @pypto.frontend.jit 入口及其同文件可达 helper 内未找到 "
-                "set_vec_tile_shapes 或 set_cube_tile_shapes 调用。"
-                "修复方式：在 JIT 入口调用到的 Layer I `_kernel_impl` 或 Layer H "
-                "`pypto_*` 子内核中设置 tile shapes；不要放在未被 JIT 调用链触达的死代码里。",
+                f"Inside the @pypto.frontend.jit entry and its same-file reachable helpers in {impl_file}, no "
+                "set_vec_tile_shapes or set_cube_tile_shapes call was found. "
+                "Fix: set tile shapes in the Layer I `_kernel_impl` or Layer H "
+                "`pypto_*` sub-kernel called from the JIT entry; "
+                "do not put them in dead code unreachable from the JIT call chain.",
                 file=impl_file,
             )
         last_pass = (impl_file, found_tile_call)
     if not saw_jit:
-        return ctx.make_finding("OL04", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL04", "SKIP", "no jit functions")
     impl_file, node = last_pass
     return ctx.make_finding(
         "OL04",
         "PASS",
-        f"所有 impl 文件的 JIT 调用链均含 tile shapes 配置调用（共 {len(impl_files)} 个）",
+        f"all impl files have tile shapes configuration calls in their JIT call chains ({len(impl_files)} in total)",
         file=impl_file,
         line=node.lineno,
     )
@@ -304,7 +307,7 @@ def check_ol05(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL05", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL05", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -313,9 +316,9 @@ def check_ol05(ctx: CheckContext) -> Finding:
             if failure is not None:
                 return failure
     if not saw_jit:
-        return ctx.make_finding("OL05", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL05", "SKIP", "no jit functions")
     return ctx.make_finding(
-        "OL05", "PASS", "jit 函数张量参数均有 pypto.Tensor 类型注解"
+        "OL05", "PASS", "jit function tensor parameters all have pypto.Tensor type annotations"
     )
 
 
@@ -338,7 +341,7 @@ def _ol05_arg_failure(
         return ctx.make_finding(
             "OL05",
             "FAIL",
-            f"{impl_file} 中 jit 函数参数 `{arg.arg}` 缺少类型注解",
+            f"jit function parameter `{arg.arg}` in {impl_file} is missing a type annotation",
             file=impl_file,
             line=func.lineno,
         )
@@ -349,7 +352,7 @@ def _ol05_arg_failure(
     return ctx.make_finding(
         "OL05",
         "FAIL",
-        f"{impl_file} 中 jit 函数张量参数 `{arg.arg}` 注解必须为 pypto.Tensor",
+        f"the annotation of jit function tensor parameter `{arg.arg}` in {impl_file} must be pypto.Tensor",
         file=impl_file,
         line=func.lineno,
     )
@@ -363,7 +366,7 @@ def check_ol06(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL06", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL06", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, _, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -373,14 +376,14 @@ def check_ol06(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL06",
                     "FAIL",
-                    f"{impl_file} 中 jit 函数内使用了 Python 原生 "
-                    f"{bad_call.func.id}()，应使用 pypto 等价函数",
+                    f"inside a jit function in {impl_file}, Python native "
+                    f"{bad_call.func.id}() was used, use the pypto equivalent instead",
                     file=impl_file,
                     line=bad_call.lineno,
                 )
     if not saw_jit:
-        return ctx.make_finding("OL06", "SKIP", "无 jit 函数")
-    return ctx.make_finding("OL06", "PASS", "所有 impl 文件均未使用原生 min/max")
+        return ctx.make_finding("OL06", "SKIP", "no jit functions")
+    return ctx.make_finding("OL06", "PASS", "no impl file uses native min/max")
 
 
 def _native_min_max_call(func):
@@ -400,7 +403,7 @@ def check_ol07(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL07", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL07", "SKIP", "no impl files to check")
     parsed_any = False
     for impl_file, tree, _ in _iter_parsed_impls(ctx, impl_files):
         parsed_any = True
@@ -409,11 +412,11 @@ def check_ol07(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL07",
                 "FAIL",
-                f"{impl_file} 使用了非正规 PyPTO 导入 {bad_text}。"
-                "本 agent 算子开发流程只允许文件顶层写 `import pypto`，"
-                "禁止 alias、`import pypto.frontend as F` 与 from-import。"
-                "这与 OL01 的字面 @pypto.frontend.jit 要求保持一致，"
-                "便于 AST 静态分析、grep 与自动修复。",
+                f"{impl_file} uses a non-canonical PyPTO import {bad_text}."
+                "This agent's op development workflow only allows writing `import pypto` at the top of the file, "
+                "aliases, `import pypto.frontend as F`, and from-imports are forbidden."
+                "This is consistent with OL01's literal @pypto.frontend.jit requirement, "
+                "to keep AST static analysis, grep, and auto-fix reliable.",
                 file=impl_file,
                 line=getattr(bad_import, "lineno", 0),
             )
@@ -421,15 +424,16 @@ def check_ol07(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL07",
                 "FAIL",
-                f"{impl_file} 中未 import pypto——"
-                "这是 PyPTO 算子实现的基础前提，缺少 import 说明该文件不是合法的 kernel 实现。"
-                "修复方式：在文件顶层添加唯一正规导入 `import pypto`；不要使用 alias 或 from-import。",
+                f"{impl_file} does not import pypto——"
+                "this is the basic prerequisite of a PyPTO op implementation; "
+                "missing the import means the file is not a valid kernel implementation. "
+                "Fix: add the canonical `import pypto` at the top of the file; do not use aliases or from-imports.",
                 file=impl_file,
             )
     if not parsed_any:
-        return ctx.make_finding("OL07", "SKIP", "无 impl 文件可解析")
+        return ctx.make_finding("OL07", "SKIP", "no impl files to parse")
     return ctx.make_finding(
-        "OL07", "PASS", f"所有 impl 文件均使用正规 `import pypto`（共 {len(impl_files)} 个）"
+        "OL07", "PASS", f"all impl files use the canonical `import pypto` ({len(impl_files)} in total)"
     )
 
 
@@ -481,7 +485,7 @@ def check_ol08(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL08", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL08", "SKIP", "no impl files to check")
     last_pass: tuple[str, ast.FunctionDef] | None = None
     for impl_file, tree, _ in _iter_parsed_impls(ctx, impl_files):
         wrapper = next(
@@ -495,17 +499,17 @@ def check_ol08(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL08",
                 "FAIL",
-                f"{impl_file} 中未找到以 _wrapper 结尾的模块级函数",
+                f"no module-level function ending in _wrapper found in {impl_file}",
                 file=impl_file,
             )
         last_pass = (impl_file, wrapper)
     if last_pass is None:
-        return ctx.make_finding("OL08", "SKIP", "无 impl 文件可解析")
+        return ctx.make_finding("OL08", "SKIP", "no impl files to parse")
     impl_file, wrapper = last_pass
     return ctx.make_finding(
         "OL08",
         "PASS",
-        f"所有 impl 文件均含 _wrapper 函数（共 {len(impl_files)} 个）",
+        f"all impl files contain a _wrapper function ({len(impl_files)} in total)",
         file=impl_file,
         line=wrapper.lineno,
     )
@@ -522,7 +526,7 @@ def check_ol23(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL23", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL23", "SKIP", "no impl files to check")
     saw_jit = False
     files_without_loop: list[str] = []
     last_pass_file = None
@@ -543,17 +547,17 @@ def check_ol23(ctx: CheckContext) -> Finding:
             continue
         files_without_loop.append(impl_file)
     if not saw_jit:
-        return ctx.make_finding("OL23", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL23", "SKIP", "no jit functions")
     if files_without_loop:
         return ctx.make_finding(
             "OL23",
             "WARN",
-            "以下 impl 文件未检测到 loop 相关结构；若算子需要分块或迭代，"
-            "请确认设计已说明无需 loop：" + ", ".join(files_without_loop),
+            "The following impl files have no loop-related structures detected; if the op needs tiling or iteration, "
+            "please confirm the design explicitly states no loop is needed: " + ", ".join(files_without_loop),
             file=files_without_loop[0],
         )
     return ctx.make_finding(
-        "OL23", "PASS", "所有 impl 文件均检测到 loop 相关结构", file=last_pass_file
+        "OL23", "PASS", "loop-related structures detected in all impl files", file=last_pass_file
     )
 
 
@@ -567,7 +571,7 @@ def check_ol25(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL25", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL25", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -576,9 +580,9 @@ def check_ol25(ctx: CheckContext) -> Finding:
             if finding is not None:
                 return finding
     if not saw_jit:
-        return ctx.make_finding("OL25", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL25", "SKIP", "no jit functions")
     return ctx.make_finding(
-        "OL25", "PASS", "JIT Tensor 注解均包含 shape 与 dtype"
+        "OL25", "PASS", "all JIT Tensor annotations include shape and dtype"
     )
 
 
@@ -605,9 +609,9 @@ def _ol25_arg_finding(
         return ctx.make_finding(
             "OL25",
             "FAIL",
-            f"{impl_file} 中参数 `{arg.arg}` 使用 pypto.Tensor()（无参数形式）；"
-            "动态轴必须显式标 pypto.DYNAMIC，静态轴写常量整数，"
-            "禁止使用空注解。例：pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32)",
+            f"parameter `{arg.arg}` in {impl_file} uses pypto.Tensor() (no-argument form); "
+            "dynamic axes must be explicitly marked pypto.DYNAMIC and static axes written as constant integers, "
+            "empty annotations are forbidden. E.g.: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_FP32)",
             file=impl_file,
             line=annotation.lineno,
         )
@@ -616,9 +620,9 @@ def _ol25_arg_finding(
         return ctx.make_finding(
             "OL25",
             "FAIL",
-            f"{impl_file} 中参数 `{arg.arg}` 使用 pypto.Tensor([], ...) 空 shape 注解；"
-            "动态轴必须显式标 pypto.DYNAMIC，静态轴写常量整数。"
-            "（per-shape compile 写法已废弃，详见 DEBUG_GUIDEBOOK §9.13）",
+            f"parameter `{arg.arg}` in {impl_file} uses an empty shape annotation pypto.Tensor([], ...); "
+            "dynamic axes must be explicitly marked pypto.DYNAMIC and static axes written as constant integers."
+            "(the per-shape compile style is deprecated; see DEBUG_GUIDEBOOK §9.13)",
             file=impl_file,
             line=annotation.lineno,
         )
@@ -627,8 +631,8 @@ def _ol25_arg_finding(
     return ctx.make_finding(
         "OL25",
         "WARN",
-        f"{impl_file} 中参数 `{arg.arg}` 只声明了 shape，缺少 dtype。"
-        "建议写成 pypto.Tensor([shape], dtype)",
+        f"parameter `{arg.arg}` in {impl_file} only declares shape; dtype is missing."
+        "recommended form: pypto.Tensor([shape], dtype)",
         file=impl_file,
         line=annotation.lineno,
     )
@@ -642,7 +646,7 @@ def check_ol26(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL26", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL26", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -652,17 +656,18 @@ def check_ol26(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL26",
                     "FAIL",
-                    f"{impl_file} 中 jit 函数 {func.name} 的张量参数 `{bad_arg.arg}` "
-                    f"出现在非张量参数之后，JIT 要求张量参数在前、非张量参数在后",
+                    f"tensor parameter `{bad_arg.arg}` of jit function {func.name} in {impl_file} "
+                    "appears after a non-tensor parameter; "
+                    "JIT requires tensor parameters first, non-tensor parameters last",
                     file=impl_file,
                     line=func.lineno,
                 )
     if not saw_jit:
-        return ctx.make_finding("OL26", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL26", "SKIP", "no jit functions")
     return ctx.make_finding(
         "OL26",
         "PASS",
-        "所有 impl 文件的 jit 函数参数顺序正确（张量在前、标量在后）",
+        "jit function parameter order is correct in all impl files (tensors first, scalars last)",
     )
 
 
@@ -687,7 +692,7 @@ def check_ol28(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL28", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL28", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -696,9 +701,9 @@ def check_ol28(ctx: CheckContext) -> Finding:
             if finding is not None:
                 return finding
     if not saw_jit:
-        return ctx.make_finding("OL28", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL28", "SKIP", "no jit functions")
     return ctx.make_finding(
-        "OL28", "PASS", "所有 impl 文件中 FP32-only API 与 dtype 注解一致"
+        "OL28", "PASS", "FP32-only API usage and dtype annotations are consistent in all impl files"
     )
 
 
@@ -726,10 +731,10 @@ def _ol28_function_finding(
         return ctx.make_finding(
             "OL28",
             "WARN",
-            f"{impl_file} 中 jit 函数使用了仅支持 DT_FP32 的 API "
-            f"({', '.join(sorted(used_apis))})，"
-            f"但参数 `{arg.arg}` 的 dtype 不是 DT_FP32，"
-            "请确认已正确处理 dtype 转换（cast）",
+            f"a DT_FP32-only API is used in a jit function in {impl_file} "
+            f"({', '.join(sorted(used_apis))}), "
+            f"but the dtype of parameter `{arg.arg}` is not DT_FP32, "
+            "please confirm the dtype conversion (cast) is handled correctly",
             file=impl_file,
             line=func.lineno,
         )
@@ -745,7 +750,7 @@ def check_ol29(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL29", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL29", "SKIP", "no impl files to check")
     files_without_dynamic: list[str] = []
     files_with_tensor_count = 0
     last_file_seen = ""
@@ -764,18 +769,18 @@ def check_ol29(ctx: CheckContext) -> Finding:
         if not has_dynamic:
             files_without_dynamic.append(impl_file)
     if files_with_tensor_count == 0:
-        return ctx.make_finding("OL29", "SKIP", "无 Tensor 注解")
+        return ctx.make_finding("OL29", "SKIP", "no Tensor annotations")
     if files_without_dynamic:
         return ctx.make_finding(
             "OL29",
             "WARN",
-            f"以下文件的 Tensor 注解均未声明 pypto.DYNAMIC/pypto.DYN: "
+            f"Tensor annotations in the following files do not declare pypto.DYNAMIC/pypto.DYN: "
             f"{', '.join(files_without_dynamic)}。"
-            "若有输入维度在运行时可变，必须标记为 DYNAMIC 以避免重编译",
+            "if an input dimension can change at runtime, it must be marked DYNAMIC to avoid recompilation",
             file=files_without_dynamic[0],
         )
     return ctx.make_finding(
-        "OL29", "PASS", "Tensor 注解中包含 DYNAMIC 维度声明", file=last_file_seen
+        "OL29", "PASS", "Tensor annotations include DYNAMIC dimension declarations", file=last_file_seen
     )
 
 
@@ -883,7 +888,7 @@ def check_ol45(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL45", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL45", "SKIP", "no impl files to check")
     for impl_file, tree, _, jit_funcs in _iter_jit_impls(ctx, impl_files):
         jit_names = {f.name for f in jit_funcs}
         for top in _function_defs(tree):
@@ -894,18 +899,18 @@ def check_ol45(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL45",
                     "FAIL",
-                    f"Layer K 包装函数 `{top.name}` 包含 Python "
-                    f"`for ... in range(...)` 逐块调用 JIT kernel。"
-                    f"请将分块迭代移入 `_kernel_impl`，改用 "
-                    f"`pypto.loop(NT)` + `pypto.view(..., offsets=[nt*BT, ...])`。"
-                    f"包装函数必须仅调用 kernel 一次。",
+                    f"Layer K wrapper function `{top.name}` contains a Python "
+                    f"`for ... in range(...)` loop calling the JIT kernel tile by tile."
+                    f"move the tiled iteration into `_kernel_impl`, using "
+                    f"`pypto.loop(NT)` + `pypto.view(..., offsets=[nt*BT, ...])` instead."
+                    f"The wrapper function must call the kernel exactly once.",
                     file=impl_file,
                     line=bad_loop.lineno,
                 )
     return ctx.make_finding(
         "OL45",
         "PASS",
-        "Layer K 包装函数未通过 Python 循环分块调用 kernel",
+        "Layer K wrapper functions do not call the kernel via Python loop tiling"
     )
 
 
@@ -921,7 +926,7 @@ def check_ol46(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL46", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL46", "SKIP", "no impl files to check")
     for impl_file, tree, aliases in _iter_parsed_impls(ctx, impl_files):
         for top in _function_defs(tree):
             if not _is_kernel_impl_function(top.name):
@@ -938,17 +943,17 @@ def check_ol46(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL46",
                     "WARN",
-                    f"{impl_file}: `{top.name}` 用 `pypto.loop(1)` 包装了内层 "
-                    f"`pypto.loop(N)`。请移除外层 `pypto.loop(1)` — 它仅用于"
-                    f"作用域内不存在其他 pypto.loop 的场景（布局检查要求的"
-                    f"vector-pipe 简单算子）。",
+                    f"{impl_file}: `{top.name}` wraps an inner "
+                    f"`pypto.loop(N)` with `pypto.loop(1)`. Remove the outer `pypto.loop(1)` — it is only for "
+                    f"scopes without any other pypto.loop (layout checks require this for "
+                    f"simple vector-pipe ops).",
                     file=impl_file,
                     line=line if line > 0 else None,
                 )
     return ctx.make_finding(
         "OL46",
         "PASS",
-        "未检测到冗余的 pypto.loop(1) 包装",
+        "no redundant pypto.loop(1) wrapping detected"
     )
 
 
@@ -977,7 +982,7 @@ def check_ol47(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL47", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL47", "SKIP", "no impl files to check")
     for impl_file, tree, aliases in _iter_parsed_impls(ctx, impl_files):
         for top in _function_defs(tree):
             if not _is_kernel_impl_function(top.name):
@@ -988,16 +993,16 @@ def check_ol47(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL47",
                     "INFO",
-                    f"{impl_file}: `{top.name}` 在 `_kernel_impl` 顶层设置了 tile shapes"
-                    f"同时调用了 {helper_calls} 个 `pypto_*` 子 kernel。"
-                    f"建议将每个 `set_*_tile_shapes` 移到对应的子 kernel 内部，"
-                    f"使各阶段的 matmul/vec 操作能使用各自最优的 tile 布局。",
+                    f"{impl_file}: `{top.name}` sets tile shapes at the top level of `_kernel_impl`"
+                    f"while also calling {helper_calls} `pypto_*` sub-kernels."
+                    f"consider moving each `set_*_tile_shapes` into its corresponding sub-kernel, "
+                    f"so that each stage's matmul/vec operations can use their own optimal tile layout.",
                     file=impl_file,
                 )
     return ctx.make_finding(
         "OL47",
         "PASS",
-        "tile-shape 作用域配置看起来与 kernel 结构匹配",
+        "tile-shape scope configuration appears to match the kernel structure"
     )
 
 
@@ -1122,8 +1127,8 @@ def _cube_tile_pair_errors(axis: str, node) -> list[str]:
     n = len(node.elts)
     if n != 2:
         errs.append(
-            f"`{axis}` 必须是 2 元素 list `[{axis}L0, {axis}L1]`，实际为 {n} 元素 list "
-            f"(set_cube_tile_shapes 每轴需 [L0, L1]，不能是单元素 [L0])"
+            f"`{axis}` must be a 2-element list `[{axis}L0, {axis}L1]`, but got a {n}-element list "
+            f"(set_cube_tile_shapes requires [L0, L1] per axis, not a single-element [L0])"
         )
         return errs
     l0 = _int_literal_value(node.elts[0])
@@ -1131,13 +1136,13 @@ def _cube_tile_pair_errors(axis: str, node) -> list[str]:
     if l0 is None or l1 is None:
         return errs
     if l0 <= 0 or l1 <= 0:
-        errs.append(f"`{axis}` 取值必须为正：得到 [{l0}, {l1}]")
+        errs.append(f"`{axis}` values must be positive: got [{l0}, {l1}]")
         return errs
     if l0 > l1:
-        errs.append(f"`{axis}` 要求 {axis}L0 <= {axis}L1，得到 [{l0}, {l1}]")
+        errs.append(f"`{axis}` requires {axis}L0 <= {axis}L1, got [{l0}, {l1}]")
     if l1 % l0 != 0:
         errs.append(
-            f"`{axis}` 要求 {axis}L1 % {axis}L0 == 0，得到 [{l0}, {l1}] "
+            f"`{axis}` requires {axis}L1 % {axis}L0 == 0, got [{l0}, {l1}] "
             f"({l1} % {l0} = {l1 % l0})"
         )
     return errs
@@ -1184,24 +1189,26 @@ def _tile_violation_message(
     violations: list[TileViolation],
     cube_violations: list[CubeViolation],
 ) -> str:
-    lines = [f"{impl_file} 中 tile 参数违规："]
+    lines = [f"tile parameter violations in {impl_file}:"]
     if violations:
         lines.append(
-            "· 非编译期静态值（必须是 Python int 字面量或解析到字面量的局部/模块 Assign）："
+            "· Non-compile-time static values (must be a Python int literal "
+            "or a local/module Assign that resolves to a literal): "
         )
         lines.extend(
-            f"  - {tile_call} 第 {line} 行: `{expression}`"
+            f"  - {tile_call} at line {line}: `{expression}`"
             for tile_call, expression, line in violations
         )
     if cube_violations:
         lines.append(
-            "· set_cube_tile_shapes 的 tile 列表结构 / 整除违规 "
-            "(参考 docs/zh/api/config/pypto-set_cube_tile_shapes.md)："
+            "· set_cube_tile_shapes tile list structure / divisibility violations "
+            "(see docs/zh/api/config/pypto-set_cube_tile_shapes.md): "
         )
-        lines.extend(f"  - 第 {line} 行: {message}" for message, line in cube_violations)
+        lines.extend(f"  - at line {line}: {message}" for message, line in cube_violations)
     lines.append(
-        "禁止用 kernel 入参、tensor.shape[i]、SymbolicScalar、运行时计算等动态值作为 "
-        "tile shape；set_cube_tile_shapes 每轴须为 [L0, L1] 且 0<L0<=L1、L1%L0==0。"
+        "dynamic values such as kernel input parameters, tensor.shape[i], "
+        "SymbolicScalar, or runtime computation must not be used as "
+        "tile shape; set_cube_tile_shapes requires [L0, L1] per axis with 0<L0<=L1, L1%L0==0."
     )
     return "\n".join(lines)
 
@@ -1218,7 +1225,7 @@ def check_ol48(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL48", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL48", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, tree, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -1241,11 +1248,11 @@ def check_ol48(ctx: CheckContext) -> Finding:
                 line=first_line,
             )
     if not saw_jit:
-        return ctx.make_finding("OL48", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL48", "SKIP", "no jit functions")
     return ctx.make_finding(
         "OL48",
         "PASS",
-        f"所有 impl 文件的 tile 参数均为编译期静态值（共 {len(impl_files)} 个）",
+        f"tile parameters in all impl files are compile-time static values ({len(impl_files)} in total)",
     )
 
 
@@ -1311,7 +1318,7 @@ def check_ol49(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL49", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL49", "SKIP", "no impl files to check")
     saw_jit = False
     for impl_file, _, aliases, jit_funcs in _iter_jit_impls(ctx, impl_files):
         saw_jit = True
@@ -1321,20 +1328,21 @@ def check_ol49(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL49",
                     "FAIL",
-                    f"{impl_file} 第 {loop_call.lineno} 行：`pypto.loop(..., unroll_list=...)` "
-                    f"出现在外层（其 body 内还嵌套了另一个 pypto.loop）。"
-                    f"unroll_list **只能放在最内层** pypto.loop —— 外层加 unroll_list 会触发"
-                    f"编译路径爆炸或寄存器拷贝 pass 引起的精度异常。"
-                    f"请把 unroll_list 移到最内层 pypto.loop（或删除外层 unroll_list）。",
+                    f"{impl_file} line {loop_call.lineno}: `pypto.loop(..., unroll_list=...)` "
+                    f"appears on an outer loop (another pypto.loop is nested in its body)."
+                    "unroll_list **may only be placed on the innermost** pypto.loop "
+                    "—— adding unroll_list to an outer loop triggers "
+                    f"compile path explosion or precision issues caused by the register copy pass."
+                    f"move unroll_list to the innermost pypto.loop (or remove the outer unroll_list).",
                     file=impl_file,
                     line=loop_call.lineno,
                 )
     if not saw_jit:
-        return ctx.make_finding("OL49", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL49", "SKIP", "no jit functions")
     return ctx.make_finding(
         "OL49",
         "PASS",
-        "所有 unroll_list 均位于最内层 pypto.loop",
+        "all unroll_list are placed on the innermost pypto.loop"
     )
 
 
@@ -1414,11 +1422,13 @@ def check_ol56(ctx: CheckContext) -> Finding:
             return ctx.make_finding(
                 "OL56",
                 "FAIL",
-                "DESIGN.md 的 ```python``` 代码块中存在多值 "
-                "`pypto.loop(..., unroll_list=[...])`。Stage 6 之前 unroll_list "
-                "只能含单一值（默认 `[1]`；有依据时可用其它单值），多值会触发"
-                "编译路径爆炸、拖慢编译并导致开发超时。多值展开调优请留到 "
-                "Stage 7 optimization。",
+                "the ```python``` code blocks in DESIGN.md contain multi-value "
+                "`pypto.loop(..., unroll_list=[...])`. Before Stage 6, unroll_list "
+                "may only contain a single value (default `[1]`; other single values "
+                "are OK with justification); multi-values trigger "
+                "compile path explosion, slowing down compilation and causing "
+                "dev timeouts. Leave multi-value unroll tuning to "
+                "Stage 7 optimization.",
                 file="DESIGN.md",
             )
 
@@ -1433,22 +1443,23 @@ def check_ol56(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL56",
                     "FAIL",
-                    f"{impl_file} 第 {hits[0]} 行："
-                    f"`pypto.loop(..., unroll_list=[...])` 含 2 个及以上值。"
-                    f"Stage 6 之前 unroll_list 只能含单一值（默认 `[1]`；有依据"
-                    f"时可用其它单值）——多值会触发编译路径爆炸、拖慢编译并导致"
-                    f"开发超时。请把 unroll_list 改成单一值（多值展开调优留到 "
-                    f"Stage 7 optimization）。",
+                    f"{impl_file} line {hits[0]}: "
+                    f"`pypto.loop(..., unroll_list=[...])` contains 2 or more values."
+                    f"before Stage 6, unroll_list may only contain a single value (default `[1]`; with justification "
+                    "other single values are OK)——multi-values trigger compile path "
+                    "explosion, slowing compilation and causing "
+                    f"dev timeouts. Change unroll_list to a single value (multi-value unroll tuning is for "
+                    f"Stage 7 optimization).",
                     file=impl_file,
                     line=hits[0],
                 )
 
     if not ctx.file_exists("DESIGN.md") and not saw_jit:
-        return ctx.make_finding("OL56", "SKIP", "无 DESIGN.md / jit 函数可供检查")
+        return ctx.make_finding("OL56", "SKIP", "no DESIGN.md / jit functions to check")
     return ctx.make_finding(
         "OL56",
         "PASS",
-        "所有 unroll_list 均为单一值（Stage 6 之前约束）",
+        "all unroll_list are single values (constraint before Stage 6)"
     )
 
 
@@ -1504,11 +1515,11 @@ def _view_rank_finding(
         return ctx.make_finding(
             "OL52",
             "FAIL",
-            f"{impl_file} 第 {line} 行: `pypto.view(...)` 的 shape/offsets "
-            f"rank 不一致 (shape={shape_len} dims, offsets={offsets_len} dims)。"
-            f"pypto.view 不是 reshape, 而是抽取 **同 rank 的 sub-view** 的 API。"
-            f"请将两个 list 的长度对齐。若要改变 rank, 应使用 `pypto.reshape(...)`。"
-            f"(参考 `docs/zh/api/operation/pypto-view.md`, "
+            f"{impl_file} line {line}: the shape/offsets of `pypto.view(...)` "
+            f"have mismatched ranks (shape={shape_len} dims, offsets={offsets_len} dims)."
+            f"pypto.view is not a reshape but an API that extracts a **same-rank sub-view**."
+            f"Align the lengths of the two lists. To change rank, use `pypto.reshape(...)`."
+            f"(see `docs/zh/api/operation/pypto-view.md`, "
             f"`skills/pypto-general-debug/references/DEBUG_GUIDEBOOK.md` §9.4)",
             file=impl_file,
             line=line if line > 0 else None,
@@ -1524,10 +1535,10 @@ def _view_rank_finding(
     return ctx.make_finding(
         "OL52",
         "FAIL",
-        f"{impl_file} 第 {line} 行: `pypto.view(...)` 的 shape/valid_shape "
-        f"rank 不一致 (shape={shape_len} dims, valid_shape={valid_len} dims)。"
-        f"shape, offsets, valid_shape 三者必须 rank 一致。"
-        f"(参考 `docs/zh/api/operation/pypto-view.md`)",
+        f"{impl_file} line {line}: the shape/valid_shape of `pypto.view(...)` "
+        f"have mismatched ranks (shape={shape_len} dims, valid_shape={valid_len} dims)."
+        f"shape, offsets, and valid_shape must all have matching ranks."
+        f"(see `docs/zh/api/operation/pypto-view.md`)",
         file=impl_file,
         line=line if line > 0 else None,
     )
@@ -1546,7 +1557,7 @@ def check_ol52(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL52", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL52", "SKIP", "no impl files to check")
     for impl_file, tree, aliases in _iter_parsed_impls(ctx, impl_files):
         for node in ast.walk(tree):
             if not _is_pypto_view_call(node, aliases):
@@ -1557,7 +1568,7 @@ def check_ol52(ctx: CheckContext) -> Finding:
     return ctx.make_finding(
         "OL52",
         "PASS",
-        "pypto.view 的 shape/offsets/valid_shape 全部 rank 一致 (或非 literal)",
+        "shape/offsets/valid_shape of pypto.view all have matching ranks (or are non-literal)"
     )
 
 
@@ -1700,20 +1711,22 @@ def check_ol57(ctx: CheckContext) -> Finding:
                 return ctx.make_finding(
                     "OL57",
                     "FAIL",
-                    f"{impl_file}: JIT 图代码函数 `{name}` 内出现非 pypto.loop/loop_unroll/range 的 "
-                    f"Python {kind} 循环 (第 {lineno} 行)。@pypto.frontend.jit 配下"
-                    f"(kernel 本体及其调用的所有函数) 的迭代可用 `pypto.loop(...)` / `pypto.loop_unroll(...)` "
-                    f"或 `for ... in range(...)`; "
-                    f"迭代间有数据依赖时加 `submit_before_loop=True`。静态展开 (含 "
-                    f"inverse 类分块) 不得用 Python while。Layer K host wrapper "
-                    f"的 kernel 驱动循环另由 OL45 管辖。",
+                    f"{impl_file}: inside JIT graph code function `{name}`, a non-pypto.loop/loop_unroll/range "
+                    f"Python {kind} loop (at line {lineno}) was found. Under @pypto.frontend.jit "
+                    "iteration within (the kernel body and all functions it calls) "
+                    "can use `pypto.loop(...)` / `pypto.loop_unroll(...)` "
+                    f"or `for ... in range(...)`; "
+                    "add `submit_before_loop=True` when iterations have data "
+                    "dependencies. Static unrolling (including "
+                    f"inverse-style tiling) must not use Python while. The Layer K host wrapper "
+                    f"kernel driving loop is governed by OL45.",
                     file=impl_file,
                     line=lineno,
                 )
     if not saw_jit:
-        return ctx.make_finding("OL57", "SKIP", "无 jit 函数")
+        return ctx.make_finding("OL57", "SKIP", "no jit functions")
     return ctx.make_finding(
-        "OL57", "PASS", "JIT 图代码内未发现非 pypto.loop/loop_unroll/range 的 Python 循环"
+        "OL57", "PASS", "no non-pypto.loop/loop_unroll/range Python loops found in JIT graph code"
     )
 
 
@@ -1888,14 +1901,14 @@ def _ol58_creation_finding(
     return ctx.make_finding(
         "OL58",
         "FAIL",
-        f"Layer K wrapper `{wrapper.name}` (第 {bad_call.lineno} 行) "
-        f"调用 `pypto.{api_name}(...)`。`pypto.{api_name}` 是 JIT-context "
-        f"creation API, 仅在 `@pypto.frontend.jit` 函数体内合法; "
-        f"在 host wrapper 调用会 runtime crash "
-        f"(`device=` kwarg 不接受, 或 `F21003 INVALID_TYPE`)。"
-        f"host wrapper 内 output buffer 必须用 `torch.{api_name}(...)` "
-        f"等 torch 等价物预先分配 (显式 `dtype=` 与 `device=`), "
-        f"再传给 JIT 入口。",
+        f"Layer K wrapper `{wrapper.name}` (line {bad_call.lineno}) "
+        f"calls `pypto.{api_name}(...)`. `pypto.{api_name}` is a JIT-context "
+        f"creation API, only legal inside a `@pypto.frontend.jit` function body; "
+        f"calling it from a host wrapper will runtime crash "
+        f"(`device=` kwarg is not accepted, or `F21003 INVALID_TYPE`)."
+        f"inside a host wrapper, the output buffer must be created with `torch.{api_name}(...)` "
+        f"or equivalent torch APIs, pre-allocated (with explicit `dtype=` and `device=`), "
+        f"before being passed to the JIT entry.",
         file=impl_file,
         line=bad_call.lineno,
     )
@@ -1914,24 +1927,24 @@ def _ol58_jit_arg_finding(
         return ctx.make_finding(
             "OL58",
             "FAIL",
-            f"Layer K wrapper `{wrapper.name}` 调用 JIT kernel `{callee}` "
-            f"(第 {call.lineno} 行) 时传入 `{arg.id}`, 但 `{arg.id}` 来自 "
-            f"`pypto.{api_name}(...)` (第 {evidence_line} 行)。"
-            f"host wrapper 内 output buffer 必须用 torch.* 预分配 "
+            f"Layer K wrapper `{wrapper.name}` calls JIT kernel `{callee}` "
+            f"(at line {call.lineno}) passing `{arg.id}`, but `{arg.id}` comes from "
+            f"`pypto.{api_name}(...)` (line {evidence_line})."
+            f"inside a host wrapper, the output buffer must be pre-allocated with torch.* "
             f"(`torch.empty / torch.zeros / torch.empty_like` 等), "
-            f"`pypto.{api_name}` 仅在 JIT 图内合法。",
+            f"`pypto.{api_name}` is only legal inside the JIT graph.",
             file=impl_file,
             line=evidence_line,
         )
     return ctx.make_finding(
         "OL58",
         "FAIL",
-        f"Layer K wrapper `{wrapper.name}` 调用 JIT kernel `{callee}` "
-        f"(第 {call.lineno} 行) 时传入 output `{arg.id}`, 但 `{arg.id}` "
-        f"未在 wrapper 内分配, 也不是 wrapper 参数。"
-        f"output buffer 必须用 `torch.empty / torch.zeros / "
-        f"torch.empty_like` 等 torch allocation API 创建后, "
-        f"再传给 JIT 入口。",
+        f"Layer K wrapper `{wrapper.name}` calls JIT kernel `{callee}` "
+        f"(at line {call.lineno}) passing output `{arg.id}`, but `{arg.id}` "
+        f"is not allocated inside the wrapper nor is it a wrapper parameter."
+        f"The output buffer must be created with `torch.empty / torch.zeros / "
+        f"torch.empty_like` and other torch allocation APIs, "
+        f"before being passed to the JIT entry.",
         file=impl_file,
         line=arg.lineno,
     )
@@ -1958,7 +1971,7 @@ def check_ol58(ctx: CheckContext) -> Finding:
     """
     impl_files = _impl_files_to_scan(ctx)
     if not impl_files:
-        return ctx.make_finding("OL58", "SKIP", "无 impl 文件可供检查")
+        return ctx.make_finding("OL58", "SKIP", "no impl files to check")
     saw_wrapper = False
     for impl_file in impl_files:
         syntax_error = _syntax_error_finding(ctx, "OL58", impl_file)
@@ -1988,9 +2001,9 @@ def check_ol58(ctx: CheckContext) -> Finding:
             if violation is not None:
                 return _ol58_jit_arg_finding(ctx, impl_file, top, violation)
     if not saw_wrapper:
-        return ctx.make_finding("OL58", "SKIP", "未检测到 Layer K wrapper 函数")
+        return ctx.make_finding("OL58", "SKIP", "no Layer K wrapper function detected")
     return ctx.make_finding(
         "OL58",
         "PASS",
-        "Layer K wrapper output buffer 已用 torch.* 预分配; 未发现 pypto.zeros/empty/ones/full 误用",
+        "Layer K wrapper output buffer is pre-allocated with torch.*; no pypto.zeros/empty/ones/full misuse found"
     )

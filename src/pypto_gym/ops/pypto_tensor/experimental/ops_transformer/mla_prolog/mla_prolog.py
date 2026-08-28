@@ -264,7 +264,7 @@ def test_mla_prolog(device_id=None, run_mode: str = "npu"):
     test_seq_lens = [8, 16, 32]
 
     for seq_len in test_seq_lens:
-        logging.info(f"\n测试 seq_len={seq_len} (dynamic)")
+        logging.info(f"\nTesting seq_len={seq_len} (dynamic)")
 
         token_x = torch.randn(seq_len, HE, dtype=torch.bfloat16, device=device)
         weight_dq = torch.randn(HE, HCQ, dtype=torch.bfloat16, device=device)
@@ -305,7 +305,7 @@ def test_mla_prolog(device_id=None, run_mode: str = "npu"):
             compare(query_rope.cpu(), golden_query_rope.cpu(), "query_rope", 0.005, 0.0078125, 0.05)
             compare(c_kv_out.cpu(), golden_c_kv.cpu(), "c_kv_out", 0.005, 0.0078125, 0.005)
             compare(k_r_out.cpu(), golden_k_r.cpu(), "k_r_out", 0.005, 0.0078125, 0.05)
-            logging.info(f"✓ seq_len={seq_len} 所有精度对比通过")
+            logging.info(f"✓ seq_len={seq_len} all precision comparisons passed")
 
 
 def main():

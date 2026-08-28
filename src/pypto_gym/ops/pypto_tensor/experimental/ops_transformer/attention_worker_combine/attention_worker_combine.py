@@ -127,7 +127,7 @@ def attention_worker_combine_splith_kernel(
 
 
 def test_kernel(kernel_func, kernel_name, test_bs=8, test_h=32):
-    """测试单个 kernel"""
+    """Test a single kernel"""
     logging.info(f"\n--- Testing {kernel_name} (bs={test_bs}, h={test_h}) ---")
 
     device_id = get_device_id()
@@ -149,18 +149,18 @@ def test_kernel(kernel_func, kernel_name, test_bs=8, test_h=32):
 
         max_diff = (y - golden).abs().max().item()
         logging.info(f"  Max diff: {max_diff:.6f}")
-        logging.info(f"  Result: {'PASS' if max_diff < 0.01 else 'FAIL'}")
+        (logging.error if max_diff >= 0.01 else logging.info)(f"  Result: {'PASS' if max_diff < 0.01 else 'FAIL'}")
         return max_diff < 0.01
 
     except Exception as e:
-        logging.info(f"  ✗ Error: {e}")
+        logging.error(f"  ✗ Error: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
 def run_all_tests():
-    """运行所有测试"""
+    """Run all tests"""
     logging.info("=" * 70)
     logging.info("AttentionWorkerCombine PyPTO Kernel Tests (Dynamic Shape)")
     logging.info("=" * 70)
@@ -186,7 +186,7 @@ def run_all_tests():
     logging.info("Summary")
     logging.info("=" * 70)
     for name, passed in results:
-        logging.info(f"  {name}: {'✓ PASS' if passed else '✗ FAIL'}")
+        (logging.warning if not passed else logging.info)(f"  {name}: {'✓ PASS' if passed else '✗ FAIL'}")
 
     total = sum(1 for _, p in results if p)
     logging.info(f"\nTotal: {total}/{len(results)} passed")

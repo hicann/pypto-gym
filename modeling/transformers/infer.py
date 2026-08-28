@@ -31,15 +31,15 @@ if args.use_pto:
     import pto_kernels
     sys.modules["pto_kernels"] = pto_kernels
     pto_kernels.USE_PTO_RMS_NORM = True
-    print("* PyPTO RMSNorm 已启用")
+    print("* PyPTO RMSNorm enabled")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)

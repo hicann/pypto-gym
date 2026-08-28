@@ -34,9 +34,9 @@ def load_python_ast(abs_path: str, filename: str) -> tuple[ast.Module | None, st
         with open(abs_path, "r", encoding="utf-8") as source_file:
             source = source_file.read()
     except OSError:
-        return None, "文件为空或无法读取"
+        return None, "File is empty or unreadable"
     if not source:
-        return None, "文件为空或无法读取"
+        return None, "File is empty or unreadable"
     return parse_python_source(source, filename)
 
 

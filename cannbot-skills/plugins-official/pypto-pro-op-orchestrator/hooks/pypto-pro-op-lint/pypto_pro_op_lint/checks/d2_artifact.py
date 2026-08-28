@@ -65,10 +65,10 @@ def _load_spec_contract_text(content: str):
 def _check_file_exists(ctx: CheckContext, rule_id: str, filename: str) -> Finding:
     if ctx.file_exists(filename):
         return ctx.make_finding(
-            rule_id, "PASS", f"{filename} 存在", file=filename
+            rule_id, "PASS", f"{filename} exists", file=filename
         )
     return ctx.make_finding(
-        rule_id, "FAIL", f"{filename} 不存在", file=filename
+        rule_id, "FAIL", f"{filename} does not exist", file=filename
     )
 
 
@@ -76,24 +76,24 @@ def _check_file_exists(ctx: CheckContext, rule_id: str, filename: str) -> Findin
 def check_pl03(ctx: CheckContext) -> Finding:
     """SPEC.md satisfies the canonical Stage-1 JSON contract."""
     if not ctx.file_exists(SPEC_FILE):
-        return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} 不存在", file=SPEC_FILE)
+        return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} does not exist", file=SPEC_FILE)
     content = ctx.read_file(SPEC_FILE)
     if not content.strip():
-        return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} 为空", file=SPEC_FILE)
+        return ctx.make_finding("PL03", "FAIL", f"{SPEC_FILE} is empty", file=SPEC_FILE)
     try:
         contract = _load_spec_contract_text(content)
     except Exception as exc:
         return ctx.make_finding(
-            "PL03", "FAIL", f"SPEC.md JSON machine-contract 无效: {exc}", file=SPEC_FILE
+            "PL03", "FAIL", f"SPEC.md JSON machine-contract invalid: {exc}", file=SPEC_FILE
         )
     if contract.get("op_name") != ctx.op_name:
         return ctx.make_finding(
             "PL03", "FAIL",
-            f"SPEC.md op_name={contract.get('op_name')!r}，期望 {ctx.op_name!r}",
+            f"SPEC.md op_name={contract.get('op_name')!r}, expected {ctx.op_name!r}",
             file=SPEC_FILE,
         )
     return ctx.make_finding(
-        "PL03", "PASS", "SPEC.md JSON machine-contract 通过 canonical validator", file=SPEC_FILE
+        "PL03", "PASS", "SPEC.md JSON machine-contract passed the canonical validator", file=SPEC_FILE
     )
 
 
@@ -136,22 +136,22 @@ def check_pl10(ctx: CheckContext) -> Finding:
     state_path = ctx.file_path(STATE_FILE)
     if not os.path.isfile(state_path):
         return ctx.make_finding(
-            "PL10", "FAIL", f"{STATE_FILE} 不存在", file=STATE_FILE
+            "PL10", "FAIL", f"{STATE_FILE} does not exist", file=STATE_FILE
         )
     try:
         with open(state_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         return ctx.make_finding(
-            "PL10", "FAIL", f"{STATE_FILE} 不是合法 JSON: {e}", file=STATE_FILE
+            "PL10", "FAIL", f"{STATE_FILE} is not valid JSON: {e}", file=STATE_FILE
         )
     max_stage = data.get("max_stage")
     if type(max_stage) is not int or max_stage != 5:
         return ctx.make_finding(
             "PL10", "FAIL",
-            f"{STATE_FILE} max_stage={max_stage}（期望严格整数 5）",
+            f"{STATE_FILE} max_stage={max_stage} (expected exactly integer 5)",
             file=STATE_FILE
         )
     return ctx.make_finding(
-        "PL10", "PASS", f"{STATE_FILE} 合法，max_stage={max_stage}", file=STATE_FILE
+        "PL10", "PASS", f"{STATE_FILE} is valid, max_stage={max_stage}", file=STATE_FILE
     )

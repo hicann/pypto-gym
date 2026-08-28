@@ -141,20 +141,23 @@ def _finding_context(
     if fails:
         lines = [_format_finding(finding) for finding in fails]
         sections.append(
-            "[pypto-op-lint] 以下规则违规，请立即修正后重新写入文件：\n"
+            "[pypto-op-lint] the following rules were violated, please fix them immediately and rewrite the file:\n"
             + "\n".join(lines)
-            + "\n\n参考 .opencode/skills/pypto-op-develop/references/execution-constraints.md"
+            + "\n\nsee .opencode/skills/pypto-op-develop/references/execution-constraints.md"
         )
     if warns:
         lines = [_format_finding(finding) for finding in warns]
         sections.append(
-            "[pypto-op-lint] 以下提醒建议确认：\n"
+            "[pypto-op-lint] please confirm the following reminders:\n"
             + "\n".join(lines)
-            + "\n\n请确认以上提醒项是否需要处理。"
+            + "\n\nplease confirm whether the above reminders need to be addressed."
         )
     if infos:
         lines = [_format_finding(finding) for finding in infos]
-        sections.append("[pypto-op-lint] 以下信息提示（不影响门禁）：\n" + "\n".join(lines))
+        sections.append(
+            "[pypto-op-lint] the following informational hints "
+            "(do not affect the gate):\n" + "\n".join(lines)
+        )
     return "\n\n".join(sections)
 
 
@@ -166,12 +169,12 @@ def _blocking_reason(error_fails: list[Finding]) -> str:
     ]
     blocking_rules = sorted({finding.rule_id for finding in error_fails})
     footer = (
-        "\n\n**⛔ 修正流程：阅读上方 fix_hints → 修复 file:line 指出的违规 → "
-        "对【同一文件】重新执行 Write/Edit。不可使用 bash 绕过 lint，"
-        "不可移动文件到其他路径。**"
+        "\n\n**⛔ fix process: read the fix_hints above → fix the violations pointed out by file:line → "
+        "re-run Write/Edit on the [same file]. Do not use bash to bypass lint, "
+        "do not move files to another path.**"
     )
     return (
-        "[pypto-op-lint] 产物写入后即时门禁未通过（S0/S1）：\n"
+        "[pypto-op-lint] the post-write instant gate did not pass (S0/S1):\n"
         + "\n".join(lines)
         + "\n\nblocking_rules: "
         + ", ".join(blocking_rules)
@@ -205,9 +208,9 @@ def hook_post_edit() -> int:
                 "PostToolUse",
                 decision="block",
                 reason=(
-                    f"[pypto-op-lint] {SPEC_FILE} 在 Stage 1 完成后已冻结。"
-                    "如需修订规格，请通过 state_transition 回退到 target_stage=1。"
-                    "（例外：仅减少 front matter supported_dtypes 的 Edit 放行）"
+                    f"[pypto-op-lint] {SPEC_FILE} is frozen after Stage 1 completes."
+                    "if you need to revise the spec, roll back to target_stage=1 via state_transition."
+                    "(exception: only Edits that reduce the front matter supported_dtypes are allowed)"
                 ),
             )
             return 0
@@ -253,8 +256,8 @@ def hook_post_bash() -> int:
     verdict = _parse_verdict(stdout, stderr, exit_code)
     detail = _verdict_detail(verdict)
     context_msg = (
-        f"[pypto-op-lint parse-result] 确定性判定: {verdict}。{detail}。"
-        "请以此结果为准，不要自行解读测试输出。"
+        f"[pypto-op-lint parse-result] deterministic verdict: {verdict}. {detail}."
+        "please rely on this result, and do not interpret the test output yourself."
     )
     _output_hook_json("PostToolUse", additionalContext=context_msg)
     return 0
@@ -270,8 +273,8 @@ def hook_pre_edit_backup() -> int:
         _output_hook_json(
             "PreToolUse",
             decision="block",
-            reason="禁止直接修改 .orchestrator_state.json，"
-            "请通过 state_transition 工具操作阶段状态。",
+            reason="direct modification of .orchestrator_state.json is forbidden, "
+            "please use the state_transition tool to manage stage states.",
         )
         return 0
 
@@ -386,15 +389,15 @@ def hook_stop() -> int:
         _output_hook_json(
             "Stop",
             decision="block",
-            reason="[pypto-op-lint] 交付门禁未通过，存在 ERROR（S0/S1）级违规：\n"
+            reason="[pypto-op-lint] delivery gate failed, ERROR (S0/S1) level violations exist:\n"
             + "\n".join(lines)
             + "\n\nblocking_rules: "
             + ", ".join(blocking_rules)
             + "\nfix_hints:\n"
             + "\n".join(hint_lines)
             + "\n\ndocs_ref: .opencode/hooks/pypto-op-lint/rules.json"
-            + "\n\n**⛔ 门禁已阻断：请先修复上述 ERROR 级违规，再继续后续操作。"
-            "修复后重新运行即可。**",
+            + "\n\n**⛔ gate blocked: fix the above ERROR-level violations first, then continue. "
+            "simply re-run after fixing.**",
         )
         return 2
     _emit_gate_event(ctx, blocked=False, blocking_rules=[], invocation_id=invocation_id)
@@ -421,10 +424,11 @@ def _rule_fix_hint(rule_id: str) -> str:
     hints = {
         # D1 框架约束（impl 文件最常触发）
         "OL01": (
-            "kernel 装饰器必须字面写成 @pypto.frontend.jit（或带参数 @pypto.frontend.jit(...)），"
-            "每个 impl 文件须有且仅有 1 个（Layer J）；任何别名形式均被拒绝——包括 "
-            "@pt.frontend.jit、@F.jit、@frontend.jit、@jit 等。"
-            "import 必须用 `import pypto`，不要用 as 子句或 from-import"
+            "the kernel decorator must be written literally as @pypto.frontend.jit "
+            "(or with arguments @pypto.frontend.jit(...)), "
+            "each impl file must have exactly one (Layer J); all alias forms are rejected — including "
+            "@pt.frontend.jit, @F.jit, @frontend.jit, @jit, etc. "
+            "imports must use `import pypto`, not as clauses or from-import"
         ),
         "OL02": "输出写回须用 y[:] = expr / pypto.move() / pypto.assemble()，不可写成 y = expr",
         "OL03": "kernel 内禁止使用 Python 原生 for/while 控制流，请改用 pypto.loop()",
@@ -467,7 +471,7 @@ def _rule_fix_hint(rule_id: str) -> str:
             "out.move(...) 或 out[:] = ...；不要只重新绑定局部变量"
         ),
     }
-    return hints.get(rule_id, "参考 rules.json 中该规则说明修复")
+    return hints.get(rule_id, "refer to the rule description in rules.json to fix")
 
 
 def _parse_verdict(stdout: str, stderr: str, exit_code: int) -> str:
@@ -484,9 +488,9 @@ def _parse_verdict(stdout: str, stderr: str, exit_code: int) -> str:
 
 def _verdict_detail(verdict: str) -> str:
     details = {
-        "precision_pass": "输出中包含 [PRECISION_PASS] 标记，精度通过",
-        "precision_fail": "输出中包含 [PRECISION_FAIL] 标记，精度失败",
-        "runtime_error": "测试进程返回非零退出码，运行失败",
-        "no_marker": "测试运行完毕但未检测到精度标记（[PRECISION_PASS]/[PRECISION_FAIL]）",
+        "precision_pass": "output contains [PRECISION_PASS] marker, precision passed",
+        "precision_fail": "output contains [PRECISION_FAIL] marker, precision failed",
+        "runtime_error": "test process returned a non-zero exit code, execution failed",
+        "no_marker": "test finished but no precision marker detected ([PRECISION_PASS]/[PRECISION_FAIL])",
     }
-    return details.get(verdict, f"未知判定结果: {verdict}")
+    return details.get(verdict, f"unknown verdict: {verdict}")

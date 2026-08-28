@@ -246,7 +246,7 @@ def _build_validate(op: str) -> str:
         '    """',
         "    device = _get_device()",
         "    print('=' * 60)",
-        f"    print('{op}_golden 验证报告')",
+        f"    print('{op}_golden validation report')",
         "    print('=' * 60)",
         "    print(f'Device: {device}')",
         "",
@@ -267,7 +267,7 @@ def _build_validate(op: str) -> str:
         "    # TODO: generalization sampling over dynamic axes",
         "",
         "    print('\\n' + '=' * 60)",
-        "    print('验证完成')",
+        "    print('validation complete')",
         "    print('=' * 60)",
     ])
 
@@ -384,7 +384,7 @@ def _self_test(template_path: str) -> int:
         "no_placeholder": "{op}" not in code,
     }
     for k, v in checks.items():
-        _LOGGER.info("  [%s] %s", "PASS" if v else "FAIL", k)
+        _LOGGER.error("  [%s] %s", "PASS" if v else "FAIL", k)
     return 0 if all(checks.values()) else 1
 
 

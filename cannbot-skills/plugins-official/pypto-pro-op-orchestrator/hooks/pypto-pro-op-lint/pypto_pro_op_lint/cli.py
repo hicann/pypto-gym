@@ -57,7 +57,7 @@ def cmd_check_gate(op_dir: str, stage: int) -> int:
     gate_rules = GATE_RULES_BY_STAGE.get(stage, [])
     if not gate_rules:
         return _cmd_run([
-            _system_failure("LINT_CONFIG", f"不支持 Stage {stage}，门禁拒绝放行")
+            _system_failure("LINT_CONFIG", f"Stage {stage} is not supported, gate refused to pass")
         ])
     findings, _ = _run_checks(ctx, gate_rules)
     return _cmd_run(findings)
@@ -73,7 +73,7 @@ def cmd_check_module_gate(op_dir: str, module: str, stage: int = 4) -> int:
         return _cmd_run([
             _system_failure(
                 "LINT_CONFIG",
-                f"Module 门禁仅适用于 Stage 4，收到 Stage {stage}",
+                f"Module gate only applies to Stage 4, received Stage {stage}",
             )
         ])
     suffix = _resolve_module_suffix(op_dir, module)
@@ -81,7 +81,7 @@ def cmd_check_module_gate(op_dir: str, module: str, stage: int = 4) -> int:
         return _cmd_run([
             _system_failure(
                 "LINT_CONFIG",
-                f"无法解析 module {module} 的 suffix（state.json 无有效 stage4_modules）",
+                f"cannot resolve the suffix of module {module} (no valid stage4_modules in state.json)",
             )
         ])
     staged_file = _module_staged_filename(ctx.op_name, suffix)
@@ -89,7 +89,7 @@ def cmd_check_module_gate(op_dir: str, module: str, stage: int = 4) -> int:
         return _cmd_run([
             _system_failure(
                 "LINT_CONFIG",
-                f"Module {module} 的 staged 文件不存在: {staged_file}",
+                f"staged file for Module {module} does not exist: {staged_file}",
             )
         ])
     ctx.module_scope = suffix
@@ -121,7 +121,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _require_op_dir(parser: argparse.ArgumentParser, args: argparse.Namespace, option: str) -> str:
     if not args.op_dir:
-        parser.error(f"{option} 需要 --op-dir")
+        parser.error(f"{option} requires --op-dir")
     return args.op_dir
 
 
@@ -148,7 +148,7 @@ def _dispatch_command(parser: argparse.ArgumentParser, args: argparse.Namespace)
     if args.check_module_gate:
         op_dir = _require_op_dir(parser, args, "--check-module-gate")
         if not args.module:
-            parser.error("--check-module-gate 需要 --module (如 1, 2, 3)")
+            parser.error("--check-module-gate requires --module (e.g. 1, 2, 3)")
         return cmd_check_module_gate(op_dir, args.module, args.stage)
 
     parser.print_help()

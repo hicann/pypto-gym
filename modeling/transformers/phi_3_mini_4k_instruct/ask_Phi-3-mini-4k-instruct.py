@@ -48,7 +48,7 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\n".join(lines)
-    logging.info(f"从文件读取提示词: {args.sentence_file} ({len(prompt)} 字符)")
+    logging.info(f"Prompt read from file: {args.sentence_file} ({len(prompt)} chars)")
 else:
     prompt = "你好"
 
@@ -58,16 +58,16 @@ if args.use_pypto or args.use_acl_graph:
     import pto_kernels
     sys.modules["pto_kernels"] = pto_kernels
     pto_kernels.USE_PTO_RMS_NORM = True
-    logging.info("PyPTO RMSNorm 已启用")
+    logging.info("PyPTO RMSNorm enabled")
 
 if args.use_acl_graph:
     pto_kernels.USE_ACL_GRAPH = True
-    logging.info("ACL Graph 模式已启用")
+    logging.info("ACL Graph mode enabled")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 
@@ -100,7 +100,7 @@ if args.use_acl_graph:
     compiler_config.experimental_config.tiling_schedule_optimize = True
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
     model = torch.compile(model, dynamic=True, fullgraph=True, backend=npu_backend)
-    logging.info("ACL Graph torch.compile 已完成")
+    logging.info("ACL Graph torch.compile completed")
 
 # ---- Tokenize ----
 t0 = time.perf_counter()
@@ -108,7 +108,7 @@ inputs = tokenizer(prompt, return_tensors="pt").to(f"npu:{args.device}")
 metrics["tokenize_s"] = round(time.perf_counter() - t0, 3)
 input_len = inputs.input_ids.shape[1]
 metrics["input_tokens"] = input_len
-logging.info(f"输入token数: {input_len}")
+logging.info(f"Input token count: {input_len}")
 
 # ---- Generate ----
 torch.npu.synchronize()
@@ -137,14 +137,14 @@ metrics["mode"] = "+".join(mode_label) if mode_label else "baseline"
 metrics["model"] = "Phi-3-mini-4k-instruct"
 
 logging.info(f"\n--- Performance ---")
-logging.info(f"  模式:           {metrics['mode']}")
-logging.info(f"  模型加载:       {metrics['model_load_s']}s (峰值显存 {metrics['model_load_peak_mem_mb']}MB)")
-logging.info(f"  推理耗时:       {metrics['generate_s']}s")
-logging.info(f"  生成token数:    {metrics['generated_tokens']}")
-logging.info(f"  吞吐量:         {metrics['tokens_per_second']} tokens/s")
-logging.info(f"  推理峰值显存:   {metrics['generate_peak_mem_mb']}MB")
+logging.info(f"  Mode:           {metrics['mode']}")
+logging.info(f"  Model load:     {metrics['model_load_s']}s (peak memory {metrics['model_load_peak_mem_mb']}MB)")
+logging.info(f"  Inference time: {metrics['generate_s']}s")
+logging.info(f"  Generated tokens: {metrics['generated_tokens']}")
+logging.info(f"  Throughput:     {metrics['tokens_per_second']} tokens/s")
+logging.info(f"  Inference peak memory: {metrics['generate_peak_mem_mb']}MB")
 
 if args.report_file:
     with open(args.report_file, "w") as f:
         json.dump(metrics, f, indent=2)
-    logging.info(f"  报告已写入:     {args.report_file}")
+    logging.info(f"  Report written to:     {args.report_file}")

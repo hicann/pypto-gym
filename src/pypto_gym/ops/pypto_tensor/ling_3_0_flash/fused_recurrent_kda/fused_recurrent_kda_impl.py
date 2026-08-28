@@ -38,6 +38,7 @@
 #   L  (N/A — test produced by verifier)
 # =============================================================================
 
+import logging
 import pypto
 import torch
 import torch_npu  # noqa: F401  required for NPU device init
@@ -437,9 +438,9 @@ try:
         )
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'fused_recurrent_kda'")
+        logging.warning(f"Skip: torchair not installed, skip NPU registration for operator 'fused_recurrent_kda'")
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def fused_recurrent_kda_graph(

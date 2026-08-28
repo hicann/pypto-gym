@@ -18,6 +18,7 @@ ITER_14策略：
 目标：减少PyPTO内部的vec操作，利用torch_npu原生算子性能优势
 """
 
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -205,7 +206,7 @@ def mla_prolog_hybrid_optimized(hidden_states, kv_a_weight, kv_b_weight, ln_weig
         'sin': sin.device,
     }
     if len(set(devices.values())) > 1:
-        print(f"[ERROR] Device mismatch: {devices}")
+        logging.error(f"[ERROR] Device mismatch: {devices}")
         raise RuntimeError(f"Device mismatch: {devices}")
 
     # Stage 1: kv_a_proj + split + RMSNorm (torch_npu原生算子)

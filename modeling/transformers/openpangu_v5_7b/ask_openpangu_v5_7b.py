@@ -132,8 +132,8 @@ def main():
 
     _du.generate_default_prompt = _override_prompt
 
-    logger.info("使用设备: npu:%s", args.device)
-    logger.info("模型路径: %s", args.model_path)
+    logger.info("Using device: npu:%s", args.device)
+    logger.info("Model path: %s", args.model_path)
     logger.info("PyPTO: %s", "ON" if args.use_pto else "OFF (baseline)")
 
     torch.manual_seed(42)

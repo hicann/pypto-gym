@@ -194,7 +194,7 @@ def _load_rules() -> list[dict[str, Any]]:
         with open(rules_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logging.getLogger(__name__).error("[pypto-op-lint FATAL] rules.json 加载失败: %s", e)
+        logging.getLogger(__name__).error("[pypto-op-lint FATAL] failed to load rules.json: %s", e)
         return []
     return data.get("rules", [])
 
@@ -213,7 +213,7 @@ def _run_checks(ctx: CheckContext, rule_ids: list[str]) -> tuple[list[Finding], 
             start = time.perf_counter()
             rule = ctx.get_rule(rid)
             if ctx.stage not in rule.get("stages", []):
-                finding = ctx.make_finding(rid, "SKIP", "当前阶段不适用")
+                finding = ctx.make_finding(rid, "SKIP", "not applicable at the current stage")
                 findings.append(finding)
                 dur = (time.perf_counter() - start) * 1000
                 total_duration_ms += dur
@@ -221,7 +221,7 @@ def _run_checks(ctx: CheckContext, rule_ids: list[str]) -> tuple[list[Finding], 
                 continue
             checker = CHECKERS.get(rid)
             if not checker:
-                finding = ctx.make_finding(rid, "SKIP", "检查函数未注册")
+                finding = ctx.make_finding(rid, "SKIP", "check function not registered")
                 findings.append(finding)
                 dur = (time.perf_counter() - start) * 1000
                 total_duration_ms += dur

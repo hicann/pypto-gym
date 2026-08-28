@@ -61,7 +61,7 @@ def check_pl11(ctx: CheckContext) -> Finding:
     """golden 文件禁止 import pypto_pro 或 import pypto."""
     targets = _scan_golden_files(ctx)
     if not targets:
-        return ctx.make_finding("PL11", "SKIP", "未发现 golden 文件")
+        return ctx.make_finding("PL11", "SKIP", "No golden files found")
 
     failures: list[str] = []
     for rel, abs_path in targets:
@@ -77,7 +77,7 @@ def check_pl11(ctx: CheckContext) -> Finding:
         forbidden = sorted(set(forbidden))
         if forbidden:
             failures.append(
-                f"{rel}: 发现禁止的 import（{', '.join(forbidden)}）"
+                f"{rel}: found forbidden import ({', '.join(forbidden)})"
             )
 
     if failures:
@@ -86,7 +86,7 @@ def check_pl11(ctx: CheckContext) -> Finding:
         )
     return ctx.make_finding(
         "PL11", "PASS",
-        f"所有 golden 文件（共 {len(targets)} 个）纯度检查通过"
+        f"All golden files ({len(targets)} total) passed the purity check"
     )
 
 
@@ -96,7 +96,7 @@ def check_pl13(ctx: CheckContext) -> Finding:
     if ctx.file_scope:
         basename = os.path.basename(ctx.file_scope)
         if "_golden_stage" not in basename or not basename.endswith(".py"):
-            return ctx.make_finding("PL13", "SKIP", "当前文件不是 golden_stage 文件")
+            return ctx.make_finding("PL13", "SKIP", "The current file is not a golden_stage file")
         stage_files = [(basename, ctx.file_scope)]
     else:
         stage_files = []
@@ -104,7 +104,7 @@ def check_pl13(ctx: CheckContext) -> Finding:
     modules_dir = os.path.join(ctx.op_dir, "modules")
     if not stage_files and not os.path.isdir(modules_dir):
         return ctx.make_finding(
-            "PL13", "SKIP", "modules/ 目录不存在（L1 路径 Stage 4 才产出）"
+            "PL13", "SKIP", "modules/ directory does not exist (produced only at L1 path Stage 4)"
         )
 
     op_name = ctx.op_name
@@ -116,7 +116,7 @@ def check_pl13(ctx: CheckContext) -> Finding:
 
     if not stage_files:
         return ctx.make_finding(
-            "PL13", "SKIP", "未发现 golden_stage 文件"
+            "PL13", "SKIP", "No golden_stage files found"
         )
 
     failures: list[str] = []
@@ -134,7 +134,7 @@ def check_pl13(ctx: CheckContext) -> Finding:
         staged_imports = sorted(set(staged_imports))
         if staged_imports:
             failures.append(
-                f"{rel}: 发现 import staged impl（{', '.join(staged_imports)}）"
+                f"{rel}: found import of staged impl ({', '.join(staged_imports)})"
             )
 
     if failures:
@@ -143,5 +143,5 @@ def check_pl13(ctx: CheckContext) -> Finding:
         )
     return ctx.make_finding(
         "PL13", "PASS",
-        f"所有 golden_stage 文件（共 {len(stage_files)} 个）独立性检查通过"
+        f"All golden_stage files ({len(stage_files)} total) passed the independence check"
     )

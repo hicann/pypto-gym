@@ -140,11 +140,11 @@ def run_bn_reduce_case(case_index: int, shape: tuple[int, int, int, int], device
 
 def summarize_failed_cases(failed_cases: list[tuple[int, tuple[int, int, int, int]]]) -> None:
     LOGGER.info("")
-    LOGGER.info("%s 测试总结 %s", "=" * 20, "=" * 20)
+    LOGGER.info("%s Test Summary %s", "=" * 20, "=" * 20)
     if not failed_cases:
-        LOGGER.info("全部测试通过。")
+        LOGGER.info("All tests passed.")
         return
-    LOGGER.warning("⚠️ 存在 %s 个失败用例:", len(failed_cases))
+    LOGGER.warning("⚠️ %s failed test cases:", len(failed_cases))
     for case_index, shape in failed_cases:
         LOGGER.warning("   - Case %s: %s", case_index, shape)
 

@@ -85,7 +85,7 @@ export function isStateWriteCommand(command: string): boolean {
 
 export function formatPluginError(scope: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  return `[pypto-pro-op-lint plugin-error] ${scope} 自动检查失败：${detail}`;
+  return `[pypto-pro-op-lint plugin-error] ${scope} auto-check failed: ${detail}`;
 }
 
 export function parseHookOutput(raw: string): ParsedHookOutput {
@@ -93,7 +93,7 @@ export function parseHookOutput(raw: string): ParsedHookOutput {
     return {
       additionalContext: "",
       decision: "block",
-      reason: "[pypto-pro-op-lint plugin-error] post-edit 自动检查返回空输出",
+      reason: "[pypto-pro-op-lint plugin-error] post-edit auto-check returned empty output",
     };
   }
 
@@ -112,7 +112,7 @@ export function parseHookOutput(raw: string): ParsedHookOutput {
     return {
       additionalContext: "",
       decision: "block",
-      reason: formatPluginError("post-edit 输出解析", error),
+      reason: formatPluginError("post-edit output parsing", error),
     };
   }
 }

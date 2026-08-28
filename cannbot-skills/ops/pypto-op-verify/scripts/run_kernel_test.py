@@ -512,7 +512,7 @@ def _check_scenario(scenario: tuple, work: Path, cfg: TimeoutConfig) -> bool:
     result = _run_scenario(argv, env_add, str(work / name), cfg)
     emit_result(result, as_json=False)
     ok = result.verdict == want_verdict and result.exit_code == want_exit
-    _log.info(f"SELFTEST {'PASS' if ok else 'FAIL'} {name}: "
+    _log.error(f"SELFTEST {'PASS' if ok else 'FAIL'} {name}: "
           f"verdict={result.verdict.value} "
           f"(want {want_verdict.value}) exit={result.exit_code} "
           f"(want {want_exit})")
@@ -553,7 +553,7 @@ def _self_test() -> int:
         except OSError:
             pass
 
-    _log.info(f"SELFTEST {'PASS' if not bad else 'FAIL'}: "
+    _log.error(f"SELFTEST {'PASS' if not bad else 'FAIL'}: "
           f"{len(scenarios) - bad}/{len(scenarios)} scenarios passed")
     return 1 if bad else 0
 

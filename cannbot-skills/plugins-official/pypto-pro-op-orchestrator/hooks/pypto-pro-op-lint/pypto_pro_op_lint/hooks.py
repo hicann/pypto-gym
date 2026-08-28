@@ -86,25 +86,26 @@ def _finding_context(
     if fails:
         lines = [_format_finding(f) for f in fails]
         sections.append(
-            "[pypto-pro-op-lint] 以下规则违规，请立即修正后重新写入文件：\n"
+            "[pypto-pro-op-lint] The following rules were violated, fix them and rewrite the file:\n"
             + "\n".join(lines)
         )
     if warns:
         lines = [_format_finding(f) for f in warns]
         sections.append(
-            "[pypto-pro-op-lint] 以下提醒建议确认：\n" + "\n".join(lines)
+            "[pypto-pro-op-lint] The following reminders are recommended for confirmation:\n" + "\n".join(lines)
         )
     if infos:
         lines = [_format_finding(f) for f in infos]
         sections.append(
-            "[pypto-pro-op-lint] 以下信息提示（不影响门禁）：\n" + "\n".join(lines)
+            "[pypto-pro-op-lint] The following messages are for information "
+            "(does not affect the gate):\n" + "\n".join(lines)
         )
     return "\n\n".join(sections)
 
 
 def _rule_fix_hint(rule_id: str, ctx: CheckContext) -> str:
     rule = ctx.get_rule(rule_id)
-    return rule.get("fix_hint", "参考 rules.json 中该规则说明修复")
+    return rule.get("fix_hint", "Refer to the rule description in rules.json to fix")
 
 
 def _blocking_reason(error_fails: list[Finding], ctx: object) -> str:
@@ -115,11 +116,11 @@ def _blocking_reason(error_fails: list[Finding], ctx: object) -> str:
     ]
     blocking_rules = sorted({f.rule_id for f in error_fails})
     footer = (
-        "\n\n**⛔ 修正流程：阅读上方 fix_hints → 修复 file 指出的违规 → "
-        "对【同一文件】重新执行 Write/Edit。不可使用 bash 绕过 lint。**"
+        "\n\n**⛔ Fix workflow: read the fix_hints above → fix the violations pointed out by file → "
+        "re-execute Write/Edit on the [same file]. Do not use bash to bypass lint.**"
     )
     return (
-        "[pypto-pro-op-lint] 产物写入后即时门禁未通过（S0/S1）：\n"
+        "[pypto-pro-op-lint] Immediate gate after artifact write failed (S0/S1):\n"
         + "\n".join(lines)
         + "\n\nblocking_rules: "
         + ", ".join(blocking_rules)
@@ -141,7 +142,7 @@ def hook_post_edit() -> int:
         _output_hook_json(
             "PostToolUse",
             decision="block",
-            reason="[pypto-pro-op-lint] 无法定位被编辑文件所属的 Pro 算子目录",
+            reason="[pypto-pro-op-lint] cannot locate the Pro operator directory of the edited file",
             additionalContext="",
         )
         return 0
@@ -152,7 +153,7 @@ def hook_post_edit() -> int:
         _output_hook_json(
             "PostToolUse",
             decision="block",
-            reason=f"[pypto-pro-op-lint] 无法为 {basename} 选择 post-edit 规则",
+            reason=f"[pypto-pro-op-lint] cannot select post-edit rules for {basename}",
             additionalContext="",
         )
         return 0
@@ -213,13 +214,13 @@ def hook_stop() -> int:
         _output_hook_json(
             "Stop",
             decision="block",
-            reason="[pypto-pro-op-lint] 交付门禁未通过，存在 ERROR（S0/S1）级违规：\n"
+            reason="[pypto-pro-op-lint] Delivery gate failed, ERROR (S0/S1) level violations exist:\n"
             + "\n".join(lines)
             + "\n\nblocking_rules: "
             + ", ".join(blocking_rules)
             + "\nfix_hints:\n"
             + "\n".join(hint_lines)
-            + "\n\n**⛔ 门禁已阻断：请先修复上述 ERROR 级违规，再继续后续操作。**",
+            + "\n\n**⛔ Gate blocked: fix the ERROR-level violations above first, then continue.**",
         )
         return 2
     _emit_gate_event(ctx, blocked=False, blocking_rules=[], invocation_id=invocation_id)

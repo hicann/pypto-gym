@@ -339,12 +339,12 @@ def _build_chain_groups(starts, aiv_succ, keyed, stop_set=None):
 def _log_analysis_header(topo, rows, starts, lh_has_cube):
     aiv_count = sum(1 for row in rows if row["coreType"] == 0)
     logging.info("=" * 80)
-    logging.info("AIV 依赖链分析（sg_set_scope 合图优化）")
+    logging.info("AIV Dependency Chain Analysis (sg_set_scope graph merge optimization)")
     logging.info("=" * 80)
-    logging.info(f"\n数据: {topo}")
-    logging.info(f"总任务: {len(rows)}, AIV: {aiv_count}, 起点: {len(starts)}")
+    logging.info(f"\nData: {topo}")
+    logging.info(f"Total tasks: {len(rows)}, AIV: {aiv_count}, Starts: {len(starts)}")
     if lh_has_cube:
-        logging.info(f"后继含 cube 的 leafHash: {sorted(lh_has_cube)}")
+        logging.info(f"leafHash with cube successors: {sorted(lh_has_cube)}")
 
 
 def _chain_count(items, graph):
@@ -375,10 +375,10 @@ def _json_levels(levels):
 
 
 def _log_original_chain(label, count, levels, leaf_info):
-    logging.info(f"\n链路{label}（{count}次）")
+    logging.info(f"\nChain {label} ({count} times)")
     if _is_isolated(levels):
         node = levels[0][0]
-        logging.info(f"{node['leafHash']}  (孤立，无依赖)")
+        logging.info(f"{node['leafHash']}  (isolated, no dependencies)")
         if node["leafHash"] in leaf_info:
             leaf = leaf_info[node["leafHash"]]
             logging.info(
@@ -407,10 +407,13 @@ def _process_original_groups(groups, graph, leaf_info, include_json):
 
 def _log_suggestion_header():
     logging.info(f"\n{'=' * 80}")
-    logging.info("sg_set_scope 优化建议")
+    logging.info("sg_set_scope optimization suggestions")
     logging.info(f"{'=' * 80}")
-    logging.info("\n规则: 遇到后继含 cube 的 AIV 节点时保留该节点，但不继续展开")
-    logging.info("      截断后 >=2 节点且 psgId 有变化的链段建议 sg_set_scope 合并\n")
+    logging.info("\nRule: when an AIV node has cube successors, keep the node but do not expand further")
+    logging.info(
+        "      Chain segments with >=2 nodes after truncation and psgId "
+        "changes are suggested to merge with sg_set_scope\n"
+    )
 
 
 def _collect_cut_points(levels, lh_has_cube):
@@ -439,8 +442,8 @@ def _log_suggestion(suggestion, leaf_info, lh_has_cube):
     cut_points = suggestion["cut_points"]
     psg_path = " → ".join(str(node["psgId"]) for node in nodes)
     logging.info(
-        f"  建议 {index}: 截断后 {len(nodes)} 个节点, "
-        f"{count} 次, psgId 变化: {psg_path}"
+        f"  Suggestion {index}: {len(nodes)} nodes after truncation, "
+        f"{count} times, psgId changes: {psg_path}"
     )
 
     if _is_isolated(levels):
@@ -452,16 +455,16 @@ def _log_suggestion(suggestion, leaf_info, lh_has_cube):
     for node in nodes:
         leaf = leaf_info.get(node["leafHash"], {})
         label = infer_label(leaf.get("ops", [])) if leaf else ""
-        cube_mark = " [✂ cube边界]" if node["leafHash"] in lh_has_cube else ""
+        cube_mark = " [✂ cube boundary]" if node["leafHash"] in lh_has_cube else ""
         logging.info(f"    {node['leafHash']}: psg={node['psgId']}, {label}{cube_mark}")
 
     if can_merge:
         merge_path = ' → '.join(str(psg_id) for psg_id in _unique_psg_path(nodes))
-        logging.info(f"    → 建议: 用 sg_set_scope 包裹 psgId {merge_path} 的 vector 操作")
+        logging.info(f"    → Suggestion: wrap the vector operations of psgId {merge_path} with sg_set_scope")
     else:
-        logging.info("    → 单节点或 psgId 无变化, 无需 sg_set_scope")
+        logging.info("    → Single node or psgId unchanged, no sg_set_scope needed")
     if cut_points:
-        logging.info(f"    ✂ 截断点 (后继含 cube): {cut_points}")
+        logging.info(f"    ✂ Cut points (cube successors): {cut_points}")
     logging.info("")
 
 
@@ -505,7 +508,7 @@ def _write_json(path, chains, suggestions):
             indent=2,
             ensure_ascii=False,
         )
-    logging.info(f"\nJSON 已写入: {output_path}")
+    logging.info(f"\nJSON written to: {output_path}")
 
 
 def main():
@@ -519,7 +522,7 @@ def main():
 
     _log_analysis_header(topo, rows, starts, lh_has_cube)
     groups = _build_chain_groups(starts, aiv_succ, keyed)
-    logging.info(f"去重后链路: {len(groups)} 条")
+    logging.info(f"Deduped chains: {len(groups)}")
     json_chains = _process_original_groups(
         groups, graph, leaf_info, bool(args.json)
     )
@@ -527,8 +530,8 @@ def main():
     _log_suggestion_header()
     json_suggestions = []
     if not lh_has_cube:
-        logging.info("  所有 AIV 节点均无 cube 后继，无需截断")
-        logging.info("  建议对完整链路中 psgId 有变化的段进行 sg_set_scope 合并")
+        logging.info("  No AIV node has cube successors, no truncation needed")
+        logging.info("  For full chains with psgId changes, merge the segments with sg_set_scope")
     else:
         cut_groups = _build_chain_groups(
             starts, aiv_succ, keyed, stop_set=lh_has_cube
@@ -540,7 +543,7 @@ def main():
     if args.json:
         _write_json(args.json, json_chains, json_suggestions)
     logging.info(f"\n{'=' * 80}")
-    logging.info("分析完成")
+    logging.info("Analysis complete")
 
 
 if __name__ == "__main__":

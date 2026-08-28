@@ -713,7 +713,7 @@ def chunk_gated_delta_rule_wrapper(
 
     if "head_first" in kwargs:
         warnings.warn(
-            "head_first 已废弃：gdr_fwd 仅接受 [B, T, H, K] 布局，该参数将被忽略。",
+            "head_first is deprecated: gdr_fwd only accepts the [B, T, H, K] layout, this parameter will be ignored.",
             DeprecationWarning,
             stacklevel=2,
         )

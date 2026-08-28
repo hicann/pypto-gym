@@ -9,6 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import logging
 import os
 import sys
 import argparse
@@ -72,7 +73,7 @@ def test_scatter_nd_sub(device_id: int = None, run_mode: str = "npu", dynamic: b
     updates_max_value = 2
 
     for idx, (target_shape_list, indices_shape_list, updates_shape_list) in enumerate(input_scenarios):
-        print(f"\n=== 生成第 {idx+1} 个场景的数据 ===")
+        print(f"\n=== Generating data for scenario {idx+1} ===")
 
         target_shape = tuple(target_shape_list)
         indices_shape = tuple(indices_shape_list)
@@ -156,21 +157,20 @@ Examples:
 
     # List examples if requested
     if args.list:
-        print("\n" + "=" * 60)
-        print("Available Examples")
-        print("=" * 60 + "\n")
+        logging.info("Available Examples")
+        logging.info("=" * 60 + "\n")
         for ex_id, ex_info in sorted(examples.items()):
-            print(f"  ID: {ex_id}")
-            print(f"     name: {ex_info['name']}")
-            print(f"     description: {ex_info['description']}\n")
+            logging.info(f"  ID: {ex_id}")
+            logging.info(f"     name: {ex_info['name']}")
+            logging.info(f"     description: {ex_info['description']}\n")
         return
 
     # Validate example ID if provided
     if args.example_id is not None:
         if args.example_id not in examples:
-            print(f"ERROR: Invalid example ID: {args.example_id}")
-            print(f"Valid example IDs are: {', '.join(map(str, sorted(examples.keys())))}")
-            print("\nUse --list to see all available examples.")
+            logging.error(f"ERROR: Invalid example ID: {args.example_id}")
+            logging.info(f"Valid example IDs are: {', '.join(map(str, sorted(examples.keys())))}")
+            logging.info("\nUse --list to see all available examples.")
             raise RuntimeError("Test execution failed")
 
     print("\n" + "=" * 60)
@@ -209,7 +209,7 @@ Examples:
             print("=" * 60)
 
     except Exception as e:
-        print(f"\nError: {e}")
+        logging.error(f"\nError: {e}")
         raise
 
 

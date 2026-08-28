@@ -258,7 +258,7 @@ def _self_test() -> int:
         else:
             ok = any(e.startswith(want) for e in errs)
         bad += 0 if ok else 1
-        _LOGGER.info("%s %s: %s", "PASS" if ok else "FAIL", name,
+        _LOGGER.error("%s %s: %s", "PASS" if ok else "FAIL", name,
                      errs if errs else "no errors")
     return 1 if bad else 0
 
@@ -277,10 +277,10 @@ def main() -> int:
     spec = _load(args.yaml)
     errors = validate(spec or {})
     if args.json:
-        _LOGGER.info(json.dumps(
+        _LOGGER.error(json.dumps(
             {"status": "PASS" if not errors else "FAIL", "violations": errors}, indent=2))
     elif errors:
-        _LOGGER.info("FAIL:")
+        _LOGGER.error("FAIL:")
         for e in errors:
             _LOGGER.info("  - %s", e)
     else:

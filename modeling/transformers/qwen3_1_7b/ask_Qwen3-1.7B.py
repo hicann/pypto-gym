@@ -30,8 +30,8 @@ parser.add_argument("--use-pto", action="store_true", help="启用PyPTO融合算
 args = parser.parse_args()
 
 torch.npu.set_device(args.device)
-logger.info("使用设备: npu:%s", args.device)
-logger.info("模型路径: %s", args.model_path)
+logger.info("Using device: npu:%s", args.device)
+logger.info("Model path: %s", args.model_path)
 
 # PyPTO injection (must happen before transformers import)
 if args.use_pto:

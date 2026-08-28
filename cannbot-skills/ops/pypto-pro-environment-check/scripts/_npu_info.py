@@ -718,7 +718,7 @@ def _output_json(collector: NpuInfoCollector, npu_ids: List[int]) -> int:
 
 def _output_warnings(collector: NpuInfoCollector) -> int:
     for w in collector.get_all_warnings():
-        _LOGGER.info("WARN: %s", w)
+        _LOGGER.warning("WARN: %s", w)
     return 0
 
 

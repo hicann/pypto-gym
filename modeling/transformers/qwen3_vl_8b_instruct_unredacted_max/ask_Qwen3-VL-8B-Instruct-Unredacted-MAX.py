@@ -47,7 +47,7 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\n".join(lines)
-    logging.info(f"从文件读取提示词: {args.sentence_file} ({len(prompt)} 字符)")
+    logging.info(f"Prompt read from file: {args.sentence_file} ({len(prompt)} chars)")
 else:
     prompt = "你好，请介绍一下自己。"
 
@@ -58,8 +58,8 @@ if args.use_pypto:
     pto_kernels.USE_PTO_RMS_NORM = True
     logging.info("PyPTO mode enabled: RMSNorm fused")
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True, trust_remote_code=True)
@@ -91,7 +91,7 @@ if args.use_pypto:
     logging.info(f"PyPTO RMSNorm monkey-patched to {patched_count} layers")
 
 inputs = tokenizer(text, return_tensors="pt").to(f"npu:{args.device}")
-logging.info(f"输入token数: {inputs.input_ids.shape[1]}")
+logging.info(f"Input token count: {inputs.input_ids.shape[1]}")
 with torch.no_grad():
     outputs = model.generate(**inputs, max_new_tokens=args.output_length, temperature=0.7, do_sample=True, top_p=0.8)
 response = tokenizer.decode(outputs[0], skip_special_tokens=True)

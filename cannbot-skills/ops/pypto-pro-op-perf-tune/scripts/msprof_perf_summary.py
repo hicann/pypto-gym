@@ -302,22 +302,25 @@ def per_core_balance_section(merged: Dict[str, Any], group_dir: str) -> List[str
     spread_pct = (t_max - t_min) / t_max * 100.0 if t_max > 0 else 0.0
 
     if spread_pct < 10:
-        verdict = "达标 (<10%)"
+        verdict = "PASS (<10%)"
     elif spread_pct < 30:
-        verdict = "警告 (10~30%)"
+        verdict = "Warning (10~30%)"
     else:
-        verdict = "严重问题 (>30%)"
+        verdict = "Critical issue (>30%)"
 
-    lines = ["", "--- 逐核负载均衡 (sample-based aicore.db) ---"]
-    lines.append(f"  有效核数: {len(times)}  | 主频推算: {freq_ghz:.3f} GHz ({ns_per_cyc:.4f} ns/cycle)")
+    lines = ["", "--- Per-core load balancing (sample-based aicore.db) ---"]
+    lines.append(
+        f"  Effective cores: {len(times)}  | Estimated frequency: "
+        f"{freq_ghz:.3f} GHz ({ns_per_cyc:.4f} ns/cycle)"
+    )
     lines.append(f"  min={t_min:.3f}us  avg={t_avg:.3f}us  max={t_max:.3f}us")
     lines.append(f"  (max-min)/max = {spread_pct:.2f}%  ->  {verdict}")
 
     sorted_desc = sorted(times, key=lambda x: -x[1])
     slow_top = sorted_desc[:3]
     fast_top = sorted_desc[-3:][::-1]
-    lines.append("  Top-3 慢核: " + ", ".join(f"Core{cid}={t:.2f}us" for cid, t in slow_top))
-    lines.append("  Top-3 快核: " + ", ".join(f"Core{cid}={t:.2f}us" for cid, t in fast_top))
+    lines.append("  Top-3 slowest cores: " + ", ".join(f"Core{cid}={t:.2f}us" for cid, t in slow_top))
+    lines.append("  Top-3 fastest cores: " + ", ".join(f"Core{cid}={t:.2f}us" for cid, t in fast_top))
 
     sorted_by_id = sorted(times, key=lambda x: x[0])
     if len(sorted_by_id) >= 4:
@@ -329,8 +332,8 @@ def per_core_balance_section(merged: Dict[str, Any], group_dir: str) -> List[str
         gap = abs(g1_avg - g2_avg) / max(g1_avg, g2_avg) * 100.0
         if gap >= 2.0:
             lines.append(
-                f"  [提示] 前半段 core 均值 {g1_avg:.2f}us vs 后半段 {g2_avg:.2f}us，"
-                f"差距 {gap:.2f}%"
+                f"  [Hint] first-half core avg {g1_avg:.2f}us vs second-half {g2_avg:.2f}us, "
+                f"gap {gap:.2f}%"
             )
             lines.append(
                 "         疑似两簇 (NUMA / L2 slice) 负载偏斜，"
@@ -452,7 +455,7 @@ def _add_memory_section(lines: List[str], merged: Dict[str, Any]) -> None:
     if not has_mem:
         return
     lines.append("")
-    lines.append("--- Memory 带宽 (aic-metrics=Memory) ---")
+    lines.append("--- Memory bandwidth (aic-metrics=Memory) ---")
     mem_rows = [
         ("aic main_mem read", "aic_main_mem_read_bw(GB/s)"),
         ("aic main_mem write", "aic_main_mem_write_bw(GB/s)"),
@@ -609,17 +612,17 @@ def _add_basic_info(lines: List[str], merged: Dict[str, Any]) -> Tuple[float, fl
     aicore_time = safe_float(merged.get("aicore_time(us)"))
     aiv_time = safe_float(merged.get("aiv_time(us)"))
 
-    lines.append("=== 上板性能统计摘要 (msprof) ===")
+    lines.append("=== On-device performance statistics summary (msprof) ===")
     lines.append(f"Op: {op_name}")
     lines.append(
         f"Type: {op_type} | TaskType: {task_type} | Duration: {duration}us"
         f" | BlockDim: {block_dim} (mix={mix_block})"
     )
     if merged.get("_missing_metrics"):
-        lines.append(f"[WARN] 缺失指标: {', '.join(merged['_missing_metrics'])}")
+        lines.append(f"[WARN] Missing metrics: {', '.join(merged['_missing_metrics'])}")
     lines.append("")
-    lines.append("[注] msprof 的 op_summary 是 per-op 聚合值（不含逐核 min/avg/max）；")
-    lines.append("     如需逐核数据请改用 msprof op (需要 msopprof 二进制)。")
+    lines.append("[Note] msprof op_summary is a per-op aggregate value (not per-core min/avg/max);")
+    lines.append("     For per-core data, switch to msprof op (requires the msopprof binary).")
     return duration, aicore_time, aiv_time
 
 
@@ -628,7 +631,7 @@ def _add_pipe_ratios(lines: List[str], merged: Dict[str, Any], aicore_time: floa
     aic_cube_like = max(safe_float(merged.get("aic_mac_ratio")), safe_float(merged.get("aic_mte2_ratio")))
     aiv_vec_like = safe_float(merged.get("aiv_vec_ratio"))
     prefix = "aic" if aic_cube_like >= aiv_vec_like else "aiv"
-    lines.append(f"--- Pipe ratios (主导核 = {prefix}) ---")
+    lines.append(f"--- Pipe ratios (dominant core = {prefix}) ---")
     lines.append(f"  aicore_time: {aicore_time:.3f}us | aiv_time: {aiv_time:.3f}us")
 
     aic_fields = [
@@ -666,23 +669,23 @@ def _add_overhead(lines: List[str], duration: float, aicore_time: float, aiv_tim
     core_time_max = max(aicore_time, aiv_time)
     overhead = max(0.0, duration - core_time_max)
     overhead_pct = (overhead / duration * 100.0) if duration > 0 else 0.0
-    lines.append("--- 头开销 ---")
+    lines.append("--- Overhead ---")
     lines.append(
-        f"  Task Duration: {duration}us | 核最长耗时: {core_time_max:.3f}us"
-        f" | 头开销: {overhead:.3f}us ({overhead_pct:.1f}%)"
+        f"  Task Duration: {duration}us | max core time: {core_time_max:.3f}us"
+        f" | overhead: {overhead:.3f}us ({overhead_pct:.1f}%)"
     )
 
 
 def _add_footer(lines: List[str], merged: Dict[str, Any], round_dir: str, group_dir: str) -> None:
     lines.append("")
-    lines.append("--- 原始数据位置 ---")
-    lines.append(f"  归档 CSV : {round_dir}/")
+    lines.append("--- Raw data location ---")
+    lines.append(f"  Archived CSV : {round_dir}/")
     lines.append(f"  采集源 PROF（compare 默认清理）: {group_dir}/")
-    lines.append("  按 aic-metrics 拆分的 op_summary_<Metric>.csv 均已复制到归档目录，")
-    lines.append("  如需逐列查看可直接 Read。")
+    lines.append("  op_summary_<Metric>.csv split by aic-metrics have all been copied to the archive directory, ")
+    lines.append("  for per-column inspection, just Read.")
     if merged.get("_metric_sources"):
         lines.append("")
-        lines.append("--- Metric 来源 ---")
+        lines.append("--- Metric source ---")
         for m in METRICS:
             src = merged["_metric_sources"].get(m)
             if src:
@@ -2300,11 +2303,11 @@ def main():
         sys.exit(_validate_case_source_mode(args))
     elif args.compare:
         if not args.output_dir:
-            parser.error("--compare 模式必须指定 --output-dir")
+            parser.error("--compare mode requires --output-dir")
         sys.exit(run_compare_mode(args))
     elif args.quick:
         if not args.output_dir:
-            parser.error("--quick 模式必须指定 --output-dir")
+            parser.error("--quick mode requires --output-dir")
         sys.exit(run_quick_mode(args))
     elif args.batch:
         try:
@@ -2314,7 +2317,7 @@ def main():
             sys.exit(1)
     else:
         if not args.prof_group_dir or not args.ops_dir:
-            parser.error("标准模式需要 prof_group_dir 和 ops_dir 参数")
+            parser.error("Standard mode requires prof_group_dir and ops_dir arguments")
         try:
             _run_standard_mode(args)
         except ValueError as e:

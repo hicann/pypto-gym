@@ -138,7 +138,7 @@ def _self_test() -> int:
     ok = (params == ["x", "scale"]
           and "op: relu" in out and "name: x" in out and "name: scale" in out
           and "dtype: float16" in out and "atol: 0.001" in out and "modules:" in out)
-    _LOGGER.info("%s self-test: params=%s", "PASS" if ok else "FAIL", params)
+    _LOGGER.error("%s self-test: params=%s", "PASS" if ok else "FAIL", params)
     return 0 if ok else 1
 
 

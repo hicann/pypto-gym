@@ -91,14 +91,14 @@ def pct(a, b):
     if b == 0: return 'N/A'
     return f\"{{((a-b)/b*100):+.1f}}%\"
 
-print(f\"{{'指标':<24}} {{'Baseline':>12}} {{'PyPTO':>12}} {{'Diff':>10}}")
+print(f\"{{'Metric':<24}} {{'Baseline':>12}} {{'PyPTO':>12}} {{'Diff':>10}}")
 print('-' * 60)
 fields = [
-    ('model_load_s',         '模型加载 (s)'),
-    ('generate_s',           '推理耗时 (s)'),
-    ('generated_tokens',     '生成token数'),
-    ('tokens_per_second',    '吞吐 (tokens/s)'),
-    ('generate_peak_mem_mb', '峰值显存 (MB)'),
+    ('model_load_s',         'Model Load (s)'),
+    ('generate_s',           'Inference Time (s)'),
+    ('generated_tokens',     'Generated Tokens'),
+    ('tokens_per_second',    'Throughput (tokens/s)'),
+    ('generate_peak_mem_mb', 'Peak Mem (MB)'),
 ]
 for key, label in fields:
     bv = b.get(key, 0)
@@ -106,7 +106,7 @@ for key, label in fields:
     diff = pct(pv, bv)
     print(f'{{label:<24}} {{bv:>12.2f}} {{pv:>12.2f}} {{diff:>10}}')
 print()
-print('报告文件:')
+print('Report files:')
 print(f'  Baseline: {{sys.argv[1]}}')
 print(f'  PyPTO:    {{sys.argv[2]}}')
 PY

@@ -67,14 +67,14 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\\n".join(lines)
-    logging.info(f"从文件读取提示词: {{args.sentence_file}} ({{len(prompt)}} 字符)")
+    logging.info(f"Prompt loaded from file: {{args.sentence_file}} ({{len(prompt)}} chars)")
 else:
     prompt = "你好"
 
 # ---- ACL Graph: JIT compile mode (必须在 set_device 之前) ----
 if args.use_acl_graph:
     torch.npu.set_compile_mode(jit_compile=True)
-    logging.info("ACL Graph (JIT Compile) 已启用")
+    logging.info("ACL Graph (JIT Compile) enabled")
 
 # ---- PTO / ACL Graph 注入 (必须在 transformers 导入之前) ----
 pto_kernels = None
@@ -86,17 +86,17 @@ if args.use_pto or args.use_acl_graph:
         if args.use_pto:
             pto_kernels.USE_PTO_RMS_NORM = True
             pto_kernels.USE_PTO_ATTN_PROLOG = True
-            logging.info("PyPTO 融合算子已启用")
+            logging.info("PyPTO fused operators enabled")
         if args.use_acl_graph:
             pto_kernels.USE_ACL_GRAPH = True
     except ImportError:
-        logging.warning("PyPTO kernel 包 {pkg_name} 未找到，跳过注入")
+        logging.warning("PyPTO kernel package {pkg_name} not found, skipping injection")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 torch.npu.set_device(args.device)
-logging.info(f"使用设备: npu:{{args.device}}")
-logging.info(f"模型路径: {{args.model_path}}")
+logging.info(f"Using device: npu:{{args.device}}")
+logging.info(f"Model path: {{args.model_path}}")
 
 # ---- Tokenizer ----
 t0 = time.perf_counter()
@@ -127,14 +127,14 @@ if args.use_acl_graph:
     compiler_config.experimental_config.enable_view_optimize = True
     npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
     model = torch.compile(model, dynamic=True, fullgraph=True, backend=npu_backend)
-    logging.info("ACL Graph torch.compile 已封装")
+    logging.info("ACL Graph torch.compile wrapped")
 
 # ---- Warmup ----
 for i in range(3):
     warm = tokenizer("Hello world", return_tensors="pt").to(f"npu:{{args.device}}")
     _ = model.generate(**warm, max_new_tokens=8, do_sample=False)
 torch.npu.synchronize()
-logging.info("Warmup 完成 (3x8 tokens)")
+logging.info("Warmup completed (3x8 tokens)")
 
 # ---- Per-step timing (hook model forward, 必须在 warmup 之后) ----
 if args.per_step_timing:
@@ -144,7 +144,7 @@ if args.per_step_timing:
         _out = _orig_forward(*model_args, **model_kwargs)
         torch.npu.synchronize()
         _dur = (time.perf_counter() - _step_t0) * 1e6
-        print(f"====duration==== {{_dur:.2f}}us")
+        logging.info(f"====duration==== {{_dur:.2f}}us")
         return _out
     model.forward = _timed_forward
 
@@ -152,7 +152,7 @@ if args.per_step_timing:
 inputs = tokenizer(prompt, return_tensors="pt").to(f"npu:{{args.device}}")
 input_len = inputs.input_ids.shape[1]
 metrics["input_tokens"] = input_len
-logging.info(f"输入token数: {{input_len}}")
+logging.info(f"Input tokens: {{input_len}}")
 
 # ---- Generate ----
 torch.npu.synchronize()
@@ -203,17 +203,17 @@ metrics["mode"] = "+".join(mode_parts) if mode_parts else "eager"
 metrics["model"] = "{args.model_name}"
 
 logging.info(f"\\n--- Performance ---")
-logging.info(f"  模式:           {{metrics['mode']}}")
-logging.info(f"  模型加载:       {{metrics['model_load_s']}}s (峰值显存 {{metrics['model_load_peak_mem_mb']}}MB)")
-logging.info(f"  推理耗时:       {{metrics['generate_s']}}s")
-logging.info(f"  生成token数:    {{metrics['generated_tokens']}}")
-logging.info(f"  吞吐量:         {{metrics['tokens_per_second']}} tokens/s")
-logging.info(f"  推理峰值显存:   {{metrics['generate_peak_mem_mb']}}MB")
+logging.info(f"  Mode:           {{metrics['mode']}}")
+logging.info(f"  Model load:       {{metrics['model_load_s']}}s (Peak mem {{metrics['model_load_peak_mem_mb']}}MB)")
+logging.info(f"  Inference time:  {{metrics['generate_s']}}s")
+logging.info(f"  Generated tokens: {{metrics['generated_tokens']}}")
+logging.info(f"  Throughput:      {{metrics['tokens_per_second']}} tokens/s")
+logging.info(f"  Inference peak mem: {{metrics['generate_peak_mem_mb']}}MB")
 
 if args.report_file:
     with open(args.report_file, "w") as f:
         json.dump(metrics, f, indent=2)
-    logging.info(f"  报告已写入:     {{args.report_file}}")
+    logging.info(f"  Report written:  {{args.report_file}}")
 '''
 
 os.makedirs(args.script_dir, exist_ok=True)
@@ -222,10 +222,10 @@ with open(output_file, "w") as f:
     f.write(content)
 os.chmod(output_file, 0o755)
 
-logging.info(f"脚本已生成: {output_file}")
-logging.info("\n使用方法:")
+logging.info(f"Script generated: {output_file}")
+logging.info("\nUsage:")
 logging.info(f"  python3 {output_file}")
-logging.info(f"  python3 {output_file} --prompt '你的问题'")
+logging.info(f"  python3 {output_file} --prompt 'your question'")
 logging.info(f"  python3 {output_file} --device 7")
 logging.info(f"  python3 {output_file} --use-pto")
 logging.info(f"  python3 {output_file} --use-acl-graph")

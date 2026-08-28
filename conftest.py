@@ -89,7 +89,7 @@ def _is_case_match_cards(item, target_cards) -> bool:
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
-    """为每个 worker 节点配置设备"""
+    """Configure devices for each worker node"""
     print(f"========== pytest_configure_node called for node {node.gateway.id} ==========", flush=True)
     
     # 从环境变量获取设备列表

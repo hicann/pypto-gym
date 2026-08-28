@@ -68,13 +68,13 @@ torch.npu.set_device(args.device)
 device = f"npu:{args.device}"
 
 print("=" * 80)
-print("SwiGLU MLP整网集成 - torch.compile模式")
+print("SwiGLU MLP full-network integration - torch.compile mode")
 print("=" * 80)
-print(f"设备: {device}")
+print(f"Device: {device}")
 print(f"Batch: {args.batch}")
 print(f"Prompt: {args.prompt}")
 print(f"Output length: {args.output_length}")
-print(f"模式:")
+print(f"Mode:")
 print(f"  PyPTO: {args.use_pto}")
 print(f"  Dynamic Config: {args.use_dynamic_config}")
 print(f"  Simple Prompt: {args.simple_prompt}")
@@ -98,7 +98,7 @@ metrics = {
 
 # ===== 步骤22：sys.modules注入 =====
 if args.use_pto or args.use_dynamic_config:
-    print("\n[步骤22] sys.modules注入...")
+    print("\n[Step 22] sys.modules injection...")
 
     # 1. 添加路径
     sys.path.insert(0, args.model_path)
@@ -107,21 +107,21 @@ if args.use_pto or args.use_dynamic_config:
     if args.use_dynamic_config:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from dynamic_pto_config import DynamicPTOConfig
-        print("✓ 导入dynamic_pto_config成功")
+        print("✓ Imported dynamic_pto_config successfully")
 
     # 3. 导入模块（注意：实际模块名是pto_kernels）
     try:
         import pto_kernels
-        print("✓ 导入pto_kernels成功")
+        print("✓ Imported pto_kernels successfully")
     except ImportError as e:
-        print(f"✗ 导入pto_kernels失败: {e}")
+        print(f"✗ Failed to import pto_kernels: {e}")
         import traceback
         traceback.print_exc()
         raise RuntimeError(f"Failed to import pto_kernels: {e}") from e
 
     # 4. 注册全局（关键：注册为gutenocr_3b_pto_kernels）
     sys.modules["gutenocr_3b_pto_kernels"] = pto_kernels
-    print("✓ sys.modules注册完成（注册为gutenocr_3b_pto_kernels）")
+    print("✓ sys.modules registration complete (registered as gutenocr_3b_pto_kernels)")
 
     # 5. 应用算子配置
     if args.use_dynamic_config:
@@ -131,17 +131,17 @@ if args.use_pto or args.use_dynamic_config:
         # 自动调整aclgraph参数（如果动态配置建议使用aclgraph）
         if config['use_aclgraph'] and not args.use_acl_graph:
             args.use_acl_graph = True
-            print(f"✓ 动态配置自动启用aclgraph: {config['mode']}")
+            print(f"✓ Dynamic config auto-enabled aclgraph: {config['mode']}")
 
         # 应用配置
         DynamicPTOConfig.apply_config(pto_kernels, args.batch, config['mode'])
 
-        print(f"✓ 动态配置应用成功 (Batch={args.batch}):")
+        print(f"✓ Dynamic config applied successfully (Batch={args.batch}):")
         print(f"  USE_PTO_RMS_NORM = {pto_kernels.USE_PTO_RMS_NORM}")
         print(f"  USE_PTO_MROPE = {pto_kernels.USE_PTO_MROPE}")
         print(f"  USE_PTO_SWIGLU_MLP = {pto_kernels.USE_PTO_SWIGLU_MLP}")
-        print(f"  预期吞吐 = {config['expected_throughput']:.2f} tokens/s")
-        print(f"  配置原因: {config['reason']}")
+        print(f"  Expected throughput = {config['expected_throughput']:.2f} tokens/s")
+        print(f"  Config reason: {config['reason']}")
 
         metrics["dynamic_config"] = config
     else:
@@ -163,13 +163,13 @@ if args.use_pto or args.use_dynamic_config:
         pto_kernels.USE_ACL_GRAPH = True
         print(f"✓ USE_ACL_GRAPH = {pto_kernels.USE_ACL_GRAPH}")
 
-    print("[步骤22] ✓ sys.modules注入完成")
+    print("[Step 22] ✓ sys.modules injection complete")
 else:
     pto_kernels = None
-    print("[步骤22] 未启用PyPTO或动态配置，跳过注入")
+    print("[Step 22] PyPTO or dynamic config not enabled, skipping injection")
 
 # ===== 加载模型 =====
-print("\n[模型加载]")
+print("\n[Model Loading]")
 start_load = time.time()
 
 
@@ -189,12 +189,12 @@ for layer in model.model.language_model.layers:
 
 model.eval()
 load_time = time.time() - start_load
-print(f"✓ 模型加载完成 ({load_time:.2f}s)")
+print(f"✓ Model loaded ({load_time:.2f}s)")
 metrics["load_time"] = load_time
 
 # ===== 步骤23：aclgraph适配 =====
 if args.use_compile or args.use_acl_graph:
-    print("\n[步骤23] torch.compile配置...")
+    print("\n[Step 23] torch.compile configuration...")
 
     if args.use_acl_graph:
         # aclgraph模式（使用torchair CompilerConfig）
@@ -203,7 +203,7 @@ if args.use_compile or args.use_acl_graph:
             import torchair.ge_concrete_graph.ge_converter.experimental.patch_for_hcom_allreduce
             from torchair.configs.compiler_config import CompilerConfig
 
-            print("✓ torchair可用")
+            print("✓ torchair available")
 
             # ⭐ 按照正确范式配置CompilerConfig
             compiler_config = CompilerConfig()
@@ -212,7 +212,7 @@ if args.use_compile or args.use_acl_graph:
 
             npu_backend = tng.get_npu_backend(compiler_config=compiler_config)
 
-            print(f"✓ CompilerConfig配置完成")
+            print(f"✓ CompilerConfig configured")
             print(f"  frozen_parameter: True")
             print(f"  tiling_schedule_optimize: True")
 
@@ -228,11 +228,11 @@ if args.use_compile or args.use_acl_graph:
                 print(f"  Mode: {args.mode}")
 
             model = torch.compile(model, **compile_kwargs)
-            print(f"✓ torch.compile(aclgraph)完成")
+            print(f"✓ torch.compile(aclgraph) done")
 
         except ImportError as e:
-            print(f"✗ torchair不可用: {e}")
-            print(f"  回退到 torch.compile(backend='{args.backend}', mode='{args.mode}')")
+            print(f"✗ torchair unavailable: {e}")
+            print(f"  Falling back to torch.compile(backend='{args.backend}', mode='{args.mode}')")
 
             # 回退配置
             compile_kwargs = {"backend": args.backend}
@@ -253,12 +253,12 @@ if args.use_compile or args.use_acl_graph:
         model = torch.compile(model, **compile_kwargs)
 
         mode_str = f"mode={args.mode}" if args.mode else "default mode"
-        print(f"✓ torch.compile(backend={args.backend}, {mode_str})完成")
+        print(f"✓ torch.compile(backend={args.backend}, {mode_str}) done")
 
     metrics["compile_mode"] = f"{args.backend}" if not args.use_acl_graph else "aclgraph"
 
 # ===== 准备输入 =====
-print("\n[输入准备]")
+print("\n[Input Preparation]")
 processor = AutoProcessor.from_pretrained(
     args.model_path,
     local_files_only=True,
@@ -269,7 +269,7 @@ if args.simple_prompt:
     # 简化prompt模式（高性能）
     prompts = [args.prompt] * args.batch
     inputs = processor(text=prompts, return_tensors="pt", padding=True).to(device)
-    print(f"✓ 简化模式: 输入shape={inputs.input_ids.shape} (高性能)")
+    print(f"✓ Simple mode: input shape={inputs.input_ids.shape} (high performance)")
 else:
     # 标准模式（apply_chat_template）
     messages = [{"role": "user", "content": [{"type": "text", "text": args.prompt}]}]
@@ -281,15 +281,15 @@ else:
     else:
         inputs = processor(text=[text], return_tensors="pt").to(device)
 
-    print(f"✓ 标准模式: 输入shape={inputs.input_ids.shape} (完整格式)")
+    print(f"✓ Standard mode: input shape={inputs.input_ids.shape} (full format)")
 
-print(f"✓ 输入准备完成")
+print(f"✓ Input preparation complete")
 
 # ===== 推理执行 =====
-print("\n[推理执行]")
+print("\n[Inference]")
 
 # Warmup
-print(f"Warmup ({args.warmup}次)...")
+print(f"Warmup ({args.warmup} iters)...")
 with torch.no_grad():
     for i in range(args.warmup):
         if args.batch > 1:
@@ -299,10 +299,10 @@ with torch.no_grad():
         torch.npu.synchronize()
         if i % 5 == 0 or i == args.warmup - 1:
             print(f"  Warmup {i+1}/{args.warmup}")
-print("✓ Warmup完成")
+print("✓ Warmup complete")
 
 # 正式推理（多次取平均）
-print(f"推理 (max_new_tokens={args.output_length}, 5次平均)...")
+print(f"Inference (max_new_tokens={args.output_length}, average of 5 runs)...")
 torch.npu.reset_peak_memory_stats()
 
 infer_times = []
@@ -327,16 +327,16 @@ for i in range(5):
     throughputs.append(throughput)
 
     if i % 2 == 0 or i == 4:
-        print(f"  第{i+1}次: {infer_time:.3f}s, {throughput:.2f} tokens/s")
+        print(f"  Run {i+1}: {infer_time:.3f}s, {throughput:.2f} tokens/s")
 
 avg_infer_time = sum(infer_times) / len(infer_times)
 avg_throughput = sum(throughputs) / len(throughputs)
 peak_memory = torch.npu.max_memory_allocated() / 1024**2  # MB
 
-print(f"✓ 推理完成")
-print(f"  平均耗时: {avg_infer_time:.3f}s")
-print(f"  平均吞吐: {avg_throughput:.2f} tokens/s")
-print(f"  峰值显存: {peak_memory:.2f}MB")
+print(f"✓ Inference complete")
+print(f"  Avg inference time: {avg_infer_time:.3f}s")
+print(f"  Avg throughput: {avg_throughput:.2f} tokens/s")
+print(f"  Peak memory: {peak_memory:.2f}MB")
 
 infer_time = avg_infer_time  # 用于后续报告
 
@@ -346,31 +346,31 @@ metrics["tokens_generated"] = outputs.shape[1] - inputs.input_ids.shape[1]
 metrics["throughput_tokens_per_sec"] = metrics["tokens_generated"] / infer_time
 
 # ===== 输出结果 =====
-print("\n[输出结果]")
+print("\n[Output Results]")
 generated_ids = outputs[0][inputs.input_ids.shape[1]:]
 generated_text = processor.decode(generated_ids, skip_special_tokens=True)
 
-print(f"生成文本:")
+print(f"Generated text:")
 print(f"  {generated_text}")
 
 # ===== 性能报告 =====
 print("\n" + "=" * 80)
-print("性能报告")
+print("Performance Report")
 print("=" * 80)
 print(
-    f"模式: {'PyPTO' if args.use_pto else 'Baseline'} + "
+    f"Mode: {'PyPTO' if args.use_pto else 'Baseline'} + "
     f"{'compile(' + args.backend + ')' if args.use_compile else 'Eager'}"
 )
-print(f"推理耗时: {infer_time:.3f}s")
-print(f"生成tokens: {metrics['tokens_generated']}")
-print(f"吞吐: {metrics['throughput_tokens_per_sec']:.2f} tokens/s")
-print(f"峰值显存: {peak_memory:.2f}MB")
+print(f"Inference time: {infer_time:.3f}s")
+print(f"Generated tokens: {metrics['tokens_generated']}")
+print(f"Throughput: {metrics['throughput_tokens_per_sec']:.2f} tokens/s")
+print(f"Peak memory: {peak_memory:.2f}MB")
 print("=" * 80)
 
 # ===== 保存JSON报告 =====
 if args.report_file:
     with open(args.report_file, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"✓ 性能报告已保存: {args.report_file}")
+    print(f"✓ Performance report saved to: {args.report_file}")
 
-print("\n[集成完成] SwiGLU MLP已成功集成到整网")
+print("\n[Integration Complete] SwiGLU MLP successfully integrated into the full network")

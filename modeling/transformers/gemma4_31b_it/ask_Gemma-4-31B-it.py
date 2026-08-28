@@ -9,6 +9,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """Gemma-4-31B-it inference script with optional PyPTO kernel acceleration."""
 
+import logging
 import argparse
 import atexit
 import json
@@ -155,7 +156,7 @@ def print_summary(args, stats):
     print(f"Generate time: {stats.gen_time:.2f}s")
     print(f"Tokens/sec   : {stats.tokens_per_sec:.1f}")
     print(f"Tokenizer load: {stats.tokenizer_load_time:.2f}s")
-    print(f"Model load    : {stats.model_load_time:.2f}s")
+    logging.info(f"{'='*60}")
     print(f"{'='*60}")
 
 

@@ -71,27 +71,28 @@ def _suggest_alternatives(missing: str, pypto_attrs: set[str]) -> list[str]:
 def _format_failures(
     missing: Iterable[str], pypto_attrs: set[str], file_label: str
 ) -> str:
-    """组装 FAIL 文案。包含每个不存在属性的候选建议。"""
-    lines = [f"{file_label} 内出现 PyPTO 中不存在的属性:"]
+    """Compose the FAIL message. Include candidate suggestions for each nonexistent attribute."""
+    lines = [f"attributes that do not exist in PyPTO appear in {file_label}:"]
     for attr in sorted(missing):
         suggestions = _suggest_alternatives(attr, pypto_attrs)
         if suggestions:
             hint = ", ".join(f"pypto.{s}" for s in suggestions)
-            lines.append(f"  • pypto.{attr} → 不存在 (可能想用: {hint})")
+            lines.append(f"  • pypto.{attr} → does not exist (did you mean: {hint})")
         else:
-            lines.append(f"  • pypto.{attr} → 不存在 (无相似名建议)")
+            lines.append(f"  • pypto.{attr} → does not exist (no similar-name suggestions)")
         if attr in _RAW_TORCH_INPUT_TYPOS:
             # 这类 typo 来自 torch 习惯; PyPTO 没有随机 / 通用 tensor 构造 API。
             lines.append(
-                "    注: PyPTO 没有随机 / 通用张量构造 API。算子输入张量直接用原始 "
-                "torch (如 torch.randn(...)) 传入 JIT kernel; kernel 内部需要新建张量时用 "
-                "pypto.zeros / pypto.ones / pypto.full。不要用 from_torch。"
+                "    Note: PyPTO has no random / general tensor construction API. Pass op input tensors as raw "
+                "torch (e.g. torch.randn(...)) into the JIT kernel; "
+                "when the kernel needs to create tensors internally, use "
+                "pypto.zeros / pypto.ones / pypto.full. Do not use from_torch."
             )
         if attr in _MISSING_CREATION_APIS:
             lines.append(
-                "    注: 当前 PyPTO 公开 API 没有 pypto.empty / pypto.empty_like。"
-                "Layer K host wrapper 分配输出 buffer 时使用 torch.empty / torch.empty_like；"
-                "JIT 内需要初始化张量时使用 pypto.zeros / pypto.ones / pypto.full。"
+                "    Note: the current public PyPTO API has no pypto.empty / pypto.empty_like."
+                "When the Layer K host wrapper allocates output buffers, use torch.empty / torch.empty_like; "
+                "When tensors need to be initialized inside JIT, use pypto.zeros / pypto.ones / pypto.full."
             )
     return "\n".join(lines)
 
@@ -172,7 +173,7 @@ def check_ol55(ctx: CheckContext) -> Finding:
     targets = _target_files(ctx)
     if not targets:
         return ctx.make_finding(
-            "OL55", "SKIP", "未发现 OL55 适用的文件 (DESIGN.md / *_impl.py)"
+            "OL55", "SKIP", "no files applicable to OL55 found (DESIGN.md / *_impl.py)"
         )
 
     pypto_attrs = get_pypto_attrs()
@@ -180,8 +181,8 @@ def check_ol55(ctx: CheckContext) -> Finding:
         return ctx.make_finding(
             "OL55",
             "SKIP",
-            "lint 环境中 PyPTO 不可导入, 跳过 API 存在性检查 "
-            "(本地装好 pypto 后会自动恢复)",
+            "PyPTO cannot be imported in the lint environment; skipping the API existence check "
+            "(it will resume automatically once pypto is installed locally)"
         )
 
     # 累计违规
@@ -213,5 +214,5 @@ def check_ol55(ctx: CheckContext) -> Finding:
     return ctx.make_finding(
         "OL55",
         "PASS",
-        f"所有 pypto.<attr> (共 {total_checked} 处) 均存在于 dir(pypto)",
+        f"all pypto.<attr> usages ({total_checked} in total) exist in dir(pypto)",
     )

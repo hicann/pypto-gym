@@ -118,7 +118,7 @@ def _self_test() -> int:
     ok_readme = ("# relu" in readme and "float16" in readme
                  and "relu_wrapper(x)" in readme and "test_relu.py" in readme)
     passed = ok_impl and ok_readme
-    _LOGGER.info("%s self-test: impl=%s readme=%s", "PASS" if passed else "FAIL",
+    _LOGGER.error("%s self-test: impl=%s readme=%s", "PASS" if passed else "FAIL",
                  ok_impl, ok_readme)
     return 0 if passed else 1
 

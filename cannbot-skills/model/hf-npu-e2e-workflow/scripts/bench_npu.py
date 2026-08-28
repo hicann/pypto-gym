@@ -115,7 +115,7 @@ def measure_graph(model, capture, vocab, device, args):
         logger.info("graph: %s", result)
     except Exception as err:  # noqa: BLE001 - report any capture failure with the gotcha hint
         result = {"capture": "FAILED", "hint": capture.explain_capture_error(err)}
-        logger.info("graph FAILED: %s", result["hint"])
+        logger.error("graph FAILED: %s", result["hint"])
         logger.info("  for MoE/decode capture, apply a static-route forward / capture-safe KV cache")
     return result
 

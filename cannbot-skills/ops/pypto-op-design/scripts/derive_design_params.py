@@ -164,7 +164,7 @@ def self_test() -> int:
         got = derive(lines, mm, s, red)["module_count"]
         ok = got == want
         bad += 0 if ok else 1
-        _LOGGER.info("%s %s: module_count=%s expected=%s",
+        _LOGGER.error("%s %s: module_count=%s expected=%s",
                      "PASS" if ok else "FAIL", name, got, want)
     return 1 if bad else 0
 

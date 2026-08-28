@@ -56,11 +56,11 @@ metrics = {}
 # ---- PyPTO setup (真正的 PyPTO kernel) ----
 if args.use_pto:
     logging.info("=" * 60)
-    logging.info("启用真正的 PyPTO kernel")
+    logging.info("Enabling real PyPTO kernel")
     logging.info("=" * 60)
     logging.info("  - RMS Norm: @pypto.frontend.jit + pypto.rms_norm()")
     logging.info("  - RoPE: @pypto.frontend.jit + pypto tensor operations")
-    logging.info("  - 不是 PyTorch fallback 版本")
+    logging.info("  - Not a PyTorch fallback version")
     logging.info("")
     
     sys.path.insert(0, args.model_path)
@@ -70,7 +70,7 @@ if args.use_pto:
     pto_kernels.USE_PTO_RMS_NORM = True
     pto_kernels.USE_PTO_ROPE = True
     
-    logging.info("✓ PyPTO kernel 已启用")
+    logging.info("✓ PyPTO kernel enabled")
 
 # ---- Prompt ----
 if args.prompt:
@@ -79,12 +79,12 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\n".join(lines)
-    logging.info(f"从文件读取提示词: {args.sentence_file} ({len(prompt)} 字符)")
+    logging.info(f"Prompt read from file: {args.sentence_file} ({len(prompt)} chars)")
 else:
-    prompt = "你好"
+    prompt = "Hello"
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 
@@ -108,11 +108,11 @@ torch.npu.reset_peak_memory_stats()
 # ---- aclgraph setup ----
 if args.use_partial_aclgraph:
     logging.info("=" * 60)
-    logging.info("启用 ACLGraph 模式（partial）")
+    logging.info("Enabling ACLGraph mode (partial)")
     logging.info("=" * 60)
-    logging.info("  - 编译 MLP + RMSNorm")
-    logging.info("  - Attention 保持 eager mode")
-    logging.info("  - 注意：ACLGraph 性能下降 23-32%（不推荐）")
+    logging.info("  - Compiling MLP + RMSNorm")
+    logging.info("  - Attention stays in eager mode")
+    logging.info("  - Note: ACLGraph performance drops 23-32% (not recommended)")
     logging.info("")
     
     import torchair as tng
@@ -140,7 +140,7 @@ if args.use_partial_aclgraph:
         model.model.language_model.norm, dynamic=True, fullgraph=False, backend=npu_backend
     )
     
-    logging.info(f"✓ 编译 {len(model.model.language_model.layers)} layers")
+    logging.info(f"✓ Compiled {len(model.model.language_model.layers)} layers")
 
 # ---- Prepare inputs ----
 messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
@@ -151,7 +151,7 @@ inputs = processor(text=[text], return_tensors="pt").to(f"npu:{args.device}")
 metrics["tokenize_s"] = round(time.perf_counter() - t0, 3)
 input_len = inputs.input_ids.shape[1]
 metrics["input_tokens"] = input_len
-logging.info(f"输入token数: {input_len}")
+logging.info(f"Input token count: {input_len}")
 
 # ---- Generate ----
 torch.npu.synchronize()
@@ -170,7 +170,7 @@ metrics["generate_peak_mem_mb"] = round(torch.npu.max_memory_allocated() / 1024*
 generated_ids = outputs[0][input_len:]
 response = processor.decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 logging.info("\n" + "=" * 60)
-logging.info("生成回答:")
+logging.info("Generated response:")
 logging.info("=" * 60)
 logging.info(response)
 
@@ -182,33 +182,33 @@ metrics["model"] = "spatial_ssrl_3b"
 metrics["device"] = f"npu:{args.device}"
 
 logging.info("\n" + "=" * 60)
-logging.info("性能统计")
+logging.info("Performance Stats")
 logging.info("=" * 60)
-logging.info(f"  模式:           {metrics['mode']}")
-logging.info(f"  模型加载:       {metrics['model_load_s']}s (峰值显存 {metrics['model_load_peak_mem_mb']}MB)")
-logging.info(f"  推理耗时:       {metrics['generate_s']}s")
-logging.info(f"  生成token数:    {metrics['generated_tokens']}")
-logging.info(f"  吞吐量:         {metrics['tokens_per_second']} tokens/s")
-logging.info(f"  推理峰值显存:   {metrics['generate_peak_mem_mb']}MB")
+logging.info(f"  Mode:           {metrics['mode']}")
+logging.info(f"  Model load:     {metrics['model_load_s']}s (peak memory {metrics['model_load_peak_mem_mb']}MB)")
+logging.info(f"  Inference time: {metrics['generate_s']}s")
+logging.info(f"  Generated tokens: {metrics['generated_tokens']}")
+logging.info(f"  Throughput:     {metrics['tokens_per_second']} tokens/s")
+logging.info(f"  Inference peak memory: {metrics['generate_peak_mem_mb']}MB")
 
 if args.use_pto:
     logging.info("")
-    logging.info("  PyPTO kernel 验证:")
-    logging.info("    ✓ 使用真正的 PyPTO kernel（非 fallback）")
+    logging.info("  PyPTO kernel verification:")
+    logging.info("    ✓ Using real PyPTO kernel (non-fallback)")
     logging.info("    ✓ RMS Norm: pypto.rms_norm()")
     logging.info("    ✓ RoPE: pypto tensor operations")
-    logging.info("    ✓ 预期性能提升: +10.6%")
-    logging.info("    ✓ 预期稳定性: std 3.10ms")
+    logging.info("    ✓ Expected performance improvement: +10.6%")
+    logging.info("    ✓ Expected stability: std 3.10ms")
 
 if args.use_partial_aclgraph:
     logging.info("")
-    logging.info("  ⚠️  ACLGraph 性能警告:")
-    logging.info("    - 实测性能下降 23-32%")
-    logging.info("    - 推荐使用 PyPTO eager mode")
+    logging.info("  ⚠️  ACLGraph performance warning:")
+    logging.info("    - Measured performance drop 23-32%")
+    logging.info("    - PyPTO eager mode recommended")
 
 if args.report_file:
     with open(args.report_file, "w") as f:
         json.dump(metrics, f, indent=2)
-    logging.info(f"\n  报告已写入:     {args.report_file}")
+    logging.info(f"\n  Report written to:     {args.report_file}")
 
 logging.info("=" * 60)

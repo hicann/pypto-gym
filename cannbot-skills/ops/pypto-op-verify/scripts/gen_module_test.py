@@ -288,7 +288,7 @@ def _self_test() -> int:
         compile(txt, "<gen>", "exec")
     except SyntaxError as exc:
         compile_ok = False
-        _LOGGER.info("FAIL syntax: %s", exc)
+        _LOGGER.error("FAIL syntax: %s", exc)
     e2e = build_test(TestSpec("relu", "", ["x"], "float32", [1024, 128],
                               [16, 16], 1e-3, 1e-3, is_e2e=True))
     e2e_ok = ("from relu_impl import relu_wrapper" in e2e
@@ -298,9 +298,9 @@ def _self_test() -> int:
         compile(e2e, "<gen-e2e>", "exec")
     except SyntaxError as exc:
         e2e_ok = False
-        _LOGGER.info("FAIL e2e syntax: %s", exc)
+        _LOGGER.error("FAIL e2e syntax: %s", exc)
     passed = ok and compile_ok and e2e_ok
-    _LOGGER.info("%s self-test: module_test=%s e2e=%s", "PASS" if passed else "FAIL", ok, e2e_ok)
+    _LOGGER.error("%s self-test: module_test=%s e2e=%s", "PASS" if passed else "FAIL", ok, e2e_ok)
     return 0 if passed else 1
 
 

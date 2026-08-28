@@ -35,7 +35,7 @@ def check_pl15(ctx: CheckContext) -> Finding:
     """test_{op}.py 须含 _assert_precision; 禁止 assert_close."""
     filename, content = _get_test_file_content(ctx)
     if not filename:
-        return ctx.make_finding("PL15", "SKIP", f"test_{ctx.op_name}.py 不存在")
+        return ctx.make_finding("PL15", "SKIP", f"test_{ctx.op_name}.py does not exist")
 
     tree, parse_error = parse_python_source(content, filename)
     if tree is None:
@@ -51,7 +51,7 @@ def check_pl15(ctx: CheckContext) -> Finding:
         for node in ast.walk(tree)
     )
     if not has_assert_precision:
-        failures.append("未找到 `_assert_precision`（方案A混合容差标准）")
+        failures.append("`_assert_precision` not found (Plan A hybrid tolerance criteria)")
 
     has_assert_close = any(
         (isinstance(node, ast.Name) and node.id == "assert_close")
@@ -63,13 +63,13 @@ def check_pl15(ctx: CheckContext) -> Finding:
         for node in ast.walk(tree)
     )
     if has_assert_close:
-        failures.append("发现 `assert_close`（禁止使用，改用 _assert_precision）")
+        failures.append("found `assert_close` (forbidden, use _assert_precision instead)")
 
     if failures:
         return ctx.make_finding(
             "PL15", "FAIL", "\n".join(failures), file=filename
         )
-    return ctx.make_finding("PL15", "PASS", "精度校验规范通过", file=filename)
+    return ctx.make_finding("PL15", "PASS", "Precision check specification passed", file=filename)
 
 
 @register("PL16")
@@ -77,7 +77,7 @@ def check_pl16(ctx: CheckContext) -> Finding:
     """test_{op}.py 须 import {op}_golden_cpu."""
     filename, content = _get_test_file_content(ctx)
     if not filename:
-        return ctx.make_finding("PL16", "SKIP", f"test_{ctx.op_name}.py 不存在")
+        return ctx.make_finding("PL16", "SKIP", f"test_{ctx.op_name}.py does not exist")
 
     tree, parse_error = parse_python_source(content, filename)
     if tree is None:
@@ -91,9 +91,9 @@ def check_pl16(ctx: CheckContext) -> Finding:
     if not has_import:
         return ctx.make_finding(
             "PL16", "FAIL",
-            f"未找到 import `{golden_cpu_module}`（精度对比必须用 CPU FP32 golden）",
+            f"import `{golden_cpu_module}` not found (precision comparison must use CPU FP32 golden)",
             file=filename
         )
     return ctx.make_finding(
-        "PL16", "PASS", f"已 import {golden_cpu_module}", file=filename
+        "PL16", "PASS", f"imported {golden_cpu_module}", file=filename
     )

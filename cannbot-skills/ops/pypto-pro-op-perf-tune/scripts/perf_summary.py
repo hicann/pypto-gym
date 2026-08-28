@@ -122,9 +122,9 @@ def _append_bandwidth_lines(lines, rows, fields):
 
 def _basic_summary(opprof_dir):
     rows = read_csv(os.path.join(opprof_dir, "OpBasicInfo.csv"))
-    lines = ["=== 上板性能统计摘要 ==="]
+    lines = ["=== On-device performance statistics summary ==="]
     if not rows:
-        lines.append("(OpBasicInfo.csv 未找到)")
+        lines.append("(OpBasicInfo.csv not found)")
         return lines, 0.0
     row = rows[0]
     duration = safe_float(row.get("Task Duration(us)"))
@@ -207,15 +207,15 @@ def _pipe_summary(rows, duration):
     _append_bandwidth_lines(lines, rows, _pipe_bandwidth_fields(prefix))
     scalar_parts = _scalar_summary(rows, prefix)
     if scalar_parts:
-        lines.extend(["", "--- SCALAR 子类耗时 (avg) ---", "  " + " | ".join(scalar_parts)])
+        lines.extend(["", "--- SCALAR subcategory time (avg) ---", "  " + " | ".join(scalar_parts)])
     if duration > 0 and core_times:
         max_core = max(core_times)
         overhead = max(0, duration - max_core)
         lines.extend([
             "",
-            "--- 头开销 ---",
-            f"  Task Duration: {duration}us | 最长核: {max_core:.2f}us | "
-            f"头开销: {overhead:.2f}us ({overhead / duration * 100:.1f}%)",
+            "--- Overhead ---",
+            f"  Task Duration: {duration}us | max core: {max_core:.2f}us | "
+            f"overhead: {overhead:.2f}us ({overhead / duration * 100:.1f}%)",
         ])
     return lines
 
@@ -242,9 +242,9 @@ def _memory_summary(rows):
     read_total = sum(safe_float(row.get("read_main_memory_datas(KB)")) for row in rows)
     write_total = sum(safe_float(row.get("write_main_memory_datas(KB)")) for row in rows)
     if read_total > 0:
-        lines.append(f"  主存读取: {read_total:.1f}KB total")
+        lines.append(f"  Main memory read: {read_total:.1f}KB total")
     if write_total > 0:
-        lines.append(f"  主存写入: {write_total:.1f}KB total")
+        lines.append(f"  Main memory write: {write_total:.1f}KB total")
     gm_to_ub = sum(safe_float(row.get("GM_to_UB_datas(KB)")) for row in rows)
     instruction_count = sum(
         safe_float(row.get("aiv_mte2_instructions", 0))
@@ -420,9 +420,9 @@ def generate_summary(opprof_dir: str, round_dir: str, ops_dir: str) -> str:
 
     # === Footer ===
     lines.append("")
-    lines.append("--- 原始数据位置 ---")
-    lines.append(f"  CSV 文件: {round_dir}/")
-    lines.append("  如需逐核详情，请 Read 对应 CSV 文件。")
+    lines.append("--- Raw data location ---")
+    lines.append(f"  CSV files: {round_dir}/")
+    lines.append("  For per-core details, please Read the corresponding CSV file.")
 
     return "\n".join(lines)
 

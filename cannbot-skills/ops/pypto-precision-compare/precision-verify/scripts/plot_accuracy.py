@@ -127,8 +127,8 @@ def plot_accuracy(results, output_path):
 
 
 def print_summary(results):
-    """打印精度数据汇总"""
-    logger.info("\n精度数据汇总:")
+    """Print accuracy data summary"""
+    logger.info("\nAccuracy data summary:")
     logger.info("-" * 100)
     logger.info(f"{'Checkpoint':<30} {'Tolerance':<25} {'Actual':<25} {'Status':<10}")
     logger.info("-" * 100)
@@ -143,8 +143,8 @@ def print_summary(results):
 def main():
     """主函数"""
     if len(sys.argv) < 2:
-        logger.error("错误: 必须传入 log 文件路径作为参数")
-        logger.error("用法: python3 plot_accuracy.py <verify_result.log>")
+        logger.error("Error: a log file path argument is required")
+        logger.error("Usage: python3 plot_accuracy.py <verify_result.log>")
         sys.exit(1)
 
     log_file = sys.argv[1]
@@ -158,7 +158,7 @@ def main():
 
     results = parse_checkpoints(lines)
 
-    logger.info(f'提取到 {len(results)} 个检查点的精度数据')
+    logger.info(f'Extracted accuracy data of {len(results)} checkpoints')
     for i, (ckpt, tol_rtol, tol_atol, act_rtol, act_atol) in enumerate(results):
         tol_str = f'Tolerance(rt={tol_rtol:.6f}, at={tol_atol:.6f})'
         act_str = f'Actual(rt={act_rtol:.6f}, at={act_atol:.6f})'
@@ -166,7 +166,7 @@ def main():
 
     output_image = os.path.join(log_file_dir, f'{operator_name}_accuracy_change.png')
     plot_accuracy(results, output_image)
-    logger.info(f"\n精度变化折线图已保存至: {output_image}")
+    logger.info(f"\nAccuracy change line chart saved to: {output_image}")
 
     print_summary(results)
 

@@ -38,7 +38,7 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
     """
     # 检查形状是否一致
     if cpu.shape != npu.shape:
-        print(f"错误: 形状不一致 - cpu {cpu.shape} vs npu {npu.shape}")
+        print(f"Error: shape mismatch - cpu {cpu.shape} vs npu {npu.shape}")
         return False
 
     total_elements = cpu.size
@@ -46,8 +46,8 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
     nan_count = 0
     exceed_tolerance_count = 0
 
-    print(f"开始比较数组，形状: {cpu.shape}, 总元素数: {total_elements}")
-    print(f"容差条件: rtol={rtol}, atol={atol}")
+    print(f"Comparing arrays, shape: {cpu.shape}, total elements: {total_elements}")
+    print(f"Tolerance: rtol={rtol}, atol={atol}")
     print("=" * 80)
 
     # 将数组展平以便遍历，但记录原始索引
@@ -91,12 +91,12 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
 
     # 检查是否通过 allclose 条件
     is_allclose = abnormal_count == 0
-    print(f"\nnp.allclose 等价结果: {is_allclose}")
+    print(f"\nnp.allclose equivalent result: {is_allclose}")
 
     assert_allclose(cpu, npu, rtol, atol)
 
     if abnormal_count > max_prints:
-        print(f"\n注意: 只显示了前 {max_prints} 个异常，共有 {abnormal_count} 个异常元素")
+        print(f"\nNote: only showing first {max_prints} anomalies, total {abnormal_count} anomalous elements")
     assert_allclose(cpu, npu, rtol, atol)
 
     return is_allclose
@@ -117,7 +117,7 @@ def _is_above_tolerance(cpu_val, npu_val, rtol, atol):
 def _print_first_n(cpu_flat, npu_flat, get_multi_index, n):
     if n <= 0:
         return
-    print(f"{Colors.YELLOW}强制打印前 {n} 个元素:{Colors.RESET}")
+    print(f"{Colors.YELLOW}Force printing first {n} elements:{Colors.RESET}")
     for flat_idx in range(min(n, len(cpu_flat))):
         cpu_val = cpu_flat[flat_idx]
         npu_val = npu_flat[flat_idx]
@@ -126,28 +126,31 @@ def _print_first_n(cpu_flat, npu_flat, get_multi_index, n):
         cpu_str = "NaN" if np.isnan(cpu_val) else f"{cpu_val:.6e}"
         npu_str = "NaN" if np.isnan(npu_val) else f"{npu_val:.6e}"
         diff_str = "NaN" if np.isnan(cpu_val) or np.isnan(npu_val) else f"{np.abs(cpu_val - npu_val):.6e}"
-        print(f"{Colors.YELLOW}索引 {multi_idx}: cpu={cpu_str}, npu={npu_str}, 差值={diff_str}{Colors.RESET}")
+        print(f"{Colors.YELLOW}index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff={diff_str}{Colors.RESET}")
     print("-" * 80)
 
 
 def _log_nan_error(multi_idx, cpu_val, npu_val):
     cpu_str = "NaN" if np.isnan(cpu_val) else f"{cpu_val:.6e}"
     npu_str = "NaN" if np.isnan(npu_val) else f"{npu_val:.6e}"
-    print(f"索引 {multi_idx}: cpu={cpu_str}, npu={npu_str}, 差值=NaN")
+    print(f"index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff=NaN")
 
 
 def _log_tolerance_error(multi_idx, cpu_val, npu_val, rtol, atol):
     abs_diff = np.abs(cpu_val - npu_val)
     allowed_diff = atol + rtol * np.abs(npu_val)
-    print(f"索引 {multi_idx}: cpu={cpu_val:.6e}, npu={npu_val:.6e}, 差值={abs_diff:.6e}(超过容差{allowed_diff:.6e})")
+    print(
+        f"index {multi_idx}: cpu={cpu_val:.6e}, npu={npu_val:.6e}, "
+        f"diff={abs_diff:.6e}(exceeds tolerance {allowed_diff:.6e})"
+    )
 
 
 def _print_summary(abnormal_count, nan_count, exceed_tolerance_count, total_elements, name):
     # 统计信息
     print("=" * 80)
-    print(f"{Colors.BOLD}{Colors.PURPLE}{name} 比较结果统计:{Colors.RESET}")
-    print(f"总元素数量: {total_elements}")
-    print(f"异常元素数量: {abnormal_count}")
-    print(f"  - NaN 数量: {nan_count}")
-    print(f"  - 超出容差数量: {exceed_tolerance_count}")
-    print(f"异常比例: {abnormal_count / total_elements * 100:.4f}%")
+    print(f"{Colors.BOLD}{Colors.PURPLE}{name} comparison statistics:{Colors.RESET}")
+    print(f"Total elements: {total_elements}")
+    print(f"Anomalous elements: {abnormal_count}")
+    print(f"  - NaN count: {nan_count}")
+    print(f"  - Exceeds tolerance count: {exceed_tolerance_count}")
+    print(f"Anomaly ratio: {abnormal_count / total_elements * 100:.4f}%")

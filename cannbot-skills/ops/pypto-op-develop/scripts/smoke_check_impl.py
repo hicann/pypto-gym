@@ -213,7 +213,7 @@ def _ast_precheck(impl: Path) -> bool:
     try:
         ast.parse(impl.read_text(encoding="utf-8"), filename=str(impl))
     except SyntaxError as e:
-        _log.info(f"[SMOKE ERROR] stage=ast: SyntaxError: {e}")
+        _log.error(f"[SMOKE ERROR] stage=ast: SyntaxError: {e}")
         return False
     _log.info("[SMOKE] stage=ast: OK")
     return True
@@ -254,7 +254,7 @@ def _trace_kernels(module, shapes_cfg: dict) -> tuple:
             _log.info(f"[SMOKE SKIP] kernel={name}: {res['detail']}")
         else:
             n_errors += 1
-            _log.info(f"[SMOKE ERROR] stage=trace kernel={name}: {res['detail']}")
+            _log.error(f"[SMOKE ERROR] stage=trace kernel={name}: {res['detail']}")
     return n_errors, n_skips
 
 
@@ -262,17 +262,17 @@ def main() -> int:
     args = _parse_cli()
     impl = Path(args.impl).resolve()
     if not impl.is_file():
-        _log.info(f"[SMOKE ERROR] file not found: {impl}")
+        _log.error(f"[SMOKE ERROR] file not found: {impl}")
         return 2
     try:
         shapes_cfg = _load_shapes_cfg(args.shapes)
     except json.JSONDecodeError as e:
-        _log.info(f"[SMOKE ERROR] --shapes is not valid JSON: {e}")
+        _log.error(f"[SMOKE ERROR] --shapes is not valid JSON: {e}")
         return 2
 
     # ---- 1. AST-level precheck (syntax) ----
     if not _ast_precheck(impl):
-        _log.info(f"SMOKE RESULT: FAIL errors=1 file={impl}")
+        _log.error(f"SMOKE RESULT: FAIL errors=1 file={impl}")
         return 1
 
     # ---- 2+3. import + trace, inside a throwaway cwd so pypto's output/
@@ -284,8 +284,8 @@ def main() -> int:
         try:
             module = import_impl(impl)
         except Exception:  # noqa: BLE001
-            _log.info(f"[SMOKE ERROR] stage=import: {traceback.format_exc(limit=3)}")
-            _log.info(f"SMOKE RESULT: FAIL errors=1 file={impl}")
+            _log.error(f"[SMOKE ERROR] stage=import: {traceback.format_exc(limit=3)}")
+            _log.error(f"SMOKE RESULT: FAIL errors=1 file={impl}")
             return 1
         _log.info("[SMOKE] stage=import: OK")
         n_errors, n_skips = _trace_kernels(module, shapes_cfg)
@@ -293,7 +293,7 @@ def main() -> int:
         _cleanup_workdir(workdir, old_cwd)
 
     if n_errors:
-        _log.info(f"SMOKE RESULT: FAIL errors={n_errors} skips={n_skips} file={impl}")
+        _log.error(f"SMOKE RESULT: FAIL errors={n_errors} skips={n_skips} file={impl}")
         return 1
     note = " (trace skipped for some kernels: import+AST only)" if n_skips else ""
     _log.info(f"SMOKE RESULT: PASS skips={n_skips}{note} file={impl}")

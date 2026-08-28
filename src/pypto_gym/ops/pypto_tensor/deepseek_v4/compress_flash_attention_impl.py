@@ -22,6 +22,7 @@ Main Functions:
     - kv_cache_concat_bsnd: Convert paged KV cache to BSND format
 """
 
+import logging
 from dataclasses import dataclass
 import torch
 import pypto
@@ -232,9 +233,9 @@ try:
         return cfa_attention(q, cmp_kv, sinks, cmp_block_table, seqused_kv, ori_kv, ori_block_table, cmp_ratio)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'cfa_attention'")
+        logging.warning(f"Skip: torchair not installed, skip NPU registration for operator 'cfa_attention'")
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def cfa_graph(q, cmp_kv, sinks, cmp_block_table, seqused_kv, ori_kv, ori_block_table, cmp_ratio):

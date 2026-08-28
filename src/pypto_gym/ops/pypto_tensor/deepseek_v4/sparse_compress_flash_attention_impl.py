@@ -23,6 +23,7 @@ Main Functions:
 Example:
     See test_sparse_compress_flash_attention.py for usage examples.
 """
+import logging
 from dataclasses import dataclass
 import collections
 import pypto
@@ -285,9 +286,12 @@ try:
         return npu_sparse_compress_flash_attention(inputs)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'sparse_compress_flash_attention'")
+        logging.warning(
+            "Skip: torchair not installed, skip NPU registration "
+            "for operator 'sparse_compress_flash_attention'"
+        )
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def sparse_compress_flash_attention_graph(inputs: SCFANpuInputs):

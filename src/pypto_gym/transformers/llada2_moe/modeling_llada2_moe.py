@@ -534,7 +534,7 @@ class LLaDA2MoeAttention(nn.Module):
         self.layer_idx = layer_idx
         if layer_idx is None:
             logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing `layer_idx` is not recommended and will "
+                f"Instantiating {self.__class__.__name__} without passing `layer_idx` is not recommended and will lead "
                 "to errors during the forward call, if caching is used. Please make sure to provide a `layer_idx` "
                 "when creating this class."
             )
@@ -952,7 +952,7 @@ class LLaDA2MoeModel(LLaDA2MoePreTrainedModel):
             if use_cache:
                 logger.warning_once(
                     "`use_cache=True` is incompatible with gradient checkpointing. "
-                    "Setting `use_cache=False`transformers."
+                    "Setting `use_cache=False` in transformers."
                 )
                 use_cache = False
 

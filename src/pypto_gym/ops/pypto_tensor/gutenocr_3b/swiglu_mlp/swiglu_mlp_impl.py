@@ -115,9 +115,9 @@ def swiglu_mlp_fused_static(x, gate_weight, gate_bias, up_weight, up_bias,
 
 
 def test_swiglu_precision():
-    """精度测试"""
+    """Accuracy test"""
     _logger.info("%s", "=" * 60)
-    _logger.info("SwiGLU MLP精度测试")
+    _logger.info("SwiGLU MLP Accuracy Test")
     _logger.info("%s", "=" * 60)
 
     torch.manual_seed(42)
@@ -145,11 +145,11 @@ def test_swiglu_precision():
             x, gate_weight, gate_bias, up_weight, up_bias,
             down_weight, down_bias, batch_size_static=batch_size
         )
-        _logger.info("✓ PyPTO融合kernel执行成功")
-        _logger.info("  输入shape: %s", x.shape)
-        _logger.info("  输出shape: %s", output_pypto.shape)
+        _logger.info("✓ PyPTO fused kernel executed successfully")
+        _logger.info("  Input shape: %s", x.shape)
+        _logger.info("  Output shape: %s", output_pypto.shape)
     except Exception as e:
-        _logger.info("✗ PyPTO融合kernel失败: %s", e)
+        _logger.error("✗ PyPTO fused kernel failed: %s", e)
         import traceback
         traceback.print_exc()
         return False
@@ -168,22 +168,22 @@ def test_swiglu_precision():
     diff = torch.abs(output_torch - output_pypto).max().item()
     mean_diff = torch.abs(output_torch - output_pypto).mean().item()
 
-    _logger.info("精度对比:")
+    _logger.info("Accuracy comparison:")
     _logger.info("  Max diff: %.6f", diff)
     _logger.info("  Mean diff: %.6f", mean_diff)
 
     if diff < 0.1:
-        _logger.info("✓ 精度通过 (diff < 0.1)")
+        _logger.info("✓ Accuracy passed (diff < 0.1)")
         return True
     else:
-        _logger.info("✗ 精度未通过 (diff > 0.1)")
+        _logger.error("✗ Accuracy check failed (diff > 0.1)")
         return False
 
 
 def benchmark_swiglu_performance():
-    """性能测试"""
+    """Performance test"""
     _logger.info("\n%s", "=" * 60)
-    _logger.info("SwiGLU MLP性能测试")
+    _logger.info("SwiGLU MLP Performance Test")
     _logger.info("%s", "=" * 60)
 
     import time
@@ -271,7 +271,7 @@ def benchmark_swiglu_performance():
             _logger.info("  Max diff: %.6f", diff)
 
         except Exception as e:
-            _logger.info("  ✗ PyPTO failed: %s", e)
+            _logger.error("  ✗ PyPTO failed: %s", e)
 
 
 if __name__ == "__main__":

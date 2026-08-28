@@ -53,7 +53,7 @@ elif args.sentence_file:
     with open(args.sentence_file, "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
     prompt = "\n".join(lines)
-    logging.info(f"从文件读取提示词: {args.sentence_file} ({len(prompt)} 字符)")
+    logging.info(f"Prompt read from file: {args.sentence_file} ({len(prompt)} chars)")
 else:
     prompt = "你好，请介绍一下自己。"
 
@@ -72,8 +72,8 @@ if args.use_pypto:
 from transformers import AutoTokenizer
 from transformers.models.qwen3_5 import Qwen3_5ForConditionalGeneration
 
-logging.info(f"使用设备: npu:{args.device}")
-logging.info(f"模型路径: {args.model_path}")
+logging.info(f"Using device: npu:{args.device}")
+logging.info(f"Model path: {args.model_path}")
 
 torch.npu.set_device(args.device)
 torch.npu.reset_peak_memory_stats(args.device)
@@ -89,7 +89,7 @@ model = Qwen3_5ForConditionalGeneration.from_pretrained(
 ).to(f"npu:{args.device}").eval()
 torch.npu.synchronize(args.device)
 load_time = time.time() - _t_load
-logging.info(f"模型加载耗时: {load_time:.3f}s")
+logging.info(f"Model load time: {load_time:.3f}s")
 
 # Monkey-patch Qwen3_5GatedDeltaNet to route the chunk-prefill path through
 # the PyPTO wrapper. The hook is also embedded in the bundled modeling file
@@ -132,13 +132,13 @@ if args.use_acl_graph:
         import torchair  # noqa: F401  (also importable as torch_npu.dynamo.torchair)
         gen_model = torch.compile(model, backend=torchair.get_npu_backend(),
                                   mode="reduce-overhead", dynamic=False)
-        logging.info("torchair aclgraph 已启用 (reduce-overhead)")
+        logging.info("torchair aclgraph enabled (reduce-overhead)")
     except Exception as e:  # noqa: BLE001
-        logging.warning(f"torchair aclgraph 初始化失败，回退 eager: {e}")
+        logging.warning(f"torchair aclgraph init failed, falling back to eager: {e}")
         gen_model = eager_model
 
 inputs = tokenizer(text, return_tensors="pt").to(f"npu:{args.device}")
-logging.info(f"输入token数: {inputs.input_ids.shape[1]}")
+logging.info(f"Input token count: {inputs.input_ids.shape[1]}")
 
 # Optional per-token timing via a lightweight streamer. transformers echoes the prompt
 # via put(input_ids) BEFORE prefill, then one put per generated token; record numel to
@@ -183,7 +183,10 @@ else:
         outputs = _generate(gen_model)
     except Exception as e:  # noqa: BLE001
         if args.use_acl_graph and gen_model is not eager_model:
-            logging.warning(f"aclgraph 整网捕获失败(vendored modeling 原地算子)，回退 eager: {e}")
+            logging.warning(
+                "aclgraph full-graph capture failed (vendored modeling "
+                f"in-place ops), falling back to eager: {e}"
+            )
             outputs = _generate(eager_model)
         else:
             raise

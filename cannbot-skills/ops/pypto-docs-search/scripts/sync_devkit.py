@@ -107,7 +107,7 @@ def _link_resources(request, base, manifest, mode, source_for):
         source = base / sub
         if not source.exists():
             _remove_managed_path(request.devkit / name)
-            LOGGER.info("[跳过] %s:%s（源无此路径）", request.tag, sub)
+            LOGGER.info("[skipped] %s:%s (path not in source)", request.tag, sub)
             continue
         relink(request.devkit / name, source)
         manifest[name] = {"mode": mode, "source": source_for(sub, source)}
@@ -118,7 +118,7 @@ def _reuse_local(request, base, manifest):
         request, base, manifest, "symlink",
         lambda _sub, source: str(source),
     )
-    LOGGER.info("[复用] %s ← %s", request.tag, base)
+    LOGGER.info("[reuse] %s ← %s", request.tag, base)
 
 
 def _checkout_sparse_repo(request, tmp):
@@ -127,19 +127,19 @@ def _checkout_sparse_repo(request, tmp):
         request.url, str(tmp),
     ]
     if git(clone_args) != 0:
-        LOGGER.error("[下载失败] %s（设对应 *_URL 覆盖，或检查网络）", request.url)
+        LOGGER.error("[download failed] %s (set corresponding *_URL to override, or check the network)", request.url)
         return 4
     subs = [sub for _name, sub in request.pairs]
     if git(["sparse-checkout", "set"] + subs, cwd=tmp) != 0:
-        LOGGER.error("[sparse 失败] %s", request.tag)
+        LOGGER.error("[sparse failed] %s", request.tag)
         return 4
     if not request.pin:
         return 0
     if git(["fetch", "--depth", "1", "origin", request.pin], cwd=tmp) != 0:
-        LOGGER.error("[pin 失败] %s 无法获取 %s", request.tag, request.pin)
+        LOGGER.error("[pin failed] %s unable to fetch %s", request.tag, request.pin)
         return 4
     if git(["checkout", "--detach", "FETCH_HEAD"], cwd=tmp) != 0:
-        LOGGER.error("[pin 失败] %s 无法切换到 %s", request.tag, request.pin)
+        LOGGER.error("[pin failed] %s unable to switch to %s", request.tag, request.pin)
         return 4
     return 0
 
@@ -159,7 +159,7 @@ def _download_resources(request, manifest):
         request, tmp, manifest, "download@" + revision,
         lambda sub, _source: f"{request.url}:{sub}",
     )
-    LOGGER.info("[下载] %s ← %s@%s", request.tag, request.url, revision)
+    LOGGER.info("[download] %s ← %s@%s", request.tag, request.url, revision)
     return 0
 
 
@@ -209,12 +209,12 @@ def main(argv=None):
     _configure_logging()
     devkit = cache_dir()
     if shutil.which("git") is None:
-        LOGGER.error("[缺 git] 请先安装 git")
+        LOGGER.error("[missing git] Please install git first")
         return 3
     try:
         devkit.mkdir(parents=True, exist_ok=True)
     except OSError:
-        LOGGER.error("[无法创建缓存] %s", devkit)
+        LOGGER.error("[cannot create cache] %s", devkit)
         return 3
 
     manifest = {}
@@ -226,7 +226,7 @@ def main(argv=None):
     (devkit / "MANIFEST.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     dirs = " ".join(sorted(name + "/" for name in manifest))
-    LOGGER.info("[完成] 缓存: %s （%s + MANIFEST.json）", devkit, dirs)
+    LOGGER.info("[done] Cache: %s (%s + MANIFEST.json)", devkit, dirs)
     return 0
 
 

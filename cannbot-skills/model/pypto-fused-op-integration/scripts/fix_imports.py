@@ -174,7 +174,7 @@ def fix_imports(file_path):
     with open(file_path, "w") as f:
         f.write(content)
 
-    logging.info(f"已修复导入: {file_path}")
+    logging.info(f"Fixed imports: {file_path}")
 
 
 def main():
@@ -185,23 +185,23 @@ def main():
     file_path = sys.argv[1]
 
     if not os.path.exists(file_path):
-        logging.error(f"文件不存在: {file_path}")
+        logging.error(f"File not found: {file_path}")
         sys.exit(1)
 
     # 先备份
     backup_path = file_path + ".bak"
     if os.path.exists(backup_path):
-        logging.info(f"已有备份，保留原文件: {backup_path}")
+        logging.info(f"Backup already exists, keeping original: {backup_path}")
     else:
         shutil.copy(file_path, backup_path)
-        logging.info(f"已创建备份: {backup_path}")
+        logging.info(f"Backup created: {backup_path}")
 
     fix_imports(file_path)
 
     # 验证修复后的文件可以导入
-    logging.info("\n验证修复结果:")
-    logging.info("  请检查文件内容，确认导入语句正确")
-    logging.info(f"  如有问题，可从备份恢复: cp {backup_path} {file_path}")
+    logging.info("\nVerification result:")
+    logging.info("  Please check the file content, make sure the import statements are correct")
+    logging.info(f"  If you have problems, restore from backup: cp {backup_path} {file_path}")
 
 
 if __name__ == "__main__":

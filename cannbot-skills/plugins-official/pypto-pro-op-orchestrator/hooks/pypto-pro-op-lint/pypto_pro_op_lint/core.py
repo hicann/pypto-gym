@@ -138,7 +138,7 @@ def _read_rules_file() -> list[dict[str, Any]]:
         with open(rules_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        message = f"[pypto-pro-op-lint FATAL] rules.json 加载失败: {e}"
+        message = f"[pypto-pro-op-lint FATAL] failed to load rules.json: {e}"
         logger.error(message)
         raise LintConfigurationError(message) from e
 
@@ -236,9 +236,9 @@ def _validate_checker_coverage(rule_by_id: dict[str, dict[str, Any]]) -> None:
     if missing_checkers or undocumented_checkers:
         details = []
         if missing_checkers:
-            details.append("规则缺少检查器: " + ", ".join(missing_checkers))
+            details.append("Missing checkers for rules: " + ", ".join(missing_checkers))
         if undocumented_checkers:
-            details.append("检查器缺少规则定义: " + ", ".join(undocumented_checkers))
+            details.append("Checkers missing rule definitions: " + ", ".join(undocumented_checkers))
         raise LintConfigurationError(
             "[pypto-pro-op-lint FATAL] rules/checkers 不一致: " + "; ".join(details)
         )
@@ -394,18 +394,18 @@ def _system_failure(rule_id: str, message: str) -> Finding:
 def _run_single_check(ctx: CheckContext, rule_id: str) -> Finding:
     rule = ctx.get_rule(rule_id)
     if not rule:
-        return _system_failure(rule_id, f"规则 {rule_id} 未在 rules.json 中定义")
+        return _system_failure(rule_id, f"Rule {rule_id} is not defined in rules.json")
     if ctx.stage not in rule.get("stages", []):
-        return ctx.make_finding(rule_id, "SKIP", "当前阶段不适用")
+        return ctx.make_finding(rule_id, "SKIP", "Not applicable in the current stage")
     checker = CHECKERS.get(rule_id)
     if not checker:
-        return _system_failure(rule_id, f"规则 {rule_id} 的检查函数未注册")
+        return _system_failure(rule_id, f"Checker function for rule {rule_id} is not registered")
     try:
         return checker(ctx)
     except Exception as error:  # hard gates must fail closed
         return _system_failure(
             rule_id,
-            f"规则 {rule_id} 检查器执行异常: {type(error).__name__}: {error}",
+            f"Checker for rule {rule_id} raised an exception: {type(error).__name__}: {error}",
         )
 
 
@@ -419,7 +419,7 @@ def _run_checks(ctx: CheckContext, rule_ids: list[str]) -> tuple[list[Finding], 
     total_duration_ms = 0.0
     try:
         if not rule_ids:
-            finding = _system_failure("LINT_CONFIG", "未选择任何检查规则，门禁拒绝放行")
+            finding = _system_failure("LINT_CONFIG", "No check rules selected, gate refused to pass")
             findings.append(finding)
             _emit_metric_event_buffered(ctx, finding, run_meta, 0.0)
         for rule_id in rule_ids:

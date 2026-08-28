@@ -128,7 +128,7 @@ def _self_test() -> int:
     ok_golden = "test_op_golden_stage12" not in result and "test_op_golden_cpu" in result
     ok_import = "from test_op_golden_cpu import" in result
     passed = ok_wrapper and ok_golden and ok_import
-    _LOGGER.info(
+    _LOGGER.error(
         "%s self-test: wrapper=%s golden=%s import=%s",
         "PASS" if passed else "FAIL",
         ok_wrapper, ok_golden, ok_import,

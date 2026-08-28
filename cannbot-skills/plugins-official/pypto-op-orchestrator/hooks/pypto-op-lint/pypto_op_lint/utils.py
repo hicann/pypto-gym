@@ -362,7 +362,7 @@ def _syntax_error_finding(ctx: CheckContext, rule_id: str, filename: str) -> Opt
     return ctx.make_finding(
         rule_id,
         "FAIL",
-        f"{filename} 存在语法错误，无法解析: {error}",
+        f"{filename} has a syntax error and cannot be parsed: {error}",
         file=filename,
     )
 

@@ -523,7 +523,7 @@ class Phi3FlashAttention2(Phi3Attention):
                 target_dtype = self.qkv_proj.weight.dtype
 
             logger.warning_once(
-                f"The input hidden states seems to be silently casted in float32, this might be related to"
+                f"The input hidden states seem to be silently cast in float32, this might be related to"
                 f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
                 f" {target_dtype}."
             )

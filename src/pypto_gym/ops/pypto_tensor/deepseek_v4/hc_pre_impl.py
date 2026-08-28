@@ -14,6 +14,7 @@ Hello World Example for PyPTO
 This example demonstrates the simplest tensor addition.
 """
 
+import logging
 import pypto
 import torch
 from torch._dynamo import allow_in_graph
@@ -339,9 +340,9 @@ try:
         return npu_hc_pre(x, hc_fn, hc_scale, hc_base, hc_mult, hc_sinkhorn_iters, hc_eps)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'hc_pre'")
+        logging.warning(f"Skip: torchair not installed, skip NPU registration for operator 'hc_pre'")
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def hc_pre_pypto(x, hc_fn, hc_scale, hc_base, hc_mult, hc_sinkhorn_iters, hc_eps):

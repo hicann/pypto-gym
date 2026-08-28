@@ -65,7 +65,7 @@ def check_pl01(ctx: CheckContext) -> Finding:
     """PL01: import 门禁 — 必须 import pypto_pro.language as pl，禁止 classic API."""
     targets = _scan_test_files(ctx)
     if not targets:
-        return ctx.make_finding("PL01", "SKIP", "未发现 test/staged 文件")
+        return ctx.make_finding("PL01", "SKIP", "No test/staged files found")
 
     failures: list[str] = []
     for rel, abs_path in targets:
@@ -77,18 +77,18 @@ def check_pl01(ctx: CheckContext) -> Finding:
         has_pro_import = has_import_alias(tree, "pypto_pro.language", "pl")
         if not has_pro_import:
             failures.append(
-                f"{rel}: 未找到 `import pypto_pro.language as pl`"
+                f"{rel}: `import pypto_pro.language as pl` not found"
             )
 
         has_classic_jit = count_decorators(tree, "pypto.frontend.jit") > 0
         if has_classic_jit:
             failures.append(
-                f"{rel}: 发现 `@pypto.frontend.jit`（禁止使用 classic API）"
+                f"{rel}: found `@pypto.frontend.jit` (classic API forbidden)"
             )
 
         if imports_module(tree, "pypto"):
             failures.append(
-                f"{rel}: 发现 pypto（非 Pro）import（禁止使用 classic API）"
+                f"{rel}: found non-Pro pypto import (classic API forbidden)"
             )
 
     if failures:
@@ -98,7 +98,7 @@ def check_pl01(ctx: CheckContext) -> Finding:
 
     return ctx.make_finding(
         "PL01", "PASS",
-        f"所有 test/staged 文件（共 {len(targets)} 个）import 门禁通过"
+        f"All test/staged files ({len(targets)} total) passed the import gate"
     )
 
 
@@ -107,7 +107,7 @@ def check_pl02(ctx: CheckContext) -> Finding:
     """test/staged 文件中 @pl.jit 必须且仅能出现 1 次（单 kernel 铁律）."""
     targets = _scan_test_files(ctx)
     if not targets:
-        return ctx.make_finding("PL02", "SKIP", "未发现 test/staged 文件")
+        return ctx.make_finding("PL02", "SKIP", "No test/staged files found")
 
     failures: list[str] = []
     for rel, abs_path in targets:
@@ -118,10 +118,10 @@ def check_pl02(ctx: CheckContext) -> Finding:
 
         jit_count = count_decorators(tree, "pl.jit")
         if jit_count == 0:
-            failures.append(f"{rel}: 未找到 @pl.jit 装饰的 kernel 函数")
+            failures.append(f"{rel}: no kernel function decorated with @pl.jit found")
         elif jit_count > 1:
             failures.append(
-                f"{rel}: 发现 {jit_count} 个 @pl.jit（单 kernel 铁律：只允许 1 个）"
+                f"{rel}: found {jit_count} @pl.jit(s) (single-kernel rule: only 1 allowed)"
             )
 
     if failures:
@@ -131,5 +131,5 @@ def check_pl02(ctx: CheckContext) -> Finding:
 
     return ctx.make_finding(
         "PL02", "PASS",
-        f"所有 test/staged 文件（共 {len(targets)} 个）单 kernel 铁律通过"
+        f"All test/staged files ({len(targets)} total) passed the single-kernel rule"
     )

@@ -188,7 +188,10 @@ def _log_outliers(result, max_display):
     count = result["out_of_tolerance_count"]
     logger.info("Maximum deviation exceeding tolerance: %.6f", result["max_out_of_tolerance_diff"])
     logger.info("Average deviation exceeding tolerance: %.6f", result["mean_out_of_tolerance_diff"])
-    logger.info("\n🔍 Details of elements exceeding tolerance limits (Before Displaying%d):", min(max_display, count))
+    logger.info(
+        "\n🔍 Details of elements exceeding tolerance limits "
+        "(showing first %d of %d):", min(max_display, count), count
+    )
     logger.info("-" * 80)
     logger.info(
         "%-20s %-15s %-15s %-12s %-12s",
@@ -207,7 +210,7 @@ def _log_outliers(result, max_display):
             result["outlier_relative_diffs"][index].item(),
         )
     if count > max_display:
-        logger.info("... And also %d An element exceeding the tolerance is not displayed.", count - max_display)
+        logger.info("... And %d more elements exceeding tolerance are not displayed.", count - max_display)
 
 
 def _log_result(tensor_name, result, options):

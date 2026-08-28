@@ -8,6 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+import logging
 import collections
 from dataclasses import dataclass
 from typing import List
@@ -85,9 +86,9 @@ try:
         return npu_compressor(args)
 except Exception as e:
     if "could not parse dispatch key: NPU" in str(e):
-        print(f"Skip: torchair not installed, skip NPU registration for operator 'compressor'")
+        logging.warning(f"Skip: torchair not installed, skip NPU registration for operator 'compressor'")
     else:
-        print(f"Skip: Unexpected error : {e}")
+        logging.warning(f"Skip: Unexpected error: {e}")
 
 
 def compressor_pypto(args: CompressorArgs):
