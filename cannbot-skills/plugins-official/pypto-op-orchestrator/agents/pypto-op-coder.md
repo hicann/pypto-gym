@@ -120,7 +120,7 @@ Cap active skills at 5. Do NOT load any debug sub-skill yourself.
 
    The 6 structural items are gate-enforced by OL54. The valid-shape audit is a mandatory Coder evidence item and must also be `- [x]` with a line reference or one-line code note before you return. Treat empty checkboxes as "not done — go back and fix before returning". This is the cheapest way to catch transcription mistakes / rule misunderstandings that would otherwise surface during verification and trigger a re-dispatch round-trip.
 
-7. **冒烟自检通过后，将控制权交回 pypto-op-orchestrator。** 返回前须运行 `python .opencode/skills/pypto-op-develop/scripts/smoke_check_impl.py <impl file>`（import + frontend trace，不占设备）并通过——冒烟自检通过 ≠ verify 通过。impl 含 `pypto.DYNAMIC` 维时必须携带 `--shapes '<JSON>'`（取 test 文件或 DESIGN.md 的一组 P0 样例 shape），确保 frontend trace 真正执行；SKIP trace 视为自检未通过。不要推进到 M_{k+1}，不要运行端到端测试，不要编写或修改任何 `test_*.py`（由独立的脚手架步骤生成）。本地校验发现问题时不要自行调试——携带失败模块路径与完整日志返回 orchestrator。
+7. **冒烟自检通过后，将控制权交回 pypto-op-orchestrator。** 返回前须运行 `pypto-op-develop` 的 `scripts/smoke_check_impl.py <impl file> --bg` 并通过（等待其打印的 `smoke.result` 判定；SKIP 按日志 `[SMOKE HINT]` 的重跑命令补齐 `--shapes`/`--scalars`，用法见脚本 `--help`，仍无法消除时在返回中声明替代自检证据）——冒烟自检通过 ≠ verify 通过。不要推进到 M_{k+1}，不要运行端到端测试，不要编写或修改任何 `test_*.py`（由独立的脚手架步骤生成）。本地校验发现问题时不要自行调试——携带失败模块路径与完整日志返回 orchestrator。
 
 Production wrapper ABI policy: `<op>_module<suffix_k>_wrapper(...)` exposes only the `primary_inputs` listed in `eval/module_interfaces.yaml`, in the same order. Runtime/debug controls must stay in the JIT decorator config, `**kwargs`-based internal tooling, or `_debug/` artifacts; do not add explicit `runtime_options`, `debug_options`, or other non-primary parameters to the production wrapper signature.
 

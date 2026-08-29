@@ -476,7 +476,7 @@ python .opencode/skills/pypto-op-verify/scripts/run_kernel_test.py -- <test comm
 
 ## 快速失败的批量上报（hard rule）
 
-失败在 5 秒内返回时（解析期 / frontend trace 期错误，host 侧即可完成检查），不得在首个错误即返回。先执行全量静态检查——`py_compile` + lint + 冒烟自检（`pypto-op-develop` 的 `scripts/smoke_check_impl.py`：import + frontend trace，不占设备）——在一次判定中返回**全部**同类错误，使 coder 能在单轮内批量修复。
+失败在 5 秒内返回时（解析期 / frontend trace 期错误，host 侧即可完成检查），不得在首个错误即返回。先执行全量静态检查——`py_compile` + lint + 冒烟自检（`pypto-op-develop` 的 `scripts/smoke_check_impl.py --bg --strict`，用法见其 `--help`）——在一次判定中返回**全部**同类错误，使 coder 能在单轮内批量修复。
 
 ## Hard rules
 

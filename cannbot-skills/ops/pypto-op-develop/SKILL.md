@@ -186,7 +186,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 
 3. **失败时**：将 stderr 中包含 `Errcode: F` / `ErrCode: F` 的错误码原文记入 MEMORY，并按 [references/error-code-troubleshooting.md](references/error-code-troubleshooting.md) 的流程排查。**不要自行修复架构 / 算法层级问题**，向上反馈。
 
-4. **冒烟自检（提交验证前必做）**：提交 verify 前必须自跑 `python scripts/smoke_check_impl.py <impl 文件>`（import + frontend trace，不起 kernel、不占设备），将 trace 期错误一次性暴露并修完。impl 含 `pypto.DYNAMIC` 维时必须携带 `--shapes '<JSON>'`（取 test 文件或 DESIGN 的一组 P0 样例 shape），确保 trace 真正执行；输出 SKIP trace 视为自检未通过。**冒烟自检通过 ≠ verify 通过**：设备级测试一律由 verifier 执行，coder 不得自跑。
+4. **冒烟自检（提交验证前必做）**：提交 verify 前必须自跑 `python scripts/smoke_check_impl.py <impl 文件> --bg`（host 侧检查：import + frontend trace + kernel codegen，分钟级，不占 NPU），等待其打印的 `smoke.result` 文件判定通过；出现 SKIP 时按日志中 `[SMOKE HINT]` 打印的重跑命令补齐 `--shapes`/`--scalars`（用法细节见脚本 `--help`），仍无法消除时在返回中声明替代自检证据（如自建 trace harness 通过）。**冒烟自检通过 ≠ verify 通过**：设备级测试一律由 verifier 执行，coder 不得自跑。
 
 ⚠️ 有 NPU 卡的情况下，禁止用 `run_mode=sim` 跑验证（OL42）。
 
