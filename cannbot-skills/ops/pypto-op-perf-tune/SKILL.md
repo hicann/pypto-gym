@@ -511,8 +511,8 @@ SWIMLANE 重试"的回环是预期行为，不是异常——外循环机制天�
   ├─ ⭐⭐   F-6 合并独立loop → 合并无数据依赖的独立loop
   ├─ ⭐⭐   S-9 Stitch调优 → stitch_function_max_num: 128
   ├─ ⭐⭐⭐ S-4/S-5 普通合图 → sg_set_scope 或 nbuffer
-  ├─ ⭐⭐⭐ S-14 A5 Mix合图 → auto_mix_partition=1（自动）和 sg_set_scope（手动）是同一功能的两种开关方式，优先尝试自动，⛔编译超时禁止放弃Mix合图（缩小scope/TileShape后重试，自动超时→切手动），⛔退化禁止直接回退到非Mix优化（走诊断决策树），当前方式充分调优后仍无收益再切换另一种（仅A5 npuarch=='DAV_3510'，⚠️ UB并发须<248KB，须追踪CV间数据流向验证所有CV间数据走CV通路）
-  ├─ ⭐⭐⭐ S-21 Mix双scope策略 → Mix scope放出的V段用独立sg_set_scope做普通合图
+  ├─ ⭐⭐⭐ S-14 A5 Mix合图 → auto_mix_partition=1（自动）和 sg_set_scope（手动）是同一功能的两种开关方式，优先尝试自动，⛔编译超时禁止放弃Mix合图（缩小scope/TileShape后重试，自动超时→切手动），⛔退化禁止直接回退到非Mix优化（走诊断决策树），当前方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种（仅A5 npuarch=='DAV_3510'，⚠️ UB并发须<248KB，须追踪CV间数据流向验证所有CV间数据走CV通路）
+  ├─ ⭐⭐⭐ S-21 Mix多scope策略 → Mix scope放出的V段用独立sg_set_scope做普通合图；多段无数据依赖的CV段分独立Mix scope
   ├─ ⭐⭐⭐ 主SKILL.md §4.3 A-D1~A-D3 → S-14失败后算法级减少DDR往返（合并gather/view复用/消除中间assemble）
   └─ ⭐     S-10 调度策略 → device_sched_mode调整
 

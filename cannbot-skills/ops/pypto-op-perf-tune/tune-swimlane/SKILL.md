@@ -90,7 +90,7 @@ Stitch 配置决定了多少个 root function 被同时下发调度。
 
 > **⛔ ⛔ ⛔ 配置任何合图参数前，必须加载 [合图调优](references/merge-optimization.md) 获取完整指南。合图配置错误是性能退化的最常见原因。**
 
-> **🔥 A5 平台专属 [S-14] Mix合图**：若 `pypto.platform.npuarch == 'DAV_3510'`，CV 间搬运可用 Mix合图走 CV 通路消除（CV 最优配比 1:2）。自动合图（`auto_mix_partition: 1`）和手动合图（`sg_set_scope`）是同一功能的两种开关方式，功能完全一致，异常处理（编译超时/退化）方式也完全一致。优先尝试自动合图，按 merge-optimization.md §4.1 关键路径（Step 1→2→3→4→5→6）逐步执行，当前开关方式充分调优后仍无收益再切换另一种开关方式。限制条件必须逐项满足。**⚠️ Mix合图首次开启与配套 TileShape（L0 调小 + L1 调大 + loop tile 调小）须作为原子优化点提交**。
+> **🔥 A5 平台专属 [S-14] Mix合图**：若 `pypto.platform.npuarch == 'DAV_3510'`，CV 间搬运可用 Mix合图走 CV 通路消除（CV 最优配比 1:2）。自动合图（`auto_mix_partition: 1`）和手动合图（`sg_set_scope`）是同一功能的两种开关方式，功能完全一致，异常处理（编译超时/退化）方式也完全一致。优先尝试自动合图，按 merge-optimization.md §4.1 关键路径（Step 0→1→2→3→4→5→6）逐步执行，当前开关方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种开关方式。限制条件必须逐项满足。**⚠️ Mix合图首次开启与配套 TileShape（L0 调小 + L1 调大 + loop tile 调小）须作为原子优化点提交**。
 
 > **⛔ 编译超时处理摘要**（完整步骤见 [merge-optimization.md §4.1 Step 2](references/merge-optimization.md)）：⛔ 禁止移除 Mix合图配置，按以下优先级逐个尝试：
 > 1. 移除 `debug_options` + 加 `host_options={"compile_monitor_enable": 0}`（最常见原因）
@@ -267,30 +267,61 @@ Recommended: set max_workspace_kb near 531052KB and above 10380KB to activate me
 - `host_options` 不影响算子计算性能，仅减少编译开销
 
 
-### 11. Mix合图双 scope 策略（对应优化点 S-21）
+### 11. Mix合图多 scope 策略（对应优化点 S-21）
 
-> **适用场景**：A5 平台 + 算子有跨迭代依赖的 V 段需从 Mix scope 放出（如 online softmax 的 state merge 段）。
+> **适用场景**：A5 平台 + 算子 loop 体内最后一个 Cube 之后的 V 段涉及跨迭代依赖（需从 Mix scope 放出），或有多段无数据依赖的 CV 段可分别独立合图。
 
-**原理**：Mix合图 Step 0 规则3 要求"操作 running state tensor 的 V 段应从 Mix scope 中放出"。但放出的 V 段如果不做任何合图，其内部的多个 Vector 子图间仍有调度开销。**双 scope 策略**：放出的 V 段应立即用独立 `sg_set_scope` 做普通合图，消除子图间调度开销。
+**原理**：Mix scope 内的 CV 交替数据应通过 CV 通路直接传递（不走 DDR）。但如果 Mix scope 内包含写跨迭代依赖 tensor 的 V 段（该 tensor 在 loop 外声明、loop 内被写入，其值从上一轮迭代传递到下一轮），会打断 CV 通路的数据流。这类 V 段应从 Mix scope 中放出，用独立 `sg_set_scope` 做普通合图，消除子图间调度开销。**多 scope 策略**包含两种模式：
 
-**双 scope 布局**：
+#### scope 划分条件
+
+**Step 1: 识别跨迭代依赖**
+
+扫描 loop 体内的操作，找满足以下条件的 tensor：
+- 在 loop 外声明
+- 在 loop 内被写入（作为任意操作的输出）
+- 在 loop 内被读取（作为后续操作的输入）
+
+这类 tensor 的值从上一轮迭代传递到下一轮，构成跨迭代依赖。
+
+> 在 loop 内声明并使用的 tensor 不构成跨迭代依赖（生命周期仅限单轮）。在 loop 外声明但 loop 内只读不写的 tensor 不构成跨迭代依赖（如权重）。
+
+**Step 2: 判断最后一个 Cube 之后的 V 段是否涉及跨迭代依赖**
+
+在 loop 体内从后往前扫描，找到最后一个 Cube 操作（`pypto.matmul`）。该 matmul 之后的连续 V 操作段为"最后一段 V"：
+- 该 V 段中存在写入跨迭代依赖 tensor 的操作 → 需要切 scope
+- 该 V 段中不存在此类操作 → 不切 scope
+
+**Step 3: 按情况处理**
+
+- **不涉及跨迭代依赖** → 不切 scope，整个 loop 体留在 Mix scope（切出只增加 GM 搬运代价，无收益）
+- **涉及跨迭代依赖** → 切 scope，Mix scope 包含到最后一个 Cube（含），V 段用独立普通合图 scope 包裹。切后与非切实测对比，保留性能更优的：
+  - 编译超时 → 缩小 scope / 调小 TileShape 后重试
+  - 两者都可行 → 保留性能更优的（V 段较短时非切可能更优，GM 代价小于调度收益；V 段较长时切通常更优）
+
+**注意事项**：
+- scope 划分前先确认代码无冗余计算（如单 tile 路径重复 matmul），冗余计算是算法级问题，应先消除再做 scope 优化
+- 条件分支内如有 Cube 操作，scope 关闭位置应放在分支内部，让 Cube 留在 Mix scope，不要包进普通合图
+
+**策略1：Mix scope 放出的 V 段用独立 sg_set_scope 做普通合图**
+
+放出的 V 段应立即用独立 `sg_set_scope` 做普通合图，消除子图间调度开销。
 
 ```
-Mix scope (ID 例如 20001，无语义): V0→C1→V1→C2 (CV 链，走 CV 通路)
+Mix scope (ID 例如 20001): V0→C1→V1→C2 (CV 链，走 CV 通路)
   sg_set_scope=20001
   ... V0 gather + dequant + C1 matmul + V1 softmax + C2 matmul ...
   sg_set_scope=-1
 
-普通合图 scope (ID 例如 1，无语义): V2 (online softmax update，纯 Vector)
+普通合图 scope (ID 例如 1): V2 (online softmax update，纯 Vector)
   sg_set_scope=1
   ... V2: max/sum/exp/oi_update operations ...
   sg_set_scope=-1
 ```
 
-**配置示例**：
-
 ```python
-# ===== Mix合图 scope: V0→C1→V1→C2 =====
+# ===== 策略1：Mix scope + 放出V段普通合图 =====
+# Mix合图 scope: V0→C1→V1→C2
 if pypto.platform.npuarch == 'DAV_3510':
     pypto.set_pass_options(sg_set_scope=20001)
 
@@ -302,7 +333,7 @@ if pypto.platform.npuarch == 'DAV_3510':
 if pypto.platform.npuarch == 'DAV_3510':
     pypto.set_pass_options(sg_set_scope=-1)
 
-# ===== 普通合图 scope: V2 online softmax update =====
+# 普通合图 scope: V2 online softmax update
 if pypto.platform.npuarch == 'DAV_3510':
     pypto.set_pass_options(sg_set_scope=1)
 
@@ -312,13 +343,57 @@ if pypto.platform.npuarch == 'DAV_3510':
     pypto.set_pass_options(sg_set_scope=-1)
 ```
 
+**策略2：多段无数据依赖的 CV 段分为多段独立 Mix scope**
+
+当算子有多段 CV 交替段且段间无数据依赖时，将每段分别用独立 Mix scope 包裹，提升编译器调度灵活性。
+
+```
+Mix scope 1 (ID 例如 10001): V10→C11→V11→C12 (第1段 CV 链)
+  sg_set_scope=10001
+  ... V10→C11→V11→C12 ...
+  sg_set_scope=-1
+
+Mix scope 2 (ID 例如 10002): V20→C21→V21→C22 (第2段 CV 链，与第1段无数据依赖)
+  sg_set_scope=10002
+  ... V20→C21→V21→C22 ...
+  sg_set_scope=-1
+
+普通合图 scope (ID 例如 3): 两段生成数据的后续计算
+  sg_set_scope=3
+  ... 合并/归约操作 ...
+  sg_set_scope=-1
+```
+
+```python
+# ===== 策略2：多段独立 Mix scope =====
+# 第1段 CV 交替段
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=10001)
+# ... V10→C11→V11→C12 ...
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=-1)
+
+# 第2段 CV 交替段（与第1段无数据依赖）
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=10002)
+# ... V20→C21→V21→C22 ...
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=-1)
+
+# 两段生成数据的后续计算
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=3)
+# ... 合并/归约操作 ...
+if pypto.platform.npuarch == 'DAV_3510':
+    pypto.set_pass_options(sg_set_scope=-1)
+```
+
 **scope ID 命名规则**：
 - scope ID 无功能差异，仅作唯一标志，每个 scope 使用不重复的正整数即可；示例中 Mix scope 用大 ID、普通合图用小 ID 仅为便于阅读（merge-optimization.md §4.1 已声明 ID 无特殊语义）
 - 每个 scope 使用不同的正整数 ID
 
 **⚠️ 适用条件**：
-- V 段有跨迭代依赖（操作 oi_update/sum_update/max_update 等 running state tensor）
-- V 段在 `is_loop_begin`/`is_loop_end` 分支内
+- 最后一个 Cube 之后的 V 段涉及跨迭代依赖（V 段中写入在 loop 外声明、loop 内读写的 tensor）
 - V 段是纯 Vector 操作（无 Cube 夹杂）
 
 > 完整的 Step 0b 规则3 scope 布局方法详见 [merge-optimization.md §4.1 Step 0b](references/merge-optimization.md)。
@@ -374,10 +449,10 @@ if pypto.platform.npuarch == 'DAV_3510':
 - [ ] ⛔ 是否检查 UB 使用：单个 tensor 的ND+NZ的总大小须 < 248KB
 - [ ] ⛔ 是否验证 CV 通路生效：解析 program.json，追踪 CV 间数据流向——识别 CV 间应传递的数据（通过 semantic_label 定位），检查每个数据走 CV 通路 opcode（✅）还是 DDR 中转（COPY_OUT 后紧接 COPY_IN 无 CV_SYNC 邻居 ❌）。⛔ 不能只看 opcode 是否存在，须确认所有 CV 间数据都走 CV 通路。有 DDR 中转 → 排查 UB 超限 / shape 非单调 / tensor 生命周期过长
 - [ ] 检查泳道图中 spill（WorkspaceGm）数量是否 ≤ 20（经验阈值），超过则调小 TileShape或调小 nbuffer 减少 spill
-- [ ] ⛔ **nbuffer 调优流程（必做，不可跳过）**：①初始值设为1（`vec_nbuffer:{"DEFAULT":1}` + `cube_nbuffer:{-1:1}` + `cube_l1_reuse:{-1:1}`）→ ②在nbuffer=1基线上完成其他参数调优（TileShape/unroll/ooo_sched_mode等）→ ③逐步调大vec_nbuffer（1→2→4→8逐值实测，劣化则回退）→ ④在vec_nbuffer最优值基础上逐步调大cube_nbuffer（1→2→4逐值实测）。详见 catalog S-14 nbuffer调优流程
+- [ ] ⛔ **nbuffer 调优流程（必做，不可跳过）**：①初始值设为1（`vec_nbuffer:{"DEFAULT":1}` + `cube_nbuffer:{-1:1}` + `cube_l1_reuse:{-1:1}`）→ ②在nbuffer=1基线上完成其他参数调优（TileShape/unroll/ooo_sched_mode等）→ ③从1开始按2的幂次递增逐值实测vec_nbuffer（1→2→4→8→16→32…，1/2/4/8是常用范围不是上限，8有收益继续试16/32，劣化则回退不再增大）→ ④在vec_nbuffer最优值基础上同理逐值实测cube_nbuffer和cube_l1_reuse。详见 catalog S-14 nbuffer调优流程
 - [ ] 首次配置（原子优化点）后若性能劣化被回退，后续每轮 ITER_MODIFY 是否以"Mix合图 + 配套 TileShape"为基底叠加新参数试错（而非在无 Mix合图基础上试其他参数），直到组合生效或确认所有配套手段均无收益才彻底回退 Mix合图
 - [ ] ⛔ 是否以 AICore E2E Time（核上 compute）而非 wall time / device time 判断优化效果——Mix合图可能降低 wall time 但增加核上 compute，须以 AICore E2E Time 下降为准
-- [ ] 若 Mix scope 放出了 V 段（操作 running state tensor 的段），是否对放出的 V 段用独立 sg_set_scope 做了普通合图（参见 [S-21] §11）
+- [ ] 若 Mix scope 放出了 V 段（涉及跨迭代依赖的段），是否对放出的 V 段用独立 sg_set_scope 做了普通合图（参见 [S-21] §11）
 - [ ] ⛔ CV 全合和 CV 不全合都是合法调优路径。选定一个 scope 范围后，必须先在该范围内充分调参（配合调小 TileShape、对比 nbuffer、排查 DDR 回退、调整 unroll），所有参数都调完仍退化才切换 scope 范围（如 CV 全合→CV 不全合），在新范围内重新充分调参
 - [ ] ⛔ 多次尝试仍无收益时，是否按 [merge-optimization.md §4.7](references/merge-optimization.md)「Mix合图失败诊断子流程」执行诊断——从 DDR 回退追溯到代码具体行，区分不可修复约束 vs 可修复代码结构，对可修复断点执行代码结构改造（合并 gather / view 复用 / 消除中间 assemble），修复后重试 Mix合图
 
@@ -414,9 +489,10 @@ if pypto.platform.npuarch == 'DAV_3510':
 - [ ] 是否按推荐值设置了 max_workspace_kb
 - [ ] 是否设置了 host_options={"compile_monitor_enable": 0}
 
-**🔥 P2+ - Mix合图双 scope 策略 [S-21]**（A5 平台 + 有跨迭代依赖 V 段的算子）：
-- [ ] [S-21] 是否识别了从 Mix scope 放出的 V 段（操作 running state tensor 的段）
+**🔥 P2+ - Mix合图多 scope 策略 [S-21]**（A5 平台 + 最后一个 Cube 后的 V 段涉及跨迭代依赖，或多段无数据依赖的 CV 段）：
+- [ ] [S-21] 是否按 §11 的 scope 划分条件诊断：识别跨迭代依赖 tensor → 判断最后一段 V 是否涉及 → 决定是否切 scope
 - [ ] 是否对放出的 V 段用独立 sg_set_scope 做了普通合图
+- [ ] 切 scope 后是否与非切实测对比，保留性能更优的
 - [ ] scope ID 是否互不重复（Mix 与普通 scope 使用不同正整数即可，大小无特殊语义）
 
 

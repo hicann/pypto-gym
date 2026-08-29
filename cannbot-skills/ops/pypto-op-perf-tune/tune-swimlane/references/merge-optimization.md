@@ -529,7 +529,7 @@ if pypto.platform.npuarch == 'DAV_3510':
 
 > **铁律：Mix合图一旦开启，不论编译超时还是性能退化，都禁止直接移除 Mix合图配置转向非 Mix 优化（如 stitch/sched_mode/NONE_CACHEABLE/vf_options）。必须走完下方全部 Step 后才允许退出。**
 
-> **⛔ 两条独立调试线原则：自动合图（auto_mix_partition=1）和手动合图（sg_set_scope）是两条独立的调试线，各自必须完整走 Step 0→1→2→3→4→5→6。先完整走完自动合图线（Step 0→6），再切换走手动合图线（Step 0→6，Step 0 数据流分析可复用）。禁止从自动合图的某个中间步骤直接跳入手动合图的某个中间步骤。两条线全部走完仍无收益才允许退出 Mix合图。**
+> **⛔ 两条独立调试线原则：自动合图（auto_mix_partition=1）和手动合图（sg_set_scope）是两条独立的调试线，各自必须完整走 Step 0→1→2→3→4→5→6。先完整走完自动合图线（Step 0→6），再切换走手动合图线（Step 0→6，Step 0 数据流分析可复用）。禁止从自动合图的某个中间步骤直接跳入手动合图的某个中间步骤。两条线全部走完仍未达到预期目标性能才允许退出 Mix合图。**
 
 ```
 Step 0: 数据流分析（进入 Mix合图前的强制准备）
@@ -548,7 +548,7 @@ Step 0: 数据流分析（进入 Mix合图前的强制准备）
       对每条数据流，判断：
       - 生产者和消费者之间是否有其他 Cube 操作？（有则不能走 CV 通路）
       - 生产者的输出 shape 和消费者的输入 shape 是否单调？（交叉则不能走 CV 通路）
-      - 消费者是否在 is_loop_begin/end 内操作 running state？（是则该段有跨迭代依赖）
+      - 消费者是否在 is_loop_begin/end 内操作跨迭代依赖 tensor？（是则该段有跨迭代依赖）
 
   0b. 确定 scope 范围（基于数据流分析）
 
@@ -556,11 +556,11 @@ Step 0: 数据流分析（进入 Mix合图前的强制准备）
              则 V 和 C 应在同一 scope 内，走 CV 通路（UB→L1）。
       规则2: 如果 C 段的输出直接喂 V 段（C→V），且中间无其他 Cube，
              则 C 和 V 应在同一 scope 内，走 CV 通路（L0C→UB）。
-      规则3: 如果 V 段在 is_loop_begin/end 内操作 running state tensor
-             （如 oi_update/sum_update/max_update），该 V 段有跨迭代依赖，
+      规则3: 如果 V 段在 is_loop_begin/end 内操作跨迭代依赖 tensor
+             （在 loop 外声明、loop 内读写的 tensor），该 V 段有跨迭代依赖，
              应从 Mix scope 中放出，**并立即用独立 sg_set_scope 做普通合图**（对应 S-21）。
              ⛔ 禁止只放出不做普通合图——放出的 V 段内部多个 Vector 子图间仍有调度开销。
-             双 scope 布局：
+              多 scope 布局（详见 S-21 两种策略）：
              ```
              sg_set_scope=20001  # Mix scope (大 ID)
              ... V0→C1→V1→C2 (CV 链) ...
@@ -715,7 +715,8 @@ Step 3: 性能退化处理 — 阶段 A（在当前 scope 范围内充分调参�
       ┌─────────────────────────────────────────────────────────────┐
       │ ⛔ 3c 调参清单（逐个尝试，每次只改一个参数，实测后标记）     │
       │                                                             │
-      │ □ nbuffer: vec_nbuffer 1→2→4→8 逐值实测（劣化则回退上一值） │
+       │ □ nbuffer: vec_nbuffer 1→2→4→8→16→32… 逐值实测              │
+       │   （1/2/4/8是常用范围，8有收益继续增大，劣化则回退不再增大）   │
       │ □ loop tile: 尝试至少 2 个值（如 s2_tile 1024→512→2048）   │
       │ □ cube L0: [128,128]→[64,64]→[256,128] 逐个尝试            │
       │ □ cube L1: [128,128]→[128,256]→[256,256] 逐个尝试          │
@@ -784,7 +785,7 @@ Step 4: 性能退化/未达标处理 — 阶段 B（调整 scope 框架）
 
       方向1: CV 全合 → CV 不全合
         - 当前 scope 包裹了所有 CV 段（全合），性能退化
-        - 按规则3放出跨迭代依赖 V 段（is_loop_begin/end 内操作 running state 的段）
+         - 按规则3放出涉及跨迭代依赖的 V 段（is_loop_begin/end 内操作跨迭代依赖 tensor 的段）
         - 放出的段用独立 sg_set_scope 做普通合图或局部 Mix合图
 
       方向2: CV 不全合 → 扩大 scope
@@ -859,7 +860,7 @@ Step 6: 退出 Mix合图
     □ 原因3(串行化减并行度) → 调小 loop tile/L0
     □ 原因4(均正常) → 3c 充分调参，仍退化则 Step 4
   □ 3c 配套参数逐个调优（⛔ 8 项全部标记 ✅或❌ 后才允许退出）
-    □ nbuffer: vec_nbuffer 1→2→4→8 逐值实测
+    □ nbuffer: vec_nbuffer 1→2→4→8→16→32… 逐值实测（劣化则回退）
     □ loop tile: 至少 3 个值
     □ cube L0: [128,128]→[64,64]→[256,128]
     □ cube L1: [128,128]→[128,256]→[256,256]
@@ -901,7 +902,7 @@ Step 6: 退出 Mix合图
 - **sg_set_scope 三元组**：`sg_set_scope` 除正整数 ID 外还支持三元组形式 `(id, allowParallelMerge, allowCrossScopeMerge)`，控制段间合并行为。实测参考配置 `(1, True, False)`（允许段内并行合并，禁止跨段合并）。仅单段简单合图用正整数即可，多段合图需协调合并行为时用三元组。
 - **Lite 平台边界**：DAV_3113/3003 等 Lite 平台不依赖 `sg_set_scope`，靠 LiteNPU 图形模式自动推断。本节 mixed-CV scope 方法仅适用于 DAV_3510（A5），Lite 平台无需配置。
 - **Mix合图默认 nbuffer 配置**：`vec_nbuffer_setting={-1: 1}` 和 `cube_nbuffer_setting={-1: 1}` 是 Mix合图的默认配置（粒度 1，不额外合并，交由 Mix合图接管融合）。若 `cube_nbuffer_setting` 无效，可尝试 `cube_l1_reuse_setting={-1: 1}` 替代。此处 nbuffer=1:1 是**软件级缓冲配置**，与硬件 CV 配比 1:2 是不同层面的概念——硬件配比 1:2 决定物理核如何连接，软件 nbuffer=1:1 决定编译器是否额外合并子图，两者不矛盾。nbuffer 调优见 §4.2.5 第 2 条
-- **cube_nbuffer_setting 与 Mix合图的配合**：Mix合图消除 CV 间搬运后，仍可通过 `cube_nbuffer_setting` 进一步合并同构 Cube 子图减少调度开销。两者互补——Mix消除 CV 间 DDR 搬运，cube_nbuffer 减少 Cube 子图间调度开销。建议 Mix合图生效后在默认 `cube_nbuffer_setting={-1: 1}` 基础上尝试 `{-1: 4}`（从 4 开始逐值实测 4/8/16），与 `cube_l1_reuse_setting={-1: 8}` 配合使用。⚠️ 两者的 hashOrder 分析和粒度设置应基于 analyze_swimlane.py 的输出，不宜同时过大（见 §3.3 协同原则）
+- **cube_nbuffer_setting 与 Mix合图的配合**：Mix合图消除 CV 间搬运后，仍可通过 `cube_nbuffer_setting` 进一步合并同构 Cube 子图减少调度开销。两者互补——Mix消除 CV 间 DDR 搬运，cube_nbuffer 减少 Cube 子图间调度开销。建议 Mix合图生效后在默认 `cube_nbuffer_setting={-1: 1}` 基础上从 1 开始按 2 的幂次递增逐值实测（1→2→4→8→16→32…，劣化则回退），与 `cube_l1_reuse_setting` 配合使用。⚠️ 两者的 hashOrder 分析和粒度设置应基于 analyze_swimlane.py 的输出，不宜同时过大（见 §3.3 协同原则）
 
 ##### 4.2 硬性限制条件（⛔ 不满足则 Mix合图不生效）
 
@@ -938,7 +939,7 @@ Step 6: 退出 Mix合图
 1. **scope ID 只是唯一标记，无功能差异**：`sg_set_scope` 的数字（如 5001、20001）只是一个唯一标识符，在一个 kernel 代码中不重复使用即可，对 Mix合图行为无影响。
 2. **nbuffer 配比须实测对比**：真正的性能差异来自 **nbuffer 配比**：nbuffer 调大允许编译器跨迭代重叠计算与搬运，但同时增加 UB 并发占用，可能引发 spill（溢出 workspace GM，性能下降）。实测中大 nbuffer 也可能导致部分 tensor 退回 DDR 中转，须逐值验证 CV 通路是否仍生效（解析 program.json，见§4.5）。须逐值实测取优。
 
-   - **建议**：逐步调大 nbuffer（如 1→2→4→8→16）逐值实测性能，取最优配置——若调大后性能劣化则回退至上一个最优值。
+   - **建议**：从 1 开始按 2 的幂次递增逐值实测性能（1→2→4→8→16→32…，1/2/4/8 是常用范围不是上限，8 有收益继续增大），取最优配置——若调大后性能劣化则回退至上一个最优值，不再继续增大。
 3. **spill 数量参考阈值 ≤ 20**（性能指标，非硬性限制）：Mix合图场景下，spill 指编译器因 UB/L1 寄存器不足将数据溢出到 workspace GM 的次数，在泳道图中体现为 `WorkspaceGm`。复杂算子 spill ≤ 20 属正常（经验阈值，非绝对标准）；**超过 20 说明性能还有优化空间**，一般调小 TileShape或调小 nbuffer 会减少 spill（减小并发 tensor 占用，释放寄存器/UB 空间）。spill 与 UB 并发使用（§4.2 第 3 条）相关但不同：UB 超限导致数据走 DDR 中转（CV 通路失效），spill 超限导致数据溢出到 workspace GM（性能下降但 CV 通路可能仍生效）。
 4. **多次尝试，不可一次劣化即回退**：A5 场景下 Mix合图是核心性能调优手段，其核心收益是消除 CV 间 DDR 搬运开销，最终一般都能带来优化。首次配置后若性能劣化，**不可直接回退放弃**——需结合本节其他条目多次尝试：同步调小 TileShape（第 9 条）、对比 nbuffer 配比（第 2 条）、调整 unroll 策略（第 8 条）、排查 DDR 回退（§4.5/§4.6），确认所有合理组合都试过仍无收益才可回退。
 
@@ -951,9 +952,9 @@ Step 6: 退出 Mix合图
    | cube L0（mL0, nL0） | [128, 128] | [128,128] / [64,128] / [256,128] | 128 附近通常最优，勿用极小值（如 16，会破坏 CV 通路 shape-tile 衔接轴整数倍约束） |
    | cube L1（kAL1, kBL1, mL1, nL1） | [128, 128] | [128,128] / [128,256] / [256,256] | 与 L0 相近或更大 |
    | s2_tile（loop tile） | 1024 | 1024 / 512 / 2048 | Mix 串行化减少 task 数，调小 loop tile 增加任务数弥补并行度损失 |
-   | vec tile | [128, 128] | [128,128] / [128,512] / [128,256] | 与 cube L0 同方向 |
-   | nbuffer（vec/cube） | {-1: 1} | 1→2→4→8 逐值实测 | 从 1:1 开始，逐步调大 |
-   | unroll_list | [8,4,2,1] | [8,4,2,1] / [4,2,1] / [2,1] | 全展开最优；编译超时则降档（按第 7 条对策） |
+    | vec tile | [128, 128] | [128,128] / [128,512] / [128,256] / [64,128] / [32,512] | 根据实际 tensor 维度设置，优先用满尾轴；与 cube L0 同方向 |
+    | nbuffer（vec/cube） | {-1: 1} | 1→2→4→8→16→32… 逐值实测（劣化则回退） | 从 1:1 开始，按 2 的幂次递增 |
+    | unroll_list | [8,4,2,1] | [8,4,2,1] / [4,2,1] / [4] / [2,1] / [1] | 全展开最优；编译超时则降档（按第 7 条对策）。Mix合图场景下推荐多级 unroll_list（如 [8,4,2,1]），多级展开减少循环调度开销，单值（如 [1]）仅在多级编译失败时使用 |
 
     ⛔ 首次开启 Mix 时，使用"推荐起始值"列的全部值作为原子优化点一次性提交。退化后，按候选值表逐个替换参数（每次只改一个），在 Mix 框架内迭代。具体配套参数由 Step 0c 分析确定。
 
@@ -980,7 +981,7 @@ Step 6: 退出 Mix合图
    | # | 尝试维度 | 最低尝试次数 | 具体操作 | 说明 |
    |---|---------|------------|---------|------|
    | 1 | 原子优化点 | 1 次 | CV 全合 + 推荐起始值（见候选值表） | 首次实测 |
-   | 2 | nbuffer 调整 | 至少 2 个值 | 1→2→4（逐值实测，退化则回退上一值） | 从 1:1 开始逐步调大 |
+    | 2 | nbuffer 调整 | 至少 2 个值 | 1→2→4→8→16→32…（逐值实测，劣化则回退不再增大） | 从 1:1 开始按 2 的幂次递增 |
    | 3 | TileShape/loop tile 调整 | 至少 1 次 | s2_tile 或 cube tile 调整（按候选值表） | 在 Mix 框架内调小 |
    | 4 | unroll 策略 | 至少 1 次 | unroll_list 降档（如 [8,4,2,1]→[4,2,1]） | 编译超时按第 7 条对策 |
 
@@ -993,7 +994,7 @@ Step 6: 退出 Mix合图
    |------|------------|------|
    | CV 全合首次开启（原子优化点） | ✅ 1 轮 | 含配套 TileShape 的首次实测 |
    | CV 全合→CV 不全合切换 | ✅ 1 轮 | scope 范围调整后重新实测 |
-   | nbuffer 调整（1→2→4→8） | ✅ 每个值 1 轮 | 逐值实测 |
+    | nbuffer 调整（1→2→4→8→16→32…） | ✅ 每个值 1 轮 | 逐值实测，劣化则回退 |
    | TileShape 调整（配套参数） | ✅ 每个参数 1 轮 | 每次只改一个 |
    | unroll_list 降档 | ✅ 每档 1 轮 | 编译超时按第 7 条对策后重试 |
    | program.json 诊断（不改变参数） | ❌ 不计入 | 诊断性操作 |
@@ -1005,8 +1006,8 @@ Step 6: 退出 Mix合图
 
    **判断哪些 V 段应该从 Mix合图中放出**：存在**跨迭代依赖**的 V 段应放出。判断标准：
    - 该 V 段在 `is_loop_begin` / `is_loop_end` 条件分支内
-   - 且操作跨迭代累积的 running state tensor（如 online softmax 的 oi_update / sum_update / max_update）
-   - 这类 V 段放进 Mix合图会导致 UB 并发占用过大（running state tensor 生命周期跨越整个 loop），引发 spill 或 DDR 回退
+   - 且写入在 loop 外声明、loop 内读写的 tensor（构成跨迭代依赖）
+   - 这类 V 段放进 Mix合图会导致 UB 并发占用过大（跨迭代依赖 tensor 生命周期跨越整个 loop），引发 spill 或 DDR 回退
 
    **放出后的处理**：放出的段**必须**用 `sg_set_scope` 单独包裹做局部合图——没有被 mix合图包裹的独立段，用 scope 单独包起来一般也会有性能提升（减少段内子图间调度开销和数据搬运开销）。具体方式：
    - 若放出的段仍含 CV 交替结构 → 做局部 Mix合图（A5 平台，scope 用正整数）
@@ -1025,7 +1026,7 @@ Step 6: 退出 Mix合图
    即 Mix合图只包裹 C1+V1+C2（消除 CV 间搬运），V2（flash update，存在跨迭代依赖）从 Mix合图中放出，用独立的 scope 做普通合图减少 V2 内部子图间调度开销。
 6. **⚠️ Mix合图对核上 compute 的影响须以 AICore E2E Time 为准**：Mix合图通过 `sg_set_scope` 改变 CV 调度方式，可能减少 CV 间 DDR 搬运（降低 wall time / device time），但**同时可能增加核上等待时间**（CV 交替段的同步开销、scope 内子图串行化），导致 **AICore End-to-End Time（核上 compute）上升**。实测案例：某 attention 算子 Mix合图后 device time 从 1727us 降至 667us，但 AICore E2E Time 从 102us 升至 167us——核上计算反而变慢。**⛔ Mix合图的优化效果必须以 AICore E2E Time 下降为准**，不能仅看 wall time 或 device time。若 Mix合图后 AICore E2E Time 上升，即使 wall time 下降也属错误优化方向，应回退或调整 scope 策略（如 split scope 替代全合 scope）。
 7. **Mix合图后子图膨胀可能引发编译超时**：Mix合图本身会将 CV 交替段合并为大子图，叠加其他会进一步放大子图规模的调优（如调大 `unroll_list` 展开更多迭代、调大 nbuffer 增加并发缓冲、增大 loop tile 等）可能导致编译器 pass 阶段复杂度爆炸，表现为编译卡死数分钟无进展。**⛔ 编译时间门槛 = 20 分钟**：Mix合图（及叠加其他放大子图规模的调优）单次编译耗时超过 20min 即判定为不可应用——即使有性能收益，编译时间过长无法应用到实际整网中，直接回退或改尝试缩小子图规模的方案。**对策**（按优先级）：① 改小或回退当次会放大子图的调整；② 减小 Mix合图包裹段——按第 5 条「CV 全合 vs 不全合」将部分段从 mix合图中放出，缩小单段子图规模后重试；③ **调小核内 TileShape（L0）和 loop tile**——TileShape 过大是编译路径爆炸的常见根因，配合第 9 条的配套 TileShape 调整（L0 调小 + L1 调大 + loop tile 调小）可显著减少编译产物规模。
-8. **Loop unroll 减少调度开销**：可尝试对最内层 loop unroll 更多子图或全 unroll，以减少循环迭代次数和 host task 调度开销（`unroll_list` 包含所有可能的尾块次数，或对静态轴用 `range` 展开）。**⚠️ 全 unroll 副作用**：全 unroll 将每个循环迭代编译为独立代码路径，若迭代间存在数据依赖（如 online softmax 的 mi/li/oi running state），编译器无法跨代码路径保持状态，被迫走 DDR 传递（见 §4.6）——属算法固有依赖，数据量小时性能影响可忽略。
+ 8. **Loop unroll 减少调度开销**：可尝试对最内层 loop unroll 更多子图或全 unroll，以减少循环迭代次数和 host task 调度开销（`unroll_list` 包含所有可能的尾块次数，或对静态轴用 `range` 展开）。**Mix合图场景下推荐多级 unroll_list**（如 `[8,4,2,1]`），多级展开让编译器根据循环剩余次数选择最优展开粒度，比单值（如 `[1]`）减少更多循环调度开销。单值仅在多级编译失败或迭代间数据依赖严重时使用。**⚠️ 全 unroll 副作用**：全 unroll 将每个循环迭代编译为独立代码路径，若迭代间存在跨迭代依赖（如 online softmax 的 mi/li/oi 累积状态），编译器无法跨代码路径保持状态，被迫走 DDR 传递（见 §4.6）——属算法固有依赖，数据量小时性能影响可忽略。
 9. **⛔ Cube/Vector 核内 TileShape 必须同步调整**（Mix合图后强制步骤）：设置 Mix合图后，**必须同步调整核内 TileShape**（通过 `set_cube_tile_shapes` / `set_vec_tile_shapes` 设置），这是 Mix合图调优中不可跳过的关键步骤。
 
    **合图前 vs 合图后 TileShape 调优方向对比**：
@@ -1151,7 +1152,7 @@ def kernel(...):
 - [ ] 每次修改后重新验证精度 + 测性能（⛔ 上板实测）
 - [ ] ⛔ 检查 UB 使用：单个 tensor 的 ND+NZ 总大小是否 < 248KB
 - [ ] 检查 CV 间传递的 tensor 生命周期是否过长（跨越多个计算阶段），尝试缩短
-- [ ] ⛔ 逐步调大 nbuffer（如 1→2→4→8→16）逐值实测性能，取最优配置（若调大后劣化则回退至上一个最优值）
+- [ ] ⛔ 从 1 开始按 2 的幂次递增逐值实测性能（1→2→4→8→16→32…，1/2/4/8 是常用范围不是上限，8 有收益继续增大），取最优配置（若调大后劣化则回退至上一个最优值，不再继续增大）
 - [ ] 首次配置后若性能劣化，不可直接回退——多次尝试（同步调小 TileShape、对比 nbuffer、调整 unroll、排查 DDR 回退）确认无收益才可回退
 - [ ] CV 通路未生效（program.json 无 CV 通路 opcode 或仅部分走）时不可直接回退——按 §4.2 硬限制逐项排查，多次尝试调整后再下结论
 - [ ] ⛔ CV 全合和 CV 不全合都是合法调优路径。选定一个 scope 范围后，必须先在该范围内充分调参（配合调小 TileShape、对比 nbuffer、排查 DDR 回退、调整 unroll），所有参数都调完仍退化才切换 scope 范围（如 CV 全合→CV 不全合），在新范围内重新充分调参

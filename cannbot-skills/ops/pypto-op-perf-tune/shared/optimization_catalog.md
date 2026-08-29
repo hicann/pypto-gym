@@ -59,7 +59,7 @@
 | S-18 | sg_set_tunevf_mode（VF 调优 Pass 行为模式）  | ⭐⭐   | A5 平台（`npuarch == 'DAV_3510'`）+ 含 Vector 计算的算子                          | tune-swimlane SKILL.md §8 + merge-optimization.md §5.4 | 无             |
 | S-19 | ready_on_host_tensors                        | ⭐⭐   | 算子有小 tensor 输入通过 AICPU gather 下发（如 block_table、actual_seq 等索引类 tensor） | tune-swimlane SKILL.md §9                               | 无             |
 | S-20 | max_workspace_kb + host_options 完整性检查   | ⭐⭐⭐ | 所有算子（NPU 编译输出含 workspace 推荐值时强制）     | tune-swimlane SKILL.md §10 + 主 SKILL.md §2.1           | 无（S2阶段）   |
-| S-21 | Mix合图双 scope 策略（Mix + 普通合图协同）   | ⭐⭐⭐ | A5 平台 + 算子有跨迭代依赖的 V 段需从 Mix scope 放出 | tune-swimlane SKILL.md §11 + merge-optimization.md §4.1 Step 0b 规则3 | S-14 Step 0 完成 |
+| S-21 | Mix合图多 scope 策略（Mix + 普通合图协同）   | ⭐⭐⭐ | A5 平台 + 最后一个 Cube 后的 V 段涉及跨迭代依赖 | tune-swimlane SKILL.md §11 + merge-optimization.md §4.1 Step 0b 规则3 | S-14 Step 0 完成 |
 
 ### 核内调优（tune-incore）
 
@@ -94,8 +94,8 @@
 | ⭐⭐   | F-6 合并独立 loop  | 开箱     | 合并无数据依赖的独立 loop                                                      |
 | ⭐⭐   | S-9 Stitch 调优    | 深度     | `stitch_function_max_num: 128`                                               |
 | ⭐⭐⭐ | S-4 / S-5 普通合图 | 深度     | sg_set_scope 包裹 V 段 或 nbuffer                                              |
-| ⭐⭐⭐ | S-14 A5 Mix合图    | 深度     | A5 平台：`auto_mix_partition=1`（自动）和 `sg_set_scope`（手动）是同一功能的两种开关方式，优先尝试自动，当前方式充分调优后仍无收益再切换另一种（仅 `npuarch=='DAV_3510'`） |
-| ⭐⭐⭐ | S-21 Mix双scope策略 | 深度     | A5 平台：Mix scope 放出的 V 段用独立 `sg_set_scope` 做普通合图                  |
+| ⭐⭐⭐ | S-14 A5 Mix合图    | 深度     | A5 平台：`auto_mix_partition=1`（自动）和 `sg_set_scope`（手动）是同一功能的两种开关方式，优先尝试自动，当前方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种（仅 `npuarch=='DAV_3510'`） |
+| ⭐⭐⭐ | S-21 Mix多scope策略 | 深度     | A5 平台：涉及跨迭代依赖的 V 段从 Mix scope 放出，用独立 `sg_set_scope` 做普通合图；多段无数据依赖的 CV 段分独立 Mix scope                  |
 | ⭐     | S-10 调度策略      | 深度     | `device_sched_mode` 调整                                                     |
 | ⭐⭐⭐ | §4.3 A-D1~A-D3     | 算法     | ⚠️ S-14 配置级 Mix合图失败后，走算法级优化减少 DDR 往返（合并 gather / view 复用 / 消除中间 assemble），修复 CV 通路断点后重试 S-14。详见主 SKILL.md §4.3 |
 
@@ -265,8 +265,15 @@
 - **检查方法**: 检查是否设置了 `set_vec_tile_shapes`
 - **操作指南**: tune-frontend SKILL.md §3 → references/basic-block-optimization.md §3（Vector TileShape 设置规范）
 - **典型收益**: 3-10%
-- **推荐配置**: `pypto.set_vec_tile_shapes(64, 512)`
-- **约束**: 优先用满尾轴；尾轴过大必须切分时按 512B 对齐切分；尾轴 32B 对齐（最低要求）；归约类计算不在归约轴上切分
+- **推荐配置**: 根据实际数据维度设置，不可使用固定小值。设置方法：
+  1. **第一维（行方向）**：取对应 tensor 的实际行数或其整数倍缩小（如 tensor 为 [128, 512]，第一维可取 128 或 64/32 等约数）
+  2. **第二维（列方向/尾轴）**：优先用满尾轴（等于 tensor 的列数），尾轴过大时建议按 512B 对齐切分（最低要求 32B 对齐）；归约类计算不在归约轴上切分（第二维 = 实际归约轴长度）
+  3. **shape 变化时重设**：V 段内 tensor shape 从 [M,N] 变为 [M,1] 或反向变化时，必须重新设置匹配当前 shape 的 vec tile（见 F-17）
+  4. **reshape 前后分别设置**：reshape 前按源 shape 设置，reshape 后按目标 shape 重设
+  5. **参考起始值**：常见最优配置如 [128, 512]、[128, 128]、[64, 128] 等，具体取决于 tensor 实际维度
+- **约束**: 优先用满尾轴；尾轴过大建议按 512B 对齐切分（最低要求 32B 对齐）；归约类计算不在归约轴上切分
+- **调优方向链（用满尾轴之后的调整顺序）**: 用满尾轴 → UB 248KB 超限时优先调小第一维（无 reduce 操作时可尝试切分尾轴，建议 512B 对齐，最低 32B）→ 性能不优时调整第一维（增大减少循环 overhead / 减小增加 task 并行度）→ Mix合图场景须与 cube L0 衔接轴相等或整数倍 → 多 V 段共享 UB 时各段 vec tile 总并发占用不超 248KB，在段间平衡分配
+- **尾轴切分规则**: 后续 vec 操作含 reduce 操作时，尾轴一般不切（第二维 = 实际归约轴长度，切分会产生跨子图 reduce 开销）；后续无 reduce 操作时，可尝试切分尾轴验证性能（建议按 512B 对齐，最低 32B）
 - **reshape 前后重设规则**: reshape 前按源 shape 设置 vec_tile，reshape 后必须按目标 shape 重设 vec_tile，尤其 assemble 操作前必须重设，否则会出错
 - **冗余设置检查**: 合并连续相同的 `set_vec_tile_shapes` 为一次调用（常见 copy-paste 残留），减少冗余配置指令；同时检查每个 vec_tile_shapes 是否与对应 tensor shape 匹配，不匹配的及时修正
 
@@ -425,15 +432,17 @@
 - **操作指南**: tune-swimlane SKILL.md §1
 - **配置示例**: `runtime_options={"stitch_function_max_num": 128}`
 - **调优方法**: 在内存资源允许的前提下逐步增大，结合泳道图和端到端耗时调整
+- **与 max_workspace_kb 的关系**: `max_workspace_kb`（S-20）优先于 `stitch_function_max_num`。`max_workspace_kb` 激活 memory-driven mode 后，编译器自动管理 stitch 并行度，此时 `stitch_function_max_num` 通常无需额外设置。仅在 `max_workspace_kb` 未设置或设置后仍有 stitch 瓶颈时，才单独调优 `stitch_function_max_num`
 
 ### [S-10] 调度策略
 
 - **阶段**: 深度调优
 - **优先级**: ⭐ P4
-- **适用条件**: 上下游子图之间依赖较为简单，或下游子图输入 Tensor 的 L2 命中率较为重要
+- **适用条件**: 上下游子图之间依赖较为简单，或下游子图输入 Tensor 的 L2 命中率较为重要。**device_sched_mode 是公共场景的配置项**，非 Mix合图专属
 - **操作指南**: tune-swimlane SKILL.md §5
 - **配置示例**: `runtime_options={"device_sched_mode": 1}`
 - **调优方法**: 尝试不同调度策略，值域范围 [0, 3]
+- **与其他参数的关系**: `device_sched_mode` 是公共调度配置，与 Mix合图（S-14）/ stitch（S-9）/ max_workspace_kb（S-20）无互斥关系，可独立调优
 
 ### [S-11] Cube TileShape 深度调优
 
@@ -491,10 +500,10 @@
   - ⛔ shape/tile 硬数值约束：衔接 tensor 须 2D；L0C→UB vec tile 两维 16 对齐；cube tile 与 vec tile 衔接轴相等或整数倍；UB→L1 内轴切分 32B 对齐；assemble 场景输出 ≤ UB×0.35
 - **调优建议（非硬性限制，详见 merge-optimization.md §4.2.5）**: Loop unroll 减少调度开销（第 8 条）、TileShape 同步调整——L0 调小 + L1 调大 + loop tile 调小三者作为一组（第 9 条）、cube_nbuffer 配合 Mix 消除 Cube 子图间调度开销（merge-optimization.md §4.1 说明）
 - **⛔ nbuffer 调优流程（Mix合图场景必做，不可跳过）**:
-  1. **初始值设为1**：开启 Mix合图时，`vec_nbuffer_setting: {"DEFAULT": 1}` + `cube_nbuffer_setting: {-1: 1}` + `cube_l1_reuse_setting: {-1: 1}`，因为 Mix合图已将 CV 段串行化，nbuffer>1 初始会增加 UB 占用导致 spill
+  1. **初始值设为 1**：开启 Mix合图时，初始值设为1（`vec_nbuffer_setting: {"DEFAULT": 1}` + `cube_nbuffer_setting: {-1: 1}` + `cube_l1_reuse_setting: {-1: 1}`），因为 Mix合图已将 CV 段串行化，nbuffer>1 初始会增加 UB 占用导致 spill。但 nbuffer 最优值因算子而异（部分算子 cube_l1_reuse=8、cube_nbuffer=4 为最优），须逐值实测，不可仅试 1 后就放弃更大值
   2. **在 nbuffer=1 基线上完成其他参数调优**（TileShape、unroll、ooo_sched_mode 等）
-  3. **逐步调大 nbuffer 逐值实测**：vec_nbuffer_setting 从 1→2→4→8 逐值尝试，每次实测 AICore E2E Time，取最优值。若调大后劣化则回退至上一个最优值
-  4. **cube_nbuffer 同理**：在 vec_nbuffer 最优值基础上，cube_nbuffer 从 1→2→4 逐值尝试
+  3. **逐值实测 vec_nbuffer**：从 1 开始按 2 的幂次递增（1→2→4→8→16→32…），每次实测 AICore E2E Time。1/2/4/8 是常用候选范围，不是硬性上限——若 8 仍有收益，继续试 16/32。若调大后劣化则回退至上一个最优值，不再继续增大（nbuffer 是 UB 压力和并行度的 tradeoff，劣化说明 UB 压力已超阈值，继续增大几乎不可能反转）
+  4. **cube_nbuffer / cube_l1_reuse 同理**：在 vec_nbuffer 最优值基础上，cube_nbuffer 和 cube_l1_reuse 从 1 开始按 2 的幂次递增逐值尝试，劣化则回退
 - **最优结果标准（CV 全合须同时满足四条）**: (1) 用满核无气泡 (2) 全走 CV 通路无 DDR 中转 (3) 无 spill (4) 核内计算流水排布紧密无空闲。调小 TileShape 是逼近最优的首要手段（提高核内并行度+增加任务数填满核+减少 UB 占用降低 spill）
 - **验证方法（⛔ 调优必做，须追踪 CV 间数据流向）**: 解析 program.json，识别 CV 间应传递的数据（通过 semantic_label 定位），追踪每个数据的传递路径——走 CV 通路 opcode（`L0C_COPY_UB`/`UB_COPY_L1`/`UB_COPY_ND2NZ` ✅）还是 DDR 中转（`COPY_OUT` 后紧接 `COPY_IN` 无 CV_SYNC 邻居 ❌）。⛔ 不能只看 opcode 是否存在：存在 CV 通路 opcode 只能证明部分数据走了 CV 通路，须确认所有 CV 间数据都走 CV 通路。正常的 DDR 搬运（最终输出/原始输入/跨迭代依赖 mi/li/oi）不影响 Mix合图生效判断。**性能指标**：检查泳道图中 spill（`WorkspaceGm`）数量，复杂算子 ≤20 正常（经验阈值），超过则调小 TileShape或调小 nbuffer 减少 spill
 - **典型收益**: 消除 CV 间 DDR 搬运开销，视算子 CV 搬运占比而定。A5 场景下 Mix合图最终一般能带来优化，首次劣化不可直接回退，需多次尝试（同步调小 TileShape、对比 nbuffer、排查 DDR 回退）。**⛔ CV 全合和 CV 不全合都是合法调优路径**——选定一个 scope 范围后先充分调参，所有参数都调完仍退化才切换 scope 范围。**⚠️ Mix合图可能降低 wall time 但增加核上 compute（AICore E2E Time），须以 AICore E2E Time 下降为准判断优化效果，详见 merge-optimization.md §4.2.5 第 6 条**
@@ -824,21 +833,29 @@
   ```
 - **关联优化**: S-9（Stitch 调优，workspace 影响 stitch 并行度）、S-14（Mix合图，workspace 影响 CV 调度）
 
-### [S-21] Mix合图双 scope 策略（Mix + 普通合图协同）
+### [S-21] Mix合图多 scope 策略（Mix + 普通合图协同）
 
 - **阶段**: 深度调优
-- **优先级**: ⭐⭐⭐ P2+（A5 平台 + 有跨迭代依赖 V 段的算子）
-- **适用条件**: A5 平台 + 算子有跨迭代依赖的 V 段需从 Mix scope 放出（如 online softmax 的 state merge 段）
-- **前置条件**: S-14 已进入调优流程（Mix合图 Step 0 数据流分析已完成，确定有 V 段需从 Mix scope 放出）
-- **检查方法**: 分析 Mix scope 放出的 V 段（如 V2 online softmax update），判断是否应该用独立 sg_set_scope 做普通合图
+- **优先级**: ⭐⭐⭐ P2+（A5 平台 + 最后一个 Cube 后的 V 段涉及跨迭代依赖）
+- **适用条件**: A5 平台 + loop 体内最后一个 Cube 之后的 V 段涉及跨迭代依赖（V 段中写入在 loop 外声明、loop 内读写的 tensor），或有多段无数据依赖的 CV 段可分别独立合图
+- **前置条件**: S-14 已进入调优流程（Mix合图 Step 0 数据流分析已完成）
+- **检查方法**: 按 §11 scope 划分条件诊断——识别跨迭代依赖 tensor → 判断最后一段 V 是否涉及 → 决定是否切 scope。分析多段 CV 交替段是否有数据依赖，无依赖的可分独立 Mix scope
 - **操作指南**: tune-swimlane SKILL.md §11 + merge-optimization.md §4.1 Step 0b 规则3
-- **典型收益**: 5-15%（消除放出 V 段的子图间调度开销）
+- **典型收益**: 5-15%（消除放出 V 段的子图间调度开销，或多段 CV 独立合图提升并行度）
+- **多 scope 策略**:
+  - **策略1：Mix scope 放出的 V 段用独立 sg_set_scope 做普通合图**
+    - CV交替段（V0→C1→V1→C2）用一个 scope 包裹
+    - V2 update 段（涉及跨迭代依赖，需从 Mix scope 放出）用独立 scope 包裹
+  - **策略2：多段无数据依赖的 CV 段分为多段独立 Mix scope**
+    - 第1段独立的 CV 交替段（V10→C11→V11→C12...）用一个 scope 包裹
+    - 第2段独立的 CV 交替段（V20→C21→V21→C22...）用一个 scope 包裹
+    - 第1段和第2段生成数据的计算用独立 scope 包裹
 - **核心原则**:
-  - **双 scope 策略**：Mix scope (正整数 ID，如 20001) 包裹 CV 链 → scope=-1 → 普通 scope (正整数 ID，如 1) 包裹放出的 V 段 → scope=-1
   - **scope ID 说明**：scope ID 无功能差异，仅作唯一标志，每个 scope 不重复即可；Mix 用大 ID、普通用小 ID 仅为便于阅读
-  - **放出的 V 段特征**：操作 running state tensor（如 oi_update/sum_update/max_update），有跨迭代依赖，不能走 CV 通路
+  - **放出的 V 段特征**：写入在 loop 外声明、loop 内读写的 tensor（构成跨迭代依赖），不能走 CV 通路
 - **代码示例**:
   ```python
+  # === 策略1：Mix scope + 放出V段普通合图 ===
   # Mix scope: V0→C1→V1→C2
   pypto.set_pass_options(sg_set_scope=20001)
   # ... V0 gather + dequant + C1 matmul + V1 softmax + C2 matmul ...
@@ -847,6 +864,22 @@
   # 普通合图 scope: V2 online softmax update
   pypto.set_pass_options(sg_set_scope=1)
   # ... V2: max/sum/exp/oi_update operations ...
+  pypto.set_pass_options(sg_set_scope=-1)
+
+  # === 策略2：多段独立 Mix scope ===
+  # 第1段 CV 交替段
+  pypto.set_pass_options(sg_set_scope=10001)
+  # ... V10→C11→V11→C12 ...
+  pypto.set_pass_options(sg_set_scope=-1)
+
+  # 第2段 CV 交替段（与第1段无数据依赖）
+  pypto.set_pass_options(sg_set_scope=10002)
+  # ... V20→C21→V21→C22 ...
+  pypto.set_pass_options(sg_set_scope=-1)
+
+  # 两段生成数据的后续计算
+  pypto.set_pass_options(sg_set_scope=3)
+  # ... 合并/归约操作 ...
   pypto.set_pass_options(sg_set_scope=-1)
   ```
 - **关联优化**: S-14（A5 Mix合图）、S-4（Vector 手动合图）
