@@ -22,7 +22,7 @@ from ..ast_helpers import (
     _get_func_param_count,
     _get_jit_functions,
     _get_primary_jit_functions,
-    _has_loop_structure,
+    _has_loop_structure_with_helpers,
 )
 from ..core import (
     API_REPORT_FILE,
@@ -209,12 +209,12 @@ def check_ol43(ctx: CheckContext) -> Finding:
     saw_jit = False
     files_without_loop: list[str] = []
     last_pass_file = None
-    for impl_file, _, _, jit_funcs in _iter_jit_impls_d5(ctx, impl_files):
+    for impl_file, tree, _, jit_funcs in _iter_jit_impls_d5(ctx, impl_files):
         saw_jit = True
-        impl_source = ctx.read_file(impl_file) or ""
-        has_pypto_loop = bool(re.search(r'pypto\.loop\s*\(', impl_source))
-        if not has_pypto_loop:
-            has_pypto_loop = _has_loop_structure(jit_funcs[0])
+        # AST 级统一判定（覆盖 pypto.loop / pypto.loop_unroll / range 等），
+        # 不再用 `pypto\.loop\s*\(` 文本正则（loop_unroll( 会匹配失配被误拦），
+        # 对所有 jit 函数判定（而非仅 jit_funcs[0]），并跟随一层同文件 helper 委托。
+        has_pypto_loop = _has_loop_structure_with_helpers(jit_funcs, tree)
         if has_pypto_loop:
             last_pass_file = impl_file
         else:

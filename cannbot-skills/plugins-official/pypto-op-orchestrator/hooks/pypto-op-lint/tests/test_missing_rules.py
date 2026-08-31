@@ -184,3 +184,73 @@ def demo_module1_wrapper(x, y):
     finding = run_rule(mod, op_dir, "OL43", stage=5)
     assert finding.status == "FAIL"
     assert "modules/demo_module1_impl.py" in finding.message
+
+
+# ── Issue #118: loop_unroll 与 helper 委托不应被 OL43/OL23 误拦 ──
+
+
+def test_ol43_pass_with_loop_unroll_inline(tmp_path: Path):
+    """loop_unroll 内联在 JIT 入口时应 PASS（OL43 不再被文本正则误拦）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    integrated = op_dir / "demo_impl.py"
+    if integrated.exists():
+        integrated.unlink()
+    module_impl = """import pypto
+@pypto.frontend.jit
+def demo_module1_kernel(x: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP32),
+                        y: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP32)):
+    pypto.set_vec_tile_shapes(32, 128)
+    for b in pypto.loop_unroll(y.shape[0], unroll_list=[1]):
+        y[b] = x[b]
+    return y
+
+def demo_module1_wrapper(x, y):
+    return None
+"""
+    write_file(op_dir / "modules" / "demo_module1_impl.py", module_impl)
+    finding = run_rule(mod, op_dir, "OL43", stage=5)
+    assert finding.status in ("PASS", "SKIP"), finding.message
+
+
+def _write_helper_loop_impl(op_dir: Path, loop_iter_src: str) -> None:
+    module_impl = f"""import pypto
+def _batched_loop(x, y):
+    for b in {loop_iter_src}:
+        y[b] = x[b]
+
+@pypto.frontend.jit
+def demo_module1_kernel(x: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP32),
+                        y: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP32)):
+    pypto.set_vec_tile_shapes(32, 128)
+    _batched_loop(x, y)
+    return y
+
+def demo_module1_wrapper(x, y):
+    return None
+"""
+    write_file(op_dir / "modules" / "demo_module1_impl.py", module_impl)
+
+
+def test_ol43_pass_with_loop_in_helper(tmp_path: Path):
+    """loop 在 jit 入口调用的同文件 helper 内时，OL43 应 PASS（helper 委托）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    integrated = op_dir / "demo_impl.py"
+    if integrated.exists():
+        integrated.unlink()
+    _write_helper_loop_impl(op_dir, "pypto.loop(x.shape[0], unroll_list=[1])")
+    finding = run_rule(mod, op_dir, "OL43", stage=5)
+    assert finding.status in ("PASS", "SKIP"), finding.message
+
+
+def test_ol23_pass_with_loop_in_helper(tmp_path: Path):
+    """helpr 内的 loop 不应被 OL23 漏检（WARN）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    integral_impl = op_dir / "demo_impl.py"
+    if integral_impl.exists():
+        integral_impl.unlink()
+    _write_helper_loop_impl(op_dir, "pypto.loop(x.shape[0])")
+    finding = run_rule(mod, op_dir, "OL23", stage=5)
+    assert finding.status == "PASS", finding.message

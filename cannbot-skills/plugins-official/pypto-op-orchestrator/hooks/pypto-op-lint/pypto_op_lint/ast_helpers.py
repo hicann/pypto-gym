@@ -144,6 +144,36 @@ def _has_loop_structure(tree: ast.AST) -> bool:
     return False
 
 
+def _has_loop_structure_with_helpers(
+    funcs: list[ast.FunctionDef],
+    tree: ast.AST,
+) -> bool:
+    """loop 结构检测：检查给定的 jit 函数体，并跟随一层同文件本地 helper 委托。
+
+    覆盖 issue #118 场景：loop 写在 jit 入口调用的 helper 函数里（而非 JIT 入口
+    内联），OL23/OL43 不应漏检。helper 仅限同文件内定义的函数；跨文件委托不在
+    本检查范围（impl 文件应自含其 helper）。
+    """
+    if any(_has_loop_structure(func) for func in funcs):
+        return True
+    local_funcs: dict[str, ast.FunctionDef] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            local_funcs[node.name] = node
+    for func in funcs:
+        for call in ast.walk(func):
+            if not isinstance(call, ast.Call):
+                continue
+            helper = None
+            if isinstance(call.func, ast.Name):
+                helper = local_funcs.get(call.func.id)
+            elif isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+                helper = local_funcs.get(call.func.value.id)
+            if helper is not None and _has_loop_structure(helper):
+                return True
+    return False
+
+
 def _is_pypto_tensor_annotation(annotation: ast.AST,
                                 pypto_aliases: set[str] | None = None) -> bool:
     """检查注解是否为 pypto.Tensor 类型（支持别名）"""

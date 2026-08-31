@@ -521,7 +521,7 @@
         6
       ],
       "target": "gate",
-      "rule": "DESIGN.md 声明动态轴时，每个相关 impl 的 jit 函数必须包含遍历动态轴的真实 pypto.loop；该规则为硬性门禁，不得因 NPU 运行通过而跳过"
+      "rule": "DESIGN.md 声明动态轴时，每个相关 impl 的 jit 函数必须包含遍历动态轴的真实 pypto.loop / pypto.loop_unroll；该规则为硬性门禁，不得因 NPU 运行通过而跳过"
     },
     {
       "id": "OL44",
@@ -595,7 +595,7 @@
         7
       ],
       "target": "impl",
-      "rule": "unroll_list 只能出现在最内层 pypto.loop（即其 body 内不再嵌套其他 pypto.loop）；外层 pypto.loop 携带 unroll_list 会触发编译路径爆炸或寄存器拷贝 pass 引起的精度异常"
+      "rule": "unroll_list 只能出现在最内层 pypto.loop / pypto.loop_unroll（即其 body 内不再嵌套其他 pypto.loop / pypto.loop_unroll）；外层 pypto.loop / pypto.loop_unroll 携带 unroll_list 会触发编译路径爆炸或寄存器拷贝 pass 引起的精度异常"
     },
     {
       "id": "OL56",
@@ -608,7 +608,7 @@
         6
       ],
       "target": "impl",
-      "rule": "Stage 6 之前 pypto.loop 的 unroll_list 只能含单一值（默认 [1]，有依据时可用其它单值）；含 2 个及以上值会触发编译路径爆炸、拖慢编译并使开发流程超时。多值展开调优仅允许在 Stage 7 optimization。在 DESIGN.md（```python``` 代码块）与 <op>_impl.py / modules/<op>_module*_impl.py 上 post-edit 即时拒绝"
+      "rule": "Stage 6 之前 pypto.loop / pypto.loop_unroll 的 unroll_list 只能含单一值（默认 [1]，有依据时可用其它单值）；含 2 个及以上值会触发编译路径爆炸、拖慢编译并使开发流程超时。多值展开调优仅允许在 Stage 7 optimization。在 DESIGN.md（```python``` 代码块）与 <op>_impl.py / modules/<op>_module*_impl.py 上 post-edit 即时拒绝"
     },
     {
       "id": "OL57",

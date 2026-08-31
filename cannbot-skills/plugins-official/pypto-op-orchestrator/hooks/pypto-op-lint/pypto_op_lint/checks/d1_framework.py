@@ -13,7 +13,7 @@ from ..ast_helpers import (
     _extract_symbolic_dynamic_aliases,
     _get_jit_functions,
     _get_primary_jit_functions,
-    _has_loop_structure,
+    _has_loop_structure_with_helpers,
     _is_fp32_only_call,
     _is_non_tensor_annotation,
     _is_pypto_tensor_annotation,
@@ -542,7 +542,7 @@ def check_ol23(ctx: CheckContext) -> Finding:
         if not jit_funcs:
             continue
         saw_jit = True
-        if any(_has_loop_structure(func) for func in jit_funcs):
+        if _has_loop_structure_with_helpers(jit_funcs, tree):
             last_pass_file = impl_file
             continue
         files_without_loop.append(impl_file)
@@ -1262,14 +1262,15 @@ def check_ol48(ctx: CheckContext) -> Finding:
 
 
 def _is_pypto_loop_for_node(node: ast.AST, aliases) -> ast.Call | None:
-    """若 `node` 是 `for x in pypto.loop(...):` 形式，返回 pypto.loop 的 Call 节点；否则返回 None。"""
+    """若 `node` 是 `for x in pypto.loop(...)` / `for x in pypto.loop_unroll(...)` 形式，
+    返回对应 pypto.loop 的 Call 节点；否则返回 None。"""
     if not isinstance(node, ast.For):
         return None
     iter_call = node.iter
     if not isinstance(iter_call, ast.Call):
         return None
     f = iter_call.func
-    if not isinstance(f, ast.Attribute) or f.attr != "loop":
+    if not isinstance(f, ast.Attribute) or f.attr not in ("loop", "loop_unroll"):
         return None
     if not isinstance(f.value, ast.Name):
         return None

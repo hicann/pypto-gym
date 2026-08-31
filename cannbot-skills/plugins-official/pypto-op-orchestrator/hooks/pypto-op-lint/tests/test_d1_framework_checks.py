@@ -1246,3 +1246,39 @@ def demo_kernel_npu(x: pypto.Tensor([128], pypto.DT_FP32), out: pypto.Tensor([12
     write_file(op_dir / "demo_impl.py", impl)
     finding = run_rule(mod, op_dir, "OL58")
     assert finding.status == "SKIP", finding.message
+# ── Issue #118: OL56 单值门禁对 loop_unroll 同效（不再逃逸） ──
+
+
+def _write_ol56_impl(op_dir: Path, unroll_list_src: str) -> None:
+    impl = _module_impl(
+        "pypto.set_vec_tile_shapes(32, 128)\n"
+        f"for b in pypto.loop_unroll(x.shape[0], unroll_list={unroll_list_src}):\n"
+        "    y[b] = x[b]\n"
+        "return y",
+        shape="[pypto.DYNAMIC, pypto.DYNAMIC]",
+    )
+    write_file(op_dir / "modules" / "demo_module1_impl.py", impl)
+
+
+def test_ol56_fail_multivalue_loop_unroll(tmp_path: Path):
+    """loop_unroll 多值 unroll_list=[8,4,2,1] 应被 OL56 拦截（不再逃逸）。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    integral_impl = op_dir / "demo_impl.py"
+    if integral_impl.exists():
+        integral_impl.unlink()
+    _write_ol56_impl(op_dir, "[8, 4, 2, 1]")
+    finding = run_rule(mod, op_dir, "OL56", stage=5)
+    assert finding.status == "FAIL", finding.message
+
+
+def test_ol56_pass_single_value_loop_unroll(tmp_path: Path):
+    """loop_unroll 单值 unroll_list=[1] 应 PASS。"""
+    mod = load_lint_module()
+    op_dir = build_stateless_op_dir(tmp_path, "demo")
+    integral_impl = op_dir / "demo_impl.py"
+    if integral_impl.exists():
+        integral_impl.unlink()
+    _write_ol56_impl(op_dir, "[1]")
+    finding = run_rule(mod, op_dir, "OL56", stage=5)
+    assert finding.status in ("PASS", "SKIP"), finding.message
