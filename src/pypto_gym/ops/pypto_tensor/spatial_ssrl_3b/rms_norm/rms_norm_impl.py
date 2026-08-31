@@ -13,6 +13,7 @@
 PyPTO RMSNorm 实现
 """
 
+import logging
 import torch
 from torch._dynamo import allow_in_graph
 import pypto
@@ -50,6 +51,6 @@ if __name__ == "__main__":
     weight = torch.ones(2048, dtype=torch.float16, device="cpu")
     
     output = rms_norm_impl(hidden, weight, 1e-6)
-    print(f"Input shape: {hidden.shape}, dtype: {hidden.dtype}")
-    print(f"Output shape: {output.shape}, dtype: {output.dtype}")
-    print(f"Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
+    logging.info(f"Input shape: {hidden.shape}, dtype: {hidden.dtype}")
+    logging.info(f"Output shape: {output.shape}, dtype: {output.dtype}")
+    logging.info(f"Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")

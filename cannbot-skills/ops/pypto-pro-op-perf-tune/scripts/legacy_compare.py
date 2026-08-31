@@ -189,7 +189,7 @@ def _run_measurement_loop_legacy(out_dir, golden_cases, args, device_id, measure
             LOGGER.info(f"{case_name:<20} {golden_shape:<35} {golden_dtype:<10} "
                   f"{golden_us:>12.2f} {pypto_us:>12.2f} {speedup:>9.3f}x")
         else:
-            LOGGER.info(f"{case_name:<20} {golden_shape:<35} {golden_dtype:<10} "
+            LOGGER.warning(f"{case_name:<20} {golden_shape:<35} {golden_dtype:<10} "
                   f"{'N/A' if golden_us is None else f'{golden_us:.2f}':>12} "
                   f"{'N/A' if pypto_us is None else f'{pypto_us:.2f}':>12} "
                   f"{'N/A':>10}  (pypto_err={pypto_err})")

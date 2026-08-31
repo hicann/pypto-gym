@@ -242,9 +242,9 @@ def check_ol10(ctx: CheckContext) -> Finding:
     content = ctx.read_file(API_REPORT_FILE)
     headings = _extract_markdown_headings(content)
     missing: list[str] = []
-    if not _has_heading_like(headings, "API 映射"):
+    if not _has_heading_like(headings, "API mapping"):
         missing.append("API mapping")
-    if not _has_heading_like(headings, "约束"):
+    if not _has_heading_like(headings, "constraints"):
         missing.append("constraints")
     if not _has_heading_like(headings, "Tiling"):
         missing.append("Tiling")
@@ -260,7 +260,7 @@ def check_ol10(ctx: CheckContext) -> Finding:
     return ctx.make_finding(
         "OL10",
         "PASS",
-        f"{API_REPORT_FILE} 含 API 映射、约束与 Tiling 说明",
+        f"{API_REPORT_FILE} contains API mapping, constraints, and Tiling description",
         file=API_REPORT_FILE,
     )
 
@@ -316,7 +316,7 @@ def check_ol12(ctx: CheckContext) -> Finding:
         headings, "数据切分"
     ):
         missing.append("Tiling")
-    if not _has_heading_like(headings, "验证方案"):
+    if not _has_heading_like(headings, "verification plan"):
         missing.append("verification plan")
     if missing:
         return ctx.make_finding(

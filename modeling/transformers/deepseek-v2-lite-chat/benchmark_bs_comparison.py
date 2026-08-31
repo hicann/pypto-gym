@@ -62,9 +62,9 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
         cmd.append('--use_kv_fusion')
     
     mode_name = "PyPTO ACLGraph" if use_kv_fusion else "Baseline ACLGraph"
-    print(f"\n{'='*60}")
+    logging.info(f"\n{'='*60}")
     logging.info(f"{'='*60}")
-    print(f"{'='*60}")
+    logging.info(f"{'='*60}")
     
     start_time = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -83,7 +83,7 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
         inference_time = float(inference_match.group(1))
         tokens = int(tokens_match.group(1))
         
-        print(f"✓ Success: {tokens} tokens, {inference_time:.2f}s, {throughput:.1f} tokens/s")
+        logging.info(f"✓ Success: {tokens} tokens, {inference_time:.2f}s, {throughput:.1f} tokens/s")
         
         return {
             'throughput': throughput,
@@ -94,8 +94,8 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
             'mode': mode_name,
         }
     else:
-        print(f"✗ Failed: unable to parse performance metrics")
-        print(f"Output snippet:\n{output[-500:]}")
+        logging.error(f"✗ Failed: unable to parse performance metrics")
+        logging.info(f"Output snippet:\n{output[-500:]}")
         return {
             'success': False,
             'mode': mode_name,
@@ -106,10 +106,10 @@ def run_test(use_kv_fusion, output_length, prompt, device=7):
 
 
 def main():
-    print("\n" + "="*80)
-    print("Batch Size Performance Comparison Test")
-    print("Comparing Baseline ACLGraph vs PyPTO ACLGraph")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("Batch Size Performance Comparison Test")
+    logging.info("Comparing Baseline ACLGraph vs PyPTO ACLGraph")
+    logging.info("="*80)
     
     results = []
     
@@ -118,9 +118,9 @@ def main():
         output_length = config['output_length']
         prompt = config['prompt']
         
-        print(f"\n{'#'*80}")
-        print(f"Config: BS={bs}, OutputLen={output_length}, Prompt='{prompt[:30]}...'")
-        print(f"{'#'*80}")
+        logging.info(f"\n{'#'*80}")
+        logging.info(f"Config: BS={bs}, OutputLen={output_length}, Prompt='{prompt[:30]}...'")
+        logging.info(f"{'#'*80}")
         
         # 测试Baseline ACLGraph
         baseline_result = run_test(
@@ -150,12 +150,12 @@ def main():
         time.sleep(10)
     
     # 生成对比报告
-    print("\n" + "="*80)
-    print("Performance Comparison Summary")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("Performance Comparison Summary")
+    logging.info("="*80)
     
-    print(f"\n{'BS':>4} {'OutputLen':>10} {'Baseline':>12} {'PyPTO':>12} {'Speedup':>10} {'Status':>10}")
-    print("-" * 80)
+    logging.info(f"\n{'BS':>4} {'OutputLen':>10} {'Baseline':>12} {'PyPTO':>12} {'Speedup':>10} {'Status':>10}")
+    logging.info("-" * 80)
     
     for r in results:
         config = r['config']
@@ -179,11 +179,11 @@ def main():
             else:
                 status = "Warning Baseline Faster"
             
-            print(f"{config['bs']:>4} {config['output_length']:>10} "
+            logging.info(f"{config['bs']:>4} {config['output_length']:>10} "
                   f"{baseline_tps:>12.1f} {pypto_tps:>12.1f} "
                   f"{speedup_str:>10} {status:>10}")
         else:
-            print(f"{config['bs']:>4} {config['output_length']:>10} "
+            logging.info(f"{config['bs']:>4} {config['output_length']:>10} "
                   f"{'FAILED':>12} {'FAILED':>12} {'N/A':>10} {'ERROR':>10}")
     
     # 保存结果到JSON
@@ -191,35 +191,35 @@ def main():
     with open(result_file, 'w') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
-    print(f"\n✓ Results saved to: {result_file}")
+    logging.info(f"\n✓ Results saved to: {result_file}")
     
     # 详细分析
-    print("\n" + "="*80)
-    print("Detailed Analysis")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("Detailed Analysis")
+    logging.info("="*80)
     
     for r in results:
         config = r['config']
         baseline = r['baseline']
         pypto = r['pypto']
         
-        print(f"\nConfig: BS={config['bs']}, OutputLen={config['output_length']}")
+        logging.info(f"\nConfig: BS={config['bs']}, OutputLen={config['output_length']}")
         
         if baseline['success']:
-            print(f"  Baseline ACLGraph:")
-            print(f"    - Throughput: {baseline['throughput']:.2f} tokens/s")
-            print(f"    - Inference time: {baseline['inference_time']:.2f}s")
-            print(f"    - Generated tokens: {baseline['tokens']}")
+            logging.info(f"  Baseline ACLGraph:")
+            logging.info(f"    - Throughput: {baseline['throughput']:.2f} tokens/s")
+            logging.info(f"    - Inference time: {baseline['inference_time']:.2f}s")
+            logging.info(f"    - Generated tokens: {baseline['tokens']}")
         
         if pypto['success']:
-            print(f"  PyPTO ACLGraph:")
-            print(f"    - Throughput: {pypto['throughput']:.2f} tokens/s")
-            print(f"    - Inference time: {pypto['inference_time']:.2f}s")
-            print(f"    - Generated tokens: {pypto['tokens']}")
+            logging.info(f"  PyPTO ACLGraph:")
+            logging.info(f"    - Throughput: {pypto['throughput']:.2f} tokens/s")
+            logging.info(f"    - Inference time: {pypto['inference_time']:.2f}s")
+            logging.info(f"    - Generated tokens: {pypto['tokens']}")
             
             if baseline['success'] and baseline['throughput'] > 0:
                 speedup = (pypto['throughput'] / baseline['throughput'] - 1) * 100
-                print(f"  Performance diff: {speedup:+.2f}%")
+                logging.info(f"  Performance diff: {speedup:+.2f}%")
 
 if __name__ == '__main__':
     main()

@@ -680,7 +680,7 @@ def _add_footer(lines: List[str], merged: Dict[str, Any], round_dir: str, group_
     lines.append("")
     lines.append("--- Raw data location ---")
     lines.append(f"  Archived CSV : {round_dir}/")
-    lines.append(f"  采集源 PROF（compare 默认清理）: {group_dir}/")
+    lines.append(f"  source PROF (compare default cleanup): {group_dir}/")
     lines.append("  op_summary_<Metric>.csv split by aic-metrics have all been copied to the archive directory, ")
     lines.append("  for per-column inspection, just Read.")
     if merged.get("_metric_sources"):
@@ -1763,7 +1763,7 @@ def _run_measurement_loop(out_dir, performance_cases, args, device_id, measure):
                 LOGGER.info(f"{case_name:<20} {case_shape:<35} {case_dtype:<10} "
                       f"{'N/A':>12} {pypto_us:>12.2f} {'N/A':>10}")
         else:
-            LOGGER.info(f"{case_name:<20} {case_shape:<35} {case_dtype:<10} "
+            LOGGER.warning(f"{case_name:<20} {case_shape:<35} {case_dtype:<10} "
                   f"{'N/A' if golden_us is None else f'{golden_us:.2f}':>12} "
                   f"{'N/A' if pypto_us is None else f'{pypto_us:.2f}':>12} "
                   f"{'N/A':>10}  (pypto_err={pypto_err})")

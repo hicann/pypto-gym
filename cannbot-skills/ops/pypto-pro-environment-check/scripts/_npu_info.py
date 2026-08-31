@@ -737,7 +737,7 @@ def _output_summary(collector: NpuInfoCollector, npu_ids: List[int]) -> int:
     warnings = collector.get_all_warnings()
     if warnings:
         _LOGGER.info("")
-        _LOGGER.info("WARNINGS (%d):", len(warnings))
+        _LOGGER.warning("WARNINGS (%d):", len(warnings))
         for w in warnings:
             _LOGGER.info("  ! %s", w)
     return 0

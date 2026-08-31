@@ -671,8 +671,9 @@ def _self_test() -> int:
 
     def check(label: str, ok: bool, detail: str = "") -> None:
         results.append(bool(ok))
-        _log.info(f"[SELF-TEST] {'PASS' if ok else 'FAIL'} {label}"
-                  + (f" — {detail}" if detail and not ok else ""))
+        (_log.error if not ok else _log.info)(
+            f"[SELF-TEST] {'PASS' if ok else 'FAIL'} {label}"
+            + (f" — {detail}" if detail and not ok else ""))
 
     script = str(Path(__file__).resolve())
     root = Path.cwd() / _BG_DIR / "selftest"
@@ -691,8 +692,9 @@ def _self_test() -> int:
                 pass
 
     n_fail = results.count(False)
-    _log.info(f"SELF-TEST RESULT: {'PASS' if not n_fail else 'FAIL'} "
-              f"checks={len(results)} failures={n_fail}")
+    (_log.error if n_fail else _log.info)(
+        f"SELF-TEST RESULT: {'PASS' if not n_fail else 'FAIL'} "
+        f"checks={len(results)} failures={n_fail}")
     return 1 if n_fail else 0
 
 

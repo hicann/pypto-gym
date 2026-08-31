@@ -27,6 +27,7 @@ DeepSeek-V2-Lite MLA KV Prolog - PyPTO算子库适配层
         return deepseek_v2_lite_pto_kernels.mla_prolog_hybrid(...)
 """
 
+import logging
 import sys
 
 # 全局开关（按算子粒度）
@@ -37,7 +38,7 @@ try:
     from .mla_prolog import mla_prolog_hybrid_optimized
     MLA_PROLOG_AVAILABLE = True
 except Exception as e:
-    print(f"[WARNING] MLA Prolog PyPTO operator import failed: {e}")
+    logging.warning(f"[WARNING] MLA Prolog PyPTO operator import failed: {e}")
     MLA_PROLOG_AVAILABLE = False
 
 # 导入golden（fallback）
@@ -45,7 +46,7 @@ try:
     from .mla_prolog_baseline_torch import mla_prolog_torch_baseline
     MLA_PROLOG_GOLDEN_AVAILABLE = True
 except Exception as e:
-    print(f"[WARNING] MLA Prolog Golden import failed: {e}")
+    logging.warning(f"[WARNING] MLA Prolog Golden import failed: {e}")
     MLA_PROLOG_GOLDEN_AVAILABLE = False
 
 # 导入动态选择策略
@@ -53,7 +54,7 @@ try:
     from .mla_prolog_dynamic_selection import mla_prolog_dynamic_selection, SEQ_LEN_THRESHOLD
     DYNAMIC_SELECTION_AVAILABLE = True
 except Exception as e:
-    print(f"[WARNING] MLA Prolog dynamic selection import failed: {e}")
+    logging.warning(f"[WARNING] MLA Prolog dynamic selection import failed: {e}")
     DYNAMIC_SELECTION_AVAILABLE = False
 
 
@@ -88,7 +89,7 @@ def mla_prolog_wrapper(hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, 
                 use_pypto=True
             )
         except Exception as exc:
-            print(f"[ERROR] MLA Prolog dynamic selection failed, fallback to golden: {exc}")
+            logging.error(f"[ERROR] MLA Prolog dynamic selection failed, fallback to golden: {exc}")
             if MLA_PROLOG_GOLDEN_AVAILABLE:
                 return mla_prolog_torch_baseline(
                     hidden_states, kv_a_weight, kv_b_weight, ln_weight, eps, cos, sin, pos_ids

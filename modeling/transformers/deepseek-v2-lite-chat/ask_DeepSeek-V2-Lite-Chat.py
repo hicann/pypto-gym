@@ -70,7 +70,6 @@ if pto_enabled:
         if hasattr(pto_kernels, 'mla_prolog'):
             pto_kernels.mla_prolog.USE_PTO_MLA_PROLOG = True
         logging.info("MLA_PROLOG_PTO_AVAILABLE = True")
-        logging.info("MLA_PROLOG_PTO_AVAILABLE = True")
 
     if args.use_acl_graph:
         pto_kernels.USE_ACL_GRAPH = True

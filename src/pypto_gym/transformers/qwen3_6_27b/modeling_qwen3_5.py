@@ -418,7 +418,7 @@ class Qwen3_5GatedDeltaNet(nn.Module):
 
         if not is_fast_path_available:
             logger.warning_once(
-                "The fast path is not available because one of the required library "
+                "The fast path is not available because one of the required libraries "
                 "is not installed. Falling back to "
                 "torch implementation. To install follow "
                 "https://github.com/fla-org/flash-linear-attention#installation"

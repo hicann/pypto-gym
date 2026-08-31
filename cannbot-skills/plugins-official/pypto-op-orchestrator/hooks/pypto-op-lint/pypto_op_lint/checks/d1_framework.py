@@ -775,7 +775,7 @@ def check_ol29(ctx: CheckContext) -> Finding:
             "OL29",
             "WARN",
             f"Tensor annotations in the following files do not declare pypto.DYNAMIC/pypto.DYN: "
-            f"{', '.join(files_without_dynamic)}。"
+            f"{', '.join(files_without_dynamic)}."
             "if an input dimension can change at runtime, it must be marked DYNAMIC to avoid recompilation",
             file=files_without_dynamic[0],
         )
@@ -1931,7 +1931,7 @@ def _ol58_jit_arg_finding(
             f"(at line {call.lineno}) passing `{arg.id}`, but `{arg.id}` comes from "
             f"`pypto.{api_name}(...)` (line {evidence_line})."
             f"inside a host wrapper, the output buffer must be pre-allocated with torch.* "
-            f"(`torch.empty / torch.zeros / torch.empty_like` 等), "
+            "(`torch.empty / torch.zeros / torch.empty_like`, etc.), "
             f"`pypto.{api_name}` is only legal inside the JIT graph.",
             file=impl_file,
             line=evidence_line,

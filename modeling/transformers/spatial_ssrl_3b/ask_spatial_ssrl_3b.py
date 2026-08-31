@@ -202,7 +202,7 @@ if args.use_pto:
 
 if args.use_partial_aclgraph:
     logging.info("")
-    logging.info("  ⚠️  ACLGraph performance warning:")
+    logging.warning("  ⚠️  ACLGraph performance warning:")
     logging.info("    - Measured performance drop 23-32%")
     logging.info("    - PyPTO eager mode recommended")
 

@@ -240,7 +240,7 @@ def _validate_checker_coverage(rule_by_id: dict[str, dict[str, Any]]) -> None:
         if undocumented_checkers:
             details.append("Checkers missing rule definitions: " + ", ".join(undocumented_checkers))
         raise LintConfigurationError(
-            "[pypto-pro-op-lint FATAL] rules/checkers 不一致: " + "; ".join(details)
+            "[pypto-pro-op-lint FATAL] rules/checkers inconsistency: " + "; ".join(details)
         )
 
 

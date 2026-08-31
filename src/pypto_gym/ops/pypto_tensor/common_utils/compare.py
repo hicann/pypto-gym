@@ -94,7 +94,7 @@ def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ra
 
     # 打印错误点的逻辑（如果有误差点）
     if error_count > 0:
-        print(
+        logging.error(
             f"\n========== Tensor {name} has {error_count} error points "
             f"(threshold: {error_count_threshold})=========="
         )
@@ -104,7 +104,7 @@ def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ra
 
         # 限制显示的误差点数量（避免数据量过大）
         show_count = min(error_count, max_error_count)
-        print(
+        logging.error(
             f"Showing first {show_count} error points "
             "(position | compared value | reference value | absolute error | tolerance):"
         )
@@ -123,17 +123,17 @@ def compare(t: torch.Tensor, t_ref: torch.Tensor, name, atol, rtol, max_error_ra
             tol_val = tolerance[pos_tuple].item()
 
             # 格式化输出，保留足够小数位
-            print(
+            logging.error(
                 f"  position {pos_tuple}: {t_val:.8f} vs {t_ref_val:.8f} "
                 f"| error={diff_val:.8f} | threshold={tol_val:.8f}"
             )
 
         # 打印最大误差点
-        print(
+        logging.error(
             f"\nMax error point: position {max_pos} "
             f"| error={max_diff.item():.8f} | threshold={tolerance[max_pos].item():.8f}"
         )
-        print("=" * 80 + "\n")
+        logging.error("=" * 80 + "\n")
 
     # 断言误差点数量不超过阈值
     assert error_count <= error_count_threshold, \

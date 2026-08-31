@@ -208,8 +208,8 @@ def hook_post_edit() -> int:
                 "PostToolUse",
                 decision="block",
                 reason=(
-                    f"[pypto-op-lint] {SPEC_FILE} is frozen after Stage 1 completes."
-                    "if you need to revise the spec, roll back to target_stage=1 via state_transition."
+                    f"[pypto-op-lint] {SPEC_FILE} is frozen after Stage 1 completes. "
+                    "If you need to revise the spec, roll back to target_stage=1 via state_transition. "
                     "(exception: only Edits that reduce the front matter supported_dtypes are allowed)"
                 ),
             )
@@ -430,10 +430,10 @@ def _rule_fix_hint(rule_id: str) -> str:
             "@pt.frontend.jit, @F.jit, @frontend.jit, @jit, etc. "
             "imports must use `import pypto`, not as clauses or from-import"
         ),
-        "OL02": "输出写回须用 y[:] = expr / pypto.move() / pypto.assemble()，不可写成 y = expr",
-        "OL03": "kernel 内禁止使用 Python 原生 for/while 控制流，请改用 pypto.loop()",
+        "OL02": "output writeback must use y[:] = expr / pypto.move() / pypto.assemble(), not y = expr",
+        "OL03": "Python native for/while control flow is forbidden inside kernels, use pypto.loop() instead",
         "OL04": (
-            "JIT 入口及其同文件可达的 Layer I/H helper 内必须调用 "
+            "JIT entry and its same-file reachable Layer I/H helpers must call "
             "pypto.set_vec_tile_shapes 或 pypto.set_cube_tile_shapes；"
             "允许 thin @pypto.frontend.jit 只委托 helper"
         ),
@@ -467,8 +467,8 @@ def _rule_fix_hint(rule_id: str) -> str:
             "不进入生产 ABI"
         ),
         "OL51": (
-            "每个 YAML 输出至少要有一个真实写回点：pypto.assemble(..., out)、"
-            "out.move(...) 或 out[:] = ...；不要只重新绑定局部变量"
+            "Each YAML output must have at least one real writeback point: pypto.assemble(..., out), "
+            "out.move(...) or out[:] = ...; do not just rebind a local variable"
         ),
     }
     return hints.get(rule_id, "refer to the rule description in rules.json to fix")

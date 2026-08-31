@@ -268,7 +268,7 @@ def hc_pre_kernel_prefill(
         hc_scale_hc = hc_scale.expand_clone([hc, 3])
         pre = rms_res[:hc, :] * (hc_scale_hc[:, 0:1])
         pre = pre + hc_base[:hc, :] # (4, tile_t)
-        print("pre ", pre.shape)
+        logging.info("pre ", pre.shape)
         pre = sigmoid(pre) + hc_eps # (4, tile_t)
         pre = pre.transpose(0, 1)   # (tile_t, 4)
 

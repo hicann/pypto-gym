@@ -216,11 +216,11 @@ def _resolve_comparison_options(options, legacy_values, legacy_options):
 def _check_tensor_layout(jit_data, golden_data, name):
     if jit_data.dtype != golden_data.dtype:
         logger.warning(f"\n{name}: ✗ FAIL")
-        logger.info(f"  Data type mismatch: jit={jit_data.dtype}, golden={golden_data.dtype}")
+        logger.warning(f"  Data type mismatch: jit={jit_data.dtype}, golden={golden_data.dtype}")
         return False
     if jit_data.shape != golden_data.shape:
         logger.warning(f"\n{name}: ✗ FAIL")
-        logger.info(f"  Data shape mismatch: jit={jit_data.shape}, golden={golden_data.shape}")
+        logger.warning(f"  Data shape mismatch: jit={jit_data.shape}, golden={golden_data.shape}")
         return False
     return True
 
@@ -321,7 +321,7 @@ def compare_with_golden(
     """对比 jit 结果与 golden 结果；旧位置参数和关键字参数均保持兼容。"""
     if jit_data is None or golden_data is None:
         logger.warning("\n%s: ✗ FAIL", name)
-        logger.info("  Failed to read the data to be compared")
+        logger.warning("  Failed to read the data to be compared")
         return False
     if not _check_tensor_layout(jit_data, golden_data, name):
         return False

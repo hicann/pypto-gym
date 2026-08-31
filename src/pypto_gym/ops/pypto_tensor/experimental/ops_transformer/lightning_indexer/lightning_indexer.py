@@ -221,7 +221,7 @@ def main():
     try:
         test_lightning_indexer(device_id, args.run_mode, args.batch_size)
     except Exception as e:
-        logging.info(f"\nError: {e}")
+        logging.error(f"\nError: {e}")
         raise
 
 

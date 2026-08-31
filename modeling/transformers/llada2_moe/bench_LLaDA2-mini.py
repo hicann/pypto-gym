@@ -85,19 +85,19 @@ def setup_pypto(model_path):
             shutil.copy2(patched_dst, backup)
         shutil.copy2(patched_src, patched_dst)
         atexit.register(lambda: shutil.copy2(backup, patched_dst))
-        print(f"[PyPTO] Installed patched modeling to {patched_dst}")
+        logging.info(f"[PyPTO] Installed patched modeling to {patched_dst}")
     cache_root = os.path.expanduser("~/.cache/huggingface/modules/transformers_modules")
     shutil.rmtree(os.path.join(cache_root, "LLaDA2_dot_0_hyphen_mini"), ignore_errors=True)
     from pypto_gym.ops.pypto_tensor import llada2_moe as llada2_kernels
     llada2_kernels.USE_PTO_EXPERT_FFN = True
     sys.modules["llada2_pto_kernels"] = llada2_kernels
-    print("[PyPTO] Expert FFN kernel enabled")
+    logging.info("[PyPTO] Expert FFN kernel enabled")
 
 
 def load_model_and_tokenizer(model_path, device):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    print(f"Loading model from {model_path} ...")
+    logging.info(f"Loading model from {model_path} ...")
     torch.npu.reset_peak_memory_stats()
     t0 = time.perf_counter()
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True,
@@ -110,7 +110,7 @@ def load_model_and_tokenizer(model_path, device):
     torch.npu.synchronize()
     model_load_s = time.perf_counter() - t0
     peak_load_mem = torch.npu.max_memory_allocated() / 1024**2
-    print(f"Model loaded in {model_load_s:.1f}s (peak {peak_load_mem:.0f} MB)")
+    logging.info(f"Model loaded in {model_load_s:.1f}s (peak {peak_load_mem:.0f} MB)")
     torch.npu.reset_peak_memory_stats()
     return tokenizer, model, model_load_s, peak_load_mem
 
@@ -135,12 +135,12 @@ def timed_call(fn):
 
 
 def run_forward_benchmark(model, input_ids, attention_mask):
-    print(f"\nWarmup forward ({args.warmup} iterations)...")
+    logging.info(f"\nWarmup forward ({args.warmup} iterations)...")
     for idx in range(args.warmup):
         _, elapsed = timed_call(lambda: model(input_ids=input_ids, attention_mask=attention_mask))
         logging.info(f"  warmup {idx + 1}: {elapsed:.3f}s")
 
-    print(f"\nMeasurement forward ({args.iters} iterations)...")
+    logging.info(f"\nMeasurement forward ({args.iters} iterations)...")
     times, logits_shape, argmax_token = [], None, None
     for idx in range(args.iters):
         outputs, elapsed = timed_call(lambda: model(input_ids=input_ids, attention_mask=attention_mask))
@@ -172,12 +172,12 @@ def build_forward_result(context, times, logits_shape, argmax_token):
 def run_generate_benchmark(model, input_ids, input_len):
     gen_kwargs = dict(gen_length=args.output_length, steps=args.steps,
                       block_length=args.block_length, temperature=0.0)
-    print(f"\nWarmup ({args.warmup} iterations)...")
+    logging.info(f"\nWarmup ({args.warmup} iterations)...")
     for idx in range(args.warmup):
         _, elapsed = timed_call(lambda: model.generate(input_ids, **gen_kwargs))
         logging.info(f"  warmup {idx + 1}: {elapsed:.2f}s")
 
-    print(f"\nMeasurement ({args.iters} iterations)...")
+    logging.info(f"\nMeasurement ({args.iters} iterations)...")
     times, tokens_list = [], []
     for idx in range(args.iters):
         outputs, elapsed = timed_call(lambda: model.generate(input_ids, **gen_kwargs))
@@ -392,7 +392,7 @@ def run_graph_benchmark():
     use_pypto = args.use_pypto
     mode = "pypto+graph" if use_pypto else "graph"
     sep = "=" * 70
-    print(f"\n{sep}\n  LLaDA2.0-mini E2E Benchmark - {mode.upper()} (NPUGraph capture)\n{sep}")
+    logging.info(f"\n{sep}\n  LLaDA2.0-mini E2E Benchmark - {mode.upper()} (NPUGraph capture)\n{sep}")
     torch.npu.set_device(args.device)
     device = f"npu:{args.device}"
     os.environ["TILE_FWK_DEVICE_ID"] = str(args.device)
@@ -411,7 +411,7 @@ def run_graph_benchmark():
             shutil.copy2(_pdst, _bak)
         shutil.copy2(_psrc, _pdst)
         atexit.register(lambda: os.path.exists(_bak) and shutil.copy2(_bak, _pdst))
-        print(f"[graph] Installed in-repo modeling to {_pdst}")
+        logging.info(f"[graph] Installed in-repo modeling to {_pdst}")
 
     from transformers import AutoModelForCausalLM
     model = AutoModelForCausalLM.from_pretrained(
@@ -458,7 +458,7 @@ def run_graph_benchmark():
         return time.perf_counter() - start
 
     graph, graph_logits = _capture_forward(forward_fn)
-    print("[graph] capture OK")
+    logging.info("[graph] capture OK")
     dims = {"window": window, "prompt_len": prompt_len, "gen_len": gen_len, "num_steps": num_steps,
             "warmup": args.warmup, "iters": args.iters}
     return _measure_and_report(run_once, mode, device, dims)

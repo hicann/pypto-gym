@@ -309,7 +309,7 @@ def _self_test(template_path: str) -> int:
         "no_placeholder": "{op}" not in code and "{formula_literal}" not in code,
     }
     for k, v in checks.items():
-        _LOGGER.error("  [%s] %s", "PASS" if v else "FAIL", k)
+        (_LOGGER.info if v else _LOGGER.error)("  [%s] %s", "PASS" if v else "FAIL", k)
     return 0 if all(checks.values()) else 1
 
 
@@ -318,7 +318,7 @@ def _compiles(code: str) -> bool:
         ast.parse(code)
         return True
     except SyntaxError as e:
-        _LOGGER.info("    SyntaxError: %s", e)
+        _LOGGER.warning("    SyntaxError: %s", e)
         return False
 
 

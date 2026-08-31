@@ -143,30 +143,30 @@ def cmd_check_design_gate(op_dir: str, stage: int = 4) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="PyPTO 算子开发流程确定性检查工具")
+    parser = argparse.ArgumentParser(description="PyPTO operator development deterministic check tool")
     parser.add_argument("--hook",
                         choices=["post-edit", "post-bash",
                                  "pre-edit-backup", "stop"],
-                        help="Hook 模式（从 stdin 读 JSON）")
+                        help="Hook mode (read JSON from stdin)")
     parser.add_argument("--lint-impl", action="store_true",
-                        help="检查 impl 文件")
+                        help="Check impl files")
     parser.add_argument("--lint-golden", action="store_true",
-                        help="检查 golden 文件")
+                        help="Check golden files")
     parser.add_argument("--lint-test", action="store_true",
-                        help="检查 test 文件")
+                        help="Check test files")
     parser.add_argument("--lint-consistency", action="store_true",
-                        help="检查跨文件一致性（D5 规则）")
+                        help="Check cross-file consistency (D5 rules)")
     parser.add_argument("--check-gate", action="store_true",
-                        help="检查阶段门禁")
+                        help="Check stage gates")
     parser.add_argument("--check-phase-gate", action="store_true",
-                        help="检查 Stage 5 phase 门禁 (仅扫描当前 phase 的累积模块 impl)")
+                        help="Check Stage 5 phase gate (scan only current phase cumulative module impls)")
     parser.add_argument("--check-design-gate", action="store_true",
-                        help="检查 Stage 4 设计阶段门禁 (Designer 完成后, Verifier 启动前)")
+                        help="Check Stage 4 design gate (after Designer, before Verifier)")
     parser.add_argument("--phase",
-                        help="Stage 5 phase 标识 (如 M1, M2, ...), 与 --check-phase-gate 配合")
-    parser.add_argument("--op-dir", help="算子工作目录")
+                        help="Stage 5 phase ID (e.g. M1, M2, ...), used with --check-phase-gate")
+    parser.add_argument("--op-dir", help="Operator working directory")
     parser.add_argument("--stage", type=int, default=5,
-                        help="当前阶段 (1-7)")
+                        help="Current stage (1-7)")
     return parser
 
 

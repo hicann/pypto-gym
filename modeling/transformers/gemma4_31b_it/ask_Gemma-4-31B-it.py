@@ -70,14 +70,14 @@ def setup_pypto(repo_root, model_path):
         for name in os.listdir(cache_root):
             if "gemma" in name.lower() or "gemma4" in name.lower():
                 shutil.rmtree(os.path.join(cache_root, name), ignore_errors=True)
-    print(f"[PyPTO] Installed patched modeling overlay at {overlay_dir}")
+    logging.info(f"[PyPTO] Installed patched modeling overlay at {overlay_dir}")
 
     # Import real kernel adapter module and register under expected name
     from pypto_gym.ops.pypto_tensor import gemma4_31b_it as gemma4_kernels
     gemma4_kernels.USE_PTO_SOFTMAX = True
     gemma4_kernels.USE_PTO_GQA = True
     sys.modules["gemma4_pto_kernels"] = gemma4_kernels
-    print("[PyPTO] Attention SoftMax and GQA Decode kernels enabled")
+    logging.info("[PyPTO] Attention SoftMax and GQA Decode kernels enabled")
     return overlay_dir
 
 
@@ -148,16 +148,16 @@ def generate_once(args, tokenizer, model, device_str):
 
 
 def print_summary(args, stats):
-    print(f"\n{'='*60}")
-    print(f"Model       : {args.model_path}")
-    print(f"PyPTO       : {'ON' if args.use_pypto else 'OFF'}")
-    print(f"Input tokens: {stats.input_len}")
-    print(f"Output tokens: {stats.output_tokens}")
-    print(f"Generate time: {stats.gen_time:.2f}s")
-    print(f"Tokens/sec   : {stats.tokens_per_sec:.1f}")
-    print(f"Tokenizer load: {stats.tokenizer_load_time:.2f}s")
+    logging.info(f"\n{'='*60}")
+    logging.info(f"Model       : {args.model_path}")
+    logging.info(f"PyPTO       : {'ON' if args.use_pypto else 'OFF'}")
+    logging.info(f"Input tokens: {stats.input_len}")
+    logging.info(f"Output tokens: {stats.output_tokens}")
+    logging.info(f"Generate time: {stats.gen_time:.2f}s")
+    logging.info(f"Tokens/sec   : {stats.tokens_per_sec:.1f}")
+    logging.info(f"Tokenizer load: {stats.tokenizer_load_time:.2f}s")
     logging.info(f"{'='*60}")
-    print(f"{'='*60}")
+    logging.info(f"{'='*60}")
 
 
 def maybe_write_report(args, stats):
@@ -174,7 +174,7 @@ def maybe_write_report(args, stats):
         }
         with open(args.report_file, "w") as f:
             json.dump(report, f, indent=2)
-        print(f"Report saved to {args.report_file}")
+        logging.info(f"Report saved to {args.report_file}")
 
 
 class _CaptureCache:
@@ -231,13 +231,13 @@ def _report_decode(args, mode, ctx_len, gen_n, best):
     """Print the gemma4 decode result and optionally write the JSON report."""
     tps = round(gen_n / best, 2)
     sep = "=" * 60
-    print(f"\n{sep}\nGemma-4-31B-it  {mode}  decode tok/s: {tps}  ({best / gen_n * 1000:.2f} ms/tok)\n{sep}")
+    logging.info(f"\n{sep}\nGemma-4-31B-it  {mode}  decode tok/s: {tps}  ({best / gen_n * 1000:.2f} ms/tok)\n{sep}")
     if args.report_file:
         report = {"model": args.model_path, "mode": mode, "ctx": ctx_len, "output_length": gen_n,
                   "decode_tok_s": tps, "ms_per_tok": round(best / gen_n * 1000, 3)}
         with open(args.report_file, "w") as handle:
             json.dump(report, handle, indent=2)
-        print(f"Report saved to {args.report_file}")
+        logging.info(f"Report saved to {args.report_file}")
 
 
 def run_graph(args):
@@ -284,7 +284,7 @@ def run_graph(args):
     graph = torch.npu.NPUGraph()
     with torch.npu.graph(graph):
         captured_next = step()
-    print("[graph] capture OK")
+    logging.info("[graph] capture OK")
 
     def run_generate():
         st.cache.write_pos.fill_(ctx_len)
@@ -327,7 +327,7 @@ def main():
     print_summary(args, stats)
     if args.show_outputs:
         text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        print(f"\nGenerated:\n{text}")
+        logging.info(f"\nGenerated:\n{text}")
     maybe_write_report(args, stats)
 
 

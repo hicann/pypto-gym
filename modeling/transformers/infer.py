@@ -31,7 +31,7 @@ if args.use_pto:
     import pto_kernels
     sys.modules["pto_kernels"] = pto_kernels
     pto_kernels.USE_PTO_RMS_NORM = True
-    print("* PyPTO RMSNorm enabled")
+    logging.info("* PyPTO RMSNorm enabled")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 

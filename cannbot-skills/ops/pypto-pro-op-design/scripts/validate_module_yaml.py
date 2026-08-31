@@ -313,8 +313,9 @@ def _self_test() -> int:
         else:
             ok = any(e.startswith(want) for e in errs)
         bad += 0 if ok else 1
-        _LOGGER.error("%s %s: %s", "PASS" if ok else "FAIL", name,
-                     errs if errs else "no errors")
+        (_LOGGER.info if ok else _LOGGER.error)(
+            "%s %s: %s", "PASS" if ok else "FAIL", name,
+            errs if errs else "no errors")
     return 1 if bad else 0
 
 

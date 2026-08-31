@@ -393,7 +393,7 @@ def _compiles(code: str) -> bool:
         ast.parse(code)
         return True
     except SyntaxError as e:
-        _LOGGER.info("    SyntaxError: %s", e)
+        _LOGGER.warning("    SyntaxError: %s", e)
         return False
 
 

@@ -143,7 +143,7 @@ def main() -> int:
             failures.append(
                 f"{label}: expected {'a blocker' if want_blocker else 'no blocker'}, got {got}"
             )
-        _LOGGER.error("%s %s", "PASS" if ok else "FAIL", label)
+        (_LOGGER.info if ok else _LOGGER.error)("%s %s", "PASS" if ok else "FAIL", label)
 
     for label, golden_src, delivery, want_blocker in RAW_CASES:
         got = _blockers(golden_src, delivery)
@@ -152,14 +152,15 @@ def main() -> int:
             failures.append(
                 f"{label}: expected {'a blocker' if want_blocker else 'no blocker'}, got {got}"
             )
-        _LOGGER.error("%s %s", "PASS" if ok else "FAIL", label)
+        (_LOGGER.info if ok else _LOGGER.error)("%s %s", "PASS" if ok else "FAIL", label)
 
     # A golden with no return value is indeterminate; stay silent rather than guess.
     got = _blockers(GOLDENS[0], f"a, b = {FN}(x)\n")
     ok = got == []
     if not ok:
         failures.append(f"golden with no return: expected silence, got {got}")
-    _LOGGER.error("%s golden with no return stays silent", "PASS" if ok else "FAIL")
+    (_LOGGER.info if ok else _LOGGER.error)(
+        "%s golden with no return stays silent", "PASS" if ok else "FAIL")
 
     # Inconsistent return arity within the golden is also indeterminate.
     inconsistent = f"def {FN}(x):\n    if x:\n        return x\n    return x, x\n"
@@ -167,14 +168,16 @@ def main() -> int:
     ok = got == []
     if not ok:
         failures.append(f"inconsistent returns: expected silence, got {got}")
-    _LOGGER.error("%s inconsistent golden returns stay silent", "PASS" if ok else "FAIL")
+    (_LOGGER.info if ok else _LOGGER.error)(
+        "%s inconsistent golden returns stay silent", "PASS" if ok else "FAIL")
 
     # An unreadable delivery must not raise.
     got = _blockers(GOLDENS[2], "a, b = (\n")
     ok = got == []
     if not ok:
         failures.append(f"unparseable delivery: expected silence, got {got}")
-    _LOGGER.error("%s unparseable delivery stays silent", "PASS" if ok else "FAIL")
+    (_LOGGER.info if ok else _LOGGER.error)(
+        "%s unparseable delivery stays silent", "PASS" if ok else "FAIL")
 
     for problem in failures:
         _LOGGER.warning("\n%s", problem)

@@ -19,6 +19,7 @@ PyPTO RoPE Implementation
 - Multimodal RoPE: 预处理使用 PyTorch，核心 rotate 使用 PyPTO kernel
 """
 
+import logging
 from typing import Tuple, List
 import torch
 from torch._dynamo import allow_in_graph
@@ -195,7 +196,7 @@ def apply_multimodal_rotary_pos_emb_pto_impl(
 
 
 if __name__ == "__main__":
-    print("=== PyPTO RoPE Implementation Test ===")
+    logging.info("=== PyPTO RoPE Implementation Test ===")
     
     import os
     import torch_npu
@@ -213,13 +214,13 @@ if __name__ == "__main__":
         q_embed_vision, k_embed_vision = \
             apply_rotary_pos_emb_vision_pto_impl(q_vision, k_vision, cos_vision, sin_vision)
         
-        print(f"Vision RoPE:")
-        print(f"  q_embed shape: {q_embed_vision.shape}")
-        print(f"  k_embed shape: {k_embed_vision.shape}")
-        print(f"  q_embed device: {q_embed_vision.device}")
-        print(f"[TEST_PASS] Vision RoPE PyPTO kernel works")
+        logging.info(f"Vision RoPE:")
+        logging.info(f"  q_embed shape: {q_embed_vision.shape}")
+        logging.info(f"  k_embed shape: {k_embed_vision.shape}")
+        logging.info(f"  q_embed device: {q_embed_vision.device}")
+        logging.info(f"[TEST_PASS] Vision RoPE PyPTO kernel works")
     except Exception as e:
-        print(f"[TEST_ERROR] Vision RoPE: {e}")
+        logging.info(f"[TEST_ERROR] Vision RoPE: {e}")
         import traceback
         traceback.print_exc()
     
@@ -235,12 +236,12 @@ if __name__ == "__main__":
             q_multimodal, k_multimodal, cos_multimodal, sin_multimodal, mrope_section
         )
         
-        print(f"\nMultimodal RoPE:")
-        print(f"  q_embed shape: {q_embed_multimodal.shape}")
-        print(f"  k_embed shape: {k_embed_multimodal.shape}")
-        print(f"  q_embed device: {q_embed_multimodal.device}")
-        print(f"[TEST_PASS] Multimodal RoPE PyPTO kernel works")
+        logging.info(f"\nMultimodal RoPE:")
+        logging.info(f"  q_embed shape: {q_embed_multimodal.shape}")
+        logging.info(f"  k_embed shape: {k_embed_multimodal.shape}")
+        logging.info(f"  q_embed device: {q_embed_multimodal.device}")
+        logging.info(f"[TEST_PASS] Multimodal RoPE PyPTO kernel works")
     except Exception as e:
-        print(f"[TEST_ERROR] Multimodal RoPE: {e}")
+        logging.info(f"[TEST_ERROR] Multimodal RoPE: {e}")
         import traceback
         traceback.print_exc()

@@ -8,6 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+import logging
 import numpy as np
 from numpy.testing import assert_allclose
 
@@ -38,7 +39,7 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
     """
     # 检查形状是否一致
     if cpu.shape != npu.shape:
-        print(f"Error: shape mismatch - cpu {cpu.shape} vs npu {npu.shape}")
+        logging.error(f"Error: shape mismatch - cpu {cpu.shape} vs npu {npu.shape}")
         return False
 
     total_elements = cpu.size
@@ -46,9 +47,9 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
     nan_count = 0
     exceed_tolerance_count = 0
 
-    print(f"Comparing arrays, shape: {cpu.shape}, total elements: {total_elements}")
-    print(f"Tolerance: rtol={rtol}, atol={atol}")
-    print("=" * 80)
+    logging.info(f"Comparing arrays, shape: {cpu.shape}, total elements: {total_elements}")
+    logging.info(f"Tolerance: rtol={rtol}, atol={atol}")
+    logging.info("=" * 80)
 
     # 将数组展平以便遍历，但记录原始索引
     cpu_flat = cpu.reshape(-1)
@@ -91,12 +92,12 @@ def detailed_allclose_manual(cpu, npu, name, *, rtol=1e-3, atol=1e-3, max_prints
 
     # 检查是否通过 allclose 条件
     is_allclose = abnormal_count == 0
-    print(f"\nnp.allclose equivalent result: {is_allclose}")
+    logging.info(f"\nnp.allclose equivalent result: {is_allclose}")
 
     assert_allclose(cpu, npu, rtol, atol)
 
     if abnormal_count > max_prints:
-        print(f"\nNote: only showing first {max_prints} anomalies, total {abnormal_count} anomalous elements")
+        logging.info(f"\nNote: only showing first {max_prints} anomalies, total {abnormal_count} anomalous elements")
     assert_allclose(cpu, npu, rtol, atol)
 
     return is_allclose
@@ -117,7 +118,7 @@ def _is_above_tolerance(cpu_val, npu_val, rtol, atol):
 def _print_first_n(cpu_flat, npu_flat, get_multi_index, n):
     if n <= 0:
         return
-    print(f"{Colors.YELLOW}Force printing first {n} elements:{Colors.RESET}")
+    logging.info(f"{Colors.YELLOW}Force printing first {n} elements:{Colors.RESET}")
     for flat_idx in range(min(n, len(cpu_flat))):
         cpu_val = cpu_flat[flat_idx]
         npu_val = npu_flat[flat_idx]
@@ -126,20 +127,20 @@ def _print_first_n(cpu_flat, npu_flat, get_multi_index, n):
         cpu_str = "NaN" if np.isnan(cpu_val) else f"{cpu_val:.6e}"
         npu_str = "NaN" if np.isnan(npu_val) else f"{npu_val:.6e}"
         diff_str = "NaN" if np.isnan(cpu_val) or np.isnan(npu_val) else f"{np.abs(cpu_val - npu_val):.6e}"
-        print(f"{Colors.YELLOW}index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff={diff_str}{Colors.RESET}")
-    print("-" * 80)
+        logging.info(f"{Colors.YELLOW}index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff={diff_str}{Colors.RESET}")
+    logging.info("-" * 80)
 
 
 def _log_nan_error(multi_idx, cpu_val, npu_val):
     cpu_str = "NaN" if np.isnan(cpu_val) else f"{cpu_val:.6e}"
     npu_str = "NaN" if np.isnan(npu_val) else f"{npu_val:.6e}"
-    print(f"index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff=NaN")
+    logging.info(f"index {multi_idx}: cpu={cpu_str}, npu={npu_str}, diff=NaN")
 
 
 def _log_tolerance_error(multi_idx, cpu_val, npu_val, rtol, atol):
     abs_diff = np.abs(cpu_val - npu_val)
     allowed_diff = atol + rtol * np.abs(npu_val)
-    print(
+    logging.info(
         f"index {multi_idx}: cpu={cpu_val:.6e}, npu={npu_val:.6e}, "
         f"diff={abs_diff:.6e}(exceeds tolerance {allowed_diff:.6e})"
     )
@@ -147,10 +148,10 @@ def _log_tolerance_error(multi_idx, cpu_val, npu_val, rtol, atol):
 
 def _print_summary(abnormal_count, nan_count, exceed_tolerance_count, total_elements, name):
     # 统计信息
-    print("=" * 80)
-    print(f"{Colors.BOLD}{Colors.PURPLE}{name} comparison statistics:{Colors.RESET}")
-    print(f"Total elements: {total_elements}")
-    print(f"Anomalous elements: {abnormal_count}")
-    print(f"  - NaN count: {nan_count}")
-    print(f"  - Exceeds tolerance count: {exceed_tolerance_count}")
-    print(f"Anomaly ratio: {abnormal_count / total_elements * 100:.4f}%")
+    logging.info("=" * 80)
+    logging.info(f"{Colors.BOLD}{Colors.PURPLE}{name} comparison statistics:{Colors.RESET}")
+    logging.info(f"Total elements: {total_elements}")
+    logging.info(f"Anomalous elements: {abnormal_count}")
+    logging.info(f"  - NaN count: {nan_count}")
+    logging.info(f"  - Exceeds tolerance count: {exceed_tolerance_count}")
+    logging.info(f"Anomaly ratio: {abnormal_count / total_elements * 100:.4f}%")

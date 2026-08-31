@@ -73,7 +73,7 @@ def test_scatter_nd_sub(device_id: int = None, run_mode: str = "npu", dynamic: b
     updates_max_value = 2
 
     for idx, (target_shape_list, indices_shape_list, updates_shape_list) in enumerate(input_scenarios):
-        print(f"\n=== Generating data for scenario {idx+1} ===")
+        logging.info(f"\n=== Generating data for scenario {idx+1} ===")
 
         target_shape = tuple(target_shape_list)
         indices_shape = tuple(indices_shape_list)
@@ -107,10 +107,10 @@ def test_scatter_nd_sub(device_id: int = None, run_mode: str = "npu", dynamic: b
         # 3. compare pypto vs tensorflow output
         max_diff = np.abs(target.cpu().numpy() - tf_output.numpy()).max().item()
         if run_mode == "npu":
-            print(f"Max difference from Tensorflow: {max_diff:.6f}")
+            logging.info(f"Max difference from Tensorflow: {max_diff:.6f}")
             assert max_diff < 1e-1, "Result mismatch!"
-        print("✓ Combined operations completed successfully")
-    print("finished")
+        logging.info("✓ Combined operations completed successfully")
+    logging.info("finished")
 
 
 def main():
@@ -173,9 +173,9 @@ Examples:
             logging.info("\nUse --list to see all available examples.")
             raise RuntimeError("Test execution failed")
 
-    print("\n" + "=" * 60)
-    print("PyPTO test_scatter_nd_sub Example")
-    print("=" * 60 + "\n")
+    logging.info("\n" + "=" * 60)
+    logging.info("PyPTO test_scatter_nd_sub Example")
+    logging.info("=" * 60 + "\n")
 
     # Get and validate device ID (needed for NPU examples)
     device_id = None
@@ -195,18 +195,18 @@ Examples:
         device_id = get_device_id()
         import torch_npu
         torch.npu.set_device(device_id)
-        print("Running examples that require NPU hardware...")
-        print("(Make sure CANN environment is configured and NPU is available)\n")
+        logging.info("Running examples that require NPU hardware...")
+        logging.info("(Make sure CANN environment is configured and NPU is available)\n")
 
     try:
         for ex_id, ex_info in examples_to_run:
-            print(f"Running Example {ex_id}: {ex_info['name']}")
+            logging.info(f"Running Example {ex_id}: {ex_info['name']}")
             ex_info['function'](device_id, args.run_mode)
 
         if len(examples_to_run) > 1:
-            print("=" * 60)
-            print("All scatter_nd_sub tests passed!")
-            print("=" * 60)
+            logging.info("=" * 60)
+            logging.info("All scatter_nd_sub tests passed!")
+            logging.info("=" * 60)
 
     except Exception as e:
         logging.error(f"\nError: {e}")
