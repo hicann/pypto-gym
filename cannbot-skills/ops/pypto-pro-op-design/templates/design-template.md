@@ -153,15 +153,17 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ### 片上地址映射表（按内存空间分节）
 
-| 内存空间 | 用途 | 变量名 | shape | dtype | layout | 地址 | 大小 | 备注 |
-|---------|------|--------|-------|-------|--------|------|------|------|
-| UB(Vec) | ... | ... | ... | ... | {— 或具体 layout} | ... | ... | {...} |
-| L1(Mat) | ... | ... | ... | ... | {— 默认} | ... | ... | {含 cube 时填} |
-| L0C(Acc) | ... | ... | ... | ... | {— 默认} | ... | ... | {含 cube 时填} |
+| 内存空间 | 用途 | 变量名 | shape | dtype | layout | 起始字节 | 每槽字节数 | 槽位数 | 生命周期 | 结束字节（不含） | 备注 |
+|---------|------|--------|-------|-------|--------|---------|-----------:|------:|----------|------------------|------|
+| UB(Vec) | ... | ... | ... | ... | {— 或具体 layout} | ... | ... | ... | {轮转/驻留/临时} | ... | {...} |
+| L1(Mat) | ... | ... | ... | ... | {— 默认} | ... | ... | ... | {轮转/驻留/临时} | ... | {含 cube 时填} |
+| L0C(Acc) | ... | ... | ... | ... | {— 默认} | ... | ... | ... | {轮转/驻留/临时} | ... | {含 cube 时填} |
 
-**各空间总用量**（逐空间列出，无对应 tile 的空间可省略）:
-- UB(Vec): {∑ 大小} / {EXPLORE_REPORT §7 UB 容量} = {百分比}
-- L1(Mat) / L0A / L0B / L0C（如有 cube）: {∑ 大小} / {EXPLORE_REPORT §7 对应容量} = {百分比}——容量取 §7 探测记录，§7 未记录则回退 material-explore 补测，不臆测
+> 地址使用半开区间`[起始字节, 结束字节)`。连续槽位的结束字节为`起始字节 + 每槽字节数 × 槽位数`；槽位不连续时逐槽列出起止字节。生命周期重叠的 tile 地址不得相交。
+
+**各空间地址高水位**（逐空间列出，无对应 tile 的空间可省略）:
+- UB(Vec): {max(结束字节（不含）)} / {EXPLORE_REPORT §7 UB 容量} = {百分比}
+- L1(Mat) / L0A / L0B / L0C（如有 cube）: {max(结束字节（不含）)} / {EXPLORE_REPORT §7 对应容量} = {百分比}——容量取 §7 探测记录，§7 未记录则回退 material-explore 补测，不臆测
 
 ### 分配方式选择
 
@@ -226,7 +228,9 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 ### 分核方式
 
 - **方案**: strided loop —— {扁平切 `pl.range(core_id, m_tiles*n_tiles, num_cores)` / 二维切 外 `range(core_id, m_tiles, num_cores)`+内 `range(0, n_tiles, 1)`} + {选择理由}
-- **host 侧 block_dim**: {仅Vector Kernel使用`vector_core_num`，Cube或混合Kernel使用`core_num`}，`block_dim = min(max_blocks, total_tasks)`
+- **host 侧 block_dim**: {仅Vector Kernel使用`vector_core_num`，Cube或混合Kernel使用`core_num`}；`total_tasks > 0` 时 `block_dim = min(max_blocks, total_tasks)`；`total_tasks = 0` 时仅允许经目标验证的 `block_dim=1` 空工作单次启动，否则报 `design_violation`，禁止 `block_dim=0` 或跳过启动
+- **交付 launch 合同**: 恰好 1 次；唯一 kernel `{kernel_symbol}` 由 `{wrapper_symbol}` 在 host 循环外调用一次；若做不到，记录证据并返回 `failure_category: design_violation`，不得填写多 launch fallback
+- **TensorList ABI（不涉及则填 N/A）**: {冻结合同中的有限 `L_MAX` 及 `B_MAX=L_MAX`；多个 TensorList 形参间的长度关系；每槽有限元素数上限 `N_MAX` 对所有 `DT_INT32` 派生式的安全性；只生成一组 `B_MAX` 个固定槽位，每个 TensorList 形参逐槽展开为独立 Ptr 参数；wrapper 对真实槽位的校验和 `n_i=0` 填充；连续且 rank 无关的适用依据，或非连续/rank 相关情形所需的独立有界 ABI；地址值不进入 tiling 数据}
 
 ---
 
@@ -345,7 +349,7 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 |--------|------|------|
 | R0-R7 输出无矛盾 | ✅ / ❌ | {交叉验证} |
 | 所有决策有证据支撑 | ✅ / ❌ | {证据链检查} |
-| 各内存空间（UB/L1/L0A/L0B/L0C）tile 总用量分别不超各自容量上限（R3 逐空间验证，含 cube 时须查 L1/L0） | ✅ / ❌ | {回 R3 重排地址 / R2 缩 tile} |
+| R3 片上地址范围与逐空间容量检查 | ✅ / ❌ | 规则见 `pypto-pro-op-design` Skill「R3：片上空间布局」；证据见本文 §3 的地址表、地址高水位和容量来源；❌ 时回 R3 重排地址 / R2 缩 tile |
 | `tile_dims` 使用时已关注大 stride 对性能的影响 | ✅ / ❌ | {回 R2 调整布局} |
 | 条件性检查（若 §6 填“不涉及cross_core”，确认不存在Cube↔Vector或跨Block/subblock的数据依赖） | ✅ / ❌ | {R0 重新评估} |
 

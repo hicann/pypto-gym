@@ -10,7 +10,7 @@
 # Do not copy this header into generated code: a generated kernel inherits
 # no validation from the sample it was modelled on.
 # STATUS: VALIDATED on Ascend a5 (950) NPU — 2026-07-17. pl tile DSL (pypto_pro.language).
-#   FP32 -> max_abs_diff = 0.000e+00 (bit-exact vs golden); FP16 -> 1.9e-06. Both PASS.
+#   FP32 -> max_abs_diff = 0.000e+00 (bit-exact vs golden); PASS.
 #   Modeled on the real pl matmul test t01 (python/tests/ut/block/frontend/a5/matmul/
 #   test_matmul_api_basic.py:92-125): GM->L1(Mat)->L0A(Left,NZ)/L0B(Right,ZN)->matmul->L0C(Acc)->GM.
 #   pl has NO RunMode.SIM -> validated ONLY on Tier-3 NPU (bisheng compile + run).

@@ -813,10 +813,10 @@ def {op}_kernel(
             # 示例 (GroupNorm per-group):   src_offset = wi * rows_per_wi * r_dim; g_offset = (wi % num_g) * rows_per_wi
             src_view = pl.make_tensor(
                 x_ptr + wi * rows_per_wi * r_dim,
-                [rows_per_wi, r_dim], [r_dim * 4, 4])
+                [rows_per_wi, r_dim], [r_dim, 1])
             dst_view = pl.make_tensor(
                 y_ptr + wi * rows_per_wi * r_dim,
-                [rows_per_wi, r_dim], [r_dim * 4, 4])
+                [rows_per_wi, r_dim], [r_dim, 1])
             g_offset = wi * rows_per_wi
 
             # Round 1: 累加 sum

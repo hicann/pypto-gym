@@ -1192,9 +1192,9 @@ the same branch's later finding — see entry II-3, which supersedes it.
 `TENSOR` / `PTR` / `TILING` / `SCALAR` only, argument arity must match the
 declaration exactly, and `ptr.make_ptr` requires a `PtrType` — so a runtime
 value (a `data_ptr()` read from a tensor) can never become a pointer, and a
-Python list of tensors cannot be passed at all. This forces generated
-bucket ladders of unrolled parameters (`L = 1..64` reaches 385 declared
-parameters at `L = 64`, which does compile and launch). The host-loop
+Python list of tensors cannot be passed at all. This requires fixed unrolled
+parameters: historical bucket probes reached 385 parameters at arity 64, while
+delivery uses one finite maximum-arity signature and pads shorter lists. The host-loop
 alternative measured **6.46x** device time at `L = 64`. Fix: a real
 list-of-tensors parameter kind, or allow `pl.Ptr` construction from a runtime
 address. Full pattern:

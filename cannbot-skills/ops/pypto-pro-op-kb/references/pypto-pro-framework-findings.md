@@ -366,12 +366,13 @@ the rule is: **have the consuming stage touch a cross-core buffer with a vector
 op first**. If a stage only wants to forward the buffer to GM, copy it into a
 local tile with a vector op and store that.
 
-**Where the auto path is still the right choice.** Hand-writing the same ten
-events — following the reference's discipline exactly, verified against the
-reference's own generated C++ — deadlocked on device (`aicore timeout`), and
-bisecting down to a single buffer with one forward/backward pair still
-deadlocked. The generated form is the one to reach for; the hand-written form is
-a last resort.
+**Historical scope.** In that experiment, hand-writing the same ten events —
+verified against the reference's generated C++ — deadlocked even after bisection
+to one buffer and one event pair. The deadlock result covers only that exact
+hand-written organization; the preceding success covers only the recorded
+generated form. Current delivery follows the
+[manual-preload design](../../pypto-pro-op-design/references/cv_fusion_pipeline.md)
+and a matching official sample.
 
 **Related gotcha, same symptom class.** A tile declared `valid_shape=[-1, -1]`
 takes its extent from `set_validshape` at runtime. Both sides of a cross-core
@@ -634,7 +635,8 @@ kept for the width that does not divide.
 M tile requires a pad kernel before and a strip kernel after -- but only when
 `M` is not already a multiple of `TM`. Guarding both launches on `M == Mp` and
 letting the cube read and write the real tensors removed 24.5% of the largest
-case outright.
+case outright. This historical multi-launch result is diagnostic evidence only;
+delivery must keep equivalent tail handling in one launch or report a blocker.
 
 ### 24. A deep K chain in one L0C accumulator is a measurable accuracy defect
 

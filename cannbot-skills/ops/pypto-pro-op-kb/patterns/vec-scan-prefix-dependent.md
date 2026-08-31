@@ -263,6 +263,9 @@ now crosses jobs, so pass A writes each segment's aggregate to a small
 barrier, since the launches serialise. Cost is one extra read of the input
 (~17% of the traffic for a 2-byte dtype) plus the workspace.
 
+Those two launches make this form research-only. Delivery must express the
+dependency in one `@pl.jit` or report a design blocker.
+
 Neither form helps a 1-D input. With `P <= ROWS` the job count is at most
 `outer`, so a 1-D case goes from one *lane* of one core to `ROWS` lanes of one
 core and no further; only `P > ROWS` moves it off a single core.

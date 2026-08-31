@@ -88,7 +88,7 @@ and every step of that convenience is a device kernel in the measured window.
 | `torch.zeros` / `zeros_like` init | write every output element, or initialize in-kernel |
 | `arange` / index construction | compute the index arithmetically in the kernel |
 | `torch.npu.synchronize()` | delete it — synchronization belongs to the caller; this only adds an unnecessary stream wait inside the wrapper |
-| a `for` loop over a TensorList launching one kernel per element | pack the elements' addresses and shapes into tiling parameters and launch **once**; iterate inside the kernel |
+| a `for` loop over a TensorList launching one kernel per element | expand one finite maximum set of fixed slots and each TensorList argument into one `Ptr` per slot; keep addresses out of tiling data, validate real slots, pad unused slots with `n_i=0`, and launch **once**; this flattened form is only for contiguous, rank-insensitive semantics, while other layouts need a separately bounded ABI |
 
 The last row is the expensive one for `foreach`-style operators. Their baseline is a
 single fused call — eliminating per-tensor launch overhead is the entire reason those

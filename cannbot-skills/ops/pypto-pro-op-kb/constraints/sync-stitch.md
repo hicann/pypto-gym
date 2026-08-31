@@ -11,21 +11,16 @@ flow crosses engines or sub-blocks, copy the producer/consumer event sequence
 from a matching official example for the installed SDK and validate it on the
 target.
 
-## On A5: which cube+vector fusion construct to reach for
+## On A5: delivery rule and historical evidence
 
-Two different constructs are covered here, and only one of them hangs. Decide in
-this order — the same order the adjudication further down this page arrives at:
+For delivery, follow the current
+[manual preload design](../../pypto-pro-op-design/references/cv_fusion_pipeline.md)
+and its matching official sample inside one `@pl.jit`. The generated-pipeline
+result in [framework-findings §17](../references/pypto-pro-framework-findings.md)
+and the split-launch results below are historical evidence, not alternative
+delivery contracts.
 
-1. **Try the generated pipeline path first.** `fwd_ids`/`bwd_ids` plus
-   `@pl.pipeline.stage` plus `PipelineConfig` **does work** here, measured on the
-   reference kernel and on a full staged kernel
-   ([framework-findings §17](../references/pypto-pro-framework-findings.md)).
-2. **Fall back to single-sided launches with GM intermediates** when the fused
-   form fails. This is the proven escape, not evidence that fusion is impossible.
-3. **Do not hand-write a per-tile cross-core event sequence inside one `@pl.jit`.**
-   That is the construct that hangs; see below.
-
-### The construct that does not run: hand-written per-tile handoff
+### Historical failed configuration: one hand-written attention handoff
 
 Measured, repeatedly. A single `@pl.jit` holding a `section_cube()` and a
 `section_vector()` with a **hand-written** cross-core handoff on every tile
@@ -35,11 +30,10 @@ and never ran once, even though every ingredient passed in isolation — the cub
 half (including the transposed NT load and a dual-accumulator contraction) and
 the register-level softmax were each proven separately. A reference
 implementation written against a different kernel language hit the identical
-wall on the identical construct, so the limit is in the construct rather than in
-one language's lowering. This says nothing about the generated pipeline path in
-step 1.
+wall on the identical construct. This rejects that exact event/buffer/loop
+organization, not the current manual preload design or every hand-written path.
 
-### The proven fallback: decompose into single-sided launches
+### Diagnostic-only experiment: decompose into single-sided launches
 
 Each kernel is cube-only or vector-only and contains *no* cross-core
 synchronisation at all; ordering comes from the launch boundary. Two operators
@@ -54,13 +48,12 @@ The cost is the intermediates round-tripping through GM — up to 268 MB of scor
 matrix on the largest attention case — and that is real. It is also affordable
 far more often than it looks, because the benchmark pays `0.3` per accurate case
 *before* any performance term: a slow correct kernel scores, a fast one that
-never runs does not. Reserve this for after the generated pipeline path in step 1
-has been tried; once on the GM split, only revisit fusion if the split form is
-already correct and profiling says the GM round trip dominates.
+never runs does not. Reserve this split for diagnosis or research after the
+applicable one-launch design has been tried; never deliver it.
 
-The wrapper constraint that comes with it: the benchmark times the wrapper, so
-there must be **no launch inside a host loop** — a fixed number of launches,
-each looping internally. See
+In a diagnostic harness there must still be **no launch inside a host loop**:
+use a fixed number of launches, each looping internally. A delivered wrapper
+must launch exactly once; otherwise report a design blocker. See
 [wrapper-boundary.md](wrapper-boundary.md).
 
 ## Review sequence

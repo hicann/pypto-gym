@@ -1,31 +1,34 @@
 # TensorList under a fixed-parameter DSL — padded fixed arity
 
-**Topology:** `elementwise` (and any topology whose inputs carry `is_list: true`)
-**Status:** validated skeleton on Ascend950PR_9579 (CANN 9.2.0). 21 generated
-kernels covering `L = 1..64` over three dtypes; the whole ladder compiles, and
-`L = 64` at 385 declared parameters launches and returns per-slot-correct data.
-**Evidence:** [retained validation record](../examples/validation-records.md), including
-the generated-length ladder, dtype coverage and 64-slot launch result.
+**Topology:** contiguous, rank-insensitive `elementwise` / `foreach` inputs with
+`is_list: true`
+**Status:** conceptual for the independent-`Ptr` delivery below. The historical
+`Tensor`/host-view harness validated arity 64 and empty ranges,
+not the corrected wrapper boundary.
+**Evidence:** [retained validation record](../examples/validation-records.md).
 
 ## When this applies
 
 An input is declared `is_list: true` — a `TensorList` whose **length is a runtime
 value**. The `torch._foreach_*` family is the obvious case, but the pattern is about the parameter
 boundary rather than the arithmetic: it applies whenever the number of tensors is
-not known when the kernel is compiled.
+not known when the kernel is compiled. The flattened delivery below applies only
+to contiguous, rank-insensitive elementwise semantics; other layouts need a
+separately bounded, target-validated view ABI.
 
 It does **not** apply to a *batched* operator whose batch is an axis of one
 tensor. That is a loop bound, not an arity problem.
 
 ## The problem, stated exactly
 
-pypto-pro has **no TensorList parameter type**. `runtime/jit.py:354-370`
+On the retained target/version, pypto-pro has **no TensorList parameter type**. `runtime/jit.py:354-370`
 (`_extract_param_specs`) recognises `TENSOR` / `PTR` / `TILING` / `SCALAR` and
 nothing else; `_validate_tensor_arg` requires each tensor argument to be a
 `torch.Tensor`; `_validate_args` requires the argument count to match the
 declared count exactly. **A Python list cannot be passed.** So the list has to
 become *parameters*, and the number of parameters is fixed when the kernel is
 compiled — while `L` is not known until it is called.
+Recheck the installed version; native TensorList support would supersede this workaround.
 
 ## Two routes that do not work, with what they actually say
 
@@ -76,21 +79,24 @@ Two readings, and the second is the one that generalises:
   `L <= 2`. The rule earns its keep on the cases a visible run never reaches,
   which is exactly why it has to be a rule rather than a measurement.
 
-## The shape that works: fixed arity, padded slots, one launch
+## Corrected delivery shape to validate: one maximum arity, padded slots, one launch
 
-Unroll the list into parameters at **generation** time, over a ladder of bucket
-sizes, and pad. Per slot `i`: its tensors, plus its element count `n_i`, plus one
-load-balance scalar.
+Set `B_MAX` to the frozen contract's finite maximum list length. Generate exactly
+one `B_MAX`-slot signature, with no length-bucket ladder. Each TensorList formal
+becomes an independent `Ptr` parameter in every slot; addresses stay in declared
+launch arguments, while `n_i` and rotation are scalars. Because `Ptr` does not
+provide the `Tensor` rank/dtype checks, the wrapper validates every real slot before
+`pl.make_tensor` builds its view; validate the complete definition on target.
 
 ```python
 @pl.jit(auto_mutex=True)
-def op_{dtype}_b{B}_{hash}(
-        x1_0: pl.Tensor[[1, pl.DYNAMIC], dt], ..., y_0: pl.Tensor[[1, pl.DYNAMIC], dt],
-        ...                                    # slots 1 .. B-1, identical
+def op_{dtype}_max{B_MAX}_{hash}(
+        x1_0: pl.Ptr[dt], ..., y_0: pl.Ptr[dt],
+        ...                                    # slots 1 .. B_MAX-1, identical
         n_0: pl.DT_INT32, r_0: pl.DT_INT32,    # ... one pair per slot
         s: pl.DT_FP32):
 
-    <tile groups declared ONCE here>            # see "UB is bucket-independent"
+    <tile groups declared ONCE here>            # see "UB is arity-independent"
 
     with pl.section_vector():
         nc = pl.get_block_num()
@@ -100,31 +106,48 @@ def op_{dtype}_b{B}_{hash}(
         nch_0 = (n_0 + CHUNK - 1) // CHUNK      # ceiling division
         st_0 = (cid + r_0) % nc                 # phase rotation, see below
         for c_0 in pl.range(st_0, nch_0, nc):
+            # n_0 > 0 whenever the body executes; padded n_0 == 0 slots
+            # therefore never construct a zero-sized tensor view.
+            x1_view_0 = pl.make_tensor(x1_0, [1, n_0], [n_0, 1])
+            y_view_0 = pl.make_tensor(y_0, [1, n_0], [n_0, 1])
             off_0 = c_0 * CHUNK
             vl_0 = pl.min(CHUNK, n_0 - off_0)
             a_0 = g1.next()                     # rotate FIRST
             pl.set_validshape(a_0, [1, vl_0])   # then window the ROTATED tile
-            pl.load(a_0, x1_0, [0, off_0])
+            pl.load(a_0, x1_view_0, [0, off_0])
             ...
-        # ---- slot 1 .. slot B-1: the same block, re-emitted ---------------
+        # ---- slot 1 .. slot B_MAX-1: the same block, re-emitted -----------
 ```
 
-The wrapper picks `bucket = min(b for b in BUCKETS if b >= L)`, fills slots
-`L..bucket-1` with **a repeat of slot 0's tensors** at `n_i = 0`, and launches
-once. Padding is free at the data level — no allocation, no copy, no extra bytes
-moved — because the pointers ride the argument buffer the launch already builds.
+The frozen contract must provide finite `L_MAX`; set `B_MAX = L_MAX` or return
+the contract for correction. With multiple TensorList formals, it must also
+define their length relationship and which elements share a slot; the skeleton
+above assumes one common `L`. It must provide a finite per-slot element limit
+`N_MAX` that keeps every `DT_INT32` expression in range; the shown ceiling
+division specifically requires `N_MAX + CHUNK - 1 <= INT32_MAX`. The wrapper
+validates these numeric bounds and the declared length relationship, including
+`1 <= L <= B_MAX`; empty lists need a separate contract. It also validates each
+real slot's dtype, device, contiguity and required shape.
+It passes real tensors to their declared `Ptr` slots, repeats each formal's slot
+0 with `n_i = 0` for `L..B_MAX-1`, and launches once.
 
-Each item is flattened to `[1, n_i]` by a `.view()` on the host. That is a pure
-view of a contiguous tensor, so it costs nothing and never appears in the
-profile; it is also what lets one kernel cover every rank. **Guard contiguity and
-raise** — on a non-contiguous tensor the same call silently materialises a full
-copy, a dispatched device kernel inside the measured window.
+If the frozen contract permits every real `n_i` to be zero, validate the same
+kernel on target with one `block_dim=1` empty-work launch or report
+`failure_category: design_violation`. The recorded runtime rejects
+`block_dim=0`, and skipping the launch violates the one-launch contract; see the
+[launch-geometry findings](../references/pypto-pro-launch-block-dim.md).
 
-## The arity ceiling: none was found at or below the declared maximum
+Do not use a host `.view()` or a `data_ptr()` table. Derive `n_i` from allowed
+metadata and build the flat view with `pl.make_tensor` in-kernel. Non-contiguous
+or rank-sensitive inputs require a separate finite metadata contract and
+target-validated layout, or must be rejected.
+
+## Historical parameter-capacity control: arity 64 succeeded
 
 Bisected because the argument-buffer limit for this toolchain is documented
 nowhere. Each slot carried a distinct value, so a parameter-to-slot mismapping
 would have shown as wrong data rather than as silence.
+These historical `Tensor`/host-view probes do not validate the `Ptr` ABI.
 
 | arity | tensor params | int32 params | total | compile | launch | data |
 |---|---|---|---|---|---|---|
@@ -158,6 +181,9 @@ padded slots: 32/32 untouched
 smallest real slot had 1 tile(s) against 56 cores
 VERDICT: PADDING PATH OK
 ```
+
+That run establishes empty-`pl.range` behavior only. Keeping `pl.make_tensor`
+inside the range avoids a zero-sized view; the `Ptr` form still needs validation.
 
 So **write the slot body unconditionally**. A dead slot costs one division, one
 addition, one modulo and a loop test, per core. `n_i = 0` is an unambiguous
@@ -195,11 +221,9 @@ start_i = (cid + rot_i) % nc
 is a bijection on `[0, nc)`. So whatever `rot_i` is, the `nc` cores receive `nc`
 distinct starts covering the whole range, and chunk `c` of slot `i` runs on
 exactly the one core whose start is `c mod nc` — every chunk once, no chunk
-twice. Coverage and disjointness do not depend on `rot_i` at all. **`n_i` is the
-only host-computed value correctness depends on; a wrong `rot_i` is slower and
-still right.** That also means a host/kernel disagreement about the core count or
-the chunk width is a balance bug, never a correctness bug, since the loop bound
-and the stride are both read from runtime values inside the kernel.
+twice. In this contiguous example, among `n_i` and `rot_i`, only `n_i` affects
+correctness; a wrong `rot_i` is slower and still right. Shape/stride/layout
+metadata in another ABI would still be correctness-critical.
 
 Two spellings are not equivalent, and the difference is a real bug:
 `(cid + nc - phase_i) % nc` goes **negative** if `nc < BLOCKS`, and C++ `%` on a
@@ -212,7 +236,7 @@ integer division (`Div of bitwidth greater than 32 not supported`), and the
 failure is conditional on type inference, so a latent instance compiles until
 something unrelated widens the divisor.
 
-## UB is bucket-independent — declare tile groups ONCE
+## UB is arity-independent — declare tile groups ONCE
 
 **The single most consequential rule here.** The `make_tile_group` calls belong
 in the kernel body *above* the unrolled slots, and every slot body reuses them.
@@ -230,24 +254,15 @@ Sequencing follows for free: slot `i+1`'s first load reuses the buffer slot `i`'
 last store released, and `auto_mutex` serialises that automatically because it is
 the same tile group. Correctness never depends on slot ordering.
 
-## Sizing the ladder
+## One fixed maximum under the delivery contract
 
-`{1, 2, 4, 8, 16, 32, 64}` — 7 buckets per dtype — was chosen so no case at the
-common small `L` carries dead slots, at a cost of extra compiles. **That is
-insurance, not a measured win, and should be labelled as such:** a padded slot is
-measured cheap, but nobody has measured 63 of them on a 5 µs kernel. A sparse
-ladder `{4, 16, 64}` caps padding at 4x for a third of the compiles. The
-falsification is one run: time the smallest case under the narrowest and the
-widest bucket, and collapse the ladder if the delta sits inside the harness's own
-control tolerance.
-
-Dense at the bottom is the defensible half regardless: that is where kernels are
-shortest, so a fixed prologue is a larger fraction of the total, and it is where
-the case mass sits.
+Delivery has one `B_MAX = L_MAX` signature. The historical
+`{1, 2, 4, 8, 16, 32, 64}` ladder is research evidence only. Benchmark short
+lists under `B_MAX`; if the cost fails the contract, report a design blocker.
 
 ## What fails silently, in one list
 
-1. **Tile groups declared per slot** — UB overflows by the bucket factor.
+1. **Tile groups declared per slot** — UB overflows by the fixed-arity factor.
 2. **An `if n_i > 0` guard** — harmless but unnecessary; its absence is what makes
    padding free, and adding it suggests the empty-range contract is in doubt when
    it is measured.
@@ -256,8 +271,12 @@ the case mass sits.
    re-introduces the 64-lane alignment fault *per slot*, so it passes on aligned
    items and faults on unaligned ones. Keep one fixed-width physical tile and vary
    only the runtime valid window.
-5. **A `.contiguous()` in the wrapper** — turns the free flattening view into a
-   full copy inside the measured window.
-6. **Padded slots aliasing one output buffer into many output parameters** —
-   inert given `n_i = 0`, and measured inert, but if a bucket misbehaves in a way
-   that is not argument width, pass a shared one-element dummy instead.
+5. **Host `.view()` / `.contiguous()` flattening** — the former violates the
+   wrapper boundary; the latter may copy non-contiguous input. Pass the original
+   tensor to `Ptr`, reject unsupported layouts and build the view in-kernel.
+6. **Using a dummy tensor for padded output slots** — do not use this fallback.
+   Reuse each formal's slot-0 output with `n_i = 0` as specified above, and
+   validate the generated kernel's independent-`Ptr` zero-work path end to end
+   on the target. If on-target evidence disproves this padding design, report
+   `failure_category: design_violation`; the wrapper must not create or pass an
+   extra dummy tensor.

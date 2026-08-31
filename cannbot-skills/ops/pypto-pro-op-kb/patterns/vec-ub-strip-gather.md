@@ -1,10 +1,11 @@
 # UB strip gather — index-driven movement on a vector-only target
 
 **Topology:** `gather-scatter-indexing`
-**Status:** validated on Ascend950PR_9579 (CANN 9.2.0), 12 of 12 dtype
-combinations bit-exact; the fp32 case measured end to end.
+**Status:** conceptual addressing skeleton; the historical 12/12 runs establish
+dtype compatibility only because their exact `C`/`L` geometry and runnable
+artifact were not retained.
 **Evidence:** [retained validation record](../examples/validation-records.md), scoped to
-the target, dtype matrix and result stated above.
+the recorded target and dtype-compatibility result.
 
 ## When this applies
 
@@ -35,11 +36,11 @@ columns wide. Hold it in UB as an `[Xs, C]` tile and the source for output
 
     idx * C + c
 
-which `vf.gather` takes directly. Three vf ops plus the gather, for every rank
-and every `k`:
+which `vf.gather` takes directly. The following sketch covers only the hoisted
+path whose premises are stated below:
 
 ```python
-# HOISTING THIS IS ONLY LEGAL WHEN C divides L. See the premise below.
+# HOISTING THIS BITMASK IS ONLY LEGAL WHEN C is a power of two and divides L.
 lanec = vf.and_(vf.arange(0, dtype=pl.DT_INT32), cmask, mi)   # hoisted: c term
 ...
 idx = vf.load_align(t_idx, base)
@@ -55,27 +56,25 @@ tile starting at position `r*L`, so the column a lane writes is
 
     c = (r*L + lane) mod C
 
-The general expression is therefore `arange(r*L, r*L+L) & (C-1)`, which depends
-on `r`. It collapses to the hoisted, `r`-independent `arange(0, L) & (C-1)`
-**exactly when `C` is a power of two that divides `L`** — then `r*L mod C == 0`
-and the `r*L` term vanishes.
+The general expression is therefore `arange(r*L, r*L+L) % C`. For a reusable
+skeleton in which `r = 1` may execute, it becomes the hoistable, `r`-independent
+`arange(0, L) % C` exactly when `L % C == 0`. Only when `C` is also a power of
+two may that modulo be spelled with `& (C-1)`.
 
-**This premise is load-bearing, and violating it fails silently.** When
-`C > L` the premise does not hold and the hoisted form writes the wrong
-columns with no error: at `L = 32, C = 64`, `r*32 mod 64` alternates `0, 32,
-0, 32…`, so every odd step writes its whole register **32 columns off**. The
-output is fully populated and plausibly shaped; only the column mapping is
+**This premise is load-bearing, and violating it fails silently.** At
+`L = 32, C = 64`, `r*32 mod 64` alternates `0, 32, 0, 32…`, so every odd step
+gathers its whole register from source columns **32 positions off**. The output
+is still written to its normal contiguous
+positions and remains plausibly shaped; only the selected source column is
 wrong. Nothing in the DSL, the tile geometry or a capacity assertion catches
-it, because no address goes out of range — the writes land inside the tile, at
-the wrong place.
+it, because the incorrect gather offsets still land inside the source tile.
 
-**So, before hoisting, assert `C <= L and L % C == 0 and (C & (C-1)) == 0`.**
-If `C > L` — which the `Irun < C` second tile family in the next section
-deliberately creates, with `C = Irun` — do not hoist: recompute `lanec` per
-step from `arange(r*L, r*L+L) & (C-1)`, or choose `L` as a multiple of `C`.
-
-*(The measured 12/12 dtype sweep below ran entirely in the `C <= L` regime, so
-it does not cover this case. Recorded 2026-08-07.)*
+**All paths require `C > 0`; before hoisting the shown bitmask, also assert
+`L % C == 0 and (C & (C-1)) == 0`.** If `L % C != 0`, recompute `lanec` per
+step as `(r*L + lane) % C`; otherwise `lane % C` may be hoisted. In either case,
+use `& (C-1)` only for a power-of-two C. Other C values require a separately
+validated modulo implementation or rejection. The second tile family below
+sets `C = Irun` and follows the same rules.
 
 ## Sizing it — the measured knee
 
@@ -98,8 +97,10 @@ extra passes and half-empty gather lanes affordable.
 
 ## Four things that fail silently
 
-1. **`C > inner extent` writes nothing.** `ncb = ceil(Irun / C)` is zero when
-   `Irun < C`, so the kernel produces no output and reports success. Every 1-D
+1. **Do not use the fixed-width strip when `C > Irun`, where `Irun` is the
+   flattened inner extent and `esize` is bytes per element.** A full-block count
+   `ncb = floor(Irun / C)` is zero when `0 < Irun < C`; ceiling division would be
+   one but would require a separately designed partial-block tail. Every 1-D
    case is `Irun = 1`. Use a second tile family for `Irun < 32/esize`: the
    `(indexed, inner)` block is contiguous when the inner extent is that small,
    so the strip becomes a flat `[1, Xs*Irun]` run — the best possible DMA — and

@@ -188,7 +188,8 @@ each figure is a device measurement on the same case before and after.
 whole M tile needs a pad kernel before and a strip kernel after — but only when
 `M` is not already a multiple of `TM`. Guarding both launches on `M == Mp` and
 letting the cube read and write the real tensors removed **24.5%** of the
-largest case outright. Look for this before optimising anything.
+largest case outright. This is historical diagnostic evidence; delivery must
+fold equivalent tail handling into one launch or report a blocker.
 
 **2. Size the transfer, not the tile.** A copy kernel moved 67 MB at **121 GB/s**
 against a roof near 1 TB/s purely because its column tile was 512 elements — a

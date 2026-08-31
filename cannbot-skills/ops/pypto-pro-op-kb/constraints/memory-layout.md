@@ -21,37 +21,49 @@ ranges are safe to alias.
 For each memory space, maintain a table with:
 
 ```text
-tile | layout | start | size per slot | slots | lifetime | end
+tile | layout | start_byte | size_bytes_per_slot | slots | lifetime | end_byte_exclusive
 ```
 
-Reject the design if live ranges overlap, an address violates the documented
-alignment, or layout conversion is inferred rather than documented.
+Record byte ranges as half-open intervals `[start_byte, end_byte_exclusive)`.
+For one slot, `end_byte_exclusive = start_byte + size_bytes_per_slot`. If a row
+aggregates contiguous slots, use `start_byte + slots * size_bytes_per_slot`;
+otherwise list each slot's start and exclusive end separately.
 
-### A strided range's size is not the product of its extents
+Reject the design if live ranges overlap, any exclusive end exceeds that
+space's capacity, an address violates alignment, or a layout conversion is
+inferred rather than documented.
 
-The `size per slot` column above is the one people fill in wrong, and it is wrong
-in a way that makes the overlap check pass when it should fail.
+### A strided range's size cannot generally be inferred from its extents alone
 
-A tile that covers `span_i` elements along each axis of a wider parent, with
-parent stride `stride_i`, occupies a **linear extent** of
+A non-empty tile with non-negative parent strides, whose base points at its
+lowest addressed element, and which covers `span_i` elements along each axis of
+a wider parent, occupies a **linear element extent** of the following size when
+`stride_i` is measured in elements:
 
 ```text
 1 + Σ (span_i − 1) · stride_i
 ```
 
-**not** `Π span_i`. For the ordinary 2-D case — `M` rows of `N` elements out of a
-parent whose row stride is `S` — that is `(M−1)·S + N`, which exceeds `M·N`
-whenever `S > N`, i.e. whenever the tile is narrower than the tensor it came
-from. The same shape of arithmetic governs a burst transfer, where `n_burst`
-bursts of `burst_len` at inter-burst `step` span `(n_burst − 1)·step + burst_len`.
+An empty tile has zero extent. For whole-byte storage, multiply the element
+extent by `element_size_bytes`. In 2-D with unit inner stride, `M` rows of `N`
+elements with parent row stride `S` occupy
+`((M−1)·S + N)·element_size_bytes`. `Π span_i` cannot generally replace this
+linear extent: it may under-state stride gaps or over-state overlapping views.
+
+For a sub-byte dtype, follow the target packing rule and round the first-to-last
+touched bit range outwards to aligned whole bytes; do not use a fractional size.
+
+For bursts, `(n_burst−1)·step + burst_len` uses start-to-start `step`; if the API
+gives a post-payload gap, use `step = burst_len + gap`, then convert API units to
+bytes.
 
 **The two numbers answer different questions and you need both.**
 
 | Question | Use |
 |---|---|
-| does this view fit inside its parent storage? | the **linear extent** — `Π spans` under-states it and will declare a view legal that runs off the end |
-| do two live allocations collide? | the **linear extent**, as a conservative convention — see the note below |
-| how many bytes actually move? | `Π spans` — the skipped tail between bursts is genuinely not touched, and it is legal for it to extend past storage |
+| does this view fit inside its parent storage? | prove `[view_start_byte, view_start_byte + extent_bytes)` is contained in the parent's half-open range; use the formula above for whole-byte storage and target packing for sub-byte storage |
+| do two live allocations collide? | the **linear byte extent**, as a conservative convention — see the note below |
+| how many logical payload bytes move? | `Π spans · element_size_bytes` for whole-byte storage, or the target-packed equivalent; count transfer padding separately |
 
 **The overlap row is a convention, not arithmetic.** Two allocations interleaved
 in each other's inter-burst gaps genuinely do not collide byte for byte — the
@@ -65,16 +77,17 @@ which fails to catch real collisions as well.
 
 Two consequences worth stating separately:
 
-- **A bounds check written against `Π spans` is not conservative, it is wrong in
-  the unsafe direction.** It under-reports, so it green-lights the case it exists
-  to catch.
+- **For a non-overlapping view with stride gaps, a bounds check written against
+  `Π spans` is wrong in the unsafe direction.** It under-reports, so it
+  green-lights the case it exists to catch.
 - **This is what makes an exhaustive layout script toothless.**
   [investigation-discipline §12](../references/investigation-discipline.md)
   requires a per-instance *pairwise address-range non-overlap* assertion, and
   records that the defect which survived three review rounds was found by that
-  check alone. A script that computes each range as a dense `Π spans` block
-  computes the wrong ranges and then reports no overlap — a green exhaustive
-  sweep that proves nothing, which §12 calls out as more dangerous than no sweep.
+  check alone. For a layout with stride gaps, a script that computes each range
+  as a dense `Π spans` block computes the wrong ranges and then reports no
+  overlap — a green exhaustive sweep that proves nothing, which §12 calls out as
+  more dangerous than no sweep.
   Assert the linear extent, and keep the negative control that shows the
   assertion can fire.
 
