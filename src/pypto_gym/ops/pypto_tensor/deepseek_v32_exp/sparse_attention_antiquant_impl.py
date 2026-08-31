@@ -166,9 +166,16 @@ def sparse_attention_antiquant_compute(
 
                         # ------------------ cast: UB --> UB  ---- [32, 512]  -cast-> [32, 512]
                         kn_quant_fp32 = pypto.cast(kn_quant_fp16, pypto.DT_FP32)
+                        
+                        temp_tensor = pypto.full(
+                            kn_quant_fp32.shape,
+                            0.0,
+                            pypto.DT_FP32,
+                            valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), 512],
+                        )
 
                         pypto.set_vec_tile_shapes(16, 1024)
-                        kn_quant_fp32 = pypto.concat([kn_quant_fp32, kn_quant_fp32], -1)
+                        kn_quant_fp32 = pypto.concat([kn_quant_fp32, temp_tensor], -1)
                         kn_quant_fp32_reshape = pypto.reshape(kn_quant_fp32, [s2_tile * 4 * 2, 128])
 
                         kn_scale_vint8 = pypto.view(
