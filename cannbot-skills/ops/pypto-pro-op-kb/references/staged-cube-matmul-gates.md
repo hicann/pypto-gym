@@ -6,7 +6,7 @@ gates. Re-run every hardware probe after changing CANN, PyPTO-Pro, or the A5
 subtype.
 
 Start an A/B record from the
-[staged matmul checklist](../../pypto-pro-op-perf-tune/references/staged-matmul-ab-protocol.md).
+[staged matmul checklist](../../pypto-pro-op-perf-tune/references/general-knowledge/staged-matmul-ab-protocol.md).
 Use the [stage-task flatten template](../../pypto-pro-op-perf-tune/templates/stage-task-flatten.py.tmpl)
 for ownership and tail work, and the
 [tiling-key template](../../pypto-pro-op-perf-tune/templates/tiling-key-resource-specialization.py.tmpl)

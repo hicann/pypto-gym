@@ -91,4 +91,4 @@ of it.
 Platform configuration values are roofline inputs, not measured kernel
 performance. Use the target profiler to determine the current bottleneck. See
 the platform-gated
-[A5 roofline workflow](../../pypto-pro-op-perf-tune/references/a5-roofline-and-levers.md).
+[A5 roofline workflow](../../pypto-pro-op-perf-tune/references/general-knowledge/a5-roofline-and-levers.md).

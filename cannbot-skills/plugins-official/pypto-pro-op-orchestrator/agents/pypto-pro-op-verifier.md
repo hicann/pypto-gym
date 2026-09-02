@@ -24,7 +24,10 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 | `upstream-contract-check` | `pypto-pro-op-plan`、`pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 环境归因时加载 `pypto-pro-environment-check` |
 | `capability_gap_check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 涉及环境能力时加载 `pypto-pro-environment-check` |
 
-`stage1-check`、`stage3-check`、`upstream-contract-check` 和 `capability_gap_check` 还必须读取 `$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`；该文件是 Vector 选择与证据门槛的唯一规范源。
+`stage1-check`、`stage3-check`、`stage5-check`、`upstream-contract-check` 和
+`capability_gap_check` 还必须读取
+`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`；该文件是 Vector 选择与证据门槛
+的唯一规范源。
 
 # pypto-pro-op-verifier — 门禁裁判（Judge-only）
 
@@ -42,7 +45,7 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 - 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行已有脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）。只读诊断命令可直接运行；`capability_gap_check` 在文档/样例不足以裁决时，可在 cwd 的临时目录中运行一次性 `python -c` 或最小 probe，须记录命令与原始输出、结束后删除临时文件，且不得改动 `custom/<op>/` 或会话环境
-- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读，仅在 `stage3-check` PASS 且 Stage 3 完成后冻结
+- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读
 - 所有检查必须**实际执行命令并捕获输出**，不得只输出命令字符串而声称"已检查"
 - 所有文件操作限制在 cwd 内
 - **合同内裁决独立**：在用户、system 与 orchestrator 已确定的需求和流程合同内，任何 agent 的“已授权偏差 / authorized deviation”声明都不能使铁律违规（多 kernel / 作弊等“违反即失败”项）转 PASS
@@ -53,7 +56,7 @@ orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返�
 
 - `stage2-check`：`collect_golden_perf` 缺失时按 `false` 处理。
 - `module-check`：缺少正整数 `module_k` 时报 `dispatch_invalid`；`suffix_k` 由 1 到 k 的序号依次拼接得出，不接收独立值。
-- `stage4-check` / `stage5-check` 缺少合法的 `stage4_path=L0|L1` 时，报 `dispatch_invalid`；不得猜测或执行门禁。
+- `stage4-check` / `stage5-check` 缺少合法的 `stage4_path=L0|L1` 时，报 `dispatch_invalid`；`stage5-check` 缺少非空 `optimization_target.case_ids` 或合法的 `optimization_target.selection_mode=user_selected|single_p0|all_p0_no_questions` 时同样处理。不得猜测或执行门禁。
 
 | 模式 | 触发时机 | 检查项数 | 动态运行 |
 |---|---|---|---|
@@ -64,7 +67,7 @@ orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返�
 | `upstream-contract-check` | coder 上报疑似 selection/design 上游错误后 | 见下方 | 按需重跑已有最小复现，不新建产物 |
 | `capability_gap_check` | coder 报告 capability_gap 后 | 见下方 | 按需（查文档/样例；证据不足时运行最小 probe） |
 | `stage4-check` | coder 返回后（L0）或 finalize 返回后（L1） | 15 | 是（`python custom/<op>/test_{op}.py`） |
-| `stage5-check` | optimizer 返回后 | Stage 4 的 15 项 + P1–P6/P8 必选性能门禁；P7 条件审计 | 是（完整正确性 + skill 规定的证据读取/比较） |
+| `stage5-check` | optimizer 返回后 | Stage 4 的 15 项 + P1–P8 全部必选 | 是（完整正确性 + skill 规定的证据读取/比较） |
 
 ---
 
@@ -226,6 +229,9 @@ Suggested action: <编排器应补充的具体证据；不得按 false_gap/confi
 多个独立失败全部报告，但主 `failure_category` 只取一个：`kb_selection_invalid` →
 `golden_failure` → `design_violation` → `cheating` → `wrapper_boundary_violation` →
 `kb_usage_invalid` → 其他具体类别。同一根因只报最具体类别；`env_error` 仅在环境是唯一阻断时使用。
+仅在 `stage5-check` 中，若根因是无法恢复的只读/冻结输入缺失、损坏、不可解析或冻结合同客观矛盾，
+主类别优先使用 `stage5_contract_blocked` 并在 Evidence 保留全部子失败；可更新事实或代码不一致仍按
+上述原类别报告。Stage 1–4 的优先序不变。
 
 | # | 类别 | 检查项 | 验证方式 |
 |---|------|--------|---------|
@@ -249,20 +255,26 @@ Suggested action: <编排器应补充的具体证据；不得按 false_gap/confi
 
 ## Stage 5 检查清单（`stage5-check`）
 
-Stage 5 必须先完整重跑 Stage 4 的 15 项门禁；任何正确性、交付态、知识使用、wrapper 边界或反作弊退化都直接 FAIL。随后加载 `pypto-pro-op-perf-tune`，仅用其定义的字段与计时口径核查 P1–P8。P1–P6 与 P8 是完成门禁，P7 只在未通过且准备声明穷尽时审计。verifier 不重新优化、不修报告，也不把 optimizer 的口头声明当成证据。
+Stage 5 必须先完整重跑 Stage 4 的 15 项门禁；任何正确性、交付态、知识使用、wrapper 边界或反作弊退化都直接 FAIL。Stage 5 允许 optimizer 按 perf skill 同步 DESIGN/BINDINGS/KB_USAGE 的最终 as-built 事实，因此复验以当前最终代码和记录的一致性为准，同时对照冻结的 SPEC、Golden、KB_SELECTION、Module/public wrapper 合同，拒绝通过文档同步删减义务或放宽边界；不能仅因文件哈希与 Stage 3 不同就报 design violation。随后加载 `pypto-pro-op-perf-tune`，仅用其定义的字段与计时口径核查 P1–P8；八项全部是完成门禁。verifier 不重新优化、不修报告，也不把 optimizer 的口头声明当成证据。
 
 | # | 类别 | 检查项 | 验证方式 |
 |---|------|--------|---------|
 | P1 | 文件完整性 | 四件套均存在且非空：`PERFORMANCE_REPORT.md`、`performance.json`、`performance.log`、`perf_report.md` | 逐一检查文件存在、大小非零、可读取；任何缺失报 `performance_evidence_invalid` |
-| P2 | 基线一致 | `PERFORMANCE_CASES.json` 与 `PERFORMANCE_REPORT.md` 覆盖 SPEC 的每个性能 P0 case，manifest case 与 Stage 4 既有测试一一对应；报告逐 case 给出 baseline/final，shape、dtype、device、warm-up、repeats、目标 `Op Name` 和计时口径一致 | 按 perf skill schema 解析 manifest，再对照 `SPEC.md`、Stage 4 测试与报告逐字段检查；缺 case、修改 case 语义或用聚合结果冒充逐 case 结果均 FAIL |
-| P3 | 采集证据 | 最终 `performance.json` 来自正式 compare（非 quick），baseline/final 是两次独立 formal compare，逐 case 原始 CSV 与 `measurement.json` 存在且能和报告对应；final compare、timeline 与最终正确性针对同一份最终实现 | 从 `PERFORMANCE_REPORT.md` 取出不同的 `baseline_collection_id`/round 与 `final_collection_id`/round，分别加载两轮 `collection.json`、逐 case `measurement.json`/CSV，核对 manifest、Op Name、样本和报告数字；确认 final collection 完整后才允许挂接 timeline，并对照当前代码、实际命令和报告，拒绝把修改前的旧轮次证据拼到后续实现。根目录四件套只表示最近 final，不可代替 baseline 轮；孤立手填、已删除路径或互相矛盾均报 `performance_evidence_invalid` |
-| P4 | 数值可比且可复算 | baseline/final duration 为有限正数；每个 case 的同协议 PyPTO `speedup = baseline_duration / final_duration` 可复算且与报告一致 | 逐 case 独立复算（允许合理展示舍入误差）；禁止把单一聚合时延复制给多个 case。默认目标时，`performance.json` 的 `golden_reference_ratio` 必须等于冻结 Golden 每迭代 E2E / 最终 PyPTO target-kernel，并标明它不是 optimization speedup |
+| P2 | 基线一致 | `PERFORMANCE_CASES.json` 与 `PERFORMANCE_REPORT.md` 覆盖 SPEC 的每个性能 P0 case，manifest case 与 Stage 4 既有测试一一对应；`optimization_target.case_ids` 是调度所传冻结目标的非空 P0 子集，选择方式及其枚举语义成立；报告逐 case 给出 baseline/final，shape、dtype、device、warm-up、repeats、目标 `Op Name` 和计时口径一致 | 按 perf skill schema 解析 manifest，再对照调度输入、`SPEC.md`、Stage 4 测试与报告逐字段检查；`single_p0` 必须对应唯一 P0，`all_p0_no_questions` 必须覆盖全部 P0；目标 case 或选择方式不一致、缺 case、修改 case 语义或用聚合结果冒充逐 case 结果均 FAIL |
+| P3 | 采集证据 | 最终 `performance.json` 来自正式 compare（非 quick），baseline/final 是两次独立 formal compare，逐 case 原始 CSV 与 `measurement.json` 存在且能和报告对应；final compare、timeline 与最终正确性针对同一份最终实现 | 从 `PERFORMANCE_REPORT.md` 取出不同的 `baseline_collection_id`/round 与 `final_collection_id`/round，分别加载两轮 `collection.json`、逐 case `measurement.json`/CSV，核对 manifest、Op Name、样本和报告数字；核对 final collection、`performance.json`、timeline 与当前严格 runner 的 `executable_sha256` 一致，再以报告记录的源码 revision 或 diff 关联最终正确性，拒绝拼接改码前后的证据。根目录四件套只表示最近 final，不可代替 baseline 轮；孤立手填、已删除路径或互相矛盾均报 `performance_evidence_invalid` |
+| P4 | 数值可比且可复算 | baseline/final duration 为有限正数；每个 case 的同协议 PyPTO `speedup = baseline_duration / final_duration` 可复算且与报告一致 | 逐 case 独立复算（允许合理展示舍入误差）；禁止把单一聚合时延复制给多个 case。存在且 `valid_for_target_met=true` 的 Golden 合同时，`performance.json` 的 `golden_reference_ratio` 必须等于冻结 Golden 每迭代 E2E / 最终 PyPTO target-kernel，并标明它不是 optimization speedup；默认 Golden 参考为 `unavailable` 时只核验 PyPTO baseline/final 的可比性 |
 | P5 | 正确性无退化 | 最终 `python custom/<op>/test_{op}.py` exit code=0，所有 P0 case 精度指标满足 Stage 4 标准 | 必须使用最终代码实际执行并捕获 stdout/stderr；不能复用 baseline 或中间轮次的 PASS |
-| P6 | 性能目标 | `PERFORMANCE_REPORT.md` 明确引用 SPEC 中用户提供的数值目标；未提供时采用每个 P0 case `golden_reference_ratio >= 1.0`。报告给出逐 case 结论与总 `target_met: true|false` | 默认目标时，检查 Golden 合同由 perf skill 的 Stage 5 专用 `collect_golden_reference.py` 在 baseline 前冻结，不得把 Stage 2 可选 Markdown 报告当作机器合同；case id/shape/dtype 与 manifest 一致，device、seed=42、warm-up/repeats、固定 `iterations=1`、原始样本与每迭代值齐全。逐 case 复算 `golden_per_iteration_npu_e2e_us / final_pypto_target_kernel_us`，所有 P0 均 >=1.0 才能 PASS，不得用 geomean 掩盖慢 case。Stage 4 单 kernel/单次调用门禁必须仍通过；wrapper 若有未计入分母的额外 device kernel，默认目标证据无效。证据有效但任一 case 未达到报 `performance_target_miss` |
-| P7 | 未通过时的搜索完备性 | 当 P6 与 P8 都已通过时无需继续穷举；当 P6 或 P8 未通过且 optimizer/orchestrator 准备声明已穷尽或调用 `fail_stage(5)` 时，候选覆盖账本必须闭合 | 逐项核查 SPEC、当前实现与生成物、正式 profiling、Stage 5 实战指南、适用平台资料及重新采集后新瓶颈所产生的候选；所有适用原子项、要求的兼容/enable 两两组合、累积组合和负候选重开均须有实验或可复核的 `unsupported`/冲突/`dominated` 证据。`dominated` 必须有全部 P0 case 与资源约束上的实测支配或等价子情形证明；连续少数候选无收益、理论预估或单 case 更差均不能关闭搜索 |
-| P8 | Roofline、Scalar 与流水终态 | 每个 P0 case 均有结构化 `roofline_terminal`、`pipeline_evidence`、`scalar_evidence`，并证明关键路径是有效计算或必要搬运、Scalar/等待不主导、所有合法可重叠搬算已流水 | 逐 case核对 workload/必要字节、平台峰值及来源、Roofline 推导、final collection 的 CSV/A-B，以及 final case 下 `instruction_timeline/timeline_evidence.json`、原始 timeline/DB 和当前 Tile DAG/slot/stage 映射；先确认 P3 的 final compare 与 timeline 确实对应当前最终代码。终态只接受 `compute_bound`、`data_movement_bound`、`balanced_compute_movement`；pipeline 的 `proven` 必须同时满足唯一 exact target task 归属、同一 BIU lane 的稳态搬算区间重叠及相邻 Tile 映射；脚本原始状态 `requires_tile_dag_correlation` 不能直接放行。不同 lane 并行、只有 ratio 同时高、无 Tile 映射的区间相交、受 instrumentation 扰动的时延或代表 lane 外推都不是证明。也可接受附完整依赖 DAG 且确无两个 work item/合法重叠边的 `not_applicable_with_dag`；Scalar 必须 `dominant=false`。`scalar_bound`、`wait_bound`、`insufficient_evidence`、`unverified`、仅引用旧轮次或路径不可读均 FAIL，报 `performance_pipeline_invalid` |
+| P6 | 性能目标复算与披露 | `PERFORMANCE_REPORT.md` 明确引用 SPEC 中用户提供的数值目标；未提供时，把每个 P0 case `golden_reference_ratio >= 1.0` 作为默认理想参考。报告给出逐 case 与总体结论；默认 Golden 分支须与 `performance.json.default_target_status` 一致 | 有 Golden 合同时，检查它由 perf skill 的 Stage 5 专用 `collect_golden_reference.py` 在 baseline 前冻结，不得把 Stage 2 可选 Markdown 报告当作机器合同；case id/shape/dtype 与 manifest 一致，device、seed=42、warm-up/repeats、固定 `iterations=1`、原始样本与每迭代值齐全。逐 case 复算 `golden_per_iteration_npu_e2e_us / final_pypto_target_kernel_us`，不得用 geomean 掩盖慢 case或伪造状态；用户未给数值目标且没有 Golden 性能合同时核对参考不可用及原始原因，已存在但矛盾或不可复算的 Stage 5 Golden 性能合同仍报 `performance_evidence_invalid`。目标达到或未达到均不决定 PASS；参考不可用仅在上述默认分支可交付。Stage 4 单 kernel/单次调用门禁必须仍通过 |
+| P7 | 优化项与最佳版本闭合 | 按 perf Skill/playbook 独立核验全部预置来源及已创建的 `bottleneck_derived` 均已关闭，关闭/重开证据有效，final sweep 无新合法项；最终源码是在完成 formal compare 的正确、合规候选中按冻结聚合指标选出的最佳版本 | 按下方“P7 独立审计”重新枚举来源并核对账本、实验和自主阶段顺序；确认候选表没有漏掉按冻结规则应晋级的版本，独立复算全部 P0 的逐 case speedup，并仅按冻结目标 case 与聚合规则复算排名、稳定性和并列结果，再核对最佳版本的独立 final compare。来源覆盖、关闭、扫描或最佳版本选择无效报 `performance_item_coverage_invalid`；测量证据不可评估报 `performance_evidence_invalid` |
+| P8 | Roofline、Scalar 与流水诊断 | 每个 P0 case 均有来自最终代码的结构化 `roofline_terminal`、`pipeline_evidence`、`scalar_evidence`，理想或残留状态均如实披露并进入 final candidate sweep | 逐 case 核对 workload/必要字节、平台峰值及来源、Roofline 推导、final collection 的 CSV/A-B，以及 final case 下 `instruction_timeline/timeline_evidence.json`、原始 timeline/DB 和当前 Tile DAG/slot/stage 映射；先确认 P3 的 final compare 与 timeline 确实对应当前最终代码。`compute_bound`、`data_movement_bound`、`balanced_compute_movement`、流水 `proven|not_applicable_with_dag` 和 Scalar `dominant=false` 是理想状态；`scalar_bound`、`wait_bound`、流水 `residual_not_overlapped` 或 Scalar `dominant=true` 本身不导致 FAIL，但 P7 必须证明相关候选已闭合且 sweep 无新项。`insufficient_evidence`、`unverified`、`unknown`、仅引用旧轮次、路径不可读、采集不可比或虚假机制结论报 `performance_evidence_invalid` |
 
-只有 Stage 4 的 15 项与 P1–P6、P8 全部通过，`stage5-check` 才能 PASS；数值目标已达但 P8 未通过仍不得完成。P7 在完成门禁已通过后不要求继续穷举，只用于审计未通过时能否诚实声明穷尽。性能证据有效但未达目标或未形成健康流水终态也是 FAIL，不过必须与伪造/不可比/缺失证据区分。
+### P7 独立审计
+
+不依赖 optimizer 摘要；按 perf Skill 及其 playbook 重新枚举权威来源，核验账本、关闭/重开证据、
+自主优化的进入时机、final sweep 和候选比较。verifier 不提出新的优化项，只判断来源是否闭合、
+候选是否完整、最佳版本是否可复算。P6/P8 的真实非理想状态写入 PASS 摘要，不升级为失败。
+
+只有 Stage 4 的 15 项与 P1–P8 全部通过，`stage5-check` 才能 PASS。P7 未闭合或 P6/P8 证据缺失、不可读、不可比时不能完成；目标未达、默认 Golden 参考不可用或残留性能瓶颈本身不阻止 PASS。
 
 ---
 
@@ -276,7 +288,7 @@ All <M> checks passed.
 Evidence: <逐项检查结果摘要>
 ```
 
-当 `N=5` 时，返回 P1–P8 的检查摘要；P7 标明 `not_required` 或实际审计结论。编排者只有在 P1–P6/P8 全部 PASS 后才调用普通 `state_transition(action="complete_stage", stage=5)`。
+当 `N=5` 时，返回 P1–P8 的独立检查摘要；只有 P1–P8 全部 PASS 才能完成 Stage 5。
 
 ### FAIL
 
@@ -285,10 +297,12 @@ Stage N verification FAILED.
 Failed checks: <失败项编号及描述>
 failure_category: <category>
 Evidence: <每项失败的命令输出原文>
-Suggested action: <回退到哪个 Stage / 补充什么>
+Suggested action: <对应 mode 的修复或补充动作>
 ```
 
 ### failure_category 枚举
+
+当 `N=5` 时，`Suggested action` 只指出本阶段需要修复、补证或报告阻断的缺口，不建议回退或调度其它 agent；具体处置由 orchestrator 决定。下表中的回退动作只适用于 Stage 1–4 mode。
 
 | category | 触发条件 | orchestrator 动作 |
 |---|---|---|
@@ -302,16 +316,16 @@ Suggested action: <回退到哪个 Stage / 补充什么>
 | `perf_violation` | buffer 轮转或 Vector 最终实现偏离已冻结选择 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
 | `precision_failure` | test 运行无 PASS | 回退 Stage 4 修复 |
 | `runtime_failure` | test 运行报错（非环境） | 回退 Stage 4 修复 |
-| `performance_evidence_invalid` | Stage 5 四件套缺失、不可比、不可复算或彼此矛盾 | Stage 5 保持 in_progress，反馈 optimizer 补采或纠正报告 |
-| `performance_target_miss` | 证据有效、正确性通过，但 SPEC 的性能目标未达到 | Stage 5 保持 in_progress，反馈 optimizer 继续优化；穷尽方案后由编排器 fail_stage(5) 诚实上报 |
-| `performance_pipeline_invalid` | 数值证据可读，但任一 P0 case 的 Roofline 终态、Scalar 排除或搬算重叠证据不满足 P8 | Stage 5 保持 in_progress，反馈 optimizer 继续分析/优化/重采；不得用 ratio 标签或数值目标已达替代终态证据 |
+| `performance_evidence_invalid` | Stage 5 证据缺失、不可读、不可比、不可复算或彼此矛盾 | 报告不可评估的原始证据；不得建议回退 |
+| `performance_item_coverage_invalid` | P7 来源覆盖、优化项绑定、关闭/重开、final sweep 或最佳版本选择不合法 | 报告 P7 缺口、来源身份、关闭/重开、候选闭合及最佳版本选择原始证据 |
+| `stage5_contract_blocked` | Stage 5 无权修改的冻结输入无法恢复，或冻结合同客观矛盾 | 报告阻断事实与证据，不建议回退 |
 | `env_error` | torch_npu/pypto_pro 导入失败/npu-smi 无响应 | orchestrator 分流：硬件→换卡；软件→停机反馈用户 |
 | `false_gap` | capability_gap_check 结论为虚假——coder 的"框架限制"声称不成立 | orchestrator 将 verifier 分析结果原样告知 coder，让其继续开发（不调 state_transition，不回退） |
 | `confirmed_gap` | capability_gap_check 结论为成立——框架限制确实存在 | orchestrator 调 rollback_to_stage(3) 回退 Stage 3 重新设计 |
 | `capability_inconclusive` | 文档、样例和可执行最小实验仍不足以证实或证伪 capability_gap | 阻断当前推进并由 orchestrator 补齐报告中列明的证据；不得猜测归类 |
 | `signature_mismatch` | wrapper 签名与 optional 参数不符（stage4-check #12） | 回退 Stage 4 修正签名 |
 | `delivery_import_unsafe` | 交付单元下 import 失败（stage4-check #13） | 回退 Stage 4 移除 dev-only 顶层依赖 |
-| `dispatch_invalid` | `module-check` 缺少合法 `module_k`，或 `stage4-check` / `stage5-check` 缺少合法 `stage4_path` | 不修改产物、不推进状态；orchestrator 补齐原 dispatch 后重派同一 verifier 模式 |
+| `dispatch_invalid` | `module-check` 缺少合法 `module_k`，`stage4-check` / `stage5-check` 缺少合法 `stage4_path`，或 `stage5-check` 缺少合法 `optimization_target` | 不修改产物、不推进状态；orchestrator 补齐原 dispatch 后重派同一 verifier 模式 |
 | `kb_selection_invalid` | Stage 1 selection 不合规，或 design Skill 定义的 Stage 3 selection 错误（stage1-check #6 / stage3-check #12） | 回退 Stage 1 重新选择 |
 | `kb_usage_invalid` | usage 不符合 Develop 共用规范，或有效方法证明实现不满足 active requirement 或 validation scope | 回退 Stage 4 修正实现与 usage |
 | `wrapper_boundary_violation` | DESIGN 合规，但 staged/final wrapper 或其 host helper 出现边界外操作（module-check #5 / stage4-check #15） | 留在 Stage 4，修正当前 wrapper 并把操作移入 kernel；DESIGN 自身授权该操作则报 `design_violation` |

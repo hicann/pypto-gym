@@ -14,6 +14,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from argparse import Namespace
 from pathlib import Path
 from typing import NamedTuple
@@ -523,6 +524,116 @@ class GoldenDefaultTargetTest(unittest.TestCase):
             collection["seed"] = 42
             collection_path.write_text(json.dumps(collection), encoding="utf-8")
 
+    def test_executable_digest_blocks_cross_collection_splicing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fx = self._batch_fixture(directory)
+            op_dir, round_dir, test_script, report = (
+                fx["op_dir"], fx["round_dir"], fx["test_script"], fx["report"],
+            )
+            self.assertIsNone(BATCH_EV.batch_evidence_error(op_dir, report))
+            collection_path = round_dir / "collection.json"
+            collection = json.loads(collection_path.read_text(encoding="utf-8"))
+            executable_sha256 = collection.pop("executable_sha256")
+            collection_path.write_text(json.dumps(collection), encoding="utf-8")
+            self.assertIn("collection.json executable_sha256 is invalid",
+                          BATCH_EV.batch_evidence_error(op_dir, report))
+            collection["executable_sha256"] = executable_sha256
+            collection_path.write_text(json.dumps(collection), encoding="utf-8")
+            report["executable_sha256"] = "invalid"
+            self.assertIn("performance.json executable_sha256 is invalid",
+                          BATCH_EV.batch_evidence_error(op_dir, report))
+            report["executable_sha256"] = executable_sha256
+            test_script.write_text("# changed after final compare\n", encoding="utf-8")
+            self.assertIn(
+                "selected executable sha256 differs",
+                BATCH_EV.batch_evidence_error(op_dir, report),
+            )
+
+    def test_compare_rejects_runner_changed_during_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            collection_path = out_dir / "collection.json"
+            args = Namespace(
+                output_dir=str(out_dir), case_manifest="manifest.json",
+                performance_cases={}, op_name="test", seed=None, warmup=1, repeats=1,
+            )
+            cases = [("p0", "[1]", "fp16", None)]
+            with mock.patch.object(
+                MSPROF, "_resolve_mode_entry", return_value=(True, out_dir, 0, "test")
+            ), mock.patch.object(
+                MSPROF, "_validated_case_suite", return_value=cases
+            ), mock.patch.object(
+                MSPROF, "reserve_next_round", return_value=str(out_dir)
+            ), mock.patch.object(
+                MSPROF, "_run_compare_loop", return_value=([], [], [], [])
+            ), mock.patch.object(
+                MSPROF, "compute_compare_summary",
+                return_value={"n_cases_valid": 1, "n_cases_total": 1},
+            ), mock.patch.object(
+                MSPROF, "performance_case_source_error", return_value=None
+            ), mock.patch.object(
+                MSPROF, "_selected_executable_sha256",
+                side_effect=[
+                    ("test_op.py", "frozen", None),
+                    ("test_op.py", "changed", None),
+                ],
+            ), mock.patch.object(CLI, "_log_compare_header"):
+                result = MSPROF.run_compare_mode(args)
+            self.assertEqual(result, 1)
+            saved = json.loads(collection_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["status"], "failed")
+            self.assertIn("changed during formal compare", saved["failure"])
+
+    def test_timeline_checks_final_runner_before_selector_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = Namespace(
+                output_dir=directory, case_manifest="manifest.json", case_id="p0"
+            )
+            cases = [("p0", "[1]", "fp16", None)]
+            with mock.patch.object(
+                CLI, "_validate_measurement_args", return_value=True
+            ), mock.patch.object(
+                CLI, "_select_device_id", return_value=(0, "test")
+            ), mock.patch.object(
+                CLI, "_validated_performance_cases", return_value=cases
+            ), mock.patch.object(
+                CLI, "_validate_case_selector", return_value=True
+            ), mock.patch.object(
+                CLI, "_selected_executable_sha256",
+                return_value=("test_op.py", "changed", None),
+            ), mock.patch.object(
+                CLI, "_check_final_performance",
+                return_value=({"executable_sha256": "frozen"}, None),
+            ), mock.patch.object(
+                CLI, "_validate_selector_runtime", return_value=True
+            ) as selector_runtime:
+                with self.assertRaisesRegex(ValueError, "timeline executable differs"):
+                    CLI.run_timeline_mode(args)
+            selector_runtime.assert_not_called()
+
+    def test_timeline_rejects_runner_changed_during_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            context = {
+                "out_dir": out_dir,
+                "archive_dir": out_dir / "timeline",
+                "performance": {"executable_sha256": "frozen"},
+            }
+            args = Namespace(keep_prof=True)
+            artifacts = (out_dir / "trace", {}, out_dir / "reports",
+                         out_dir / "biu", out_dir / "task")
+            with mock.patch.object(
+                CLI, "_timeline_preflight", return_value=(context, None)
+            ), mock.patch.object(
+                CLI, "_collect_timeline_session", return_value=artifacts
+            ), mock.patch.object(
+                CLI, "_selected_executable_sha256",
+                return_value=("test_op.py", "changed", None),
+            ), mock.patch.object(CLI, "_stage_timeline_evidence") as publish:
+                with self.assertRaisesRegex(RuntimeError, "changed during timeline"):
+                    CLI.run_timeline_mode(args)
+            publish.assert_not_called()
+
     def test_batch_evidence_ratio_and_target_decision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fx = self._batch_fixture(directory)
@@ -598,6 +709,7 @@ class GoldenDefaultTargetTest(unittest.TestCase):
         report = MSPROF.compute_compare_summary(MSPROF.CompareSummaryInput(
             op_dir, rows, [], [], [], 1, args, 0, "test",
         ))
+        report["executable_sha256"] = args.executable_sha256
         raw_rows = [
             {"Op Name": args.op_name, "Task Duration(us)": str(duration)}
             for duration in repeat_durations
@@ -653,6 +765,7 @@ class GoldenDefaultTargetTest(unittest.TestCase):
             "warmup": payload.report["warmup"],
             "repeats": payload.report["repeats"],
             "performance_cases": payload.source,
+            "executable_sha256": payload.report["executable_sha256"],
             "expected_cases": ["p0"],
             "completed_cases": 1,
         }), encoding="utf-8")
@@ -661,7 +774,11 @@ class GoldenDefaultTargetTest(unittest.TestCase):
         """构造一套完整有效的批量证据目录，返回各关键路径与对象。"""
         op_dir = Path(directory) / "op"
         op_dir.mkdir()
+        test_script = op_dir / "test_fixture.py"
+        test_script.write_text("# Stage 5 executable fixture\n", encoding="utf-8")
+        executable_sha256 = CONTRACT.source_file_record(test_script)["sha256"]
         args, source, iterations, cases = self._fixture_args_source(op_dir)
+        args.executable_sha256 = executable_sha256
         round_dir = op_dir / "docs" / "perf" / "round_001"
         case_dir = round_dir / f"case_{MSPROF.safe_case_dir_name('p0')}"
         case_dir.mkdir(parents=True)
@@ -674,6 +791,7 @@ class GoldenDefaultTargetTest(unittest.TestCase):
         )
         return {
             "op_dir": op_dir, "case_dir": case_dir, "round_dir": round_dir,
+            "test_script": test_script,
             "args": args, "source": source, "report": report,
             "raw_rows": raw_rows, "diagnoses": diagnoses,
         }

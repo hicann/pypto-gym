@@ -14,7 +14,7 @@
 5. 所有已启动 block 和 AIV subblock 都必须到达相同顺序、相同数量的 barrier；数据 guard 只能包住
    load/compute/store，不能包住 barrier。
 
-片段见 [`../templates/stage-task-flatten.py.tmpl`](../templates/stage-task-flatten.py.tmpl)。
+片段见 [`../../templates/stage-task-flatten.py.tmpl`](../../templates/stage-task-flatten.py.tmpl)。
 
 ## 单因素验证纪律
 
@@ -43,12 +43,12 @@
 如果为了复用而把多个 partition 累加进同一个 Acc，或用 atomic 把 partial 提前合并，就已经
 改变数值 ABI，不再是本节的低风险调度优化。
 
-片段见 [`../templates/cube-output-wave-reuse.py.tmpl`](../templates/cube-output-wave-reuse.py.tmpl)。
+片段见 [`../../templates/cube-output-wave-reuse.py.tmpl`](../../templates/cube-output-wave-reuse.py.tmpl)。
 
 若优化模式必须更换 TileGroup、mutex 或 Cube 指令链，不能把 runtime shape 条件直接包在链外。
 提交契约要求单 JIT/单 launch 时，使用编译期 tiling key，并检查每个 key 的 IR 已消除 key
 引用。片段见
-[`../templates/tiling-key-resource-specialization.py.tmpl`](../templates/tiling-key-resource-specialization.py.tmpl)。
+[`../../templates/tiling-key-resource-specialization.py.tmpl`](../../templates/tiling-key-resource-specialization.py.tmpl)。
 
 ## AIV 兼容性门禁
 
@@ -56,23 +56,24 @@
 设备子型/CANN 快照可能分别暴露物理 block id 或交错 AIV id。只让 subblock 0 工作、再直接按
 raw `core_id` 分 row/head/chunk，在前一种约定可覆盖全部任务，在后一种约定只覆盖偶数编号。
 
-当前框架提供 `get_subblock_num` 时，AIV 的 `get_block_idx()` 是交错编号，先还原物理 block：
+Cube Section 的 `pl.get_block_idx()` 始终直接作为物理 Cube id，不做 subblock 除法。Vector Section
+只使用 subblock 0 时，先在 host 侧判断 AIV 编号代际，并把除数作为合法 tiling scalar 传入：
 
 ```python
-HAS_SUBBLOCK_NUM = hasattr(pl, "get_subblock_num")
-raw_core_id = pl.get_block_idx()
-if HAS_SUBBLOCK_NUM:
-    physical_id = raw_core_id // pl.get_subblock_num()
-else:
-    physical_id = raw_core_id
+# host / tiling setup, once
+new_aiv_block_index = hasattr(pl, "get_subblock_num")
+vector_task_ratio = 2 if new_aiv_block_index else 1  # serialize into an owner tiling field; example below
+
+# Vector Section
+vector_physical_id = pl.get_block_idx() // tiling.vector_task_ratio
 ```
 
-`HAS_SUBBLOCK_NUM` 必须是模块加载期 Python 常量，使旧 parser 不解析不存在的 API 分支。Cube
-与 Vector task loop 都统一用 `physical_id`，避免同一 kernel-scope block-id 表达式在两类 engine
-降低后产生不同 owner。含 GM load/store 的纯 Vector 路径只让 `sub_id == 0` 执行，并用
-`physical_id` 分配 row/head/chunk；官方
+kernel 源码不能直接调用旧 registry 中不存在的 `pl.get_subblock_num()`；代际判断只在 host 执行，
+并须在实际目标版本确认。Cube 与 Vector 各自在自己的 Section 读取 id，不能共享一个 kernel-scope
+表达式。含 GM load/store 的纯 Vector 路径只让 `sub_id == 0` 执行，并用 `vector_physical_id` 分配
+row/head/chunk；官方
 文档明确同一 physical block 的两个 AIV subblock 共享 MTE，不能把它们当作两个独立 GM worker。
-所有未选中的 subblock 仍必须参加 MIX barrier。先静态穷举两种编号模型，再在两个目标版本实测。
+所有未选中的 subblock 仍必须参加 MIX barrier。先静态穷举两种编号模型，再在目标版本实测。
 
 这不是通用的 PyPTO-Pro 语义保证；必须把失败/通过的设备子型、CANN/PyPTO 版本和 case 窗口
 写入报告，不能从一台 A5 外推所有 A5。

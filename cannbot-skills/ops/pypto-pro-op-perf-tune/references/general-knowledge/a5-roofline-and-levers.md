@@ -1,8 +1,9 @@
 # A5 roofline workflow
 
-Load this reference only after the runtime or build configuration confirms an
-A5 target (`NpuArch=3510` / `dav-c310`). It must not supply constants or tuning
-rules to an unknown or non-A5 target.
+Load this reference only after detection confirms an A5 target: raw output
+`3510` (the `NpuArch` value), helper output `dav-3510`, runtime output `DAV_3510`, or build
+target `dav-c310`. It must not supply constants or tuning rules to an unknown or
+non-A5 target.
 
 ## Evidence gate
 
@@ -144,20 +145,18 @@ the result.
 6. Keep the change only when the measured target metric improves without
    violating the numerical contract.
 
-Use [msprof-guide.md](msprof-guide.md) or
-[msprof-op-guide.md](msprof-op-guide.md) for collection, and
-[csv_fields_reference.md](csv_fields_reference.md) for the fields supported by
+Use [msprof-guide.md](../msprof-guide.md) or
+[msprof-op-guide.md](../msprof-op-guide.md) for collection, and
+[csv_fields_reference.md](../csv_fields_reference.md) for the fields supported by
 the current parser.
 
 ## A5 原语代价表（每 64 lane 寄存器）
 
-这张表决定绝大多数 dataflow 决策，**设计阶段就要用**。它从 `pypto-pro-op-perf-tune/SKILL.md`
-移到本页，因为它是 target 相关的实测值，而核心 Skill 对任意目标都会加载。
+这张表提供 A5 dataflow 决策所需的 target-specific 实测数量级；仅在目标门禁确认后使用。
 
 - **target**：A5 `Ascend950PR_9579`，56 vector core
 - **测得时间**：2026-07（随 A5 实测批次）
-- **适用范围**：仅该 SKU。**换 SKU 数值会变，触发条件与规则不变**——与目标无关的那条结论
-  （跨 lane 与否是结构选择）留在 SKILL.md，本表只提供数量级。
+- **适用范围**：仅该 SKU。换 SKU 后必须重新测量，不能直接复用本表数值。
 
 | 原语 | 代价 | |
 |---|---|---|
@@ -247,7 +246,7 @@ and stop, rather than continuing to tune.
 ## Scope of retained examples
 
 The KB's
-[BF16 operand-reuse implementation](../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
+[BF16 operand-reuse implementation](../../../pypto-pro-op-kb/examples/samples/bf16_matmul_operand_reuse/bf16_matmul_operand_reuse_impl.py)
 demonstrates one reuse topology and embeds a correctness test. It does not prove
 that an operator is cube-bound or that the topology is faster on another shape
 or target. Profile the current kernel.

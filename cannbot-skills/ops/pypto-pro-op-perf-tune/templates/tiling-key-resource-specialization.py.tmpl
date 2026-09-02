@@ -9,7 +9,7 @@ class KernelModeKey:
 
 
 @pl.jit(auto_mutex=True, tiling_key=KernelModeKey)
-def fused_kernel(public_tensor, conservative_workspace, optimized_workspace):
+def fused_kernel(public_tensor, public_output):
     # KernelMode is injected by the frontend. The branch must disappear from
     # emitted IR; do not replace it with a runtime tensor-shape condition.
     #
@@ -20,18 +20,19 @@ def fused_kernel(public_tensor, conservative_workspace, optimized_workspace):
     # at compile time does not change that: whichever body survives still has
     # to be inline. Inline it, or lift it to a value the parser can see.
     if KernelMode == 0:  # noqa: F821
-        ...  # conservative chain, written inline: tile groups, loads, matmul
-             # phases and stores for the resource-conservative shape
+        ...  # declare conservative Tile/TileGroup resources here, then inline
+             # loads, compute phases and stores to public_output
     else:
-        ...  # optimized chain, written inline, same contract and precision
+        ...  # declare optimized resources here; same public contract/precision
 
 
 def wrapper(public_tensor):
     # Host scalar metadata may choose a key. Both branches still need full
-    # contract, precision, ownership and capacity validation.
+    # contract, precision, ownership and capacity validation. The wrapper may
+    # allocate only outputs declared by that public contract.
     mode = 1 if use_optimized_static_mode() else 0
-    conservative_workspace = allocate_conservative_workspace()
-    optimized_workspace = allocate_optimized_workspace()
+    public_output = torch.empty(...)  # shape/dtype/device from frozen metadata
     fused_kernel[None, block_dim, {"KernelMode": mode}](
-        public_tensor, conservative_workspace, optimized_workspace,
+        public_tensor, public_output,
     )
+    return public_output

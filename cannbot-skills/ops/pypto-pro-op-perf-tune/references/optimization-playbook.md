@@ -1,210 +1,161 @@
-# Stage 5 精炼性能优化实战指南
+# Stage 5 优化项实验闭环
 
-> 本页是 Stage 5 从正式 baseline 到最终验收的实战检查表。完成正式 baseline 后、提出第一个候选前完整读取，并把命中的条目写入优化思路检查表。本页不替代主 Skill 的正确性、Golden 目标、正式 compare 或 verifier 门禁。
+本页定义五类优化项如何登记、实验、重开和关闭。采集命令与归档格式见
+[证据协议](evidence-protocol.md)，指标解释见[msprof 指南](msprof-guide.md)与
+[CSV 字段参考](csv_fields_reference.md)。平台资料、general knowledge 和本页本身不产生优化项；
+模板项只由[模板优化项索引](../templates/INDEX.md)枚举。
 
-精确采集命令与证据目录见 [Stage 5 证据协议](evidence-protocol.md)（既有 msprof 流程见 [msprof 指南](msprof-guide.md)），字段和来源阈值边界见 [CSV 字段参考](csv_fields_reference.md)；设备明确为 A5 时才按需读取 [A5 Roofline 与杠杆](a5-roofline-and-levers.md)。实现方法必须回到当前算子的 SPEC、源码、生成物、正式 profiling 和 PyPTO-Pro 官方资料验证。
+## 1. 冻结实验合同
 
-## Contents
+第一次正式采集前，在 `PERFORMANCE_REPORT.md` 记录并冻结：
 
-1. [冻结测量契约](#1-冻结测量契约)
-2. [建立基线与逐 case 灵敏度](#2-建立基线与逐-case-灵敏度)
-3. [用 profiling 路由瓶颈](#3-用-profiling-路由瓶颈)
-4. [优先消灭 Scalar 关键路径](#4-优先消灭-scalar-关键路径)
-5. [建立 Load–Compute–Store 流水](#5-建立-loadcomputestore-流水)
-6. [优先减少语义必需工作量](#6-优先减少语义必需工作量)
-7. [先单变量归因，再联合搜索](#7-先单变量归因再联合搜索)
-8. [候选四道晋级门](#8-候选四道晋级门)
-9. [完成与穷尽的停止条件](#9-完成与穷尽的停止条件)
+- 当前正确实现及其可恢复副本或 diff；
+- device、型号、软件版本、模块路径、竞争进程和影响性能的环境变量；
+- `PERFORMANCE_CASES.json`（含完整 P0 与冻结目标 case；本项须在任何 Stage 5 采集或改码前确定）、输入分布、seed、warm-up、repeats、精确 `Op Name` 和计时范围；
+- 完整正确性标准、quick→formal 晋级规则、稳定性判据、聚合指标及并列处理规则；
+- baseline/final 的 formal 协议；quick 只用于候选筛选。
 
-```mermaid
-flowchart TD
-    A["冻结测量契约"] --> B["逐 P0 case 建立正式 baseline"]
-    B --> C["性能采集路由 + 硬件下限/依赖分析"]
-    C --> D{"Scalar/等待在关键路径?"}
-    D -- "是" --> E["先重构 Scalar、控制与同步"]
-    D -- "否" --> F["减少语义工作量并设计搬算流水"]
-    E --> F
-    F --> G["单变量 A/B"]
-    G --> H{"正确性 + 稳定收益 + 机制 + 无新瓶颈?"}
-    H -- "否" --> I["归档失败证据并恢复当前最佳"]
-    H -- "单独无收益但能解锁组合" --> K["兼容组合与参数联合搜索"]
-    H -- "是" --> J["正式采集晋级；更新瓶颈诊断"]
-    I --> C
-    J --> L{"数值目标和健康终态证据全部通过?"}
-    L -- "是" --> M["全部目标场景最终验收并成功完成"]
-    L -- "否，仍有适用项" --> K
-    L -- "否，清单与组合已闭合" --> N["搜索完整性审计后诚实报告未达标"]
-    K --> C
-```
+“正确候选”必须通过完整正确性；“合规候选”还必须满足冻结 SPEC、全部 selected-KB 义务、
+Module/public wrapper 合同、Stage 4 铁律和资源硬限制。Stage 4 实现存在已登记的 KB 缺口时仍可作为
+修复起点和性能 baseline，但补齐全部义务前不能进入最终候选排名。用户性能目标、Golden 理想参考
+及 Roofline/Scalar/流水的理想状态用于发现候选和披露差距，不属于合规门禁。
 
-## 1. 冻结测量契约
+设备告警或复位、同卡竞争、超时、profiler 失败、目标归属不唯一、CSV 不完整或没有对应正确性
+结果的样本均无效。源码修改后应确认采集使用了新生成物；发现 stale binary 时先清理证据问题，
+不得把旧数据归给新实现。
 
-第一次性能采集前，在 `PERFORMANCE_REPORT.md` 固定并记录：
+## 2. 建立来源账本
 
-- 被测实现与 runner 的 Git commit、worktree diff/可恢复副本，以及外部 benchmark 仓库的 revision（若存在）；
-- 物理 device id、设备型号、健康状态和竞争进程；
-- CANN、PyPTO-Pro、torch、torch_npu 版本，以及实际解析到的模块/安装路径；制品系统已经提供 wheel/安装包 digest 时一并记录；
-- 影响编译、设备选择、输入和性能的环境变量；
-- `PERFORMANCE_CASES.json` 原始身份、case 语义、输入分布、shape/dtype、seed、selector；
-- 精度标准、比较方式、warm-up、repeats、聚合方法、exact `Op Name` 和计时范围；
-- baseline/final 要使用的正式协议，以及只用于筛选的 quick 协议。
+第一次改代码前，枚举四类预置来源：
 
-以下样本不得进入性能结论：设备告警或复位、同卡竞争、温度/频率异常、runner 超时、profiler 失败、target 归属不唯一、CSV 不完整、精度未执行或未通过。把它们记录为环境/证据状态，而不是把时延当成一次慢样本参与聚合。
+1. selected KB 中全部 `kind=obligation` 的原子要求；
+2. [通用优化手段](general-optimization-methods.md)中的全部 active/eligible item；
+3. [知识卡片索引](knowledge-cards/INDEX.md)中的全部 active/eligible item；
+4. [模板优化项索引](../templates/INDEX.md)中的全部 active/eligible item。
 
-final correctness、final formal compare 与 supplemental timeline 必须连续针对同一最终实现执行；中途修改 runner 或其导入实现后，重新执行这三步。
+selected KB 先按 Design Skill 的 source-first 合同核对 `DESIGN_BINDINGS.json`，再以原子 requirement
+为账本项；其稳定身份使用完整原子键 `(class_id, selection_field, reference, req_id)`，不得只使用
+组内唯一的 `req_id`。precondition 和 validation scope 只作为适用性与验证依据。进入自主优化后，
+每个新假设在改代码前追加为第五类 `bottleneck_derived`。
 
-## 2. 建立基线与逐 case 灵敏度
+每项至少记录：
 
-对每个 P0 case 分别记录：
+| 字段 | 含义 |
+|---|---|
+| `item_id` / `source_kind` | 稳定 ID，以及五类来源之一 |
+| `source_ref` | 权威文件、原子锚点和内容身份；自主项记录对应瓶颈证据 |
+| `case_scope` | 涉及的 P0 case |
+| `applicability` | 适用、不适用、未触发或待证及其依据 |
+| `expected_metric` | 预计改变的工作量、搬运、依赖、冲突或固定开销 |
+| `status` | 当前状态与关闭结论 |
+| `evidence` | 代码位置、正确性、quick/formal 数据、机制核对和恢复点 |
+| `relations` | overlap、require、enable、conflict、覆盖或重开关系 |
 
-- baseline target-kernel 时延与原始 repeats；
-- 用户目标差距，或默认 `golden_reference_ratio` 的差距；
-- 正确性结果与容差/匹配率；
-- 当前 launch/block 配置、tile/valid shape（若实现使用）、tail、输入分布和主瓶颈路由；
-- 若 SPEC 定义了带权重的验收指标，记录该 case 的真实权重/贡献；SPEC 未定义权重时不得自行编造。
+非终态为 `pending`、`unknown`、`enabler`、`blocked`。selected-KB 终态为
+`already_implemented`、`not_triggered`、`implemented`；其余来源终态为 `accepted`、`rejected`、
+`not_applicable`、`unsupported`。`rejected` 必须记录具体原因，代码恢复或切换到第 6 节规则选出的
+当前最佳实现。
 
-候选排序不只看“谁最慢”，也不只挑“谁最容易”。使用以下优先级思想：
+同一改动可以为多个来源提供实验，但每个 source id 都要有独立结论。某非 KB 项被其它项完整
+覆盖时，保留该行并记录覆盖关系；只重合一部分时仍实验独特增量。实现或前提变化使旧证据失效时，
+重开原 ID。账本状态只属于 Stage 5，不得直接复制成 `KB_USAGE.json` 状态。
 
-```text
-priority(case, lever)
-  = 对验收指标的预计改善
-    / 实现、编译、正确性与 profiling 的预计成本
-```
+## 3. Baseline、瓶颈与排序
 
-- SPEC 定义了带权重的验收指标时，“预计改善”使用该 case 的真实权重与预计指标增量；
-- 目标是全场景门禁时，优先缩小最差场景的目标差距；候选仍按全部目标场景的等权平均加速比排序，逐场景回退必须披露，且最终不得导致任一场景目标失败；
-- 预计收益只能用于排序，不能代替实际代码实验；
-- case 优先级只决定执行顺序，不能改变 final 的 all-P0 覆盖。
+先对未修改的 Stage 4 最终实现运行完整正确性和 JIT 预热，再按 manifest 建立逐 P0 formal
+baseline。对每个 P0 记录绝对 Task Duration、AIC/AIV 时间、Vector/Cube/Scalar/MTE、分层带宽、
+冲突、逐核信息，以及可获得的生成物和 Tile DAG。
 
-## 3. 用 profiling 路由瓶颈
+对每个待处理项说明：适用位置或排除依据、预期机制、涉及 case、验证指标，以及正确性、精度、
+容量、tail 和同步风险。ratio 只负责提示方向，不能单独证明硬件饱和、Roofline 或搬算重叠。
+优先级只改变实验顺序，不改变必须覆盖的项目；接受结构变化后，刷新受影响 case 的瓶颈证据并
+重新检查相关旧结论。
 
-至少读取 target 的 Vector/Cube、Scalar、MTE2、MTE3、GM/UB/L2、Task Duration、AIC/AIV 核时，以及可归属时的 block/逐核利用率。先形成“候选路由”，再用 Roofline、受控 A/B 和 timeline 确认终态：
+## 4. 逐项实验
 
-| 观察 | 初步路由 | 必须补的证明 |
-|---|---|---|
-| Vector 或 Cube 占主要份额 | `compute_candidate` | 有效工作量/适用峰值、指令构成、减工作量 A/B |
-| MTE2/MTE3 主导，或对应层带宽接近当前访问形态的可证上界 | `data_movement_candidate` | 必要字节、复用/缓存层级、只搬运或布局 A/B |
-| Scalar、地址/descriptor、branch 或同步准备主导 | `scalar_candidate` | hot region、循环/依赖证据及重构 A/B；不可作为可接受终态 |
-| 各 pipe 都低 | `scheduling_or_parallelism_candidate` | 同步/依赖 DAG、launch 与固定开销、block 数、尾核和逐核离散度 |
+按主 Skill 规定的来源顺序处理每个可能适用项：
 
-约束：
+1. `kb_selected` 缺口从当前正确版本开始修复；其它项从当前最佳正确、合规版本建立可恢复起点；
+2. 记录 item id、唯一主要假设、目标指标、风险和恢复点；
+3. 修改源码并运行完整正确性；失败立即恢复并记录；
+4. 正确后运行同条件 quick，保留原始样本；
+5. 正确落实的 `kb_selected` 缺口直接进入 formal 记录性能影响；其它候选按冻结晋级规则决定是否
+   formal，未晋级则恢复当前最佳并以 `status=rejected, reason_code=quick_not_promoted` 关闭，
+   有明确组合价值时暂记 `enabler`；
+6. 核对预期机制；性能变化与假设不符时重新诊断，不倒填结论；
+7. `kb_selected` 验证通过后保留修复并记为 `implemented`；其它项依据第 6 节决定保留或恢复，
+   并关闭该 source item。
 
-- 单个或多个 ratio 高只说明“时间花在何处”，不证明已经到 Roofline；
-- 在 schema、目标 task 和计时范围均已确认时，多个 pipe ratio 之和明显超过 100% 可作为“可能存在重叠”的线索，也可能来自计数口径；不能据此写 `pipeline_evidence=proven`；
-- 只有 final 的唯一 exact target 时间窗、同一 BIU lane 的区间证据，再与当前相邻 Tile、slot 和 stage DAG 对应，才能证明搬算重叠；
-- 不同 lane/core 同时运行是 block 级并行，不能冒充单核 Load–Compute–Store 流水。
+入口实现已经包含某项时，先记录当前机制证据；在合法、可恢复时用去除或替代该动作的版本作
+control。两版按第 6 节比较：保留含动作版本则记 `accepted`；选择 control 则记 `rejected`，并按结果
+记录 `control_faster` 或 `no_stable_gain`。control 若违反 selected-KB 义务或已登记依赖关系则不适用。
 
-## 4. 优先消灭 Scalar 关键路径
+selected-KB 的真实缺口必须落实并通过该 requirement 的验证方法，不能因性能无收益而拒绝；若其与
+冻结合同或当前能力确实无法同时满足，报告 `stage5_contract_blocked`。card 与 template 只按各自
+INDEX 枚举；目录中的未登记、draft、retired 或不 eligible 文件不进入账本。模板只是待适配骨架，
+不能替代 API、正确性或性能证明。
 
-Scalar 指令无法也无需归零；不可接受的是可避免的 Scalar、同步等待、地址或控制准备成为关键路径。优先排查：
+全部 selected-KB 缺口闭合后，对当前完整修复版本重新执行 formal compare；其通过正确性与合规
+检查后，作为首个可排名版本进入第 6 节。此前的 KB 中间版本只记录修复影响，不参与最终排名。
 
-- 生成物中的 get/set-value 类标量往返，或 reduction 结果落 Tile 后又经 Scalar 广播；
-- per-element、per-row、per-rank 的标量循环和 branch；
-- 动态小循环的回边与反复 VF 启停；
-- 每个 tile 重复计算 shape、axis、mask、地址、descriptor 或 candidate merge；
-- 不必要的 Vector↔Scalar、load↔compute、compute↔store 同步；
-- tile 过小导致固定 setup/轮转成本无法摊薄。
+只组合不存在未消解 `conflict`，并有明确 `requires`/`enables`、共享资源或机制互补依据的项。
+`enabler` 只是临时状态，指定组合接受或被证伪后必须关闭。一个 item 内可以有限搜索直接相关参数，
+但不能产生没有来源 ID 的匿名实验。
 
-按语义与公开 API 能力依次尝试：
+## 5. 自主瓶颈优化
 
-1. 将 shape、axis、满 mask、分支条件等循环不变量提升到多行/多 tile 共享；
-2. 将数据并行的 compare/select/reduce/merge 移到 Tile-level API 或合法 VF 内完成；
-3. 把逐行分支提升到 owner、stage 或有限 TilingKey 级；
-4. 静态展开确定且很小的控制网络，避免动态回边；
-5. 使用 Vector/多 accumulator 累计，最后只做一次必要 reduction；
-6. 增大合法 tile 或一次处理多行/多 batch，减少 setup 次数；
-7. 快路只覆盖已证明的前置条件；条件不成立时保留精确、完整的通用 fallback。
+四类预置项全部达到终态、没有未决 enabler 后，保存当前最佳实现和一份新鲜的逐 P0 瓶颈分析，
+再进入 `bottleneck_derived`。预置项未闭合或当前证据不可评估时，只补齐前置工作，不能提前建自主项。
 
-每项都要重新检查寄存器压力、UB 容量、tail、数值次序和全部 P0 case；“Scalar ratio 降低”本身不是接受理由，最终 Task Duration 与正确性必须同时改善。
+每个自主项必须：
 
-## 5. 建立 Load–Compute–Store 流水
+- 来自当前接受实现尚未尝试的具体瓶颈，并绑定相应 case、源码/生成物/DAG 和 profiler 证据；
+- 与 selected KB、通用方法、active card、active template 和既有自主项去重；
+- 写明可证伪机制、最小改动或有限参数域、预期指标、风险和停止条件；
+- 登记后再按第 4 节实验；接受改动后刷新瓶颈证据，再提出下一项。
 
-稳态目标是让不同 work item 形成：
+自主改动改变旧项的 bound、DAG、layout、容量、同步或适用前提时，重开受影响的原 ID；预置项
+重开后先重新闭合，再继续自主项。目标差距以及 Scalar、等待或未重叠流水等残留状态应优先产生
+候选，但在相关合法候选全部关闭后，不单独阻止交付。
 
-```text
-MTE2 load(tile N+1)
-    与 compute(tile N)
-    与 MTE3/store(tile N-1)
-在合法依赖范围内重叠
-```
+## 6. 选择最佳版本
 
-PyPTO-Pro 落地检查：
+目标 case 在任何 Stage 5 采集或改码前冻结；候选聚合指标在第一次正式采集前冻结。
+`all_p0_no_questions` 固定对全部 P0 使用下述默认算法；其它模式若 `SPEC` 已针对冻结目标 case 记录
+用户给出的可复算指标或权重，则原样使用。没有上述专用规则时，对 `optimization_target.case_ids` 逐项计算
+`case_speedup = frozen_baseline_duration / candidate_duration`，取等权算术平均。非目标 P0 不进入
+默认聚合，但仍须完成正确性、正式测量并逐 case 披露。
 
-- 用不同 TileGroup slot 表达相邻迭代的输入、工作和输出生命周期；核对 `current()/next()`、地址、valid shape、mutex id 与 `auto_mutex=True`；
-- 避免把 load tile 直接别名复用为长生命周期工作 tile，导致下一块无法提前搬入；必要时预算独立工作 tile；
-- 只在槽位即将被真实覆盖或消费者尚未完成时等待，不在每个小阶段重复同步；
-- 合并能够由同一依赖边表达的同步事件；
-- 用 stage/preload 表达可证明的预发射，不能把 `preload` 当通用 DMA prefetch；
-- prologue、steady-state、epilogue 与 tail 都要保持正确；少于两个可流水 work item 时用 DAG 证明 `not_applicable_with_dag`。
+最终选择遵循一条规则：**在所有完成 formal compare 的正确、合规候选中，选择冻结聚合指标最优
+的版本。** quick 只决定是否晋级，不能进入最终排名；逐 case 回退、用户目标和 Golden 理想参考
+状态必须披露，但不直接否决候选。
 
-上面的三段式是 **Vector 路径 `GM↔Vec/UB`** 的稳态示意。Cube 路径必须按实际 lowering 另画 `GM→Mat (MTE2) → Left/Right (MTE1) → Cube/M→Acc → output (FixPipe/相应搬运)`，分别标出可重叠与必须串行的依赖边；不能把 Vector 的 MTE2–Vector–MTE3 模板原样套到 Cube kernel。
+`PERFORMANCE_REPORT.md` 保留一张可复算的候选表，覆盖仍然正确、合规的冻结 baseline 及所有按
+冻结规则完成 formal compare 的正确、合规版本；至少记录候选身份、不可变的 `evaluation_order`、
+关联 source item、正确性与合规证据、formal collection、逐 case duration/speedup 和聚合分数。
+baseline 的顺序为 0；其它版本在第一次取得有效 formal 结果时依次编号。先按聚合分数比较；差异
+落入冻结稳定性范围时，先以原始最高分为锚选出与其不可稳定区分的候选，再从中选择顺序最小者，
+避免多候选逐对比较产生歧义。晋级规则、稳定性范围和并列规则不得在看到结果后修改。
 
-验证必须同时满足：同协议 Task Duration 改善；final timeline 在同一监控 lane 显示必要 pipe 的时间交叠；当前 lowering/源码能把交叠映射到相邻 Tile 的 load/compute/store。代码看起来像双缓冲、ratio 同时高或跨核并行都不是证明。
+选出最佳版本后，对它独立执行 final formal compare。确认结果与排名数据差异超出冻结稳定性范围
+时，按同一协议重新测量受影响候选并重新选择；不得只挑有利轮次替换结果。
 
-## 6. 优先减少语义必需工作量
+## 7. 完成与报告
 
-调整 pipe 前，先问“哪些工作根本不必做”。按当前算子语义选择：
+结束前基于最终代码、最新 profiler、生成物或 Tile DAG 和完整账本再做一次候选扫描；判断流水或
+Scalar 残留需要时间线时先补采。新证据使预置项结论失效时重开原 ID；其它新的合法优化项才登记为
+`bottleneck_derived`。没有新项时记录扫描范围、发现及其与已关闭项、冻结合同或当前能力的对应关系。
+最终验收 timeline 暴露新项时按同一规则重开闭环；代码或最佳候选变化后重新执行最终验收。
 
-- 缩小完整排序/扫描/归约范围；TopK 场景尝试截断归并、分层/树形归并；
-- 有限精确域且容量可证时，评估 histogram/threshold 类替代；
-- 缩小 key/index/dtype 宽度前，证明值域、溢出和设备数值结果；
-- 删除不会被消费的 candidate 初始化、无效 lane 工作和重复中间量；
-- 合并重复 scan/reduction，以及重复 key、axis、shape、mask 构造；
-- 消除不必要的 GM 中间结果和 UB staging；
-- 固定且很小的 K/网络使用最小合法比较或归约结构；
-- reduction/scan 的依赖链采用多 accumulator、分层合并或其它语义等价结构时，重新验证浮点次序与精度门。
+Stage 5 完成必须同时满足：
 
-任何“少算”都必须来自数学等价、SPEC 允许的有限域或已验证快路；不得通过删 case、改变输入分布、放宽精度或把数学移到 host 获得收益。
+- 四类预置来源和全部已创建的自主项均已合法关闭，没有未决或需要重开的项；
+- final sweep 没有新的合法候选；
+- 最终代码是第 6 节规则选出的最佳正确、合规版本；
+- 用户目标或 Golden 理想参考状态及残留瓶颈均如实披露；
+- 最终代码重新通过完整正确性、独立 formal compare 和每个 P0 的补充 timeline；
+- 报告、原始证据和最终事实记录相互一致且可复算。
 
-## 7. 先单变量归因，再联合搜索
-
-先用单变量 A/B 确认因果，再做联合搜索；不能把“每次只改一个假设”误解为永远只调一个参数。按适用性联合考虑：
-
-- `block_dim`/实际参与核数、owner rows/columns 与尾核策略；
-- Tile physical/valid shape、tile 大小和一次处理的行/列/batch 数；
-- local K/TK、scan/domain、merge fan-in；
-- accumulator/list 数、loop unroll 与寄存器预算；
-- rank/输出粒度、GM/UB staging；
-- TileGroup buffer 数、slot 生命周期和 pipeline stage/preload。
-
-删除同步、改变依赖关系、tile 生命周期、寄存器压力或数据复用后，旧参数最优点通常已经失效。每接受一个结构改动，重新采集并分析瓶颈，重开受影响的历史负候选。
-
-组合优先级：已接受收益项之间的兼容组合；accepted×enabler；命中不同资源但有协同可能的组合；当前最佳组合上的增量扩展。无需暴力枚举全部数学子集，但跳过项必须有能力、语义、容量、冲突或实测支配证据。
-
-## 8. 候选四道晋级门
-
-候选只有同时通过四道门才进入当前最佳版本：
-
-| 门 | 必须证据 | 失败处理 |
-|---|---|---|
-| 正确性 | 完整 Stage 4 用例、既定精度标准、退出码与误差/匹配率 | 立即拒绝并恢复上一最佳版本 |
-| 稳定收益 | 同环境、同场景、同一准确目标内核、同一快速/正式协议；全部目标场景的等权平均加速比超过当前最佳并高于本轮噪声，逐场景回退已披露且不破坏最终目标 | 标记无稳定收益，不凭单次快样本接受 |
-| 机制成立 | profile/A-B/生成物显示预先声明的工作量、搬运、冲突、依赖或流水机制确实改善 | 记录假设失败，重新诊断，不事后改写理由 |
-| 无新瓶颈 | 没有新 Scalar/wait 关键路径、串行同步、严重 spill、容量/尾块/逐核退化 | 拒绝或建立新的可归因修复候选 |
-
-每个候选保留 source path/section/id、代码 diff 或可恢复副本、完整命令、正确性日志、quick/formal collection、接受/拒绝原因，以及它对其它候选的 enable/冲突关系。失败后从“当前最快且正确”版本继续，不在失败候选上叠加新变量。
-
-单独测试近似中性、但有明确且有限的资源释放或组合解锁机制时，可标为 `enabler_only` 进入指定组合队列；它不能单独替换当前最快版本，也不能凭“将来可能有用”跳过机制门。只有组合通过完整正确性并在 all-P0 formal compare 中取得稳定收益后，才能成为新的当前最佳版本。
-
-## 9. 完成与穷尽的停止条件
-
-### 正常成功
-
-达到用户目标，或每个关键场景的默认 `golden_reference_ratio >= 1.0`；最终正确性、场景与原始证据一致性、数字可复算性、目标及健康终态证据全部通过；每个关键场景终态为 `compute_bound`、`data_movement_bound` 或 `balanced_compute_movement`，Scalar/等待不主导，搬算流水为 `proven` 或由依赖关系证明 `not_applicable_with_dag`。此时不要求为了穷举而继续优化。
-
-### 声明穷尽但未达标
-
-只有同时满足以下条件，才能通过未达标时的搜索完整性审计并报告 `exhausted_not_met`：
-
-- 所有适用原子方向都有实际代码实验；不适用项有语义、API、产品、容量或等价支配硬证据；
-- 存在合法的算法/数据流/DAG/布局等架构级候选时，至少完成一个架构级实验；若不存在，记录完整排除证据；
-- 至少完成一次有明确交互依据的多参数联合搜索；
-- DAG、bound 或资源状态变化后，相关历史负候选已经重开；
-- 当前最佳候选不是 Scalar/wait bound；合法搬算已证明重叠，或 DAG 证明不适用；
-- 在相同正式环境和冻结 case 上完成 all-P0 final 验收；
-- final correctness、formal compare、timeline 对应同一最终实现与软件环境；
-- 未修改 case、计时范围、精度门、验收指标定义或其它测量规则。
-
-预算耗尽、用户中止、环境阻断或仍有 `pending` 候选时不能声称穷尽，也不能 `target_met: true`。
-
-一句话：**先用 profiling 找到真正限制吞吐的候选 pipe，再通过减少语义工作量、重构数据流/同步和联合搜索推动瓶颈迁移；最终关键路径必须落在有效 Vector/Cube 计算、必要 MTE 搬运或二者平衡上，而不是可避免的 Scalar、同步或调度开销上。**
+`PERFORMANCE_REPORT.md` 应包含冻结合同、来源账本、baseline 与瓶颈、逐项实验、候选比较、最终
+扫描、最佳版本、目标状态、残留问题和证据路径。目标未达或默认 Golden 不存在不阻止完成；证据
+缺失或矛盾、仍有未关闭项、环境阻断、用户中止或冻结合同冲突时不能声称闭环完成。

@@ -138,7 +138,7 @@ print(f'清理完成：保留 {len(whitelist)} 个官方指定样例，删除 {r
 
 **dispatch prompt 只需包含技术细节**：任务描述、产物路径、上游 Stage 的失败信息（如有）。子代理收到任务后自行加载对应 skill 获取执行细节。
 
-**门禁验证调度**：每个 Stage 的执行子代理返回后，orchestrator 调度 `pypto-pro-op-verifier`（在 dispatch prompt 中声明模式 `stageN-check`）执行该 Stage 的检查清单。verifier 是独立门禁验证者，只检查、运行和报告，不修改代码或自行重试。orchestrator 根据 verifier 返回的 verdict 决定推进、回退或环境分流。
+**门禁验证调度**：每个 Stage 的执行子代理返回后，orchestrator 调度 `pypto-pro-op-verifier`（在 dispatch prompt 中声明模式 `stageN-check`）执行该 Stage 的检查清单。verifier 是独立门禁验证者，只检查、运行和报告，不修改代码或自行重试。orchestrator 根据 verifier 返回的 verdict 决定推进、修复或环境分流；Stage 1–4 可按各自合同回退，进入 Stage 5 后只在 Stage 5 内收敛。
 
 **统一完成前置条件**：执行子代理返回成功、文件存在或格式预检通过，都不等于 Stage
 完成。每次 `complete_stage(N)` 之前必须先取得本轮 `stageN-check` verifier 的明确 PASS；
@@ -192,23 +192,22 @@ Stage 4 → 将已验证的 selection、`DESIGN_BINDINGS.json` 与 `DESIGN.md` �
               9. 调度 pypto-pro-op-verifier（stage4-check, stage4_path=L1）
              10. PASS: complete_stage(4)（随后按「Stage 5 进入确认」决定是否继续）/ FAIL 回退或定点修复 / env_error 分流
 
-Stage 5 → 冻结 PERFORMANCE_CASES.json
-       → 调度 pypto-pro-op-optimizer（加载 pypto-pro-op-perf-tune；默认目标时使用该 skill 的 Stage 5 Golden 采集器）
-       → 若 SPEC 未记录用户提供的数值目标：optimizer 直接采集并冻结 GOLDEN_PERF_REPORT.md/JSON
-       → 优化 test_{op}.py，产出 PERFORMANCE_REPORT.md + performance.json/log/perf_report.md
-       → 调度 pypto-pro-op-verifier（stage5-check，传状态机保存的 stage4_path=L0|L1）
-       → PASS: complete_stage(5) / FAIL: 按 failure_category 继续优化或回退 / env_error 分流
+Stage 5 → 调度 pypto-pro-op-optimizer（加载并完整执行 pypto-pro-op-perf-tune）
+       → dispatch 只传递 SPEC 性能目标及来源、完整 P0、冻结目标 case/选择方式和 Stage 4 verifier PASS 摘要
+       → optimizer 按 perf skill 交付最终代码、事实记录和可复核证据
+       → 调度 pypto-pro-op-verifier（stage5-check，传 stage4_path 和同一目标 case/选择方式）
+       → PASS: complete_stage(5) / FAIL: 按 Stage 5 专节进入同阶段修复或等待阻断处理 / env_error 分流
 ```
 
-正常流程下编排者只需 **init → complete_stage(1) → complete_stage(2) → complete_stage(3) → complete_stage(4)**，随后**先按「Stage 5 进入确认」与用户确认，再决定是否继续执行 Stage 5**。跨 Stage 回退用 `rollback_to_stage`。
+正常流程下编排者只需 **init → complete_stage(1) → complete_stage(2) → complete_stage(3) → complete_stage(4)**，随后**先按「Stage 5 进入确认」与用户确认，再决定是否继续执行 Stage 5**。
 
 ## 注意事项
 
 1. orchestrator 自身**不加载**上述 skill，也**不**在 dispatch prompt 粘贴全局硬性规则块（专属 subagent 的 system prompt 已内置）。orchestrator 只负责下达任务和验收产出。
 2. 每个 Stage 结束时，orchestrator 调度 `pypto-pro-op-verifier`（声明对应 `stageN-check` 模式）执行检查清单。verifier 返回 FAIL 时，orchestrator 将失败项反馈给子代理修正。orchestrator **绝不亲自调试或修改 kernel 代码**，也**绝不亲自执行检查清单**——只做编排和决策。
-3. 不得因困难而偷懒放弃或跳过——每个问题必须正向解决。但穷尽合理方案后编排器与 verifier 仍判定算子无法完成时，允许将当前 Stage 标记为失败并诚实上报用户（见 Stage 4 / Stage 5「放弃路径」），不强行完成该 Stage。
+3. 不得因困难而偷懒放弃或跳过——每个问题必须正向解决。性能目标未达、默认 Golden 参考不可用或仍有残留瓶颈不等于算子无法交付；Stage 5 只有无法恢复的冻结合同、环境或用户终止等真实阻断才能按专节确认失败。
 4. 不得随意调用本文件未声明的 skill 或 agent。
-5. **Stage 推进统一执行 `state_transition` 抽象合同**。Pro 流程使用 `.orchestrator_state.json` 记录 Stage 状态、重试计数与 artifact 哈希。安装适配必须对下方 action schema、verifier/lint 前置门禁和原子写入提供等价语义；编排器不根据宿主选择另一套流程。Stage 1–5 verifier PASS 后统一调用 `complete_stage`；跨 Stage 回退用 `rollback_to_stage`。子代理**不得**调用 `state_transition` 或维护状态，只向编排者返回结果。详见下方「共享状态与 state_transition 工具」。
+5. **Stage 推进统一执行 `state_transition` 抽象合同**。Pro 流程使用 `.orchestrator_state.json` 记录 Stage 状态、重试计数与 artifact 哈希。安装适配必须对下方 action schema、verifier/lint 前置门禁和原子写入提供等价语义；编排器不根据宿主选择另一套流程。Stage 1–5 verifier PASS 后统一调用 `complete_stage`；Stage 1–4 的回退边界以下方 action 表为准，Stage 5 按专节只在本阶段收敛。子代理**不得**调用 `state_transition` 或维护状态，只向编排者返回结果。详见下方「共享状态与 state_transition 工具」。
 6. **实现偏差强制声明**：Stage 4 coder 若实现与 DESIGN.md 任何关键常量、算法步骤、tile 布局偏离，必须在回复中显式列出偏离点 + 原因 + 是否需回退 Stage 3。**静默偏离视为违规**。orchestrator 收到偏离声明后据偏离性质裁决——须区分两类偏差：
    - **笔误 / 参数失误 / 设计约束类**（如精度限制、API 能力不足等）：coder 只声明偏差并附证据，不直接改写 DESIGN.md；若实现未偏离设计且只是代码翻译错误，留在 Stage 4 修复；若需改变设计，orchestrator 必须回退 Stage 3，由 architect 修订并重新通过 stage3-check。
    - **铁律违规类**（单 kernel、未作弊等"违反即失败"项）：**不可声明豁免**——coder 无权自我授权违反铁律，orchestrator 也无权授权 verifier 跳过铁律检查。verifier 检测到铁律违规必须 FAIL，"实现偏差声明"机制不得被滥用以放行严重违规。
@@ -242,15 +241,15 @@ artifact 哈希、回滚历史）。**只有编排者能通过 `state_transition
 子代理只返回结果，不得写状态。合同实现必须先校验完整下一状态，再以同目录临时文件原子替换；
 不得原地局部编辑、跳过账本或跳过门禁。
 
-`state_transition` 是编排者推进 Stage 的工具。Stage 1–4 继续沿用既有 lint 门禁；Stage 5 的性能与正确性由 `stage5-check` verifier 验证，通过后按普通阶段调用 `complete_stage(5)`。lint 门禁做机械检查（import 门禁、单 kernel、golden 纯度、文件存在性），verifier agent 做语义检查（精度、作弊、性能）。lint FAIL 时状态不推进，编排器重新调度上游 agent 修复后再次调用。可用 action：
+`state_transition` 是编排者推进 Stage 的工具。Stage 1–4 继续沿用既有 lint 门禁；Stage 5 的性能与正确性由 `stage5-check` verifier 验证，通过后按普通阶段调用 `complete_stage(5)`。lint 门禁做机械检查（import 门禁、单 kernel、golden 纯度、文件存在性），verifier agent 做语义检查（精度、作弊、性能）。Stage 1–4 lint FAIL 时状态不推进并按既有责任路由；Stage 5 没有 complete-stage lint，其 verifier FAIL 按本文件 Stage 5 专节分流。可用 action：
 
 | Action | 使用时机 | 参数 |
 |---|---|---|
 | `init` | 启动新算子首次调用（创建目录 + 初始化 5-stage 状态机） | `opDir`, `stage=1` |
 | `complete_stage` | Stage 1–5 verifier 返回 PASS 后推进。自动把下一 Stage 置为 `in_progress`，正常流程无需显式 `start_stage`。Stage 4 L1 路径下仍校验所有 module 已 `verified` | `opDir`, `stage` |
-| `fail_stage` | 子代理报告不可恢复失败，或编排器穷尽方案后放弃算子（见 Stage 4 放弃路径） | `opDir`, `stage`, `reason` |
+| `fail_stage` | 子代理报告不可恢复失败，或编排器按 Stage 4 放弃路径 / Stage 5 阻断出口确认终止；性能目标未达或默认 Golden 参考不可用不能作为 Stage 5 reason | `opDir`, `stage`, `reason` |
 | `start_stage` | `fail_stage` 后重新进入该 Stage（重试） | `opDir`, `stage`, `reason?` |
-| `rollback_to_stage` | 跨 Stage 回退（`design_violation` / `capability_gap` 等需重做上游）。target 之后 Stage 重置为 pending、retry 递增、丢弃下游 artifact 哈希。`target_stage < 4` 时清空 `stage4_path` + `stage4_modules` | `opDir`, `target_stage`, `reason`（必填）, `failure_category?` |
+| `rollback_to_stage` | 仅供 Stage 1–4 跨 Stage 回退（`design_violation` / `capability_gap` 等需重做上游）；进入 Stage 5 后编排流程不得调用。target 之后 Stage 重置为 pending、retry 递增、丢弃下游 artifact 哈希。`target_stage < 4` 时清空 `stage4_path` + `stage4_modules` | `opDir`, `target_stage`, `reason`（必填）, `failure_category?` |
 | `record_artifact_hash` | 可选：记录需要追踪的产物哈希 | `opDir`, `name`, `hash` |
 | `plan_stage4` | Stage 3 完成后、Stage 4 进入前。设置 `stage4_path`（L0 或 L1，判据为 `is_fusion`），L1 时初始化 `stage4_modules` | `opDir`, `module_count`, `is_fusion` |
 | `start_module` | L1 only。开始为 Module k 调度 coder。`module` 传 Module 序号（"1"/"2"/"3"），状态机内部算 suffix | `opDir`, `module` |
@@ -419,44 +418,50 @@ Stage 4 据 `stage4_path` 走两条独立调度路径。**agent 自身不做路�
 
 Stage 4 通过后，**默认不直接开始 Stage 5**，先按以下顺序确认：
 
-1. 用户已明确要求性能优化（例如给出了性能目标，或明确要求调优）→ 直接进入 Stage 5，不再询问。
+1. 用户已明确要求性能优化（例如给出了性能目标，或明确要求调优）→ 视为已同意进入 Stage 5。
 2. 用户明确表示"不要问问题 / 自主执行"，且未要求性能优化 → **不进入 Stage 5**：向用户汇报"算子功能开发已完成并通过 Stage 4 验收，可以交付"，随后结束任务；不调度 `pypto-pro-op-optimizer`，也不做任何 Stage 5 采集。
-3. 其余情况 → 停下向用户确认：说明算子功能开发已完成、可通过 Stage 4 验收，询问是否继续 Stage 5 性能优化；**不在此环节追问性能目标**——用户此前主动给出过目标时随 dispatch 传给 optimizer，未给出则由 Stage 5 使用默认 Golden 参考目标。
+3. 其余情况 → 停下向用户确认是否继续 Stage 5；有多个性能 P0 case 时，在同一问题中列出它们并询问本轮要优化哪些 case。
 
-在取得用户同意（或命中第 1 条）之前，不得调度 `pypto-pro-op-optimizer`，不得启动任何 Stage 5 采集。（complete_stage(4) 后状态机自动把 Stage 5 置为 `in_progress` 属正常现象，仅表示进入待确认状态，不代表性能优化已开始。）
+进入 Stage 5 已获同意后、任何调度或采集前，按以下顺序冻结本轮**目标 case**：用户已直接指定，或已用按 case 指标/权重明确范围时，采用该非空 P0 子集并记 `selection_mode=user_selected`；只有一个 P0 时直接采用并记 `single_p0`；用户未指定目标且要求不再提问时采用全部 P0 并记 `all_p0_no_questions`；其余多 P0 情况必须先询问，未得到明确选择就等待。目标 case 只决定候选排名，全部 P0 仍须完成正确性、正式测量和逐 case 披露。
 
-**目标 bootstrap**：optimizer 先重跑 Stage 4 全量正确性并完成 JIT/编译预热；通过后，由 SPEC 全部性能 P0 case 与 Stage 4 既有测试冻结 `PERFORMANCE_CASES.json`。已有可靠 selector 时沿用；多 case 没有 selector 时，每个 case 必须用 `test_function` 指向 Stage 4 已验证的既有无参 `test_*` 函数，由 Stage 5 采集适配器逐 case 调用。单 case 可直接运行整个 runner，但必须只有一次可唯一归属的 target launch；均不修改 Stage 1–4 runner。若 SPEC 明确记录了用户提供的可复算数值目标，直接使用该目标。否则，由 optimizer 在第一个 PyPTO baseline 前调用 `pypto-pro-op-perf-tune/scripts/collect_golden_reference.py`，显式传入现有 Golden、同一份 `--case-manifest`、物理 device、`--warmup 3 --repeats 3 --seed 42`，并冻结成对报告。该采集属于 Stage 5，不调度、重新执行或验收 Stage 2；Stage 5 verifier 按 P6 检查报告 case id、shape/dtype、设备、固定 `iterations=1`、协议和原始样本。
+在进入同意和目标 case 都已确定之前，不得调度 `pypto-pro-op-optimizer`，不得启动任何 Stage 5 采集。（complete_stage(4) 后状态机自动把 Stage 5 置为 `in_progress` 属正常现象，仅表示进入待确认状态，不代表性能优化已开始。）
 
-**调度**：`pypto-pro-op-optimizer` 子代理。子代理只需加载 skill `pypto-pro-op-perf-tune`；默认目标分支使用该 skill 自带的 `collect_golden_reference.py`，以已通过 Stage 4 的 `test_{op}.py` 为正确性基线。dispatch prompt 必须包含 SPEC 性能目标及其来源、P0 case 和 Stage 4 verifier PASS 摘要。用户/SPEC 未给出可复算数值目标时，Stage 5 默认要求每个 P0 case 的 `golden_reference_ratio = golden_per_iteration_npu_e2e_us / final_pypto_target_kernel_us >= 1.0`；不得用聚合平均掩盖慢 case。
+**调度输入**：调度 `pypto-pro-op-optimizer`，传递算子目录、SPEC 性能目标及来源、
+完整 P0 case、冻结的 `optimization_target.case_ids` / `optimization_target.selection_mode` 和 Stage 4 verifier PASS 摘要。
+上游产物仍由 optimizer 直接读取；目标 case/选择方式以本次 dispatch 为权威，必须原样写入 manifest，
+不得自行重选。
 
-**固定采集/优化顺序**：Stage 4 全量正确性与 JIT/编译预热 → 冻结 manifest → 无用户数值目标时采集并冻结一次 Golden → 单 case discovery profile 列出并确认真实完整 lowering `Op Name`（不充当 baseline）→ manifest 逐 case formal compare、每 repeat 七组指标 → 原始证据归档 → Roofline/Tile DAG/Scalar/流水瓶颈分析 → 单变量 A/B 与兼容组合 → 最终正确性和独立 final formal compare 重采 → 对 final 每个 P0 case 运行 `msprof_perf_summary.py --timeline`，将唯一 target 时间窗内的同-lane BIU overlap 与当前 Tile DAG/slot/stage 映射联合验收。不得从最长 Task Duration 猜目标，也不得拿 `op_summary` ratio 同时高、不同 lane 并行或无 Tile 映射的区间相交证明搬算 overlap；instruction profiling 的扰动时延不得覆盖 formal compare 数值。
+**执行与交付规范**：目标 bootstrap、优化项来源与顺序、采集/实验闭环、最佳版本选择、
+停止条件、事实记录同步和全部交付物，统一以
+`$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/SKILL.md` 为唯一规范。orchestrator 不在
+dispatch 中重复该 Skill 的流程或 schema，也不自行采集、优化或改写性能证据。
 
-**交付件**：优化后的 `test_{op}.py`，以及四件套性能证据：
-
-- `PERFORMANCE_CASES.json`：从 SPEC 全部性能 P0 case 与 Stage 4 既有测试冻结的一一映射；baseline/final 使用同一原始字节版本
-- `PERFORMANCE_REPORT.md`：总报告，含冻结配置、两次独立 formal compare 的 baseline/final collection id 与 round、逐 case speedup、目标判定、正确性证据，以及逐 case `roofline_terminal` / `pipeline_evidence` / `scalar_evidence`
-- `performance.json`、`performance.log`、`perf_report.md`：perf skill 的 compare 产物；quick 仅用于候选筛选，最终证据另闭环到 `docs/perf/round_NNN/case_<id>/repeat_NNN/`
-
-optimizer 返回后，调度 `stage5-check`（`stage4_path=<状态机保存值>`），再按下表分流。
+optimizer 返回后，调度 `stage5-check`（`stage4_path=<状态机保存值>`），并传入同一份 `optimization_target.case_ids` / `optimization_target.selection_mode`，再按下表分流。
 
 | verifier 结果 | 编排动作 |
 |---|---|
-| PASS | 调用普通 `complete_stage(5)` 完成工作流 |
-| `dispatch_invalid` | 不修改产物、不重派 optimizer；从状态机读取 `stage4_path`，补入 Verifier dispatch 后重派 `stage5-check` |
-| `performance_evidence_invalid` | Stage 5 保持 `in_progress`；把缺失/矛盾/不可比证据原文交回 optimizer 补采，禁止只改口头摘要 |
-| `performance_target_miss` | 证据有效但目标未达；把逐 case 差距和未闭合候选/组合交回 optimizer 继续优化，不得因连续少数候选无收益结束 |
-| `performance_pipeline_invalid` | 数值证据可读但 P8 未过；把 Roofline、Scalar 或 overlap 缺口及证据路径原文交回 optimizer 继续分析、优化或重采，禁止用 ratio 标签补证 |
-| `precision_failure` / `runtime_failure` / `cheating` / `perf_violation` | Stage 5 保持 `in_progress`，要求 optimizer 恢复最近正确版本并修复；不得以性能收益豁免 Stage 4 铁律 |
-| `kb_selection_invalid` | `rollback_to_stage(target_stage=1, ...)` 回 planner 修正 selection；随后重走 Stage 1–5 |
-| `design_violation` | `rollback_to_stage(target_stage=3, ...)`；重新设计后必须重走 Stage 4 和 Stage 5 |
-| `golden_failure` | 仅指既有 `{op}_golden.py` 的数学结果或自验证本身失败，此时 `rollback_to_stage(target_stage=2, ...)` 修复上游产物后重走下游；Golden 性能采集失败、报告缺失或协议不一致均归 `performance_evidence_invalid`，留在 Stage 5 补采，不得借此回退 Stage 2 |
-| `kb_usage_invalid` / `wrapper_boundary_violation` / `import_violation` / `signature_mismatch` / `delivery_import_unsafe` / `missing_file` / `incomplete_structure` | `rollback_to_stage(target_stage=4, ...)`；按状态机保存的 `stage4_path`，L0 重派 coder，L1 重派 `finalize=true`，重新通过 `stage4-check` 后再进入 Stage 5；仅最终实现或测试入口发生变化时作废旧性能证据 |
+| PASS | 调用普通 `complete_stage(5)` 完成工作流；目标未达、默认 Golden 参考不可用或残留非理想瓶颈不改变该动作 |
+| `dispatch_invalid` | 不修改产物、不重派 optimizer；从状态机读取 `stage4_path`，从 Stage 5 进入确认结果读取同一份目标 case/选择方式，补齐 Verifier dispatch 后重派 `stage5-check` |
+| `performance_evidence_invalid` | Stage 5 保持 `in_progress`，把不可评估的原始证据交 optimizer 按 perf Skill 补采或纠正 |
+| `performance_item_coverage_invalid` | Stage 5 保持 `in_progress`，把 P7 的完整失败证据交 optimizer 按 perf Skill 补齐 |
+| `precision_failure` / `runtime_failure` / `cheating` / `perf_violation` / `design_violation` / `kb_usage_invalid` / `wrapper_boundary_violation` / `import_violation` / `signature_mismatch` / `delivery_import_unsafe` | Stage 5 保持 `in_progress`；把原始证据交 optimizer，在当前 Stage 恢复最近正确合规版本、修复代码或同步 as-built 记录并重验。不得以性能收益豁免铁律，不重派 coder/architect |
+| `missing_file` / `incomplete_structure` | 可更新代码、事实记录或性能交付件的缺口交 optimizer 在当前 Stage 补齐；若原始证据疑似指向冻结输入，携原证据重派 verifier 复核分类，不由 orchestrator 改判。两种情况都不回退 |
+| `stage5_contract_blocked` / Stage 5 中的 `kb_selection_invalid` / 冻结数学 Golden 的正确性自验证失败 | 不猜测或重建冻结输入、不回退、不重派上游。状态保持 Stage 5 `in_progress` 等待用户/外部修复；确定终止时用 `fail_stage(5)` 并附完整阻断证据。用户未给数值目标且不存在性能 Golden 合同时如实披露参考不可用，不进入本行；已存在但矛盾的 Stage 5 Golden 性能合同按 `performance_evidence_invalid` 修复 |
 | `env_error` | 按统一环境分流处理，不伪造性能结论 |
-| `other` | 保持当前状态，依据完整失败证据确定最早责任 Stage 后再按该 Stage 的既有路由处理；不得完成、盲目重派或丢弃证据 |
+| `other` | Stage 5 保持 `in_progress`；携原证据重派 verifier 补齐根因与分类，再按明确类别分流。不得推断“最早责任 Stage”后回退 |
 
-### Stage 5 放弃路径（诚实失败出口）
+### Stage 5 完成与阻断出口
 
-若证据始终无效，不得完成 Stage 5；继续补采或报告环境阻断。Stage 5 必须持续优化直到用户/SPEC 数值目标和 P8 健康终态都达成；未给数值目标时，每个 P0 case 还须达到默认 `golden_reference_ratio >= 1.0`。不得以固定轮数或连续少数候选无收益退出。P6 或 P8 未通过时，只有候选覆盖账本中的全部适用原子思路、要求的组合与重开项均已闭合，才可调用 `fail_stage(stage=5, reason=...)` 诚实结束；调用前必须再次执行 `stage5-check` 的 P7 穷尽审计，并使用最后 verifier 证据。单个 DSL/硬件能力缺口只关闭受影响候选，不豁免其它可执行实验。上报必须包含逐 case baseline/final、PyPTO 同口径 speedup、Golden 参考比值、Roofline/Scalar/流水缺口、候选覆盖账本和最后 verifier 证据；不得为了结束流程篡改目标或 `target_met`。
+Stage 5 只有三类出口：
+
+- verifier 的 P1–P8 全 PASS：调用 `complete_stage(5)`；目标是否达到不改变该出口。
+- 正确性、候选闭合、最佳版本选择或证据仍有可修复缺口：保持 `in_progress`，交 optimizer 定点修复。
+- 冻结合同、环境或用户决定阻断：保持 `in_progress` 等待处理；确定终止时才调用
+  `state_transition(fail_stage, stage=5, reason=...)`。
+
+目标未达、默认 Golden 参考不可用或残留瓶颈不是失败出口；缺失、不可读或不可比的证据也不是完成条件，必须按
+verifier 原始结果继续在 Stage 5 内补证或修复。出口的完整证据条件以 perf Skill 与
+`stage5-check` 为准，orchestrator 不复制其字段 schema。
 
 ---
 
@@ -467,6 +472,6 @@ optimizer 返回后，调度 `stage5-check`（`stage4_path=<状态机保存值>`
 - 算子名称
 - 数学公式 / 计算逻辑
 - 输入 / 输出 tensor 的 dtype （shape不需要向用户确认，在design阶段会进行设计，除非主动提供）
-- 若用户主动给出性能目标 / 要求性能优化，或明确表示"不要问问题 / 自主执行"，如实记下（供 Stage 4 完成后的「Stage 5 进入确认」使用；此处不主动追问）
+- 若用户主动给出性能目标、目标 case、性能优化要求，或明确表示"不要问问题 / 自主执行"，如实记下（供 Stage 4 完成后的「Stage 5 进入确认」使用；此处不主动追问）
 
 随后 `state_transition(init)` 初始化状态机，启动 Stage 1。

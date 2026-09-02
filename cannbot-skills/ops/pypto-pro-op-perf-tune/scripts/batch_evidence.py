@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
@@ -33,6 +34,7 @@ from msprof_perf_summary import (  # noqa: E402
     _is_positive_finite,
     _merge_row_values,
     _resolved_evidence_round,
+    _selected_executable_sha256,
     safe_case_dir_name,
 )
 from evidence_cli import diagnose_bound_route
@@ -103,7 +105,9 @@ def _read_archived_repeat_evidence(
     return diagnosis, float(pipe_duration), None
 
 
-def _check_collection_protocol(manifest: Dict[str, Any], data: Dict[str, Any]) -> Optional[str]:
+def _check_collection_protocol(
+    op_dir: Path, manifest: Dict[str, Any], data: Dict[str, Any]
+) -> Optional[str]:
     """校验 collection.json 与 performance.json 的协议字段一致性。"""
     target_op_name = data.get("target_op_name")
     if not isinstance(target_op_name, str) or not target_op_name.strip():
@@ -123,6 +127,21 @@ def _check_collection_protocol(manifest: Dict[str, Any], data: Dict[str, Any]) -
     source_error = performance_case_source_error(manifest.get("performance_cases"))
     if source_error:
         return source_error
+    expected_sha256 = manifest.get("executable_sha256")
+    if not isinstance(expected_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", expected_sha256):
+        return "collection.json executable_sha256 is invalid"
+    performance_sha256 = data.get("executable_sha256")
+    if not isinstance(performance_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", performance_sha256):
+        return "performance.json executable_sha256 is invalid"
+    if expected_sha256 != performance_sha256:
+        return "executable sha256 mismatch between collection.json and performance.json"
+    _, current_sha256, executable_error = _selected_executable_sha256(op_dir)
+    if executable_error:
+        return executable_error
+    if current_sha256 != expected_sha256:
+        return "selected executable sha256 differs from the final compare"
     return None
 
 
@@ -157,7 +176,7 @@ def _check_collection_manifest(
         return CollectionManifest(None, None, None, None, None, "collection id mismatch")
     if manifest.get("target_op_name") != data.get("target_op_name"):
         return CollectionManifest(None, None, None, None, None, "target op mismatch")
-    protocol_error = _check_collection_protocol(manifest, data)
+    protocol_error = _check_collection_protocol(op_dir, manifest, data)
     if protocol_error:
         return CollectionManifest(None, None, None, None, None, protocol_error)
     expected_cases = manifest.get("expected_cases")

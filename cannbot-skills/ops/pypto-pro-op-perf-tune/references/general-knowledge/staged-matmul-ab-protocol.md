@@ -2,12 +2,13 @@
 
 一次分阶段 Cube matmul 的 A/B 比较要成立，必须满足下列每一项。把它当判据清单读，
 不是当表格填——它约束的是"这次比较能不能作为证据"，不是记录格式。配套的精度与性能门在
-[分阶段 Cube matmul gates](../../pypto-pro-op-kb/references/staged-cube-matmul-gates.md)，
+[分阶段 Cube matmul gates](../../../pypto-pro-op-kb/references/staged-cube-matmul-gates.md)，
 先读那一页。
 
 两条贯穿全篇的规则：
 
-- **每次只改一个数值或调度变量。** 同时动两个，结果对任何一个都不构成证据。
+- **每次只验证一个主要假设。** 默认只改一个变量；有明确依赖依据的已登记联合候选可作为
+  一个整体实验，但结果不能单独归因给其中任一分量。
 - **不适用的项要写明理由，不能跳过。** 略过的项在事后审阅时等同于"已检查并通过"，
   而这正是无法复盘的开始。
 
@@ -30,7 +31,7 @@
 - Input -> accumulator -> output dtype
 - A reduction tree
 - B reduction tree
-- Only changed variable
+- Only changed variable, or registered joint tuple and dependency rationale
 - Expected precision effect
 - Expected performance effect
 - Range/shape assumptions not guaranteed by contract
@@ -107,10 +108,13 @@
   `data_ptr()`.
 
 Related templates:
-[stage-task flatten](stage-task-flatten.py.tmpl),
-[exact-order shared-left output pair](cube-shared-left-output-pair.py.tmpl),
-[dual-AIV mailbox](dual-aiv-mailbox.py.tmpl), and
-[tiling-key specialization](tiling-key-resource-specialization.py.tmpl).
+[stage-task flatten](../../templates/stage-task-flatten.py.tmpl),
+[exact-order shared-left output pair](../../templates/cube-shared-left-output-pair.py.tmpl), and
+[tiling-key specialization](../../templates/tiling-key-resource-specialization.py.tmpl).
+
+The historical mailbox prototype is retained only as
+[negative evidence](dual-aiv-mailbox-negative-evidence.md), not as an
+implementation option.
 
 ## FP16 range and special-value audit
 
@@ -222,4 +226,4 @@ timing improves under the same conditions.
 - Evidence-backed reason
 - Remaining unverified risk
 - Logs/artifacts
-- Next single-variable probe
+- Next single-hypothesis probe

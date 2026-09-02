@@ -179,11 +179,14 @@ Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集�
 
 Stage 2 默认只生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），不采集 NPU golden 性能。用户在需求中明确说明“采集 NPU golden 性能”时，可额外生成一份可选的 `GOLDEN_PERF_REPORT.md`；Stage 2 不负责 Stage 5 机器合同。若 SPEC 未记录用户数值目标，Stage 5 optimizer 会使用 `pypto-pro-op-perf-tune` 自带的 `collect_golden_reference.py`，基于现有 Golden 和冻结 case 清单生成一次 Stage 5 专用报告，不回滚或重跑 Stage 2。
 
-Stage 5 优先采用用户在 SPEC 中明确给出的可复算性能目标。用户未给数值目标时，默认要求 `PERFORMANCE_CASES.json` 中每个 P0 case 的 `Golden 每迭代 NPU E2E / PyPTO 最终 target-kernel >= 1.0`。该比值是明确定义的 Golden 跨实现参考目标，不是 PyPTO baseline→final 同口径加速比。
+Stage 5 优先采用用户在 SPEC 中明确给出的可复算性能目标。用户未给数值目标时，把 `PERFORMANCE_CASES.json` 中每个 P0 case 的 `Golden 每迭代 NPU E2E / PyPTO 最终 target-kernel >= 1.0` 作为默认理想参考。该比值不是 PyPTO baseline→final 同口径加速比；用户目标和默认理想参考都不是能否交付的硬门禁，达到、未达到或不可用都必须如实报告。
 
-性能提取顺序固定为：先重跑 Stage 4 正确性并完成 JIT/编译预热；用一个受控 case 做 discovery profile，读取真实完整 lowering `Op Name`；再按 manifest 逐 case formal compare，逐 repeat 采集七组 msprof 指标并归档；据此做 Roofline、PyPTO-Pro Tile 依赖和 Scalar/流水分析；经过单变量 A/B 与兼容组合后，对最终版本独立重采，并为 final 每个 P0 case 补采 instruction timeline。补充时间线只计算唯一 target task 窗口内同一监控 lane 的 pipe 区间重叠，还需与当前 Tile DAG/slot/stage 映射联合验证，不能用其受扰动时延替代 formal compare。Stage 4 runner 没有逐 case selector时，多 case manifest 必须逐 case 用 `test_function` 指向既有无参测试函数，由 Stage 5 适配器选择；单 case 可直接运行整个 runner，但必须只有一次可唯一归属的 target launch。均不修改 Stage 1–4 模板。
-
-数值目标达到后还要过健康终态门禁：每个 P0 case 的关键路径必须是有效计算、必要数据搬运或二者平衡，Scalar/等待不能主导；合法可重叠的搬算必须由可归属 target kernel 的 timeline 与当前 Tile DAG 共同证明。`op_summary` 中多个 pipe ratio 同时高、不同核/lane 并行或没有 Tile 映射的区间相交都只用于诊断，不能证明 overlap 或 Roofline。optimizer 会建立候选覆盖账本：数值目标或健康终态未通过时，须继续尝试全部适用原子思路、有意义的兼容/协同组合，并在瓶颈变化后重开受影响的旧候选；不能因少数实验无收益提前结束。
+Stage 5 由 optimizer 完整加载 `pypto-pro-op-perf-tune`：审计 selected KB 全部原子点并补齐
+未落实缺口，闭合全部 active/eligible 通用方法、知识卡与模板项；四类预置来源全部闭合后，按当前
+瓶颈建立并闭合 `bottleneck_derived`；冻结 baseline 与正式评价候选只在正确、合规时纳入排名，
+最终保留冻结聚合指标最优版本，再独立重采并验收。
+采集协议、来源账本、逐项实验、最佳版本选择、停止条件和交付物均以
+[`pypto-pro-op-perf-tune`](../../ops/pypto-pro-op-perf-tune/SKILL.md) 为准；Stage 5 修复只在本 Stage 内完成，不回退。
 
 ### 产出物示例
 
@@ -200,9 +203,9 @@ custom/<op>/
 ├── GOLDEN_PERF_REPORT.md      # Stage 2 用户按需报告，或 Stage 5 默认目标人读报告
 ├── GOLDEN_PERF_REPORT.json    # 仅 Stage 5 默认目标分支生成的机器合同
 ├── DESIGN.md                  # Tile 数据流设计文档
-├── test_{op}.py               # Stage 4 kernel；Stage 5 原地保留最快正确版本
+├── test_{op}.py               # Stage 4 kernel；Stage 5 保留冻结聚合指标最优的正确、合规版本
 ├── PERFORMANCE_CASES.json     # Stage 5 执行 case 清单（SPEC P0 与既有测试一一对应）
-├── PERFORMANCE_REPORT.md      # Stage 5 逐 case baseline/final、Golden 参考比值、候选覆盖与优化记录
+├── PERFORMANCE_REPORT.md      # Stage 5 baseline/final、来源账本、候选比较与关闭记录
 ├── performance.json           # Stage 5 结构化性能结果
 ├── performance.log            # Stage 5 采集日志
 ├── perf_report.md             # Stage 5 脚本分析报告

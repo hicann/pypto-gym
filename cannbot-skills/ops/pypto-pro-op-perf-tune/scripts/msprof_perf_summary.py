@@ -773,6 +773,18 @@ def _find_test_script(out_dir: Path, strict: bool = False):
     return str(test_scripts[0]), None
 
 
+def _selected_executable_sha256(out_dir: Path):
+    """Resolve the strict Stage 5 runner and hash its current bytes."""
+    test_script, error = _find_test_script(out_dir, strict=True)
+    if not test_script:
+        return None, None, error
+    try:
+        digest = hashlib.sha256(Path(test_script).read_bytes()).hexdigest()
+    except OSError as source_error:
+        return None, None, f"cannot hash Stage 5 executable: {source_error}"
+    return test_script, digest, None
+
+
 def _resolved_evidence_round(op_dir: Path, raw_round: Any) -> Path:
     if raw_round is None or not str(raw_round).strip():
         raise ValueError("deep_profile_round is missing")
@@ -1825,6 +1837,7 @@ def _build_collection_record(args, out_dir, device_id, performance_cases):
         "repeats": args.repeats,
         "expected_cases": [str(case[0]) for case in performance_cases],
         "performance_cases": args.performance_cases,
+        "executable_sha256": args.executable_sha256,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
 
@@ -1872,6 +1885,12 @@ def _execute_compare_loop(
         source_error = performance_case_source_error(args.performance_cases)
         if source_error:
             raise RuntimeError(source_error)
+        _, executable_sha256, executable_error = _selected_executable_sha256(out_dir)
+        if executable_error:
+            raise RuntimeError(executable_error)
+        if executable_sha256 != collection.record.get("executable_sha256"):
+            raise RuntimeError("Stage 5 executable changed during formal compare")
+        summary["executable_sha256"] = executable_sha256
         _log_and_save_compare_reports(summary, out_dir, speedups, len(performance_cases))
         collection.record["status"] = "complete"
         collection.record["completed_cases"] = summary["n_cases_valid"]
@@ -1921,9 +1940,10 @@ def _run_compare_mode(args, out_dir, device_id, device_src):
         return 1
     args.collection_id = _default_collection_id(args, "compare")
     args.deep_round_dir = reserve_next_round(str(out_dir / "docs" / "perf"))
-    test_script, script_error = _find_test_script(out_dir, strict=True)
-    if not test_script:
+    _, executable_sha256, script_error = _selected_executable_sha256(out_dir)
+    if script_error:
         raise ValueError(script_error)
+    args.executable_sha256 = executable_sha256
     collection_record = _build_collection_record(
         args, out_dir, device_id, performance_cases
     )
@@ -2289,8 +2309,8 @@ def main():
             sys.exit(1)
     elif args.timeline:
         try:
-            from evidence_cli import _run_timeline_mode
-            sys.exit(_run_timeline_mode(args))
+            from evidence_cli import run_timeline_mode
+            sys.exit(run_timeline_mode(args))
         except (OSError, RuntimeError, ValueError) as error:
             LOGGER.error("[ERROR] %s", error)
             sys.exit(1)

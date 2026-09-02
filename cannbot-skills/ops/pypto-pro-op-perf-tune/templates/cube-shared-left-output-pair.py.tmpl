@@ -2,7 +2,9 @@
 
 Replace placeholders with operator constants and existing TileGroups. The
 optimization changes operand movement only: every output must retain its
-original K-block and residual accumulation order.
+original K-block and residual accumulation order. The function-shaped block
+below is documentation only: inline it into the `@pl.jit` body because the
+frontend parser does not follow ordinary Python helper calls.
 """
 
 
@@ -15,8 +17,9 @@ def compute_output_pair_exact_order(
     valid_n,
 ):
     """Load shared left residuals once and compute two independent outputs."""
-    # Keep acquisitions and uses in this helper. A branch-local TileGroup
-    # cursor can otherwise escape its generated C++ scope on current releases.
+    # When inlining, keep acquisitions and uses in the same lexical block. A
+    # branch-local TileGroup cursor can otherwise escape its generated C++
+    # scope on current releases.
     shared_left = []
     for residual_group in left_residual_groups:
         tile = residual_group.next()
@@ -37,31 +40,40 @@ def compute_output_pair_exact_order(
     # pl.load_tile(rhs_a, RIGHT_GM, [K_BLOCK, output_index])
     # Repeat the frozen per-output order exactly:
     # residual-0 Partial -> residual-1 Acc -> ... -> Final/store.
-    # pl.matmul(acc_a, shared_left[0], rhs_a, phase=pl.AccPhase.Partial)
-    for residual in shared_left[1:-1]:          # compile-time list: unrolled by the parser
-        # pl.matmul_acc(acc_a, acc_a, residual, rhs_a, phase=pl.AccPhase.Partial)
+    if len(shared_left) == 1:
+        # pl.matmul(acc_a, shared_left[0], rhs_a, phase=pl.AccPhase.Final)
         pass
-    # pl.matmul_acc(
-    #     acc_a, acc_a, shared_left[-1], rhs_a, phase=pl.AccPhase.Final,
-    # )
+    else:
+        # pl.matmul(acc_a, shared_left[0], rhs_a, phase=pl.AccPhase.Partial)
+        for residual in shared_left[1:-1]:      # compile-time list: unrolled by the parser
+            # pl.matmul_acc(acc_a, acc_a, residual, rhs_a, phase=pl.AccPhase.Partial)
+            pass
+        # pl.matmul_acc(
+        #     acc_a, acc_a, shared_left[-1], rhs_a, phase=pl.AccPhase.Final,
+        # )
     # pl.store_tile(OUTPUT_GM, acc_a, [ROW_TILE, output_index], phase=pl.STPhase.Final)
 
     # lane B -> output_index + 1, same frozen order
     rhs_b = right_group.next()
     # pl.load_tile(rhs_b, RIGHT_GM, [K_BLOCK, output_index + 1])
-    # pl.matmul(acc_b, shared_left[0], rhs_b, phase=pl.AccPhase.Partial)
-    for residual in shared_left[1:-1]:
-        # pl.matmul_acc(acc_b, acc_b, residual, rhs_b, phase=pl.AccPhase.Partial)
+    if len(shared_left) == 1:
+        # pl.matmul(acc_b, shared_left[0], rhs_b, phase=pl.AccPhase.Final)
         pass
-    # pl.matmul_acc(
-    #     acc_b, acc_b, shared_left[-1], rhs_b, phase=pl.AccPhase.Final,
-    # )
+    else:
+        # pl.matmul(acc_b, shared_left[0], rhs_b, phase=pl.AccPhase.Partial)
+        for residual in shared_left[1:-1]:
+            # pl.matmul_acc(acc_b, acc_b, residual, rhs_b, phase=pl.AccPhase.Partial)
+            pass
+        # pl.matmul_acc(
+        #     acc_b, acc_b, shared_left[-1], rhs_b, phase=pl.AccPhase.Final,
+        # )
     # pl.store_tile(OUTPUT_GM, acc_b, [ROW_TILE, output_index + 1], phase=pl.STPhase.Final)
 
 
-# Use this helper only for a complete adjacent pair. The odd tail calls the
-# original one-output schedule with the same TileGroups and numerical order.
+# Inline this pair skeleton only for a complete adjacent pair. For the odd
+# tail, inline the original one-output schedule with the same TileGroups and
+# numerical order; do not emit either ordinary Python helper call below.
 # if output_index + 1 < output_count:
-#     compute_output_pair_exact_order(...)
+#     ...  # inlined pair skeleton
 # else:
-#     compute_one_output_original_order(...)
+#     ...  # inlined original one-output schedule

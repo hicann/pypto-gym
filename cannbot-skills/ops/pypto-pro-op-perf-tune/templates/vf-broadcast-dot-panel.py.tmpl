@@ -3,9 +3,12 @@
 # This is not a standalone kernel. Replace panel dimensions, tile strides,
 # masks and compensation with the operator's frozen design. A normal
 # vf.load_align is a register-width load even when its offset names one scalar.
-# CCE and a one-row probe are insufficient: separately gate a multi-row loop
-# on the target A5 because repeated panel MTE loads have shown shape-sensitive
-# 507015 failures that are not visible in generated-code checks.
+# CCE and a one-row probe are insufficient: separately gate a production-shaped
+# multi-row loop on the exact target A5 before accepting this skeleton.
+# This skeleton covers full GROUP_K blocks only. Keep this compile-time guard,
+# or replace it with an explicit K-tail path before using a non-divisible panel.
+
+assert PANEL_K % GROUP_K == 0
 
 @pl.vector_function
 def accumulate_panel_vf(

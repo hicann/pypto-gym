@@ -3,11 +3,15 @@
 ## Contents
 
 - [适用场景](#scope)
+- [脚本运行模式](#script-modes)
+- [PyPTO-Pro 输入与输出](#pypto-io)
+- [平台与工具选择](#platform-tool-selection)
 - [Step 1：构建算子（如果有指定的调用方式，这一步可跳过）](#build-operator)
 - [Step 2：采集](#collect-profile)
 - [Step 3：归档 + 统计摘要](#archive-summary)
 - [主 Bound 判定（msprof 归档）](#bound-classification)
 - [数据目录结构](#data-layout)
+- [通用分析纪律](#analysis-discipline)
 - [注意事项](#cautions)
 - [相关资源](#resources)
 
@@ -19,6 +23,116 @@
 ## <a id="scope"></a>适用场景
 
 - 目标环境以 `msprof` 为采集手段，或团队约定采用本工具链。
+
+| 场景 | 推荐命令 | 说明 |
+|---|---|---|
+| PyPTO 算子性能采集 | `msprof_profile_run.sh` + `msprof_perf_summary.py` | 标准采集 7 组 aic-metrics + 深度瓶颈分析 |
+| PyPTO 算子 vs golden 标杆对比 | `msprof_profile_run.sh --compare` | Golden 报告 + target-kernel Task Duration 得到参考比值 |
+| 优化前后回归 | `msprof_profile_run.sh` + `msprof_perf_summary.py` | 对比独立归档 round |
+| 快速候选筛选 | `msprof_profile_run.sh --quick` | 只采 Task Duration，不替代最终正式采集 |
+| 批量性能测试 | `msprof_profile_run.sh --batch` | 多 NPU 并行批量测试 |
+
+---
+
+## <a id="script-modes"></a>脚本运行模式
+
+本节保留不传 `--case-manifest` 时的既有兼容模式及命令语义。Stage 5 的 compare、quick 和 batch
+必须改按[证据协议](evidence-protocol.md#compare-quick-batch)执行；两种模式的 Golden、seed、逐 case
+选择和输出文件不同，不能混用。
+
+### 1. 标准采集模式（深度瓶颈分析）
+
+按下文 [Step 2](#collect-profile) 和 [Step 3](#archive-summary)采集七指标与 sample-based 证据；
+把采集命令中的 demo 替换为 `python3 test_{op}.py`，并用精确 `--op-name` 解析目标 kernel。
+
+### 2. 对比测试模式（跨口径参考比值）
+
+从 `GOLDEN_PERF_REPORT.md` 读取 Golden 非噪声 device-kernel E2E 总时长，用 msprof 采集 PyPTO
+target-kernel Task Duration，计算 `Golden E2E / PyPTO target-kernel` 参考比值。两端计时范围不同，
+该值不是同口径 optimization speedup，也不能作为 Stage 5 formal compare。为兼容既有产物，脚本
+仍使用 `speedup`、`*_speedup` 和“加速比”等旧字段名；解释时必须遵循本段语义。
+
+行为说明：
+
+- `--warm-up=N` 会在正式采集前真实执行 N 次，默认为 3。
+- `--repeats=N` 在对比和快速模式中都生效，默认为 1。N 大于等于 3 时去掉最大值和最小值后取平均；N 小于 3 时取中位数。
+- `--seed=N` 通过 `PYPTO_PERF_SEED` 传入测试脚本，同时设置 `PYTHONHASHSEED`。测试脚本应读取 `PYPTO_PERF_SEED` 来固定随机输入。
+- msprof 临时数据写入算子目录下的 `.msprof/`，并使用 PID 和时间戳隔离并发任务。
+
+```bash
+bash scripts/msprof_profile_run.sh --compare \
+    --output-dir=./custom/{op} --warm-up=3 \
+    --device=0 --op-name=<Op Name> --repeats=3 --seed=0
+```
+
+> **前置条件**：兼容 `--compare`、`--quick` 均需要 `custom/{op}/GOLDEN_PERF_REPORT.md`，兼容 `--batch` 的每个算子目录也需要该报告。Stage 2 默认不生成该报告；只有用户明确要求 golden 性能采集或 golden 基线对比时，才先以 `collect_golden_perf=true` 调用 `pypto-pro-golden-generate` 生成报告。若用户只要求 PyPTO kernel 自身的性能采集或瓶颈分析，使用标准模式，不要为了它自动采集 golden。
+>
+> **必须指定 `--op-name`**：与标准采集模式同理，PyPTO 测试脚本含多个 case + `torch.randn`，不指定会选到非目标 op。Op Name 获取方法见 [Step 3](#archive-summary)。
+>
+> **逐 case 限制**：该既有兼容模式没有标准的逐 case 选择协议。如果 `GOLDEN_PERF_REPORT.md` 包含多个 case，工具会明确报错，不会把一次聚合耗时复用到所有 case。请按 case 分别产出报告后再对比。
+
+输出：`performance.json`、`performance.log`、`perf_report.md`。
+
+### 3. 快速模式（不采集 aic-metrics）
+
+只采集 kernel Task Duration，不采集 7 个 aic-metrics，适合快速验证优化效果。`--warm-up`、`--repeats`、`--seed` 和逐 case 限制与对比模式一致。
+
+```bash
+bash scripts/msprof_profile_run.sh --quick \
+    --output-dir=./custom/{op} --warm-up=3 \
+    --device=0 --op-name=<Op Name> --repeats=3 --seed=0
+```
+
+输出：`performance.json`、`performance.log`、`perf_report.md`。
+
+### 4. 批量并行模式（多 NPU）
+
+扫描目录下所有算子子目录，多 NPU 并行执行对比测试：
+
+```bash
+bash scripts/msprof_profile_run.sh --batch --base-dir=./custom --max-jobs=7 --device-start=1
+```
+
+输出：各子目录 `performance.json` + `batch_performance.log` + `batch_report.md` + `batch_summary.json`
+
+> **使用边界**：该兼容 batch 不传逐目录 `--op-name`，仅适用于每个 runner 的目标 kernel 可唯一归属的目录；含多个 AI_CORE op 时，使用 Stage 5 manifest batch，并传入精确的 `--op-name` 或 `--op-name-map`。
+
+---
+
+## <a id="pypto-io"></a>PyPTO-Pro 输入与输出
+
+采集脚本执行算子目录中已有、已通过对应开发流程验收的 runner；本页不规定
+`test_{op}.py` 的 wrapper、Golden 或精度校验结构，也不能覆盖其 owner Skill 合同。PyPTO-Pro
+工作流的测试结构以 [Develop Skill](../../pypto-pro-op-develop/SKILL.md) 为准；Stage 5 的逐 case
+输入、Golden 机器合同和输出证据以[证据协议](evidence-protocol.md)为准。不传 manifest 的兼容
+compare/quick 输出仍按上面的模式说明生成。
+
+---
+
+## <a id="platform-tool-selection"></a>平台与工具选择
+
+在加载任何平台专属模型前，先运行
+[`../../pypto-pro-environment-check/scripts/get_npu_arch.py`](../../pypto-pro-environment-check/scripts/get_npu_arch.py)
+或读取构建配置，记录设备型号、`NpuArch`、CANN/PyPTO 版本和 `pypto_pro.__file__`：
+
+- 仅当结果确认 raw 输出 `3510`（`NpuArch` 值）、helper 输出 `dav-3510`、runtime 输出 `DAV_3510`
+  或构建目标 `dav-c310` 时，加载
+  [A5 roofline 与杠杆](general-knowledge/a5-roofline-and-levers.md)；
+- 对未知平台或非 A5 平台，不应用 A5 核数、容量、带宽、频率或经验结论，直接使用该平台的
+  官方资料与本次 profiler 数据；
+- 平台探测失败时，将平台模型标记为不可用，但仍可继续做不依赖硬编码常量的实测瓶颈分析。
+
+工具选择顺序：
+
+1. 用户指定 `msprof op` / msopprof 时，走 [msprof op 指南](msprof-op-guide.md)；指定
+   `msprof` 时，走本文。
+2. 用户未指定时探测环境：仅 `msopprof` 可用则走 msprof op；仅 `msprof` 可用则走本文；
+   两者皆可用时向用户确认或遵循项目约定；两者皆不可用时报错并检查 CANN / `ASCEND_HOME`。
+
+完整 `test_{op}.py` 的 profile 会混入输入生成、Golden 和精度检查，不能把其中的 `aclnn*`
+直接归因给 wrapper，也不能据此计算 wrapper 占比。PyPTO-Pro wrapper 合规由 Stage 4 的
+[wrapper 边界合同](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)裁决；profile 只提供性能
+证据，不能授权越界。性能结论只使用可唯一归属到目标 kernel 或冻结 case 的字段和计时口径。
 
 ---
 
@@ -169,6 +283,29 @@ ops/{算子名}/docs/perf/
 ```
 
 字段含义详见 [`csv_fields_reference.md`](csv_fields_reference.md)（按 `op_summary_*` 列名对齐同类指标）。
+
+---
+
+## <a id="analysis-discipline"></a>通用分析纪律
+
+本节只提供分析证据；Stage 5 的来源、建项时机和登记要求以[主 Skill](../SKILL.md)及
+[优化项实验闭环](optimization-playbook.md)为准，不能仅凭本节文字建立优化项。
+
+- **kernel 总耗时不是 DMA floor。** 要估计纯搬运下界，单独运行只含合同 load+store 的 sweep；
+  完整 kernel 时间同时包含计算、依赖和固定开销，不能反过来当搬运下界。
+- **按 ratio-to-floor 排诊断优先级。** SOL 或某一 pipe ratio 无法区分并行度不足与单元素效率低；
+  应把每个 case 与其同 shape/tiling 的可复核 sibling bound 或 floor probe 比较。
+- **说清 bound 的种类。** sibling bound 用更简单算子的同条件实测界定任意实现；floor probe 只
+  界定必要数据搬运，不给语义必需计算或跨 lane 原语定价；从“当前想到的杠杆”求和只描述该
+  清单，不能证明算法天花板。
+- **单个 kernel 不能代表框架 roofline。** 某 kernel 的带宽、拐点或利用率只描述当时的访问
+  形态；推断平台或框架限制必须有独立 probe、平台资料和其它实现的可复核证据。
+- **串行依赖、历史估算和旧二进制都需排除。** 依赖链要用生成物/trace/受控 A-B 证明；结构
+  改变后重新推导估计；body 修改后验证生成物身份。实验细则见
+  [优化项实验闭环](optimization-playbook.md)。
+
+更完整的 sibling/floor/证伪纪律见
+[KB investigation discipline](../../pypto-pro-op-kb/references/investigation-discipline.md)。
 
 ---
 

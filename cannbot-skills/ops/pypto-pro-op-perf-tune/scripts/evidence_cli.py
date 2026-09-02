@@ -52,6 +52,7 @@ from msprof_perf_summary import (  # noqa: E402
     _profile_env,
     _resolved_evidence_round,
     _run_warmups,
+    _selected_executable_sha256,
     _select_device_id,
     _test_command,
     _write_collection_log,
@@ -324,12 +325,14 @@ def _timeline_preflight(args):
     selected_case = _timeline_case(performance_cases, args.case_id)
     if not _validate_case_selector(performance_cases, args):
         return None, 1
-    if not _validate_selector_runtime(out_dir, performance_cases, args, device_id):
-        return None, 1
-    test_script, script_error = _find_test_script(out_dir, strict=True)
-    if not test_script:
+    test_script, executable_sha256, script_error = _selected_executable_sha256(out_dir)
+    if script_error:
         raise ValueError(script_error)
     performance, _ = _check_final_performance(out_dir, args, device_id)
+    if executable_sha256 != performance.get("executable_sha256"):
+        raise ValueError("timeline executable differs from the final compare")
+    if not _validate_selector_runtime(out_dir, performance_cases, args, device_id):
+        return None, 1
     archive_dir = _timeline_archive_dir(out_dir, performance, args.case_id)
     context = {
         "out_dir": out_dir,
@@ -370,6 +373,7 @@ def _export_and_analyze(
     selected_case = context["selected_case"]
     analysis.update({
         "collection_id": context["performance"].get("collection_id"),
+        "executable_sha256": context["performance"].get("executable_sha256"),
         "case": str(selected_case[0]),
         "shape": selected_case[1],
         "dtype": selected_case[2],
@@ -401,7 +405,7 @@ def _export_and_analyze(
 
 def _collect_timeline_session(
     session: Path, context: dict, args
-) -> Tuple[Path, Path, Dict[str, Any], Path, Path, Path]:
+) -> Tuple[Path, Dict[str, Any], Path, Path, Path]:
     """采集/导出指令时间线并分析；返回证据文件路径与分析结果。"""
     test_script = context["test_script"]
     device_id = context["device_id"]
@@ -474,7 +478,7 @@ def _stage_timeline_evidence(
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def _run_timeline_mode(args) -> int:
+def run_timeline_mode(args) -> int:
     """Collect supplemental instruction events for one final-compare P0 case."""
     context, exit_code = _timeline_preflight(args)
     if exit_code:
@@ -484,9 +488,16 @@ def _run_timeline_mode(args) -> int:
     session = context["out_dir"] / ".msprof" / f"timeline_{os.getpid()}_{time.time_ns()}"
     session.mkdir(parents=True, exist_ok=False)
     try:
-        prof_dir, trace_path, analysis, reports_path, biu_db, task_db = (
+        trace_path, analysis, reports_path, biu_db, task_db = (
             _collect_timeline_session(session, context, args)
         )
+        _, executable_sha256, executable_error = _selected_executable_sha256(
+            context["out_dir"]
+        )
+        if executable_error:
+            raise RuntimeError(executable_error)
+        if executable_sha256 != context["performance"].get("executable_sha256"):
+            raise RuntimeError("Stage 5 executable changed during timeline collection")
         _stage_timeline_evidence(
             archive_dir, session, analysis,
             TimelineArtifacts(trace_path, reports_path, biu_db, task_db),
@@ -942,14 +953,21 @@ def _add_analysis_sections(lines, report):
     lines.append("## 简短分析")
     lines.append("")
     ratio_stats = report.get("golden_reference_ratio_stats") or {}
+    golden_status = (
+        ((report.get("performance_cases") or {}).get("golden_diagnostic") or {})
+        .get("status")
+    )
     if ratio_stats.get("mean") is not None:
         lines.append(
             f"- Golden 每迭代 E2E / PyPTO target-kernel 平均目标比值为 "
-            f"{ratio_stats['mean']:.3f}；默认目标要求每个 P0 case 均不低于 "
-            f"{report['default_target_threshold']:.1f}。该比值不是 baseline→final 优化加速比。"
+            f"{ratio_stats['mean']:.3f}；默认理想参考为每个 P0 case 均不低于 "
+            f"{report['default_target_threshold']:.1f}。该比值不是 baseline→final 优化加速比，"
+            f"也不作为 Stage 5 交付门禁。"
         )
+    elif golden_status == "not_provided":
+        lines.append("- Golden JSON 不存在；PyPTO 采集有效，默认理想参考状态为 unavailable，且不作为 Stage 5 交付门禁。")
     else:
-        lines.append("- 未提供完整 Golden 数据；PyPTO 采集有效，但默认目标不可判定。")
+        lines.append("- Golden JSON 已联接，但当前参考比值不可复算；性能证据无效，修复后才能判断理想参考状态。")
     lines.append("- 详细瓶颈分析见 msprof 归档目录（op_summary_*.csv + summary.txt）。")
     lines.append("")
 

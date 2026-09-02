@@ -42,10 +42,11 @@ for task in pl.range(physical_id, total_tasks, num_cores):
         # accumulates, and the *last* block must close with `AccPhase.Final`.
         # An accumulator left on `AccPhase.Partial` stays open and faults the
         # device, so the closing block cannot be reachable only when the loop
-        # runs more than once -- a single-block K loop (k_waves * partitions
-        # == 1) has to open and close on the same iteration.
-        is_first = q == 0 and partition == 0
-        is_last = q == k_waves - 1 and partition == partitions - 1
+        # runs more than once -- a single-block chain (`k_waves == 1`) has to
+        # open and close on the same iteration. `partition` is already fixed by
+        # the outer task and is not another step in this Acc chain.
+        is_first = q == 0
+        is_last = q == k_waves - 1
         acc_phase = pl.AccPhase.Final if is_last else pl.AccPhase.Partial
 
         # for each live output lane, guarded by its tail check:
@@ -67,10 +68,10 @@ for task in pl.range(physical_id, total_tasks, num_cores):
 
     # Each [mt, partition, nt] partial remains a unique GM destination.
     if nt_base < output_tiles:
-        pl.store_tile(partial_3d, acc0, [mt, partition, nt_base])
+        pl.store_tile(partial_3d, acc0, [mt, partition, nt_base], phase=pl.STPhase.Final)
     if nt_base + 1 < output_tiles:
-        pl.store_tile(partial_3d, acc1, [mt, partition, nt_base + 1])
+        pl.store_tile(partial_3d, acc1, [mt, partition, nt_base + 1], phase=pl.STPhase.Final)
     if nt_base + 2 < output_tiles:
-        pl.store_tile(partial_3d, acc2, [mt, partition, nt_base + 2])
+        pl.store_tile(partial_3d, acc2, [mt, partition, nt_base + 2], phase=pl.STPhase.Final)
     if nt_base + 3 < output_tiles:
-        pl.store_tile(partial_3d, acc3, [mt, partition, nt_base + 3])
+        pl.store_tile(partial_3d, acc3, [mt, partition, nt_base + 3], phase=pl.STPhase.Final)
