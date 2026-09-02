@@ -482,7 +482,7 @@ def _gdr_fwd_body(q, k, v, beta, gate, states, tril_incl, strict_low, eye_stack,
         pypto.set_vec_tile_shapes(_VEC_TR, _VEC_TC)
         cank = pypto.view(states, [dk, dk], [sidx * dk, 0])
 
-        for c in pypto.loop(0, slen, bt, name="chunk", idx_name="c", unroll_list=[4]):
+        for c in pypto.loop(0, slen, bt, name="chunk", idx_name="c", unroll_list=[8, 4, 2]):
             off = s0 + c
             act = (slen - c).min(bt)
 
