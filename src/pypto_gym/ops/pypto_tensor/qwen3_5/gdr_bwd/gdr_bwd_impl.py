@@ -455,7 +455,6 @@ _CT = 128
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 8},
                   "cube_nbuffer_setting": {-1: 8},
                   "cube_l1_reuse_setting": {-1: 8}},
-    new_ir=False
     )
 
 
@@ -998,7 +997,6 @@ _SCHED_950 = 1
                   "cube_l1_reuse_setting": {-1: 8},
                   "auto_mix_partition": 1,
                   },
-    new_ir=False,
     host_options={"compile_monitor_enable": 0}
     )
 def gdr_bwd_fused_kernel_npu_950(
