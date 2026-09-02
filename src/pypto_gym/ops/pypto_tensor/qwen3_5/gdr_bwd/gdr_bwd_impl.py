@@ -1251,34 +1251,30 @@ def chunk_gated_delta_rule_backward_wrapper(
         logging.info(f"head_dim, bt, n_heads: {head_dim} {bt} {n_heads}")
         logging.info(f"nt_max, scale_val, use_rstd: {nt_max} {scale_val} {use_rstd}")
 
-        for _ in range(1):
-            a = torch.randn((int(192 * 1024 * 1024 * 2.5))).to(torch.float32).npu()
-            for _ in range(100):
-                _a_max = torch.max(a)
-            if pypto.platform.npuarch == 'DAV_3510':
-                gdr_bwd_fused_kernel_npu_950(
-                    q2d, k2d, v2d, beta2d, gcum2d,
-                    states2d, do2d,
-                    qr2d, kr2d,
-                    a_inv_2d,
-                    mask, tril_mask, eye, dmask, e_last, ones_bt,
-                    dht2d, sin_ws, seqlens,
-                    dq2d, dk2d, dv2d, dg2d, dbeta2d, dh02d,
-                    head_dim, bt, n_heads, nt_max, scale_val,
-                    use_rstd,
-                )
-            else:
-                gdr_bwd_fused_kernel_npu(
-                    q2d, k2d, v2d, beta2d, gcum2d,
-                    states2d, do2d,
-                    qr2d, kr2d,
-                    a_inv_2d,
-                    mask, tril_mask, eye, dmask, e_last, ones_bt,
-                    dht2d, sin_ws, seqlens,
-                    dq2d, dk2d, dv2d, dg2d, dbeta2d, dh02d,
-                    head_dim, bt, n_heads, nt_max, scale_val,
-                    use_rstd,
-                )
+        if pypto.platform.npuarch == 'DAV_3510':
+            gdr_bwd_fused_kernel_npu_950(
+                q2d, k2d, v2d, beta2d, gcum2d,
+                states2d, do2d,
+                qr2d, kr2d,
+                a_inv_2d,
+                mask, tril_mask, eye, dmask, e_last, ones_bt,
+                dht2d, sin_ws, seqlens,
+                dq2d, dk2d, dv2d, dg2d, dbeta2d, dh02d,
+                head_dim, bt, n_heads, nt_max, scale_val,
+                use_rstd,
+            )
+        else:
+            gdr_bwd_fused_kernel_npu(
+                q2d, k2d, v2d, beta2d, gcum2d,
+                states2d, do2d,
+                qr2d, kr2d,
+                a_inv_2d,
+                mask, tril_mask, eye, dmask, e_last, ones_bt,
+                dht2d, sin_ws, seqlens,
+                dq2d, dk2d, dv2d, dg2d, dbeta2d, dh02d,
+                head_dim, bt, n_heads, nt_max, scale_val,
+                use_rstd,
+            )
 
     # unflatten [tt,*] -> [batch,seq_len,n_heads,*] (varlen: batch==1, seq_len==sum T_i); free views.
     # dh0 -> [n_seqs,n_heads,head_dim,head_dim].
