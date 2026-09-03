@@ -8,12 +8,16 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""One-process-per-NPU, pipeline-parallel PREFILL benchmark for Kimi-Linear-48B-A3B.
+"""One-process-per-NPU, pipeline-parallel benchmark for Kimi-Linear-48B-A3B.
 
 Self-contained in this repo (no external/archive references): imports the committed
 ``pypto_gym.transformers.kimi_linear_48b_a3b`` modeling + the
 ``kimi_linear_48b_a3b_pto_kernels`` package, and wires PyPTO via the same
 ``sys.modules`` + ``USE_PTO_KDA`` mechanism as ``ask_Kimi-Linear-48B-A3B.py``.
+
+Supports two modes:
+  --mode prefill: Measure prefill performance (prompt processing)
+  --mode decode:  Measure decode performance (token generation)
 
 WHY THIS EXISTS: the single-process ``ask_*.py`` (device_map) binds PyPTO's JIT
 kernel to ONE NPU per process, so only ~6/20 KDA layers are accelerated. This bench
@@ -26,11 +30,16 @@ streams rank->rank over HCCL. Same pattern as upstream ``minimax_m27`` /
 Launch with torchrun (inside the container, Ascend env sourced):
 
   # SMOKE — random weights (no checkpoint needed), 2 NPUs, 4 layers, seq 80:
-  torchrun --nproc_per_node=2 bench_kimi_multinpu.py --random-weights --layers 4 --seq 80 --iters 2 --pypto
+  torchrun --nproc_per_node=2 bench_kimi_multinpu.py --mode prefill \
+    --random-weights --layers 4 --seq 80 --iters 2 --pypto
 
   # REAL — load the checkpoint, full model, 4 NPUs, measure prefill:
   MODEL_PATH=/data/models/Kimi-Linear-48B-A3B-Instruct \
-    torchrun --nproc_per_node=4 bench_kimi_multinpu.py --pypto --seq 300 --iters 5 --report-file out.json
+    torchrun --nproc_per_node=4 bench_kimi_multinpu.py --mode prefill --pypto --seq 300 --iters 5 --report-file out.json
+
+  # decode mode:
+  MODEL_PATH=/data/models/Kimi-Linear-48B-A3B-Instruct \
+    torchrun --nproc_per_node=4 bench_kimi_multinpu.py --mode decode --pypto --report-file decode.json
 
 Compare PyPTO vs baseline by running once with --pypto and once without.
 
@@ -44,6 +53,7 @@ import glob
 import json
 import logging
 import os
+import statistics
 import sys
 import time
 from dataclasses import dataclass
@@ -66,6 +76,7 @@ while _P != "/" and not os.path.isdir(os.path.join(_P, "src", "pypto_gym")):
     _P = os.path.dirname(_P)
 _REPO_ROOT = _P
 sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src", "pypto_gym", "transformers", "kimi_linear_48b_a3b"))
 
 # committed config.json (used for --random-weights so no weights dir is needed)
 _REPO_CONFIG = os.path.join(
@@ -87,6 +98,33 @@ class Ctx:
     model: object = None
     seq: int = 0
     stage_run: object = None  # captured NPU-graph stage closure (--graph), else None
+    batch: int = 1
+    prompt_len: int = 128
+    tokens: int = 64
+    warmup: int = 2
+
+
+@dataclass
+class RunModeParams:
+    """Parameters for prefill/decode mode execution."""
+    args: object
+    rank: int
+    world: int
+    local: int
+    dev: str
+    cfg: object
+    stage: list
+
+
+@dataclass
+class StaticRouteParams:
+    """Parameters for static route installation."""
+    cfg: object
+    model: object
+    lo: int
+    hi: int
+    dev: str
+    requested_active: int
 
 
 def _stage_bounds(num_layers, world):
@@ -368,6 +406,33 @@ def _install_static_route(ctx, args, tag="static"):
     return width, patched, n_active
 
 
+def _install_static_route_decode(params):
+    """Fixed host-precomputed MoE route on this rank's MoE blocks (decode mode)."""
+    cfg, model, lo, hi, dev, requested_active = (
+        params.cfg, params.model, params.lo, params.hi, params.dev, params.requested_active)
+    batch = 1
+    top_k = cfg.num_experts_per_token
+    reachable = batch * top_k
+    width = min(requested_active or reachable, reachable, cfg.num_experts)
+    if requested_active and requested_active > reachable:
+        log(f"[route] --active {requested_active} clamped to {width}: "
+            f"decode step with batch={batch}, top_k={top_k} has only {reachable} slots")
+
+    tok_src, inv, offs = precompute_static_routing(width, top_k, cfg.num_experts,
+                                                    batch, dev)
+    gate_fwd = make_controlled_gate(top_k, width)
+    infer_fwd = make_static_moe_infer(tok_src, inv, offs, top_k)
+    n = 0
+    for i in range(lo, hi):
+        moe = getattr(model.model.layers[i], "block_sparse_moe", None)
+        if moe is None:
+            continue
+        moe.gate.forward = gate_fwd.__get__(moe.gate)
+        moe.moe_infer = infer_fwd.__get__(moe)
+        n += 1
+    return width
+
+
 def _make_graph_stage_run(ctx, args):
     """Install static routing, build the comm-free stage closure, warm it up (3x),
     then NPU-graph-capture it. Returns stage_run(hidden) -> hidden replaying the
@@ -510,11 +575,14 @@ def _profile_compute_us(ctx, input_ids, t, prof_dir):
 
 def _parse_args():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["prefill", "decode"], default="prefill",
+                    help="benchmark mode: prefill (prompt processing) or decode (token generation)")
     ap.add_argument("--seq", type=int, default=128, help="prefill sequence length (use >64 to hit the chunk kernel)")
     ap.add_argument("--iters", type=int, default=5)
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--layers", type=int, default=None, help="limit total decoder layers (smoke)")
-    ap.add_argument("--pypto", action="store_true", help="enable PyPTO fused KDA chunk kernel")
+    ap.add_argument("--pypto", action="store_true",
+                    help="enable PyPTO fused KDA kernels (prefill chunk + decode fused)")
     ap.add_argument("--graph", action="store_true",
                     help="NPU-graph-capture the per-die comm-free compute stage (static-route "
                          "MoE + use_cache=False) and replay it (eager KDA only; requires --route, --seq>64)")
@@ -639,6 +707,35 @@ def _emit_report(ctx, args, result):
         log(f"report -> {args.report_file}")
 
 
+def _emit_decode_report(ctx, args, results, cells):
+    payload = json.dumps({"rank": ctx.rank, "results": results})
+    gathered = [None] * ctx.world
+    dist.all_gather_object(gathered, payload)
+
+    if ctx.rank == 0:
+        rows = [json.loads(g) for g in gathered]
+
+        def pipeline_ms(cell):
+            vals = [r["results"][cell].get("median_ms") for r in rows
+                    if "median_ms" in r["results"].get(cell, {})]
+            return max(vals) if len(vals) == ctx.world else None
+
+        agg = {c: pipeline_ms(c) for c, _, _ in cells}
+
+        summary = {
+            "mode": "decode",
+            "config": {"world": ctx.world, "layers": ctx.cfg.num_hidden_layers,
+                       "route": args.route,
+                       "weights": "random" if args.random_weights else MODEL_PATH},
+            "pipeline_ms_per_token": agg,
+            "per_rank": rows,
+        }
+        if args.report_file:
+            with open(args.report_file, "w") as f:
+                json.dump(summary, f, indent=2, default=str)
+            log(f"report -> {args.report_file}")
+
+
 def _run_count_experts(ctx, args, rank, world, dev):
     """Measure distinct active experts/layer via one real-routing forward; log on rank 0."""
     cfg = ctx.cfg
@@ -664,27 +761,129 @@ def _run_count_experts(ctx, args, rank, world, dev):
             f"min={min(allc)} max={max(allc)} mean={mean:.1f} -> use --active {round(mean)}")
 
 
-def main():
-    args = _parse_args()
+# ---------------------------------------------------------------------------
+# DECODE MODE FUNCTIONS
+# ---------------------------------------------------------------------------
 
-    rank = int(os.environ["RANK"])
-    world = int(os.environ["WORLD_SIZE"])
-    local = int(os.environ.get("LOCAL_RANK", rank))
-    global _RANK
-    _RANK = rank
-    # bind PyPTO to THIS rank's NPU — must precede the kernels import in _wire_pypto
-    os.environ["TILE_FWK_DEVICE_ID"] = str(local)
+@torch.no_grad()
+def _prefill_stage_decode(ctx, input_ids):
+    """Run this rank's prefill and return (last_hidden, dyn_cache) - decode mode."""
+    from pypto_gym.transformers.kimi_linear_48b_a3b.modeling_kimi import KimiDynamicCache
+    cfg, model = ctx.cfg, ctx.model
+    lo, hi = ctx.stage[ctx.rank]
+    t = ctx.prompt_len
+    dev = ctx.dev
 
-    import torch_npu  # noqa: F401  registers the NPU backend
-    torch.npu.set_device(local)
-    dev = f"npu:{local}"
-    dist.init_process_group("hccl", rank=rank, world_size=world)
+    if ctx.rank == 0:
+        hidden = model.model.embed_tokens(input_ids).contiguous()
+    else:
+        hidden = torch.empty(ctx.batch, t, cfg.hidden_size,
+                             dtype=torch.bfloat16, device=dev)
+        dist.recv(hidden, src=ctx.rank - 1)
 
-    if args.pypto:
-        _wire_pypto(local)
+    cache = KimiDynamicCache(config=cfg)
+    cache_position = torch.arange(t, device=dev)
+    neg = torch.finfo(torch.bfloat16).min
+    q_pos = cache_position.view(t, 1)
+    k_pos = cache_position.view(1, t)
+    causal = torch.zeros(1, 1, t, t, dtype=torch.bfloat16, device=dev)
+    causal = causal.masked_fill((k_pos > q_pos).view(1, 1, t, t), neg)
 
-    cfg = _build_config(args)
-    stage = _stage_bounds(cfg.num_hidden_layers, world)
+    for i in range(lo, hi):
+        layer = model.model.layers[i]
+        mask = None if getattr(layer, "is_linear_attn", False) else causal
+        hidden = layer(hidden, attention_mask=mask,
+                       position_ids=cache_position.unsqueeze(0),
+                       past_key_values=cache, use_cache=True,
+                       cache_position=cache_position)
+        if isinstance(hidden, tuple):
+            hidden = hidden[0]
+
+    if ctx.rank < ctx.world - 1:
+        dist.send(hidden.to(torch.bfloat16).contiguous(), dst=ctx.rank + 1)
+    return hidden[:, -1:].contiguous(), cache
+
+
+def _build_decode_stage(ctx, dyn_cache, use_fused, capture):
+    """Seed the static cache from prefill, build the stage closure, capture."""
+    import kda_decode_graph as dg
+    from pypto_gym.ops.pypto_tensor.kimi_linear_48b_a3b.kda import (
+        kda_fused_decode_impl as kda_impl)
+
+    cfg, model = ctx.cfg, ctx.model
+    lo, hi = ctx.stage[ctx.rank]
+    dev, batch = ctx.dev, ctx.batch
+    layer_ids = list(range(lo, hi))
+    layers = {i: model.model.layers[i] for i in layer_ids}
+    max_len = ctx.prompt_len + ctx.tokens + ctx.warmup + 8
+
+    if capture:
+        _install_static_route_decode(StaticRouteParams(
+            cfg, model, lo, hi, dev, requested_active=None))
+
+    cache = dg.StaticDecodeCache(cfg, layers, batch, max_len, torch.bfloat16,
+                                 dev, kda_impl)
+    dg.seed_from_prefill(cache, dyn_cache, kda_impl.seed_fused_buffers)
+
+    lb = float(getattr(cfg, "gate_lower_bound", -5.0))
+    prepared = (dg.prepare_decode_weights(model, layer_ids, kda_impl, gate_lower_bound=lb)
+                if use_fused else {})
+    stage = dg.make_decode_stage(dg.DecodeStageParams(
+        model, layer_ids, cache, prepared, kda_impl, torch.bfloat16, use_fused))
+
+    is_last = ctx.rank == ctx.world - 1
+
+    def step(hidden):
+        h = stage(hidden)
+        return model.model.norm(h) if is_last else h
+
+    if not capture:
+        return step, cache
+    run = dg.make_decode_stage_run(dg.DecodeStageRunParams(
+        step, cache, batch, cfg.hidden_size, dev, torch.bfloat16, ctx.warmup))
+    return run, cache
+
+
+@torch.no_grad()
+def _decode_once(ctx, step_fn, hidden):
+    """One pipelined decode step. HCCL stays outside the captured region."""
+    cfg = ctx.cfg
+    if ctx.rank > 0:
+        buf = torch.empty(ctx.batch, 1, cfg.hidden_size,
+                          dtype=torch.bfloat16, device=ctx.dev)
+        dist.recv(buf, src=ctx.rank - 1)
+        hidden = buf
+    out = step_fn(hidden)
+    if ctx.rank < ctx.world - 1:
+        dist.send(out.to(torch.bfloat16).contiguous(), dst=ctx.rank + 1)
+    return out
+
+
+@torch.no_grad()
+def _time_decode(ctx, step_fn, hidden):
+    for _ in range(ctx.warmup):
+        _decode_once(ctx, step_fn, hidden)
+    torch.npu.synchronize()
+    dist.barrier()
+
+    times = []
+    for _ in range(ctx.tokens):
+        torch.npu.synchronize()
+        dist.barrier()
+        t0 = time.perf_counter()
+        _decode_once(ctx, step_fn, hidden)
+        torch.npu.synchronize()
+        times.append((time.perf_counter() - t0) * 1e3)
+    return {"median_ms": statistics.median(times),
+            "mean_ms": statistics.mean(times),
+            "stdev_ms": statistics.pstdev(times),
+            "best_ms": min(times)}
+
+
+def _run_prefill_mode(params):
+    """Run prefill benchmark (original bench_kimi_multinpu.py behavior)."""
+    args, rank, world, local, dev, cfg, stage = (
+        params.args, params.rank, params.world, params.local, params.dev, params.cfg, params.stage)
     ctx = Ctx(cfg=cfg, stage=stage, rank=rank, world=world, dev=dev, seq=args.seq)
     if rank == 0:
         mode = "pypto" if args.pypto else "baseline"
@@ -721,6 +920,89 @@ def main():
 
     dist.barrier()
     dist.destroy_process_group()
+
+
+def _run_decode_mode(params):
+    """Run decode benchmark (fused kernel testing)."""
+    args, rank, world, local, dev, cfg, stage = (
+        params.args, params.rank, params.world, params.local, params.dev, params.cfg, params.stage)
+    if args.pypto:
+        import pypto_gym.ops.pypto_tensor.kimi_linear_48b_a3b as pto
+        sys.modules["kimi_linear_48b_a3b_pto_kernels"] = pto
+        pto.USE_PTO_KDA = True
+
+    lo, hi = stage[rank]
+
+    ctx = Ctx(cfg=cfg, stage=stage, rank=rank, world=world, dev=dev, seq=128)
+    ctx.model = _build_model(ctx, args)
+
+    if rank == 0:
+        n_kda = sum(1 for i in range(cfg.num_hidden_layers) if cfg.is_kda_layer(i))
+        mode = "pypto" if args.pypto else "baseline"
+        log(f"MODE=DECODE layers={cfg.num_hidden_layers} (KDA {n_kda}) world={world} "
+            f"stages={stage} mode={mode}")
+    ctx.warmup = args.warmup
+
+    torch.manual_seed(1234)
+    input_ids = (torch.randint(0, cfg.vocab_size, (1, 128),
+                               device=dev) if rank == 0 else None)
+
+    if args.graph:
+        if args.pypto:
+            cells = [("graph_fused", True, True)]
+        else:
+            cells = [("graph_baseline", False, True)]
+    else:
+        if args.pypto:
+            cells = [("eager_fused", True, False)]
+        else:
+            cells = [("eager_baseline", False, False)]
+
+    results = {}
+    for name, use_fused, capture in cells:
+        dist.barrier()
+        hidden, dyn = _prefill_stage_decode(ctx, input_ids)
+        try:
+            step, _ = _build_decode_stage(ctx, dyn, use_fused, capture)
+            results[name] = _time_decode(ctx, step, hidden)
+            log(f"{name:16s} median {results[name]['median_ms']:.3f} ms/token")
+        except Exception as e:
+            log(f"{name:16s} FAILED: {type(e).__name__}: {e}")
+            results[name] = {"error": f"{type(e).__name__}: {e}"}
+        del dyn
+
+    _emit_decode_report(ctx, args, results, cells)
+
+    dist.barrier()
+    dist.destroy_process_group()
+
+
+def main():
+    args = _parse_args()
+
+    rank = int(os.environ["RANK"])
+    world = int(os.environ["WORLD_SIZE"])
+    local = int(os.environ.get("LOCAL_RANK", rank))
+    global _RANK
+    _RANK = rank
+    # bind PyPTO to THIS rank's NPU — must precede the kernels import in _wire_pypto
+    os.environ["TILE_FWK_DEVICE_ID"] = str(local)
+
+    import torch_npu  # noqa: F401  registers the NPU backend
+    torch.npu.set_device(local)
+    dev = f"npu:{local}"
+    dist.init_process_group("hccl", rank=rank, world_size=world)
+
+    if args.pypto and args.mode == "prefill":
+        _wire_pypto(local)
+
+    cfg = _build_config(args)
+    stage = _stage_bounds(cfg.num_hidden_layers, world)
+
+    if args.mode == "prefill":
+        _run_prefill_mode(RunModeParams(args, rank, world, local, dev, cfg, stage))
+    elif args.mode == "decode":
+        _run_decode_mode(RunModeParams(args, rank, world, local, dev, cfg, stage))
 
 
 if __name__ == "__main__":

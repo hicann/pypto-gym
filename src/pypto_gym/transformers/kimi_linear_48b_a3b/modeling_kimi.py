@@ -4,10 +4,13 @@
 # NOTICE: This file was modified by Huawei Technologies Co., Ltd. in 2026 to
 # leverage PyPTO for operator fusion on Ascend NPU (fla->pure-torch fallback via
 # kimi_fla_compat, and the USE_PTO_KDA dispatch hook).
+from __future__ import annotations
+
 import math
 import sys
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 import torch
 import torch.nn.functional as F
@@ -170,6 +173,9 @@ class KimiDynamicCache:
         self.key_cache = [None for _ in range(config.num_hidden_layers)]
         self.value_cache = [None for _ in range(config.num_hidden_layers)]
 
+        # PyPTO fused decode buffers (persistent state, zero allocations in hot path)
+        self.kda_decode_buffers = [None for _ in range(config.num_hidden_layers)]
+
     def __len__(self):
         return len(self.layer_types)
 
@@ -245,6 +251,21 @@ class KimiDynamicCache:
         past_seen_tokens = self.get_seq_length(layer_idx)
         kv_length = query_length + past_seen_tokens
         return kv_length, kv_offset
+
+
+def kda_buffers_for(self, params):
+    """Persistent fused-decode buffers for one KDA layer.
+    Allocated and seeded from the prefill state on first use, then reused.
+    """
+    buf = self.kda_decode_buffers[params.layer_idx]
+    if buf is None:
+        from pypto_gym.ops.pypto_tensor.kimi_linear_48b_a3b.kda.kda_fused_decode_impl import (
+            make_fused_buffers, seed_fused_buffers)
+        buf = make_fused_buffers(params)
+        seed_fused_buffers(buf, self.conv_states[params.layer_idx],
+                            self.recurrent_states[params.layer_idx])
+        self.kda_decode_buffers[params.layer_idx] = buf
+    return buf
 
 
 class KimiRMSNorm(nn.Module):
@@ -413,31 +434,21 @@ class KimiMLAAttention(nn.Module):
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         batch_size, seq_length = hidden_states.shape[:-1]
-        query_shape = (batch_size, seq_length, -1, self.q_head_dim)
-        key_shape = (batch_size, seq_length, -1,
-                     self.qk_nope_head_dim + self.v_head_dim)
+        query_states, key_states, value_states = self._project_qkv(hidden_states)
 
-        q_states = self.q_proj(hidden_states)
-        q_states = q_states.view(query_shape).transpose(1, 2)
-        q_pass, q_rot = torch.split(
-            q_states, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        # Graph-capturable path: check for StaticDecodeCache
+        from pypto_gym.transformers.kimi_linear_48b_a3b.kda_decode_graph import StaticDecodeCache
+        use_static_cache = isinstance(past_key_values, StaticDecodeCache) and seq_length == 1
 
-        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        k_pass, k_rot = torch.split(
-            compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-
-        k_pass = self.kv_b_proj(self.kv_a_layernorm(
-            k_pass)).view(key_shape).transpose(1, 2)
-        k_pass, value_states = torch.split(
-            k_pass, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-
-        k_rot = k_rot.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
-        k_rot = k_rot.expand(*k_pass.shape[:-1], -1)
-
-        query_states = torch.cat((q_pass, q_rot), dim=-1)
-        key_states = torch.cat((k_pass, k_rot), dim=-1)
-
-        if past_key_values is not None:
+        if use_static_cache:
+            # Graph-ready path: write to preallocated cache (no torch.cat)
+            key_states, value_states = past_key_values.write_kv(
+                self.layer_idx, key_states, value_states)
+            # Build causal mask for static cache
+            # Override attention_mask for static cache
+            attention_mask = self._build_static_causal_mask(hidden_states, past_key_values)
+        elif past_key_values is not None:
+            # Original eager path (uses torch.cat)
             key_states, value_states = past_key_values.update(
                 key_states, value_states, self.layer_idx)
 
@@ -468,6 +479,44 @@ class KimiMLAAttention(nn.Module):
             batch_size, seq_length, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output
+
+    def _project_qkv(self, hidden_states):
+        batch_size, seq_length = hidden_states.shape[:-1]
+        query_shape = (batch_size, seq_length, -1, self.q_head_dim)
+        key_shape = (batch_size, seq_length, -1,
+                     self.qk_nope_head_dim + self.v_head_dim)
+
+        q_states = self.q_proj(hidden_states)
+        q_states = q_states.view(query_shape).transpose(1, 2)
+        q_pass, q_rot = torch.split(
+            q_states, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        k_pass, k_rot = torch.split(
+            compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
+        k_pass = self.kv_b_proj(self.kv_a_layernorm(
+            k_pass)).view(key_shape).transpose(1, 2)
+        k_pass, value_states = torch.split(
+            k_pass, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        k_rot = k_rot.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
+        k_rot = k_rot.expand(*k_pass.shape[:-1], -1)
+
+        query_states = torch.cat((q_pass, q_rot), dim=-1)
+        key_states = torch.cat((k_pass, k_rot), dim=-1)
+        return query_states, key_states, value_states
+
+    def _build_static_causal_mask(self, hidden_states, past_key_values):
+        neg_inf = torch.finfo(hidden_states.dtype).min
+        max_len = past_key_values.max_len
+        pos = past_key_values.pos.long()
+        valid = torch.arange(max_len, device=hidden_states.device)
+        return torch.where(
+            valid.view(1, 1, 1, -1) <= pos,
+            torch.zeros((), dtype=hidden_states.dtype, device=hidden_states.device),
+            torch.full((), neg_inf, dtype=hidden_states.dtype, device=hidden_states.device)
+        )
 
 
 def _dispatch_kda(primary_fn, fallback_fn, kda_kwargs):
@@ -504,6 +553,16 @@ def _run_kda(mode, kda_kwargs):
     if pto is not None and getattr(pto, "USE_PTO_KDA", False):
         primary_fn = pto.kda_chunk_wrapper
     return _dispatch_kda(primary_fn, chunk_kda, kda_kwargs)
+
+
+class Conv1dResult(NamedTuple):
+    q: torch.Tensor
+    k: torch.Tensor
+    v: torch.Tensor
+    conv_state_q: torch.Tensor | None
+    conv_state_k: torch.Tensor | None
+    conv_state_v: torch.Tensor | None
+    recurrent_state: torch.Tensor | None
 
 
 class KimiDeltaAttention(nn.Module):
@@ -589,20 +648,50 @@ class KimiDeltaAttention(nn.Module):
                     "attention_mask must be a 0-1 matrix of shape [batch_size, seq_len] "
                     "(0 = padding). 3D masks are not supported here.",
                 )
-        use_cache = cache_params is not None
         batch_size, q_len, _ = hidden_states.shape
-        mode = 'fused_recurrent' if q_len <= 64 else self.mode
-        if self.training:
-            if mode != 'chunk':
-                raise ValueError("Only chunk mode is supported in training.")
 
-        cu_seqlens = kwargs.get('cu_seqlens')
-        indices = None
-        if attention_mask is not None:
-            indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
-            hidden_states = index_first_axis(
-                rearrange(hidden_states, "b s ... -> (b s) ..."), indices).unsqueeze(0)
+        # Fused decode path: one PyPTO op for the whole per-token KDA step.
+        # Entered only after prefill has populated the cache,
+        # so the buffers can be seeded from it.
+        result = self._try_fused_decode(hidden_states, cache_params, batch_size)
+        if result is not None:
+            return result
 
+        return self._standard_kda_forward(
+            hidden_states, attention_mask, cache_params, batch_size, q_len, **kwargs)
+
+    def _should_use_fused_decode(self, q_len, cache_params):
+        """Check if fused decode path should be used."""
+        if q_len != 1 or cache_params is None or self.training:
+            return False
+        pto = sys.modules.get("kimi_linear_48b_a3b_pto_kernels")
+        if pto is None or not getattr(pto, "USE_PTO_KDA", False):
+            return False
+        if cache_params.conv_states[self.layer_idx] is None:
+            return False
+        if cache_params.recurrent_states[self.layer_idx] is None:
+            return False
+        return True
+
+    def _try_fused_decode(self, hidden_states, cache_params, batch_size):
+        if not self._should_use_fused_decode(hidden_states.shape[1], cache_params):
+            return None
+        from pypto_gym.ops.pypto_tensor.kimi_linear_48b_a3b.kda.kda_fused_decode_impl import (
+            KdaBufferParams, kda_fused_decode, prepare_kda_fused_weights)
+        weights = prepare_kda_fused_weights(
+            self, lower_bound=getattr(self.config, "gate_lower_bound", -5.0))
+        buffers = cache_params.kda_buffers_for(KdaBufferParams(
+            self.layer_idx, batch_size, self.num_heads, self.head_dim,
+            self.hidden_size, hidden_states.dtype, hidden_states.device))
+        try:
+            return kda_fused_decode(hidden_states, weights, buffers)
+        except NotImplementedError:
+            # off-bound device or out-of-scope shape -> torch path below.
+            # Drop the half-initialised buffers so the next call re-seeds.
+            cache_params.kda_decode_buffers[self.layer_idx] = None
+            return None
+
+    def _conv1d_qkv(self, hidden_states, cache_params, use_cache, cu_seqlens):
         conv_state_q, conv_state_k, conv_state_v = None, None, None
         recurrent_state = None
         if cache_params is not None:
@@ -628,13 +717,32 @@ class KimiDeltaAttention(nn.Module):
             output_final_state=use_cache,
             cu_seqlens=cu_seqlens,
         )
+        return Conv1dResult(q, k, v, conv_state_q, conv_state_k, conv_state_v, recurrent_state)
+
+    def _standard_kda_forward(self, hidden_states, attention_mask, cache_params,
+                              batch_size, q_len, **kwargs):
+        use_cache = cache_params is not None
+        # Standard path (prefill or torch decode)
+        mode = 'fused_recurrent' if q_len <= 64 else self.mode
+        if self.training:
+            if mode != 'chunk':
+                raise ValueError("Only chunk mode is supported in training.")
+
+        cu_seqlens = kwargs.get('cu_seqlens')
+        indices = None
+        if attention_mask is not None:
+            indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
+            hidden_states = index_first_axis(
+                rearrange(hidden_states, "b s ... -> (b s) ..."), indices).unsqueeze(0)
+
+        r = self._conv1d_qkv(hidden_states, cache_params, use_cache, cu_seqlens)
         g = self.f_b_proj(self.f_a_proj(hidden_states))
         g = fused_kda_gate(g, self.A_log, self.head_dim, g_bias=self.dt_bias)
         beta = self.b_proj(hidden_states).float().sigmoid()
 
         q, k = map(lambda x: rearrange(
-            x, '... (h d) -> ... h d', d=self.head_k_dim), (q, k))
-        v = rearrange(v, '... (h d) -> ... h d', d=self.head_dim)
+            x, '... (h d) -> ... h d', d=self.head_k_dim), (r.q, r.k))
+        v = rearrange(r.v, '... (h d) -> ... h d', d=self.head_dim)
 
         # PyPTO injection (via sys.modules): swap in the fused KDA kernel when
         # enabled and shape constraints are met; otherwise fall back to the
@@ -648,13 +756,13 @@ class KimiDeltaAttention(nn.Module):
         # this is not silent. Note (future work): for full 20/20 PyPTO coverage run
         # one process per NPU (pipeline / tensor parallel); see kda/README.md.
         kda_kwargs = dict(
-            q=q, k=k, v=v, g=g, beta=beta, initial_state=recurrent_state,
+            q=q, k=k, v=v, g=g, beta=beta, initial_state=r.recurrent_state,
             output_final_state=True, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
         o, recurrent_state = _run_kda(mode, kda_kwargs)
         if cache_params is not None:
             cache_params.recurrent_states[self.layer_idx] = recurrent_state
             cache_params.conv_states[self.layer_idx] = (
-                conv_state_q, conv_state_k, conv_state_v)
+                r.conv_state_q, r.conv_state_k, r.conv_state_v)
 
         g = self.g_b_proj(self.g_a_proj(hidden_states))
         g = rearrange(g, '... (h d) -> ... h d', d=self.head_dim)
@@ -1086,7 +1194,7 @@ class KimiLinearForCausalLM(KimiPreTrainedModel, GenerationMixin):
         self.post_init()
 
     @can_return_tuple
-    @auto_docstring
+    #@auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor = None,

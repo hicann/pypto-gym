@@ -1,14 +1,15 @@
-# KDA — Kimi Delta Attention (chunk/prefill) PyPTO kernel
+# KDA — Kimi Delta Attention (chunk + fused_decode) PyPTO kernels
 
 Fused PyPTO Ascend-NPU implementation of the **Kimi Delta Attention (KDA)** linear-attention
 core used by `KimiDeltaAttention` in Kimi-Linear-48B-A3B-Instruct. KDA is a refined gated
 delta rule with a **per-channel (fine-grained) log-gate** `g ∈ [-5, 0]`.
 
-One kernel (PyPTO covers the prefill/chunk path only; decode runs the upstream torch recurrent):
+Two kernels:
 
 | File | Op | Path | Default |
 |------|----|------|---------|
 | `kda_chunk_impl.py` | `kda_chunk_wrapper` | prefill (`mode == 'chunk'`) | dispatched when `USE_PTO_KDA` |
+| `kda_fused_decode_impl.py` | `kda_fused_decode_step` | decode | called from `kda_decode_graph.py` |
 
 The wrapper mirrors the upstream `fla.ops.kda.chunk_kda` signature and is `@allow_in_graph`
 (torch.compile / aclgraph capture compatible).
@@ -153,3 +154,74 @@ npugraph capture above already works for this fused kernel.)
 | 整网集成 | ✅ 已接入 — `USE_PTO_KDA` 开关 + `sys.modules` 注入 + `NotImplementedError` → 上游 torch fallback；端到端可跑通，PyPTO 运行间结果可复现（逐字节一致）。与 torch 参考 **非** bit-exact（kernel 与 torch 参考**均为 fp32 计算 + bf16 I/O**，差异仅来自实现/算子顺序的舍入，单算子 ~6.1e-5；greedy argmax 在 token 级可能分叉） |
 | ACLGraph | ✅ 算子级已验证 — chunk kernel `torch.library` 注册（`pypto::kda_chunk_kimi`，Meta+NPU），且 wrapper 去除了多余的 `torch_npu.npu.synchronize()`（kernel 走 stream 顺序，去同步后算子测试逐位一致、整网 bench KDA 覆盖不变且更快）。`test_kda_aclgraph.py` 验证：注册 op == wrapper 逐位一致、Meta 推导正确、`torch.compile(fullgraph)` 无 graph break、**真实 torchair aclgraph（reduce-overhead）capture+replay 逐位一致（diff=0，无需 GE converter）**。整网 aclgraph（其余算子也需 capture-clean）为后续工作 |
 | 性能调优 | ✅ chunk nested-64 已调优（subchunk=16，prefill 1.05–1.26x）。详见上级 `modeling/transformers/kimi_linear_48b_a3b/README.md` 性能对比 |
+
+---
+
+## KDA Fused Decode Kernel
+
+**Full KimiDeltaAttention layer fusion for decode:**
+
+Combines 11 operations into one kernel:
+
+**Input projections (3 matmuls):**
+1. q_proj: [B, H] @ [H, P]^T → [B, P]
+2. k_proj: [B, H] @ [H, P]^T → [B, P]
+3. v_proj: [B, H] @ [H, P]^T → [B, P]
+
+**KDA core (7 ops):**
+4. Causal depthwise conv1d (K=4) + SiLU
+5. q/k L2 normalization  
+6. Decay gate: `lower_bound * sigmoid(exp(A_log) * (g_raw + dt_bias))`
+7. Update weight: `beta = sigmoid(b_raw)`
+8. Delta-rule state update with per-channel gate
+9. RMSNorm (head_dim)
+10. Sigmoid output gate
+
+**Output projection (1 matmul):**
+11. o_proj: [B, P] @ [P, H]^T → [B, H]
+
+### Performance
+
+**Full model decode benchmark (27 layers, 20 KDA, 4 NPUs):**
+
+|           | Baseline (torch) | Fused (PyPTO)     | operator gain |
+|-----------|------------------|-------------------|---------------|
+| **eager** | 88.58 ms/token   | **73.30 ms/token**| **−17%**      |
+| **graph** | 29.80 ms/token   | **16.38 ms/token**| **−45%**      |
+
+
+### Accuracy
+
+**Verified against torch golden (`_naive_recurrent_kda`):**
+
+- Fused decode: max abs error ~6e-3
+- Graph capture: verified (state restored correctly)
+
+### Graph Capture
+
+- `kda_fused_decode_step`: allocates nothing, raises nothing
+- All intermediates in caller-owned `KdaFusedBuffers`
+- In-place state update
+- Compatible with `torch.npu.graph`
+
+### Usage
+
+```bash
+MODEL_PATH=/data/models/Kimi-Linear-48B-A3B-Instruct \
+  torchrun --nproc_per_node=4 bench_kimi_multinpu.py --mode decode \
+    --pypto --graph --route uniform --report-file perf.json 
+```
+
+### Test
+
+```bash
+export ASCEND_RT_VISIBLE_DEVICES=6
+python3 -m pytest tests/ops/kimi_linear_48b_a3b/test_kda_fused_decode.py
+```
+
+### Key Features
+
+✅ **45% latency reduction** for decode path  
+✅ **All 20 KDA layers accelerated** (pipeline parallel)  
+✅ **Numerical accuracy maintained** (~6e-3 max error)  
+✅ **Graph capture compatible**
