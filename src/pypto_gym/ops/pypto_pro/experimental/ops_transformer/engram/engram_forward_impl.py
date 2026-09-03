@@ -400,17 +400,17 @@ def engram_forward_kernel(
     # ── TilingKey: HMode selects tile_m_vec / h_chunk_size at compile time ──
     # HMode 0,3 use 8 rows; HMode 1,2 use 4 rows (matches backward).
     # n_h_chunks = 1 in ALL cases (full-H tile).
-    if pl.constexpr(HMode == 0):  # H = 1280
+    if HMode == 0:  # H = 1280
         tile_m_vec = TILE_M_VEC_1280  # 8
         h_chunk_size = H_CHUNK_1280  # 1280
         inv_h = INV_H_1280
         inv_sqrt_h = INV_SQRT_H_1280
-    elif pl.constexpr(HMode == 1):  # H = 2560
+    elif HMode == 1:  # H = 2560
         tile_m_vec = TILE_M_VEC_2560  # 4
         h_chunk_size = H_CHUNK_2560  # 2560
         inv_h = INV_H_2560
         inv_sqrt_h = INV_SQRT_H_2560
-    elif pl.constexpr(HMode == 2):  # H = 2048
+    elif HMode == 2:  # H = 2048
         tile_m_vec = TILE_M_VEC_2048  # 4
         h_chunk_size = H_CHUNK_2048  # 2048
         inv_h = INV_H_2048
@@ -423,7 +423,7 @@ def engram_forward_kernel(
     n_h_chunks = hidden_dim // h_chunk_size  # always 1 (full-H tile)
 
     # ── TilingKey: CMode selects tile_m at compile time ──
-    if pl.constexpr(CMode == 0):
+    if CMode == 0:
         tile_m = 128
     else:
         tile_m = 64

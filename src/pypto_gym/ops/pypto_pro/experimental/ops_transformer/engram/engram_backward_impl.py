@@ -65,7 +65,7 @@ V_TILE_BS2 = 32            # BSMode 2: BS >= 2048
 V_TILE_BS3 = 16            # BSMode 3: small BS
 LANES_FP32 = 64          # VF FP32 register width
 
-# Per-HMode vector-tile split sizes. A four-way `if pl.constexpr(HMode==k)` binds
+# Per-HMode vector-tile split sizes. A four-way `if (HMode==k)` binds
 # TILE_BS_VEC / TILE_BS_VEC_A / H_CHUNK to one triple so TileType.shape stays
 # compile-time constant.  B-phase rows are fixed 4 (Pass-A: 8 for H=1280, else 4).
 TILE_BS_VEC_1280 = 4           # HMode 0 H=1280: vec sub-row tile (B-key/B-query)
@@ -96,7 +96,7 @@ GAMMA_SLOT_SPLIT = 1
 #      would overlap at fewer-column keys -> RMS-bw reads garbage).
 #  HMode-dependent addrs use a parser-foldable 4-way select
 #      (HMode == 0)*A_1280 + (HMode == 1)*A_2560 + (HMode == 2)*A_2048 + (HMode == 3)*A_1536
-#  (HMode is a ConstInt) — the parser cannot see names bound in `if pl.constexpr` blocks,
+#  (HMode is a ConstInt) — the parser cannot see names bound in `if ` blocks,
 #  so the address arithmetic is written inline at each make_tile_group call.
 
 # ---- HMode = 0 (H = 1280, B-rows = 8): (A) group ----
@@ -582,17 +582,17 @@ def engram_backward_kernel(
     de = embeddings.shape[1]
 
     # Bind vector tile sizes to compile-time constants via TilingKey. HMode/BSMode
-    # are ConstInt -> `if pl.constexpr` parses only the taken branch, so these names
+    # are ConstInt -> `if` parses only the taken branch, so these names
     # are usable in TileType.shape and pl.range steps.  Rows fixed 4 (B-phase).
-    if pl.constexpr(HMode == 0):  # H = 1280
+    if HMode == 0:  # H = 1280
         tile_bs_vec = TILE_BS_VEC_1280  # 8
         tile_bs_vec_a = TILE_BS_VEC_A_1280  # 16
         h_chunk_size = H_CHUNK_1280  # 1280
-    elif pl.constexpr(HMode == 1):  # H = 2560
+    elif HMode == 1:  # H = 2560
         tile_bs_vec = TILE_BS_VEC_2560  # 4
         tile_bs_vec_a = TILE_BS_VEC_A_2560  # 8
         h_chunk_size = H_CHUNK_2560  # 2560
-    elif pl.constexpr(HMode == 2):  # H = 2048
+    elif HMode == 2:  # H = 2048
         tile_bs_vec = TILE_BS_VEC_2048  # 4
         tile_bs_vec_a = TILE_BS_VEC_A_2048  # 8
         h_chunk_size = H_CHUNK_2048  # 2048
@@ -601,11 +601,11 @@ def engram_backward_kernel(
         tile_bs_vec_a = TILE_BS_VEC_A_1536  # 16
         h_chunk_size = H_CHUNK_1536  # 1536
 
-    if pl.constexpr(BSMode == 0):  # BS >= 8192
+    if BSMode == 0:  # BS >= 8192
         v_tile = V_TILE_BS0  # 128
-    elif pl.constexpr(BSMode == 1):  # BS >= 4096
+    elif BSMode == 1:  # BS >= 4096
         v_tile = V_TILE_BS1  # 64
-    elif pl.constexpr(BSMode == 2):  # BS >= 2048
+    elif BSMode == 2:  # BS >= 2048
         v_tile = V_TILE_BS2  # 32
     else:  # BSMode == 3: small BS
         v_tile = V_TILE_BS3  # 16
