@@ -345,8 +345,11 @@ currently pays an extra UB pass for.
 ### 15. Structural ceilings worth stating in one place
 
 - Codegen supports **at most a two-dimensional Tile** (`TileType.md`).
-- `mutex_ids` must lie in **`[0, 31]`** and be mutually distinct — **32 buffer
-  slots** is the hard ceiling.
+- `mutex_ids` must lie in **`[0, 31]`**. Under `auto_mutex`, independent live
+  buffers or rotation slots need distinct IDs. Reusing an identity across live
+  groups must be justified by the synchronization design and a retained passing
+  target result. Therefore **32 simultaneously distinct `auto_mutex` identities**
+  is the hard ceiling; it is not a physical-buffer or tile-count limit.
 
 Neither is hard to work within; both are currently discoverable only by hitting
 them.
@@ -1925,8 +1928,9 @@ redesigns around a limit that does not exist. All are one-line changes.
     forward-compatibility risk taken unknowingly.
 
 18. **State the structural ceilings in one place** (I-15): a Tile is at most
-    two-dimensional, and `mutex_ids` must lie in `[0, 31]` — 32 buffer slots is a
-    hard limit. Both are currently discoverable only by hitting them.
+    two-dimensional, and `mutex_ids` must lie in `[0, 31]` — 32 simultaneously
+    distinct `auto_mutex` identities is the hard limit, not a physical-buffer or
+    tile-count limit. Both are currently discoverable only by hitting them.
 
 19. **Cross-reference `@pl.jit(datatype=…)` from the multi-dtype discussion**
     (I-16). One source, several specializations, one launch — authors who miss it

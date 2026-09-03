@@ -113,18 +113,20 @@ unreachable, in which case it is a specification problem and no amount of
 engineering will close it — say so once, with the check that demonstrates it,
 rather than repeatedly attempting it.
 
-## 8. Measure the bound before pushing on the target
+## 8. Measure feasibility evidence before pushing on the target
 
-Before spending another round on "make it faster", establish what the achievable
-number *is*. Two techniques, in increasing order of cost:
+Before spending another round on "make it faster", collect evidence about the
+achievable number. Two techniques, in increasing order of cost:
 
-**A sibling bound.** Time every case at a *simpler operator's measured time* on the
-same shapes and tiling, and score that. It is an empirical zero-work reference that
-already carries every real overhead a synthetic probe would have to guess at.
-Measured: pricing one activation's entire compute body at zero — every case at a
-6-operation sibling's measured time — gave a ceiling of 86.4 against a target of
-80 and a current 71.0. Cheap, and more trustworthy than a probe you have to build,
-wherever a sibling shares the tiling.
+**A sibling reference.** Time every case at a *simpler operator's measured time*
+on the same target, toolchain, shapes and tiling, and score that. It is a cheap
+empirical comparison that carries the sibling's real overhead. It is not a bound:
+the target operator may differ in launch structure, fusion, memory behaviour,
+synchronisation or required primitives. In one run, substituting a 6-operation
+sibling's measured times produced a scenario score of 86.4 against a target of
+80 and a current 71.0. Use that number to estimate the scale of possible gains
+and prioritise ideas, not as a reachable ceiling or proof that the target is
+impossible.
 
 **A floor probe.** A kernel that moves exactly the operator's contractual bytes and
 nothing else, with every data-movement lesson applied. It bounds from below.
@@ -142,8 +144,9 @@ Two rules about what these bounds mean:
   sufficient. **Pair a floor probe with the cost of the operations the operator
   cannot avoid**, or it will promise headroom that no expressible dataflow reaches.
 
-State which kind of bound you have. A sibling bound bounds *any* implementation; a
-floor probe bounds data movement only; a bound assembled from a list bounds nothing.
+State which kind of evidence you have. A sibling measurement is an empirical
+reference, not a bound on every implementation; a floor probe bounds data
+movement only; a bound assembled from a list bounds nothing.
 
 ## 9. A restatement drifts toward the conclusion you already hold
 

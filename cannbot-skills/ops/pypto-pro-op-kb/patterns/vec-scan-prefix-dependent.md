@@ -4,11 +4,14 @@
 axis — cumulative min/max/sum/product, running argmin, `torch.cummin` and
 friends. Topology `scan` in [topology-map.json](../topology-map.json).
 
-**Validation:** validated skeleton for both dataflows below. Both were built,
-compiled and recorded bit-exact on Ascend950PR_9579; see the
-[retained validation record](../examples/validation-records.md). The
-performance numbers quoted are measured on that SKU and are *not* a target for
-another one without renormalising by vector-core count.
+**Validation:** the two vector-unit dataflows below are conceptual in this KB.
+The [retained historical record](../examples/validation-records.md) reports that
+both were built, compiled and bit-exact on Ascend950PR_9579, but does not retain
+the exact scan operation, dtype, shape or case matrix. The original generator
+was not retained either, so the record is not a runnable or scope-matching
+starting point. Reimplement and validate the selected dataflow on the target;
+the quoted performance numbers are target-specific and must be remeasured on
+another SKU. Vector-core count alone is insufficient.
 
 **Which parts apply to which scan.** This page was written from a *running-extremum* scan
 (cumulative min/max, and the index that comes with it), so three of its sections are
@@ -21,11 +24,12 @@ specific to that family and do not apply to a plain associative scan:
 | the index output and its tie-break | only **arg-variants** that emit a position |
 | "the contraction rewrite does not transfer" | every combine except `+` on the values (`cumsum`) |
 
-**If your combine is `+` over the values themselves (`cumsum`), read the contraction
-rewrite first** — it is a different and simpler
-construction, and this KB has a validated sample for it at
-[`examples/kernel-index.md`](../examples/kernel-index.md) (`cumsum_matmul_impl.py`), which
-rewrites the scan as `x @ U` on the cube unit, `U` upper-triangular ones.
+**If the combine is `+` over the values (`cumsum`),** use the
+different and simpler [cumsum contraction sample](../examples/samples/vector_kernels/cumsum_matmul_impl.py),
+which rewrites the scan as `x @ U` on the cube unit, with `U` upper-triangular
+ones. The retained result covers only FP32 `[8192, 128]`; the sample handles
+complete 128-row blocks and has no row-tail path. Adapt and revalidate any other
+shape or dtype. It does not validate the two vector-unit dataflows below.
 
 **The criterion is linearity over (+, x), not invertibility** -- an earlier version of this
 paragraph said invertibility and listed `cumprod` and `logcumsumexp` alongside `cumsum`,
@@ -342,7 +346,7 @@ jobs" from "slow per element", which look identical in a score column.
 
 ## Where this was built
 
-The [retained validation record](../examples/validation-records.md) covers both dataflows
-and four dtypes; the original generator was not retained as a reusable KB artifact.
+The [retained historical record](../examples/validation-records.md) reports both
+dataflows but does not retain their exact validation matrix or generator.
 `probe/probe_{bw,ops,scan,stride}.py` (every measurement above),
 `DESIGN.md` §5 for the honest performance postmortem.

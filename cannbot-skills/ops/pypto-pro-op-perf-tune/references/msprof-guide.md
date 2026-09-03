@@ -293,11 +293,12 @@ ops/{算子名}/docs/perf/
 
 - **kernel 总耗时不是 DMA floor。** 要估计纯搬运下界，单独运行只含合同 load+store 的 sweep；
   完整 kernel 时间同时包含计算、依赖和固定开销，不能反过来当搬运下界。
-- **按 ratio-to-floor 排诊断优先级。** SOL 或某一 pipe ratio 无法区分并行度不足与单元素效率低；
-  应把每个 case 与其同 shape/tiling 的可复核 sibling bound 或 floor probe 比较。
-- **说清 bound 的种类。** sibling bound 用更简单算子的同条件实测界定任意实现；floor probe 只
-  界定必要数据搬运，不给语义必需计算或跨 lane 原语定价；从“当前想到的杠杆”求和只描述该
-  清单，不能证明算法天花板。
+- **按与参照或下界的差距排诊断优先级。** SOL 或某一 pipe ratio 无法区分并行度不足与单元素效率低；
+  应把每个 case 与同一目标、工具链、shape/tiling 下可复核的 sibling reference 或 floor probe 比较。
+- **说清证据类型。** sibling reference 是更简单算子的同条件实测，只用于估算量级和排序；不同算子的
+  启动、融合、访存、同步和必需指令可能不同，不能据此界定任意实现或证明目标可达或不可达。floor probe 只
+  界定必要数据搬运，不给语义必需计算或跨 lane 原语定价；“当前想到的杠杆”求和也只描述该清单。
+  认定硬边界还须证明哪些工作不可省略以及比较方向。
 - **单个 kernel 不能代表框架 roofline。** 某 kernel 的带宽、拐点或利用率只描述当时的访问
   形态；推断平台或框架限制必须有独立 probe、平台资料和其它实现的可复核证据。
 - **串行依赖、历史估算和旧二进制都需排除。** 依赖链要用生成物/trace/受控 A-B 证明；结构

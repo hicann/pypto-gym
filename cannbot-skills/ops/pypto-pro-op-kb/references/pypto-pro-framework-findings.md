@@ -237,13 +237,15 @@ Do not learn style from it.
 
 ## Expressiveness
 
-### 8. No per-token dynamic quantization primitive
+### 8. `pl.quant` converts per row but does not derive the dynamic scale
 
-`quant` / `dequant` are declared and registered but have **no usage in any
-shipped example test**, so their scale conventions are undemonstrated. Every
-covered path is fixpipe: a single scalar for a whole tile, or a per-channel
-scaling tile. Per-token must be composed from abs, row-reduce, clamp, broadcast
-and convert. See [../patterns/vec-per-token-dynamic-quant.md](../patterns/vec-per-token-dynamic-quant.md).
+The fixed-revision official API document defines symmetric `pl.quant` for an FP32
+source and INT8 destination, using an FP32 per-row factor shaped `[rows, 1]` at
+that revision. It does not derive the dynamic scale. The same revision's support
+table lists Ascend 950PR/950DT and marks A2/A3 unsupported. See the
+[official API document](https://gitcode.com/cann/pypto/blob/0ed5148c029e7e22d8a8134d210d183daa0f22ad/docs/zh/pypto_pro/api/SIMD-API/operation/quantization/quant.md)
+and [the design pattern](../patterns/vec-per-token-dynamic-quant.md); confirm the
+installed API and target.
 
 ### 9. Reduction workspaces are full source size
 
@@ -286,8 +288,8 @@ documentation gap or a missing feature — worth confirming upstream.
 The dual-view idiom is required by the DSL: a `[R, 1]` reduction carrier must be
 declared `layout=pl.DN` for the `dim=0` broadcasts, and elementwise ops on a
 ColMajor `[R, 1]` tile fail a static assertion, so the same address must also be
-exposed as a row-major `[1, R]` tile. Two `make_tile_group` calls at one address
-therefore carry two different `mutex_ids`.
+exposed as a row-major `[1, R]` tile. In the measured failing design, two
+`make_tile_group` calls at one address used different `mutex_ids`.
 
 `auto_mutex` tracks dependencies per `mutex_id`. It does not know the two groups
 alias, so any dependency that crosses the views is invisible to it.
@@ -671,11 +673,14 @@ it on the host and raise rather than silently dropping blocks.
 
 **Where to spend the effort.** Do not assume the deepest contraction is the
 culprit, and do not judge from a whole-tensor relative statistic -- both misled
-this operator, twice. Decompose the **absolute** error by substituting each
-stage with its exact value; the contributions add in quadrature, which makes the
-decomposition checkable (3.51^2 + 2.43^2 = 4.27^2 here) and immediately shows
-which stage is already reference-quality. On this operator the *second*
-projection needed nothing at all.
+this operator, twice. Decompose the signed error with the device/exact
+substitutions in the numerical-error playbook, then summarise with the statistic
+the gate uses. The retained values happened to satisfy
+`3.51^2 + 2.43^2 ≈ 4.27^2`, but the raw arrays and statistic name were not
+retained, so that relation is historical context rather than a validity proof.
+Quadrature is only a diagnostic for RMS errors that are approximately zero-mean
+and uncorrelated with negligible interaction. In that run, the comparison pointed
+to the first projection and supported leaving the second unchanged.
 
 ---
 
@@ -1006,9 +1011,11 @@ the entry says so. The upstream-facing subset, severity-ordered, is
   argument that it does so.
 
 - **Codegen supports at most a two-dimensional Tile** (`TileType.md`), and
-  **`mutex_ids` must lie in `[0, 31]` and be mutually distinct** — 32 buffer
-  slots is the hard ceiling. Entry 10 above says to give each rotating tile
-  family its own slot counter but never states the bound; this is it.
+  **`mutex_ids` must lie in `[0, 31]`; `auto_mutex` needs distinct identities for
+  different live buffers or rotation slots** — 32 simultaneously distinct
+  identities is the hard ceiling, not a physical-buffer or tile-count limit.
+  Entry 10 above says to give each rotating tile family its own slot counter but
+  never states the bound; this is it.
 
 - **The reduction and exponential dtype tables are narrower than they look.**
   `vf.exp` covers **FP16 and FP32 only**. `vf.exp_sub`'s dtype table has two

@@ -48,7 +48,12 @@ hardware. Two overlapped beats with two live roles need **four** slots, and a
 two-slot group is not a smaller version of that design; modulo wrapping maps the
 next beat straight onto the previous beat's still-live roles.
 
-### Handoff credits are a different quantity, and raising them makes it worse
+### Handoff credits and rotation slots: transferred guidance
+
+> **未在 PyPTO-Pro 上验证。** 本节关于 credit 与 slot 的区分、提高 credit 的
+> 风险，以及错误 credit 可能不报错的结论均迁移自另一套 DSL，本仓从未复现过。
+> **本地验证方法**：用两槽 group 搭一个两拍、两角色的轮转，跑一个会回绕的 shape；
+> 在保留复现结果前，把这些结论当作待验证假设，不要当作 PyPTO-Pro 的既定行为。
 
 A producer→consumer handoff also has a depth: how many producer beats may be in
 flight before the consumer frees a slot. It is easy to reach for that number when
@@ -61,17 +66,12 @@ a rotation misbehaves, and it is the wrong lever.
   now it corrupts.
 - Raise credits **only** when the handoff also rotates through additional slots.
 
-### Why this class of bug is silent
+### Why this class of bug may be silent
 
-The reason it survives review: the prologue pre-publishes exactly as many free
-tokens as the epilogue drains. **Both sides stay balanced whatever the number
-is**, so a wrong credit count produces no unbalanced-event warning, no assertion,
-and no error. Nothing reports it; the values are simply stale.
-
-> **未在 PyPTO-Pro 上验证。** 上面这条"错误的 credit 数不会引发任何诊断"是从另一套
-> DSL 对其自身 prologue/epilogue 的观察迁移过来的，本仓从未复现过。
-> **本地验证方法**：用两槽 group 搭一个两拍、两角色的轮转，跑一个会回绕的 shape，
-> 看是否有任何一层报出来。在复现之前，把它当作待验证假设，不要当作 PyPTO-Pro 的既定行为。
+In the source DSL, the prologue pre-publishes exactly as many free tokens as the
+epilogue drains. **Both sides stay balanced whatever the number is**, so a wrong
+credit count produces no unbalanced-event warning, assertion, or error; the
+values are simply stale.
 
 Two further non-proofs, from the same source:
 
@@ -86,9 +86,12 @@ Two further non-proofs, from the same source:
 
 ### Budgeting it here
 
-Slots are a *scarce* resource in this DSL, and the two budgets are reached by
-different designs. `mutex_ids` must lie in `[0, 31]` and be mutually distinct, so
-**32 is the hard ceiling on simultaneous rotating slots**
+`auto_mutex` identities are a *scarce* resource in this DSL, and the identity
+and byte budgets are reached by different designs. `mutex_ids` must lie in
+`[0, 31]`; under `auto_mutex`, different live buffers or rotation slots need
+distinct identifiers. Therefore
+**32 is the hard ceiling on simultaneously distinct `auto_mutex` identities,
+not on the number of physical buffers or tiles**
 ([../constraints/tiling.md](../constraints/tiling.md)) — a `B × K` product is
 spent against that ceiling as well as against the byte budget. And slot
 *identity* is what `auto_mutex` orders against: a slot counter stepping by the
@@ -104,8 +107,11 @@ core; see
 
 ## Validation status
 
-The rotating input, output, scratch, and reduction groups in the retained
-[softmax implementation](../examples/samples/softmax/softmax_impl.py) are a
-**validated skeleton** for that row-tiled topology. Loop-carried state for
-other algorithms remains conceptual until an indexed implementation or an
-official target-matching example validates it.
+The retained [softmax implementation](../examples/samples/softmax/softmax_impl.py)
+shows the group construction, but its recorded 64-row, four-core case gives each
+core one loop iteration and does not exercise slot rotation or wrap. The
+rotation skeleton remains conceptual until the KB retains a runnable
+implementation and a scope-matching passing target result that checks every
+active core's output and makes at least one active core wrap by executing more
+iterations than the relevant group depth. That result does not validate the
+separate transferred credit guidance above.

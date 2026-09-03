@@ -12,7 +12,7 @@
 # STATUS: VALIDATED a5 (2026-07-22). cumsum via MATMUL (pl has NO scan/cumsum op).
 # VALIDATED-CODE-SHA256: 4d261f089e1115ec879fb473cea7e320d54ba5b1e5aaba189cac29b6163bcf9d
 # The input is multiplied by an upper-triangular matrix of ones to produce the cumulative sum.
-#   maxdiff 1.53e-5 vs torch.cumsum, N=128. Cube kernel. L0A/L0B SINGLE-buffered ([128,128]fp32=
+#   maxdiff 1.53e-5 vs torch.cumsum, M=8192, N=128. Cube kernel. L0A/L0B SINGLE-buffered ([128,128]fp32=
 #   64KB = the cap; double-buffering faults 507015). O(N^2) -- the honest workaround for no scan.
 # cumsum via matmul-triangular (no scan op in pl). L0A/L0B single-buffered ([128,128]fp32=64KB=cap).
 import functools

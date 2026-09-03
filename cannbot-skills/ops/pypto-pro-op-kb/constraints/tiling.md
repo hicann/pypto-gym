@@ -27,11 +27,15 @@ target detection surfaces them — they are found by hitting them.
 
 - **A Tile may have at most two dimensions** (`TileType.md`). A rank-3 view has
   to be flattened into `[outer, inner]` on the host side of the tiling maths.
-- **`mutex_ids` must lie in `[0, 31]` and be mutually distinct.** That makes
-  **32** the hard ceiling on simultaneous rotating buffer slots. Budget it
-  alongside the byte budget in step 3 above: a design that fits in memory can
-  still be unbuildable because its slot count does not fit, and the two limits
-  are reached by different designs.
+- **`mutex_ids` must lie in `[0, 31]`.** When relying on `auto_mutex`, assign
+  distinct identifiers to independent live buffers or rotation slots. Reusing
+  an identity across live groups must be justified by the synchronization
+  design and a retained passing target result. Thus **32** is the hard ceiling
+  on simultaneously distinct `auto_mutex` identities, not on the number of
+  physical buffers or tiles. Budget it alongside the byte budget in step 3
+  above: a design that fits in memory can
+  still require restructuring or explicit synchronization because its identity
+  count does not fit, and the two limits are reached by different designs.
 
 Measured on Ascend950PR / CANN 9.2.0; see
 [../references/pypto-pro-framework-findings.md](../references/pypto-pro-framework-findings.md)

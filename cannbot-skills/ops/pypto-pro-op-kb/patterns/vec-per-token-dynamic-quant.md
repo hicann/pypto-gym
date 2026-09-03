@@ -8,20 +8,21 @@ scale is itself an output because a downstream operator needs it to dequantize.
 
 Fused norm-then-quant and activation-then-quant operators have this topology.
 
-## There is no primitive for this
+## `pl.quant` covers the final conversion, not scale derivation
 
-`pl.quant` / `pl.dequant` exist in the API surface but have **no usage anywhere
-in the shipped example tests**, so their scale-tile conventions are
-undemonstrated. Every quantization path with test coverage is a fixpipe
-attachment on the drain out of the accumulator, and neither form is per-token:
+The fixed-revision official API document defines symmetric `pl.quant` for an FP32
+source and INT8 destination, using an FP32 per-row multiplication factor shaped
+`[rows, 1]` at that revision:
+`out = clamp(round(src * quant_scale), -128, 127)`. See the
+[official API document at that revision](https://gitcode.com/cann/pypto/blob/0ed5148c029e7e22d8a8134d210d183daa0f22ad/docs/zh/pypto_pro/api/SIMD-API/operation/quantization/quant.md).
+The same revision's support table lists Ascend 950PR and 950DT and marks A2 and
+A3 unsupported. Confirm the installed API and target before selecting this path.
 
-| available | granularity |
-|---|---|
-| `store(..., pre_quant_scalar=...)` / `move(..., pre_quant_scalar=...)` | **one scalar for the whole tile** (a "dynamic" variant of this still means one scalar, supplied at launch rather than at compile time) |
-| `store(..., fp_tile=<Scaling-space tile>)` | **per output channel** — varies along the channel axis, not the row axis |
-
-Per-token therefore has to be composed by hand. Treat that as the expected
-shape of the work, not as a sign of a wrong approach.
+`pl.quant` performs only the final multiply, round, clamp and integer conversion.
+It does not derive `amax`, protect an all-zero row, or emit the scale required by
+the operator contract. Those steps remain explicit kernel work. The official
+example also loads a prepared scale from global memory; it does not validate
+producing the scale and consuming it with `pl.quant` in the same kernel.
 
 ## Dataflow
 
@@ -29,14 +30,27 @@ Per row block, with the row's values in a resident wide-precision buffer `V`:
 
 1. `abs` then reduce each row to `amax` — a row reduction, so
    [vec-row-reduce-broadcast.md](vec-row-reduce-broadcast.md) applies;
-2. clamp: `amax = max(amax, floor)` where `floor` is a small positive constant;
-3. `scale = amax / 127` and **store it as an output**;
-4. broadcast `scale` back along the row and divide;
-5. round to nearest, clamp to the integer range, convert to int8.
+2. clamp: `clamped_amax = max(amax, floor)` where `floor` is a small positive constant;
+3. compute `scale_out = clamped_amax / 127` and **store it as the downstream
+   dequantization scale**;
+4. derive `quant_scale` in the FP32 order required by the operator reference;
+   for `round(V / scale_out)`, it is `1 / scale_out` (algebraically
+   `127 / clamped_amax`, but the two FP32 evaluation orders need not be bit-identical);
+5. when the installed `pl.quant` contract supports the FP32-to-INT8 path, pass
+   `quant_scale` using its documented per-row shape;
+   otherwise use an installed-API-supported explicit broadcast, divide, round,
+   clamp and conversion path, or report the design as unsupported.
 
-**Step order is load-bearing.** Clamping after the division instead of before
-rescales the all-zero row by the divisor. Write the clamp exactly where the
-reference puts it and check the reference rather than reasoning about it.
+Do not pass `scale_out` directly to `pl.quant`: the API quantizes as
+`round(src * quant_scale)`, this page's reference quantizes as
+`round(src / scale_out)`, and the downstream operator dequantizes as
+`q * scale_out`. If the operator contract uses the opposite scale convention,
+name and derive the two quantities from that contract instead of reusing an
+ambiguous `scale` variable.
+
+**Step order is load-bearing.** Clamp before deriving either scale: an all-zero
+row otherwise produces `scale_out = 0` and division by zero, and clamping later
+cannot repair it. Follow the operator reference's order and verify it directly.
 
 ## Register accumulation, not tile reductions
 
@@ -79,8 +93,8 @@ scale is non-finite propagates to every element of that row's output.
 
 ## Validation
 
-`conceptual only`. The composition above follows from the available primitives
-and from measured precision results, but no retained runnable implementation
-demonstrates it yet. Confirm each call's signature against the installed API
-documentation before use, and add a link here once a validated implementation
-exists.
+`conceptual only`. The interface facts above cite a fixed-revision official source,
+but no reviewable artifact in this KB demonstrates deriving the scale and
+consuming it with `pl.quant` in the same kernel. Confirm the installed API and
+target, then retain a runnable implementation and a scope-matching passing
+result before promoting this pattern.

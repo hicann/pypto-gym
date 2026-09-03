@@ -39,7 +39,8 @@ similarly named quantization API without checking its documented equation.
 ## Validation status
 
 The retained [int8-output matmul](../examples/samples/matmul_quant_int8/matmul_quant_int8_impl.py)
-is a **validated skeleton** only for its fixed FP32-input, FP32-accumulator,
-scalar-scale, int8-output contract. Other operand formats, scale layouts, and
-block-scaled matmul forms require an official target-matching reference and
-fresh validation.
+is a runnable **study** whose Ascend 950-gated test fixes a 64-by-64 shape,
+FP32 inputs and accumulator, scalar scale `16.0`, and INT8 output. The test
+expects exact integer equality (`rtol=0`, `atol=0`), but no passing result is
+retained. Other shapes, scales, operand formats, scale layouts and block-scaled
+forms need their own target-matching reference and result.

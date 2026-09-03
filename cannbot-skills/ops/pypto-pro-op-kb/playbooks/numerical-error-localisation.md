@@ -54,37 +54,53 @@ buy.
 
 ---
 
-## 2. Decompose by exact substitution, and check the quadrature sum
+## 2. Decompose by exact substitution; use quadrature only when its assumptions hold
 
-The technique. For a chain `A → B → C`, re-run it with each stage replaced by
-its exact (fp64) value, and difference against the fp64 truth:
-
-```
-inherited = |exact_C( device_B )      − truth|   # everything upstream of C
-own       = |exact_C( exact_B )       − truth|   # C's own contribution
-total     = |device_C( device_B )     − truth|
-```
-
-Independent rounding sources add in quadrature, so
+For a chain `A → B → C`, re-run it with each stage replaced by its exact
+(fp64) value. Keep signed elementwise errors until choosing the statistic that
+matches the gate:
 
 ```
-total² ≈ inherited² + own²
+truth         = exact_C(exact_B)
+e_inherited   = exact_C(device_B) − truth
+e_own         = device_C(exact_B) − truth
+e_total       = device_C(device_B) − truth
+e_interaction = e_total − e_inherited − e_own
 ```
 
-**That identity is the check that the decomposition is trustworthy.** There it
-held to three digits — `3.51² + 2.43² = 4.27²` — which is what made it safe to
-act on after two earlier misdiagnoses.
+These expressions require `device_C` to accept `exact_B` without an extra
+boundary conversion. If it cannot, analyse that conversion as another stage;
+do not silently cast `exact_B` and attribute the cast error to C.
+
+Summarise each error with the same gate-relevant statistic. Percentiles, maxima
+and individual absolute errors do **not** add in quadrature. If the diagnostic
+uses RMS, `e_inherited` and `e_own` are approximately zero-mean and uncorrelated,
+and `e_interaction` is negligible, then the following is a useful consistency
+check:
+
+```
+rms(e_total)² ≈ rms(e_inherited)² + rms(e_own)²
+```
+
+This is an approximation under stated assumptions, not an identity or proof
+that the decomposition is correct. A large interaction term or correlated
+errors invalidates the quadrature check; inspect the signed terms and add
+targeted substitutions where needed instead of forcing the numbers to fit.
 
 Then compare each component against the same decomposition of the CPU reference.
-The measured table:
+The retained run reported the following summary values, but did not preserve the
+raw error arrays or the statistic name. Their numerical relation
+`3.51² + 2.43² ≈ 4.27²` is therefore historical context, not reusable proof;
+new investigations must recompute the corrected decomposition above.
 
-| contribution | kernel | CPU reference | verdict |
+| contribution | kernel | CPU reference | historical interpretation |
 |---|---|---|---|
-| inherited from the first projection | 3.51e-6 | 1.24e-6 | **2.8× worse — the target** |
+| inherited from the first projection | 3.51e-6 | 1.24e-6 | **reported as 2.8× worse — the target** |
 | the second projection's own | 2.43e-6 | 2.44e-6 | already reference-quality |
 
-The second stage needed *nothing*. Without the decomposition it looked like the
-obvious suspect, and one cycle was spent rewriting it.
+In that retained run, the comparison supported leaving the second stage
+unchanged. Without the decomposition it looked like the obvious suspect, and
+one cycle was spent rewriting it.
 
 ---
 

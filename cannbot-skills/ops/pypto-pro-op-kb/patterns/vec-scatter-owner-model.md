@@ -6,15 +6,16 @@ construction, embedding-gradient accumulation), as opposed to where an input is
 read from (`gather`, `index_select`, embedding lookup — the same decomposition
 applies, but the write-race section does not).
 
-Validation: **validated skeleton for the inner-tile layout**, fp32 update mode,
-measured bit-exact against torch on Ascend950PR_9579. Conceptual for the
-owner-batch and rank-1 layouts.
+**Validation:** conceptual only in this KB. A historical record reports the fp32
+inner-tile layout as bit-exact against torch on Ascend950PR_9579, but no runnable
+implementation was retained. Reimplement and validate it on the target; the
+owner-batch and rank-1 layouts have no retained board result either.
 
 **Evidence:** [retained validation record](../examples/validation-records.md), which keeps
 the fp32 inner-tile result and its explicit exclusions separate from the conceptual layouts.
 
-**Read the scope literally.** The record validates **the owner model and the inner-tile
-addressing**, in fp32. It does **not** validate narrow-dtype accumulation: `float16` `add`
+**Read the scope literally.** The historical record covers **the owner model and
+the inner-tile addressing**, in fp32. It does **not** cover narrow-dtype accumulation: `float16` `add`
 misses the gate on MARE while its MERE stays small, which is accumulation order, not
 addressing. Nor does a bit-exactness figure recorded against a **golden** transfer to the
 kernel — a golden settled offline before any kernel existed says nothing about the kernel
@@ -40,10 +41,11 @@ at once:
 
 * **no cross-core write race** — owners are the unit of parallel decomposition,
   so no atomics, no locks, no duplicate-write arbitration between cores;
-* **a determinate tie-break for duplicate indices** — an owner consumes update
-  positions `u = 0, 1, ..., U-1` in ascending order, which reproduces torch's
-  last-write-wins exactly (verified bit-exact across ranks 1-8, dims 0-7, five
-  reduce modes and five dtypes);
+* **a controllable order for duplicate indices** — an owner consumes update
+  positions `u = 0, 1, ..., U-1` in ascending order. If the operator contract or
+  golden requires last-write-wins, use the store-to-store barrier in §4 to
+  enforce that order. Reduction modes use an ordered combine; each mode and
+  dtype still needs its own validation;
 * **a rank-agnostic kernel** — rank appears only in the host-side product that
   computes `outer`/`K`/`inner`, so one kernel covers rank 1 through 8 and every
   legal `dim` without a shape guard.
@@ -91,25 +93,21 @@ explicit duplicate-resolution step; do not let the general argument paper over
 it. A random index draw makes duplicates rare, so a test set will usually not
 catch a mistake here.
 
-## 4. Reduce modes are a masked read-modify-write, not a `select`
+## 4. Match the barrier to duplicate writes or reduction reads
 
-`vf.gather` **does** permit duplicate indices, so the general form of one update
-step is
+In reduction modes, `vf.gather` **does** permit duplicate indices, so the
+general form of one update step is
 
     cur = vf.gather(y_tile, off, m)
     ... combine cur with the update ...
     vf.scatter(y_tile, new, off, m)
 
-**Every scatter needs a `vf.mem_bar()` after it.** Two `vf.scatter`
-instructions to the same UB address are *not* ordered relative to each other,
-so the ascending-`u` traversal that guarantees last-write-wins is only
-guaranteed on paper unless a barrier separates the writes. Measured on
-Ascend950PR_9579 with `K=4, U=16` so that every column carried duplicates:
-plain scatter left **3 of 256** elements holding the earlier write; the same
-kernel with `vf.mem_bar()` after each scatter was **0 of 256**. On realistic
-index draws the error rate is around 1 in 1000 — low enough to survive a casual
-check and still fail on inputs you never inspect, which is precisely why it
-belongs in a pattern page.
+Use the barrier mode that matches the next dependency. Before another scatter
+to the same UB address, use
+`vf.mem_bar(mode=pl.MemBarMode.VST_VST)` (store-to-store). Before the next
+iteration gathers or loads that address, use the default `VST_VLD`
+(store-to-load); a bare `vf.mem_bar()` covers only this second case. Confirm the
+installed API and test duplicate-heavy inputs on the target.
 
 For `amax` / `amin` the combine collapses into the mask itself, which is both
 faster and avoids `vf.select` entirely:
@@ -164,7 +162,7 @@ and keep control of the addressing.
 | device error 507035, no diagnostic | a scatter offset landed outside the tile. Clamp offsets with `vf.maxs`/`vf.mins` while bringing a kernel up: a probe that faults tells you nothing, a probe that returns a wrong number tells you where |
 | every element wrong, including a bare load→store echo | tiles built with `pl.make_tile` instead of `pl.make_tile_group`; `auto_mutex` synchronises tile *groups*, so raw tiles get no MTE↔V ordering at all |
 | ~40 % of elements wrong | the UB row stride was guessed. With `set_validshape` narrowing a tile, rows stay at the **declared** width, not the valid one |
-| a handful of elements wrong, always where an index repeats | no `vf.mem_bar()` between scatters to the same address (§4) |
+| a handful of elements wrong, always where an index repeats | the barrier does not match the next dependency: use `VST_VST` before a possibly overlapping scatter and `VST_VLD` before a following gather or load (§4) |
 | `ParserSyntaxError ... incompatible constructor arg` | a `pl.TileType` was built in a Python helper called from the kernel body. The body is parsed, not executed — construct tile types inline |
 | `OSError: could not get source code` | the kernel module was run through `exec`. `@pl.jit` resolves kernels by `inspect.getsource` and needs a real file |
 

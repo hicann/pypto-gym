@@ -483,11 +483,12 @@ def _citation_resolution_result(
 
 
 def check_pattern_validated_claims_cite_evidence() -> list[str]:
-    """A pattern row claiming `validated` must cite an artifact that RESOLVES.
+    """Check locally verifiable implementation citations for `validated` rows.
 
-    `pattern-index.md` defines the status: "validated skeleton: the page links to a
-    retained runnable implementation". Enforced only for `kernel-index.md` once, so a
-    pattern could claim validation and cite nothing -- and one did.
+    `pattern-index.md` requires a runnable implementation and a scope-matching passing
+    result. This check verifies implementation citations on disk or in fetched refs.
+    If a citation is absent on disk, names one or more refs and none is fetched, it
+    reports `SKIP`. Reviewers match the retained result to the claimed scope.
 
     This repo splits the knowledge base from the operator trees that validate it, so an
     artifact may legitimately live on another branch. That is resolved by **looking**:
@@ -498,8 +499,8 @@ def check_pattern_validated_claims_cite_evidence() -> list[str]:
     citation hid every dangling one behind it, and the keyword was searched body-wide so an
     unrelated sentence laundered a broken path.
 
-    Every citation must resolve, on disk or in a branch the page names. Each failure is
-    reported separately.
+    Every locally verifiable citation must resolve. Each failure is reported separately;
+    citations against only unfetched refs are inconclusive, not passing.
     """
     index = KB_ROOT / "patterns" / "pattern-index.md"
     if not index.is_file():
