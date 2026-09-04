@@ -444,7 +444,7 @@ def _mla_compute_q_path(inputs: _MlaComputeQPathInputs):
         q_a_proj = q_a_proj_fp32_dequant * inputs.w_qa_scale
     else:
         q_a_proj = torch.matmul(x_2d.to(torch.float32), inputs.w_dq.to(torch.float32))
-
+    q_a_proj = q_a_proj.to(torch.bfloat16)
     q_a_layernorm = rms_norm(q_a_proj, inputs.gamma_cq)
     q_a_layernorm_scale_dequant = None
     if inputs.is_quant_b:
