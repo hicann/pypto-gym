@@ -1,4 +1,4 @@
-﻿---
+---
 name: pypto-pro-precision-debug
 description: 基于 PyPTO Pro Kernel 的设备侧 dump 数据与编译产物定位算子精度问题。用于 @pl.jit 算子最终输出不一致、局部 Shape 或尾块错误、单核正确但多核错误、结果错位、误差随归约长度放大、结果偶发不稳定等场景；通过 pl.dump_data、pl.printf 对齐 GM Tensor、Vec Tile、Acc（L0C）Tile 与写回结果，结合 kernel.cpp 指令级审查和错误规律分析，确定第一个出错的中间结果并定位根因。
 ---
