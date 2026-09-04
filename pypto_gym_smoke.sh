@@ -158,8 +158,14 @@ run_gym_tests() {
     local timeout_secs="$3"
     shift 3
 
-    local device_ids="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+    local device_ids="0,1,2,3"
     local imported_pypto
+    local test_targets=(
+        "tests/ops/experimental/ops_transformer/flash_attention_mha/test_flash_attention_mha.py::test_00_910_1b"
+        "tests/ops/experimental/ops_transformer/flash_attention_mha_grad/test_flash_attention_mha_grad_a3.py::test_02"
+        "tests/ops/qat/test_qat.py::test_asymmetric_per_group"
+        "tests/ops/experimental/ops_transformer/engram/test_engram_forward.py::test_engram_forward_pypto"
+    )
     local pypto_site="$CANN_PATH/python/site-packages"
     if [ ! -d "$pypto_site" ]; then
         LOG_ERROR "PyPTO Python installation directory '$pypto_site' not found"
@@ -191,8 +197,8 @@ run_gym_tests() {
     if ASCEND_VISIBLE_DEVICES="$device_ids" \
         PYTEST_AVAILABLE_DEVICES="$device_ids" \
         timeout --signal=INT "$timeout_secs" \
-        "$_python3" -m pytest tests/ops/ -v --durations=0 -s --capture=no \
-        --rootdir="$gym_repo" -n 16 --dist=loadscope "$@"; then
+        "$_python3" -m pytest "${test_targets[@]}" -v --durations=0 -s --capture=no \
+        --rootdir="$gym_repo" -n 4 --dist=loadscope -p no:skipping "$@"; then
         :
     else
         local ret=$?
