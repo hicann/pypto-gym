@@ -37,7 +37,7 @@ python3 cannbot-skills/model/pypto-fused-op-integration/scripts/download_hf_mode
 
 ```bash
 bash cannbot-skills/model/pypto-fused-op-integration/scripts/restore_model_patch.sh \
-    {model_weight_dir} qwen3_1_7b
+    {model_weight_dir} qwen3
 ```
 
 ## 运行命令

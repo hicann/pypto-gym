@@ -1,0 +1,5 @@
+# Runtime dependencies for pypto-gym
+
+huggingface_hub
+transformers
+accelerate
