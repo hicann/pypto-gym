@@ -9,9 +9,15 @@
 #   https://github.com/fla-org/flash-linear-attention/
 
 import torch
-from einops import rearrange
 import numpy as np
 from typing import NamedTuple
+
+
+def _rearrange_btc(x: torch.Tensor, c: int) -> torch.Tensor:
+    b, t, h = x.shape[:3]
+    n = t // c
+    x = x.reshape(b, n, c, h, *x.shape[3:])
+    return x.permute(0, 3, 1, 2, *range(4, x.dim()))
 
 
 class KDAStages(NamedTuple):
@@ -92,11 +98,11 @@ def naive_chunk_kda(
 
     # Rearrange into chunks: [B, head, NT, BT, ...]
     q, k = [
-        rearrange(x, "b (n c) h ... -> b h n c ...", c=BT).to(torch.float)
+        _rearrange_btc(x, BT).to(torch.float)
         for x in [q, k]
     ]
     v, g, beta = [
-        rearrange(x, "b (n c) h ... -> b h n c ...", c=BT).to(torch.float)
+        _rearrange_btc(x, BT).to(torch.float)
         for x in [v, g, beta]
     ]
     # Expand q/k to value head dim for GVA: [B, H, ...] -> [B, HV, ...]
@@ -125,9 +131,9 @@ def naive_chunk_kda(
     w = A @ (g.exp() * k)
     u = A @ v
 
-    S = k.new_zeros(B, HV, K, V).to(q)
+    state = k.new_zeros(B, HV, K, V).to(q)
     if initial_state is not None:
-        S += initial_state
+        state += initial_state
     o = torch.zeros_like(v)
     mask = torch.triu(torch.ones(BT, BT, dtype=torch.bool, device=q.device), diagonal=1)
     for i in range(0, NT):
@@ -146,13 +152,13 @@ def naive_chunk_kda(
                 "... c d, ... d -> ... c", q_i * (g_i - g_j).exp(), k_j
             )
         Aqk = Aqk.masked_fill(mask, 0)
-        v_i = u_i - w_i @ S
-        o[:, :, i] = (q_i * g_i.exp()) @ S + Aqk @ v_i
-        S = S * rearrange(g_i[:, :, -1].exp(), "b h k -> b h k 1")
-        S += rearrange((g_i[:, :, -1:] - g_i).exp() * k_i, "b h c k -> b h k c") @ v_i
+        v_i = u_i - w_i @ state
+        o[:, :, i] = (q_i * g_i.exp()) @ state + Aqk @ v_i
+        state = state * g_i[:, :, -1].exp().unsqueeze(-1)
+        state += ((g_i[:, :, -1:] - g_i).exp() * k_i).transpose(-2, -1) @ v_i
     if not output_final_state:
-        S = None
-    return rearrange(o, "b h n c d -> b (n c) h d").to(dtype), S
+        state = None
+    return o.permute(0, 2, 3, 1, 4).reshape(B, T, HV, V).to(dtype), state
 
 
 def _seq_ranges(T: int, cu_seqlens=None) -> list[tuple[int, int]]:
