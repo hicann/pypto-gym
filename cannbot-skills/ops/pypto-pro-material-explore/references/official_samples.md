@@ -2,7 +2,7 @@
 
 > **用途**：本文件是整个 PyPTO-Pro 工作流的**统一官方样例索引来源**。
 > - **orchestrator** 资源缓存准备时，按本清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件。
-> - **material-explore** 生成 `PRO_MATERIAL_INDEX.md` §B 时，直接复制本清单内容。
+> - **material-explore** 生成 `PRO_MATERIAL_INDEX.md` §B 时，以本清单为唯一来源。
 > - **所有 skill / agent** 提到"官方指定算子样例""§B"时，最终都指向本文件。
 >
 > **维护规则**：增删样例时**只改本文件**，无需改动其他文件。路径用 `pro_ops/` 开头的相对路径（相对 `$PYPTO_DEVKIT_DIR`）。
@@ -12,7 +12,7 @@
 | # | 算子名称 | 缓存相对路径 | 类型 | 描述 |
 |---|---------|-------------|------|------|
 | 1 | add | `pro_ops/element_wise/test_add.py` | elementwise | |
-| 2 | matmul_8k_example | `pro_ops/matmul/test_matmul_8K_example.py` | matmul 入门 | |
+| 2 | matmul_8k_example | `pro_ops/matmul/test_matmul_8k_example.py` | matmul 入门 | |
 | 3 | matmul_perf_asw_4k | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset.py` | matmul 性能 | |
 | 4 | matmul_perf_asw_8k_k128 | `pro_ops/matmul/test_matmul_perf_asw_8k_k128_dn_move_offset.py` | matmul 性能 | |
 | 5 | matmul_perf_asw_4k_dynamic | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | matmul 性能（动态轴） | |

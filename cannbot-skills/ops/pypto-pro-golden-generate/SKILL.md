@@ -25,12 +25,17 @@ SPEC 中唯一的 JSON machine-contract 是 Stage 2 的机器事实源。至少�
 
 machine-contract 缺字段、类型错误或 P0 不完整时停止并退回修正 SPEC；不要从正文、动态范围或经验补造数学语义、参数、shape 或 P0。
 
+编排模式直接复用已通过的 Stage 1 产物，不重复检索 devkit。仅当生成 Golden 所需的明确
+数学事实缺失时，才按 [reference-normalization.md](references/reference-normalization.md) §1
+检索仓内 PyTorch/NumPy 参考；仍不足则返回 `stage1_material_gap`，列明缺口和已核对证据。
+
 Stage 2 必须交付并验证：
 
 | 文件 | 职责 |
 |---|---|
 | `<op-dir>/<op>_golden.py` | torch + torch_npu 的 NPU 数学参考、输入工厂和自验证 |
 | `<op-dir>/<op>_golden_cpu.py` | 纯 torch 的 CPU FP32 高精度参考和自验证 |
+| `<op-dir>/GOLDEN_VALIDATION.json` | 与 SPEC、两份 golden SHA-256 绑定的单次自验证回执 |
 
 `GOLDEN_PERF_REPORT.md` 仅在 `collect_golden_perf=true` 时交付。单独使用时，只有用户明确要求采集 NPU golden 性能才将该开关视为 `true`。开关缺失或为 `false` 时不得运行 profiling，也不得把报告列为门禁；SPEC 中存在性能 P0 或用户要求高性能实现本身不能开启该开关。
 
@@ -38,8 +43,7 @@ Stage 2 必须交付并验证：
 
 ### 1. 选择生成路径
 
-- 只有 SPEC：执行下方脚手架命令生成 NPU golden 骨架，再填充数学逻辑、受约束输入和算子属性检查 TODO。
-- 用户提供 PyTorch/NumPy 参考：先阅读 [references/reference-normalization.md](references/reference-normalization.md) 并保留原参考作为只读 oracle，再生成骨架。若参考源正是任一目标交付文件，先在临时目录生成候选；等价验证通过并取得覆盖确认后才替换目标。
+按 [references/reference-normalization.md](references/reference-normalization.md) §1 选择并规范化参考；没有可用参考时只按 SPEC 生成。
 
 使用 skill 目录中的固定模板和脚手架，不手工重建文件骨架：
 
@@ -52,7 +56,7 @@ python <skill-dir>/scripts/gen_golden_scaffold.py \
 
 脚手架通过 Intent Understand 的 `load_spec_contract()` 读取并验证该合同，将校验后的 `formula` 内容写入生成源码的 `_SPEC_FORMULA`，并按合同顺序生成全部 `p0_cases` 的签名、shape、参数和 case 名。合同无效或字段缺失时会非零退出；先修正 SPEC，再继续。
 
-任一目标交付文件已存在时不得静默覆盖：先让用户确认；未确认则保留原文件并停止，确认后才执行脚手架或其他覆盖写入。无人值守且无法取得确认时返回 `blocked`。
+参考源与交付目标同名时，按 [reference-normalization.md](references/reference-normalization.md) 的候选流程处理。其他已存在的交付文件须先取得用户覆盖确认再写入；未确认则保留原文件并返回 `blocked`。
 
 ### 2. 实现 NPU golden
 
@@ -113,35 +117,41 @@ P1 或可选分支缺少可执行的已确认值时，先退回 `pypto-pro-inten
 
 复杂公式没有独立 PyTorch API 或既有参考作为 oracle 时，在交付结果中标记 `semantic_review_required` 并说明缺少何种对照；该标记不替代自验证，也不使用星级置信度。
 
-必须直接执行脚本：
-
-```bash
-TILE_FWK_DEVICE_ID=<id> python <op-dir>/<op>_golden.py
-```
-
-未指定卡号时省略环境变量。不得以 `exec(open(...).read())` 或零散调用替代自验证。只有进程 exit code 为 0 且全部检查通过，NPU golden 才通过门禁。
+不得以 `exec(open(...).read())`、零散调用或额外 cross-check 命令替代自验证；需要的数值对比
+必须写入该文件的 `_validate()`，由第 6 步统一执行一次。
 
 ### 5. 生成并验证 CPU golden
 
-使用 [templates/golden_cpu_template.py.tmpl](templates/golden_cpu_template.py.tmpl)，从已验证的 NPU golden 复制相同数学逻辑并进行以下适配：
+使用 [templates/golden_cpu_template.py.tmpl](templates/golden_cpu_template.py.tmpl)，从已完成数学实现和自验证代码的 NPU golden 复制相同数学逻辑并进行以下适配：
 
 - 函数名为 `<op>_golden_cpu`，签名、参数语义和计算公式与 NPU golden 一致。
 - 只 import `torch`；移除 `torch_npu`、NPU device 选择和 `.to(npu)`。
 - FP16/BF16 浮点输入提升到 FP32 计算并返回 FP32，不在末尾降回输入 dtype。
 - 保留整数、布尔和索引参数的语义及 dtype。
 
-直接执行：
+CPU 自验证至少覆盖 FP32/低精度浮点输入可运行、输出为 FP32、shape 正确且无 NaN/Inf，
+并由下一步统一执行。
+
+### 6. 单次执行并生成回执
+
+两份文件完成后，只通过固定 runner 验证；mathematician 不直接执行任一 golden：
 
 ```bash
-python <op-dir>/<op>_golden_cpu.py
+TILE_FWK_DEVICE_ID=<id> python <skill-dir>/scripts/validate_golden_once.py --op-dir <op-dir> --spec <spec-path>
 ```
 
-CPU 自验证至少覆盖 FP32/低精度浮点输入可运行、输出为 FP32、shape 正确且无 NaN/Inf。exit code 非 0 时不得交付。
+未指定卡号时省略环境变量；`--spec` 缺省时读取 `<op-dir>/SPEC.md`。相同 SPEC 与文件哈希下，
+成功项只复用回执，不再次执行；失败项修正文件后自动重试，仅环境问题且文件未变时显式传
+`--retry-failed cpu|npu|all`。两份 golden 的 exit code 均为 0 且源码在执行期间未变，
+回执的 `--check` 才能通过。
 
-### 6. 按开关处理 profiling
+### 7. 按开关处理 profiling
 
 - `collect_golden_perf=false` 或缺失：跳过，继续完成 Stage 2。
 - `collect_golden_perf=true`：先保证 NPU golden 自验证通过，再阅读并执行 [references/profiling.md](references/profiling.md)。单独使用时沿用本 skill 的显式开关定义，并把 reference 命令中的 `custom/<op>/` 换成实际 `<op-dir>/`；采集流程和判定不变。多个 P0 必须逐 case 采集。
+- `profile-only=true`：仅在 `collect_golden_perf=true` 且
+  `python <skill-dir>/scripts/validate_golden_once.py --op-dir <op-dir> --spec <spec-path> --check` 通过时执行
+  profiling；不得重写或重新验证 golden。
 
 Profiling 是 Stage 2 对 NPU golden 的独立可选能力；采集逻辑只存在于 `scripts/profile_golden.py`，不得写入 golden 文件，也不绑定任何下游阶段的协议。
 
@@ -153,7 +163,7 @@ Profiling 是 Stage 2 对 NPU golden 的独立可选能力；采集逻辑只存�
 - NPU golden 仅使用 torch/torch_npu，CPU golden 仅使用 torch；
 - `_make_inputs()` 覆盖全部合同 P0，并满足所有输入约束；
 - `_validate()` 额外覆盖已冻结的性能/功能 P1、可选参数分支和必要的动态轴组合；
-- 两个文件均通过直接执行，exit code 为 0；
+- 单次验证回执与当前 SPEC、两份 golden 哈希一致，且 `--check` exit code 为 0；
 - 验证覆盖 shape、finite、适用的 API 对比、边界和数学属性；
 - 只有 `collect_golden_perf=true` 时才存在有效性能报告。
 

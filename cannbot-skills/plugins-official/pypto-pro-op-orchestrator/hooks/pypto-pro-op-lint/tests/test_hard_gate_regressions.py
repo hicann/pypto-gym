@@ -363,7 +363,7 @@ def test_rules_checker_drift_is_rejected(
     _write(tmp_path / "rules.json", json.dumps({"rules": rules}))
     monkeypatch.setattr(core, "SCRIPT_DIR", str(tmp_path))
     monkeypatch.delitem(core.CHECKERS, "PL01")
-    with pytest.raises(core.LintConfigurationError, match="规则缺少检查器"):
+    with pytest.raises(core.LintConfigurationError, match="Missing checkers for rules"):
         _load_rules()
 
 

@@ -3,7 +3,6 @@ name: pypto-pro-op-mathematician
 description: "PyPTO-Pro Stage 2 Golden 生成。产出 NPU 与 CPU golden；用户明确要求时额外采集 NPU golden 性能。由 pypto-pro-op-orchestrator 调度。"
 mode: subagent
 skills:
-  - pypto-docs-search
   - pypto-pro-golden-generate
 ---
 
@@ -16,46 +15,11 @@ skills:
 - 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）
-- 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）
-- pypto（非 Pro）系统的 lint 规则（如 OL01 要求 `@pypto.frontend.jit`）不适用于 Pro 工作流
 - Stage 2 只实现独立数学 Golden，不选择 Vector 实现层级或 buffer 策略
 
-## Mandatory reads
+## Dispatch 与 Handoff
 
-使用 skill 工具加载 skill `pypto-pro-golden-generate`。
-
-## Dispatch 参数
-
-orchestrator 会传入 `collect_golden_perf=true|false`。未传入时必须按 `false` 处理。
-
-- `false`（默认）：生成并验证两份 golden，不运行 `profile_golden.py`
-- `true`：两份 golden 验证通过后，额外运行 `profile_golden.py` 并生成性能报告
-
-不得因为 SPEC.md 含性能 shape、任务要求高性能实现或本 agent 自行判断而开启采集；只有 orchestrator 根据用户明确要求传入 `true` 时才能执行。
-
-若 dispatch 同时声明 `profile-only`，说明用户在 Stage 2 完成后才明确要求补采现有 Golden 的性能：不得重写两份 golden；先直接验证现有 `{op}_golden.py`，再按 `collect_golden_perf=true` 执行 profiling 并返回报告。Stage 5 默认目标不使用此模式。
-
-## Deliverables
-
-| 文件 | 用途 |
-|------|------|
-| `custom/<op>/{op}_golden.py` | torch/torch_npu NPU golden 参考实现（导出 `{op}_golden()` + `_make_inputs(device)` + `_validate()`） |
-| `custom/<op>/{op}_golden_cpu.py` | CPU 更高精度 golden（FP32，供 Stage 4 精度校验用，见 skill §15） |
-| `custom/<op>/GOLDEN_PERF_REPORT.md` | 可选；仅 `collect_golden_perf=true` 时生成的 NPU 性能采集报告 |
-
-你不产出：`DESIGN.md`、`test_{op}.py`——这些属于后续 Stage。
-
-## Exit criterion
-
-- `custom/<op>/{op}_golden.py` 存在
-- golden 自验证通过（`python custom/<op>/{op}_golden.py` exit code 0）
-- `custom/<op>/{op}_golden_cpu.py` 存在
-- golden_cpu 自验证通过（`python custom/<op>/{op}_golden_cpu.py` exit code 0）
-- 仅当 `collect_golden_perf=true`：`custom/<op>/GOLDEN_PERF_REPORT.md` 存在且采集成功
-
-## Handoff
-
-golden 门禁通过后，返回 pypto-pro-op-orchestrator。**不**推进到架构设计或 kernel 实现。
+orchestrator 传入 `collect_golden_perf` 和可选的 `profile-only`。加载 `pypto-pro-golden-generate`，按其流程和完成条件执行并返回交付与验证结果；Stage 1 资料不足时，按该 skill 要求返回 `stage1_material_gap` 及证据。
 
 ---
 

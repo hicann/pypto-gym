@@ -1,6 +1,6 @@
 # 既有参考规范化
 
-当用户提供 PyTorch 或 NumPy 参考实现时使用本流程。先确认参考源路径并保持原文件只读，再按 [../SKILL.md](../SKILL.md) 生成 NPU golden 骨架，把经等价核对的数学逻辑填入骨架保留的 TODO。若参考源正是任一目标交付文件，候选骨架必须生成到临时目录；等价验证通过并取得覆盖确认后才替换目标，不能先覆盖 oracle。目标是得到语义等价、可验证且便于后续实现对照的 golden；不在此阶段预测 Module 数量、划分 Module 边界或设计 kernel。
+本流程用于选择并规范化 PyTorch/NumPy 参考。确认参考源路径并保持原文件只读，按 [../SKILL.md](../SKILL.md) 生成骨架并填充数学逻辑及等价自验证。若参考源正是任一目标交付文件，先保留独立只读 oracle 副本，再在临时目录生成两份候选；等价验证通过并取得覆盖确认后才按 §5 采用，不能先覆盖原目标或让对照指向替换后的文件。不在此阶段划分 Module 或设计 kernel。
 
 ## 1. 选择参考源
 
@@ -10,13 +10,16 @@
 2. NumPy 参考；
 3. 没有可用参考时，才根据 SPEC 数学公式自行实现。
 
-在新写数学逻辑前，先搜索仓内已有实现和 PyPTO-Pro API 文档：
+仅在 [../SKILL.md](../SKILL.md) 定义的明确缺口成立时，编排模式才在以下仓内范围检索：
 
 ```bash
-rg -n "<operator name>" examples/ custom/ models/ "$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/"
+rg -n "<operator name>" examples/ custom/ models/
 ```
 
-记录最终参考文件、入口函数和选择理由。多个来源冲突时，以 SPEC 为合同并保留冲突证据；不要静默拼接不同语义。
+单独使用本 skill 时，可在命令末尾追加 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`。
+
+记录最终参考文件、入口函数和选择理由。
+多个来源冲突时，以 SPEC 为合同并保留冲突证据；不要静默拼接不同语义。
 
 ## 2. 审计并规范化
 
@@ -28,13 +31,12 @@ rg -n "<operator name>" examples/ custom/ models/ "$PYPTO_DEVKIT_DIR/docs/pypto_
 - 未显式说明的 dtype 提升、降精度或 accumulator 精度；
 - shape、索引范围和 tensor 间依赖未写清的中间值。
 
-对不明确的操作读取对应 PyPTO-Pro API 文档。规范化时：
+对不明确的操作按 §1 的证据范围核对。规范化时：
 
 - 保留数学语义，不机械保留源代码语法；
 - 显式写出关键 shape、dtype 转换、broadcast 轴和 layout 变化；
 - 将多步隐式操作拆为可单独核对的中间 tensor，并使用有意义的名称；
 - 使用 `torch.transpose(t, dim0, dim1)` 或 `tensor.transpose(dim0, dim1)`，不使用 `.T` / `.t()` 隐藏转置轴；
-- 所有 matmul 输入先转 FP32 累加；
 - 不因后续 kernel 可能采用某种结构而改变 golden 的数学结果。
 
 默认采用一次性处理完整输入的 full computation。只有 SPEC 本身定义分块、窗口、递归状态或 partial accumulation，且需要验证 tile 边界语义时，才增加 tiled 版本。若同时保留 full 与 tiled，两者必须在 dtype 对应容差内等价。
@@ -54,7 +56,7 @@ Golden operation inventory:
 
 ## 4. 证明与原始参考等价
 
-保留原始参考作为独立 oracle，使用相同输入分别执行原始与规范化实现。至少覆盖：
+在 NPU golden 的 `_validate()` 中，以原始参考为独立 oracle，使用相同输入对比原始与规范化实现。至少覆盖：
 
 - 固定 random seed；
 - 小 shape、代表性/P0 shape 和边界 shape；
@@ -67,6 +69,12 @@ Golden operation inventory:
 
 ## 5. Freeze 并进入标准交付
 
-将规范化逻辑填入已生成骨架并完成等价验证后，在 golden 文件头部记录参考源、验证命令和 `frozen` 状态。此后把规范化实现作为唯一 golden 来源；除非有可复现证据证明其语义错误，否则不要改动。
+生成时在文件头部记录参考源和验证命令，随后按 [../SKILL.md](../SKILL.md) 完成两份 golden 并统一验证。回执通过后视为冻结，不再改源码追加状态标记；除非有可复现语义错误，否则不要改动。
 
-随后返回 [../SKILL.md](../SKILL.md) 的 NPU/CPU 生成与直接执行流程，交付并验证两份 golden。Freeze 不替代这两份文件各自的 exit-code 门禁。
+同名目标的候选验证通过且用户确认覆盖后，采用两份候选的原始字节，再运行：
+
+```bash
+python <skill-dir>/scripts/validate_golden_once.py --op-dir <op-dir> --spec <spec-path> --reuse-from <candidate-dir>
+```
+
+runner 只复用与当前 SPEC、两份 golden 哈希一致的成功回执，不复制源码或重跑验证；不匹配则报错且不覆盖现有回执。不得手写或自行复制回执；原始 oracle 必须继续可读。

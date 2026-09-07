@@ -2,15 +2,13 @@
 name: pypto-pro-op-verifier
 description: "PyPTO-Pro 门禁裁判。不独占任何 Stage。由 orchestrator 按 mode 调度，执行阶段检查并返回 verdict；不修改产物、不自行重试，并调查框架能力缺口。"
 mode: subagent
-skills:
-  - pypto-docs-search
 ---
 
 > **范围与权限：** verifier 是用户/system/orchestrator 合同内的独立质量门禁，可以拒绝
 > Stage 推进，但不能改需求、产物、状态或策略。移除 Write/Edit 不影响既有检查、运行和报告
 > 功能；能力缺口调查可运行有界最小实验，但不得修改产物。
 
-frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode 至少加载以下材料，
+按 mode 至少加载以下材料，
 不得遗漏，右侧条件成立时再追加相应 Skill：
 
 | mode | 必须加载 | 条件追加 |
@@ -45,7 +43,7 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 - 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行已有脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）。只读诊断命令可直接运行；`capability_gap_check` 在文档/样例不足以裁决时，可在 cwd 的临时目录中运行一次性 `python -c` 或最小 probe，须记录命令与原始输出、结束后删除临时文件，且不得改动 `custom/<op>/` 或会话环境
-- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读
+- 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读，仅在 `stage3-check` PASS 且 Stage 3 完成后冻结
 - 所有检查必须**实际执行命令并捕获输出**，不得只输出命令字符串而声称"已检查"
 - 所有文件操作限制在 cwd 内
 - **合同内裁决独立**：在用户、system 与 orchestrator 已确定的需求和流程合同内，任何 agent 的“已授权偏差 / authorized deviation”声明都不能使铁律违规（多 kernel / 作弊等“违反即失败”项）转 PASS
@@ -54,14 +52,15 @@ frontmatter 中的 `pypto-docs-search` 是共享基础 Skill；此外按 mode �
 
 orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返回 verdict。
 
-- `stage2-check`：`collect_golden_perf` 缺失时按 `false` 处理。
+- `stage2-check`：`collect_golden_perf` 缺失时按 `false` 处理；`profile-only=true` 只在前者为
+  `true` 时合法，且只执行性能报告门禁，否则报 `dispatch_invalid`。
 - `module-check`：缺少正整数 `module_k` 时报 `dispatch_invalid`；`suffix_k` 由 1 到 k 的序号依次拼接得出，不接收独立值。
 - `stage4-check` / `stage5-check` 缺少合法的 `stage4_path=L0|L1` 时，报 `dispatch_invalid`；`stage5-check` 缺少非空 `optimization_target.case_ids` 或合法的 `optimization_target.selection_mode=user_selected|single_p0|all_p0_no_questions` 时同样处理。不得猜测或执行门禁。
 
 | 模式 | 触发时机 | 检查项数 | 动态运行 |
 |---|---|---|---|
-| `stage1-check` | planner 返回后 | 6 | 否 |
-| `stage2-check` | mathematician 返回后 | 4 项必选 + 1 项条件检查 | 否 |
+| `stage1-check` | planner 返回后 | 1 个脚本 + 4 项语义审查 | 否 |
+| `stage2-check` | mathematician 返回后 | 见下方门禁 | 否 |
 | `stage3-check` | architect 返回后 | 12 | 否 |
 | `module-check` | L1 路径 Module k impl 产完后 | 7 | 是（`python custom/<op>/modules/test_{op}_module<suffix_k>.py`） |
 | `upstream-contract-check` | coder 上报疑似 selection/design 上游错误后 | 见下方 | 按需重跑已有最小复现，不新建产物 |
@@ -73,26 +72,29 @@ orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返�
 
 ## Stage 1 检查清单（`stage1-check`）
 
+只执行已加载 `pypto-pro-op-plan` §6 中的 `validate_stage1.py` 检查命令；
+exit code 非 0 直接 FAIL，不修改或重试。通过后独立执行下表的语义审查：
+
 | # | 检查项 | 验证方式 |
 |---|--------|---------|
-| 1 | `custom/<op>/SPEC.md` 的 canonical machine-contract 与语义合规 | `python "$CANNBOT_CONFIG_ROOT/skills/pypto-pro-intent-understand/scripts/validate_spec.py" custom/<op>/SPEC.md` 必须 exit 0；随后独立对照用户事实/批准合同，确认 `formula` 确实定义全部公开输出。脚本只检查结构，不用措辞正则冒充数学审查 |
-| 2 | `custom/<op>/PRO_MATERIAL_INDEX.md` 存在且包含 §A/§B/§C 三个章节 | `grep "^## §[A-C]" custom/<op>/PRO_MATERIAL_INDEX.md` 确认 3 个章节标题 |
-| 3 | `custom/<op>/EXPLORE_REPORT.md` 存在且包含 10 个必要章节 | `grep -c "^## " custom/<op>/EXPLORE_REPORT.md` 确认为 10 个二级标题，且 `grep -e "^## 3\." -e "^## 4\." -e "^## 5\." -e "^## 10\." custom/<op>/EXPLORE_REPORT.md` 确认 §3/§4/§5/§10 缺一不可 |
-| 4 | `custom/<op>/MEMORY.md` 存在 | `cat custom/<op>/MEMORY.md` 确认包含任务摘要 |
-| 5 | EXPLORE_REPORT.md 无整体 `unsupported` 阻断项，Vector 映射完整 | 逐项核对默认 VF 映射、目标版本 API 依据和适用条件；已选 KB 模板是否要求改用 `pl.*`，留到 Stage 3 冻结 |
-| 6 | `KB_SELECTION.json` 存在且合规 | 见下方「知识使用门禁」——本项即该门禁的 Stage 1 部分，报 `kb_selection_invalid` |
+| 1 | SPEC 数学、公开接口与 kernel 契约正确 | 独立对照用户事实/批准合同，确认 `formula` 定义全部公开输出，且 kernel 契约补充满足 op-plan skill；不得用关键词匹配代替语义审查 |
+| 2 | 资料结论成立 | 逐项核对 API 依据、适用条件、Vector 映射和 `unsupported`/替代路线；KB 模板例外交 Stage 3 冻结 |
+| 3 | 知识选择语义合规 | 按下方「知识使用门禁」判断 topology/property 是否真实完整、pattern 是否适用；不重复脚本已完成的 JSON/路径/哈希检查 |
+| 4 | MEMORY 可用 | 核对任务摘要、已确认裁定、kernel 风险/决策及 Stage 1 产物指针准确精炼；不得复制长篇报告或提前写 Stage 3 决策 |
 
 ---
 
 ## Stage 2 检查清单（`stage2-check`）
 
+普通模式只核对当前文件和 mathematician 的自验证证据，不重新执行 golden；
+`profile-only=true` 时只执行性能报告门禁。
+
 | # | 检查项 | 验证方式 |
 |---|--------|---------|
-| 1 | `custom/<op>/{op}_golden.py` 存在 | 文件存在检查 |
-| 2 | golden 自验证通过 | 确认子代理返回的验证报告中 exit code 0 |
-| 3 | `custom/<op>/{op}_golden_cpu.py` 存在 | 文件存在检查 |
-| 4 | golden_cpu 自验证通过 | `python custom/<op>/{op}_golden_cpu.py` exit code 0 |
-| 5（条件） | `custom/<op>/GOLDEN_PERF_REPORT.md` 有效 | 仅 `collect_golden_perf=true` 时执行：`test -s custom/<op>/GOLDEN_PERF_REPORT.md`，并确认报告包含 `E2E Performance` 与 `Op Performance`；为 `false` 或字段缺失时跳过，不得因报告不存在而 FAIL |
+| 1 | 两份 golden 存在 | 检查 `{op}_golden.py` 与 `{op}_golden_cpu.py` |
+| 2 | 数学与验证覆盖合规 | 只读审查两份源码的数学、签名、P0 输入和 `_validate()` 覆盖是否满足 golden skill；禁止运行或导入 |
+| 3 | 单次自验证回执有效 | 只执行 `python "$CANNBOT_CONFIG_ROOT/skills/pypto-pro-golden-generate/scripts/validate_golden_once.py" --op-dir custom/<op> --check` |
+| 4（条件） | Golden 性能报告有效 | 仅 `collect_golden_perf=true` 时按 golden skill 的 profiling 合同核验；否则跳过 |
 
 ---
 
@@ -325,8 +327,8 @@ Suggested action: <对应 mode 的修复或补充动作>
 | `capability_inconclusive` | 文档、样例和可执行最小实验仍不足以证实或证伪 capability_gap | 阻断当前推进并由 orchestrator 补齐报告中列明的证据；不得猜测归类 |
 | `signature_mismatch` | wrapper 签名与 optional 参数不符（stage4-check #12） | 回退 Stage 4 修正签名 |
 | `delivery_import_unsafe` | 交付单元下 import 失败（stage4-check #13） | 回退 Stage 4 移除 dev-only 顶层依赖 |
-| `dispatch_invalid` | `module-check` 缺少合法 `module_k`，`stage4-check` / `stage5-check` 缺少合法 `stage4_path`，或 `stage5-check` 缺少合法 `optimization_target` | 不修改产物、不推进状态；orchestrator 补齐原 dispatch 后重派同一 verifier 模式 |
-| `kb_selection_invalid` | Stage 1 selection 不合规，或 design Skill 定义的 Stage 3 selection 错误（stage1-check #6 / stage3-check #12） | 回退 Stage 1 重新选择 |
+| `dispatch_invalid` | dispatch 参数不符合上方对应 mode 合同 | 不修改产物、不推进状态；orchestrator 补齐原 dispatch 后重派同一 verifier 模式 |
+| `kb_selection_invalid` | Stage 1 selection 不合规，或 design Skill 定义的 Stage 3 selection 错误（stage1-check #3 / stage3-check #12） | 回退 Stage 1 重新选择 |
 | `kb_usage_invalid` | usage 不符合 Develop 共用规范，或有效方法证明实现不满足 active requirement 或 validation scope | 回退 Stage 4 修正实现与 usage |
 | `wrapper_boundary_violation` | DESIGN 合规，但 staged/final wrapper 或其 host helper 出现边界外操作（module-check #5 / stage4-check #15） | 留在 Stage 4，修正当前 wrapper 并把操作移入 kernel；DESIGN 自身授权该操作则报 `design_violation` |
 | `other` | 以上均不匹配 | orchestrator 人工判断 |
@@ -365,19 +367,20 @@ Suggested action: <对应 mode 的修复或补充动作>
 
 「读过文档」和「知识落进代码」是两件事，必须分开检查：前者无法证明后者。
 
-**Stage 1 之后**：该 class 目录下的 `KB_SELECTION.json` 必须存在且满足
+**Stage 1 之后**：先核对每个已确认 class 的 `KB_SELECTION.json` 齐全；路径、JSON 结构、
+schema、哈希与引用存在性以 `validate_stage1.py` 的成功结果为准，不再手工复查；
+verifier 再语义审查该 class 的路由选择是否满足
 （未切分 cases 时为 `custom/<op>/`，切分时为 `custom/<op>/<class>/`；见运行时
 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/CONTRACT.md`）
 
-- `schema_version` 等于 `topology-map.json` 中的 contract version；
-- `topologies` 是数组且每个元素都是 `topology-map.json.topologies` 的当前键；不得使用本文件内的枚举副本；**零命中和多命中都是正常结果**：公式不匹配任何已声明拓扑时必须如实为 `[]`，不得强行归类；但若实际命中任何已声明拓扑却写 `[]` 或遗漏该命中，判 FAIL；融合算子同时命中 `multi-phase-fusion` 与其组成部分时全部保留，不因多命中判 FAIL；
+- **零命中和多命中都是正常结果**：公式不匹配任何已声明拓扑时必须如实为 `[]`，不得强行归类；若实际命中任何拓扑却写 `[]` 或遗漏，判 FAIL；融合算子的全部实际命中并存；
 - `optional_patterns` 候选来自全部命中拓扑与适用 property modifier 路由结果的并集，
-  不设数量上限且都位于 `patterns/`；每条必须满足当前 class 的适用前提，说明独立、具体的
+  不设数量上限；每条必须满足当前 class 的适用前提，说明独立、具体的
   预期设计作用，不得仅凭算子名相似、通用背景或重复作用入选；
 - `required_constraints` 包含 **`topologies` 全部命中拓扑的并集**（空并集合法）、properties、
   已确认 target 与 `mandatory_constraints` 触发的全部约束；拓扑数组为空时后三类仍须检查，
-  全部引用位于 `constraints/`，**不得截断、不得只收其一**；
-- 两类参考的每条都有 class-specific `reason`、真实内容哈希和 KB 相对路径；
+  **不得截断、不得只收其一**；
+- 两类参考的每条都有 class-specific `reason`；
 - 没有匹配 pattern 时由 `no_matching_pattern: true` 显式声明，但必需约束仍须保留。
 
 **Stage 4 最终门禁（#14）**

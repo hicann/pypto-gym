@@ -269,7 +269,7 @@ def select_kernel(
 | 示例 | 适合核对的内容 |
 |---|---|
 | `pro_ops/element_wise/test_add.py` | Vec Tile、逐元素API、二维Tile遍历和`make_tile_group`双缓冲 |
-| `pro_ops/matmul/test_matmul_8K_example.py` | Mat、Left、Right、Acc之间的数据通路，以及Cube TileGroup的组织方式 |
+| `pro_ops/matmul/test_matmul_8k_example.py` | Mat、Left、Right、Acc之间的数据通路，以及Cube TileGroup的组织方式 |
 | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | 动态M/N/K的Tile shape、K分块、`move` offset、尾块有效形状和`phase`配套要求 |
 | `pro_ops/vf_api/test_softmax_tile_group_vf.py` | GM→UB→寄存器→UB→GM的VF调用链、mask和动态归约轴 |
 | `pro_ops/vf_api/test_layernorm_tile_group_vf.py` | VF归约、FP32中间计算、gamma/beta Tile和动态有效形状 |

@@ -60,7 +60,7 @@ Stage 3，不问用户。
 
 - 任务和确认状态摘要；
 - kernel 契约补充的裁定及未决项；
-- 三个 Stage 1 产物路径；
+- `SPEC.md`、`PRO_MATERIAL_INDEX.md`、`EXPLORE_REPORT.md` 路径；第 5 步完成后追加各 `KB_SELECTION.json` 路径；
 - 公式步骤到 API 候选的简短映射；
 - 已冻结事实、阻塞项和尝试历史。
 
@@ -101,80 +101,17 @@ skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 
 ### 6. 收尾自检
 
-每个 class 在返回前执行下面的预检（将 `<selection>` 和 `<kb_root>` 替换为实际路径）。它只提前发现
-JSON、必填字段、pattern 标记、路径和哈希错误，不判断 pattern 是否适用，不产生 verifier PASS。
+`<skill-dir>` 为本 skill 的实际目录，`<kb-root>` 为第 5 步已读取的 KB 根；只运行以下只读检查器：
+它复用 canonical SPEC/材料索引校验器，并检查报告结构与覆盖、MEMORY 指针和 KB_SELECTION 的动态字段、路径及哈希，不替代 verifier 的语义裁决。
 
 ```bash
-python -c '
-import hashlib, json, pathlib, sys
-selection_path = pathlib.Path("<selection>")
-kb = pathlib.Path("<kb_root>")
-selection = json.loads(selection_path.read_text(encoding="utf-8"))
-mapping = json.loads((kb / "topology-map.json").read_text(encoding="utf-8"))
-bad = []
-required = {"schema_version", "op", "class_id", "topologies", "properties",
-            "optional_patterns", "required_constraints", "no_matching_pattern"}
-bad += [f"missing field: {key}" for key in sorted(required - set(selection))]
-if "topology" in selection:
-    bad.append("legacy field topology is not allowed; use topologies")
-if selection.get("schema_version") != mapping["contract"]["contract_version"]:
-    bad.append("schema_version does not match topology-map contract")
-topologies = selection.get("topologies")
-if not isinstance(topologies, list):
-    bad.append("topologies must be an array")
-else:
-    for topo in topologies:
-        if not isinstance(topo, str):
-            bad.append(f"topology must be a string: {topo!r}")
-        elif topo not in mapping["topologies"]:
-            bad.append(f"topology is not declared in topology-map: {topo}")
-expected_class = "." if selection_path.parent.parent.name == "custom" else selection_path.parent.name
-if selection.get("class_id") != expected_class:
-    bad.append(f"class_id must be {expected_class}")
-properties = selection.get("properties")
-property_keys = set(mapping["contract"]["property_keys"])
-if not isinstance(properties, dict):
-    bad.append("properties must be an object")
-elif set(properties) - property_keys:
-    bad.append(f"unknown property keys: {sorted(set(properties) - property_keys)}")
-patterns = selection.get("optional_patterns")
-constraints = selection.get("required_constraints")
-if not isinstance(patterns, list) or not isinstance(constraints, list):
-    bad.append("optional_patterns and required_constraints must be lists")
-else:
-    if selection.get("no_matching_pattern") is not (not patterns):
-        bad.append("no_matching_pattern is inconsistent")
-    for refs, namespace in ((patterns, "patterns"), (constraints, "constraints")):
-        namespace_root = (kb / namespace).resolve()
-        for ref in refs:
-            if not isinstance(ref, dict):
-                bad.append("reference must be an object")
-                continue
-            if not isinstance(ref.get("reason"), str) or not ref["reason"].strip():
-                bad.append("reference reason must be non-empty")
-            path = ref.get("path")
-            target = (kb / path).resolve() if isinstance(path, str) else None
-            try:
-                if not isinstance(path, str) or not path.startswith(namespace + "/"):
-                    raise ValueError
-                target.relative_to(namespace_root)
-            except (TypeError, ValueError):
-                bad.append(f"path escapes {namespace}/ namespace: {path}")
-                continue
-            if not target.is_file():
-                bad.append(f"referenced file does not exist: {path}")
-                continue
-            expected = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
-            if ref.get("sha256") != expected:
-                bad.append(f"stale sha256: {path}")
-
-print("OK" if not bad else "FAIL: " + "; ".join(bad))
-sys.exit(0 if not bad else 1)
-'
+python "<skill-dir>/scripts/validate_stage1.py" \
+  --op-dir custom/<op> \
+  --devkit "$PYPTO_DEVKIT_DIR" \
+  --kb-root "<kb-root>"
 ```
 
-对 flat 布局检查 `<op>/KB_SELECTION.json`；对 split 布局逐个检查
-`<op>/<class>/KB_SELECTION.json`。输出非 `OK` 时就地修正，然后再交 orchestrator 调度 `stage1-check`。
+输出非 0 时一次性修正全部 `[FAIL]` 后重跑。
 
 ## 完成条件
 

@@ -7,7 +7,7 @@ topologies, property keys, reference classes, role scope and status vocabulary.
 - The planner writes `KB_SELECTION.json` before Stage 1 can pass.
 - The coder writes implementation claims to `KB_USAGE.json` during Stage 4.
 - `pypto-pro-op-verifier` independently validates the artifacts and the referenced code.
-- The orchestrator may complete a stage only after the corresponding verifier returns PASS.
+- Every stage except Stage 2 requires verifier PASS before completion; Stage 2 requires it only when explicitly requested by the user.
 
 There is no external evaluator dependency in this contract. `contract_version` is **3**.
 

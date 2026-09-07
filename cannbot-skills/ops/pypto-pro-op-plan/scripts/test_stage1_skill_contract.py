@@ -12,10 +12,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,10 +43,24 @@ def _ref(path: Path, rel: str) -> dict[str, str]:
     }
 
 
-def _run_precheck(code: str, root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-c", code], cwd=root,
-        text=True, capture_output=True, check=False,
+def _report_with_paths(template: str, samples: list[str], tutorials: list[str]) -> str:
+    report = re.sub(r"\{[^{}\r\n]+\}", "filled", template).replace(
+        "op_name: filled", "op_name: demo",
+    )
+    report = re.sub(r"(?m)^\|[^\n]*`filled`[^\n]*\n?", "", report)
+    sample_rows = "\n".join(
+        f"| {index} | `{path}` | `vf.add` |" for index, path in enumerate(samples, 1)
+    )
+    tutorial_rows = "\n".join(f"| `{path}` | tutorials | pattern | applicable |" for path in tutorials)
+    report = report.replace(
+        "### 4.1 全量样例参考（按 cube/vec 组成分类）",
+        "### 4.1 全量样例参考（按 cube/vec 组成分类）\n" + sample_rows,
+        1,
+    )
+    return report.replace(
+        "### 5.1 适用的设计模式",
+        "### 5.1 适用的设计模式\n" + tutorial_rows,
+        1,
     )
 
 
@@ -156,7 +169,7 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertIn("matched topologies and applicable property modifiers", selection_rule)
         self.assertIn("retain all and only candidates", selection_rule)
         self.assertIn("零命中和多命中都是正常结果", verifier)
-        self.assertIn("若实际命中任何已声明拓扑却写 `[]` 或遗漏该命中，判 FAIL", verifier)
+        self.assertIn("若实际命中任何拓扑却写 `[]` 或遗漏，判 FAIL", verifier)
         self.assertIn("适用 property modifier 路由结果的并集", verifier)
         self.assertIn("拓扑数组为空时后三类仍须检查", verifier)
         self.assertIn("不能表示未知、未分析或跳过", plan)
@@ -166,141 +179,255 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertTrue(topology_map["mandatory_constraints"])
         self.assertNotRegex(plan, r"contract v\d+")
 
-    def test_plan_defaults_to_a5_and_has_an_executable_kb_precheck(self) -> None:
+    def test_plan_uses_one_stage1_validator(self) -> None:
         plan = _read(PLAN / "SKILL.md")
-        code_template = self._extract_kb_precheck(plan)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            kb, selection = self._create_kb_fixture(root)
-            code = code_template.replace(
-                "<selection>", "custom/demo/KB_SELECTION.json"
-            ).replace("<kb_root>", kb.as_posix())
-            op_dir = root / "custom" / "demo"
-            op_dir.mkdir(parents=True)
-            self._assert_flat_selection(root, op_dir, code, selection)
-            split, code = self._assert_split_selection(
-                root, op_dir, code_template, kb, selection,
-            )
-            self._assert_invalid_selection(root, split, code, selection)
-
-    def test_kb_precheck_validates_topologies_array(self) -> None:
-        plan = _read(PLAN / "SKILL.md")
-        code_template = self._extract_kb_precheck(plan)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            kb, selection = self._create_kb_fixture(root)
-            op_dir = root / "custom" / "demo"
-            op_dir.mkdir(parents=True)
-            selection_path = op_dir / "KB_SELECTION.json"
-            code = code_template.replace(
-                "<selection>", "custom/demo/KB_SELECTION.json"
-            ).replace("<kb_root>", kb.as_posix())
-
-            selection_path.write_text(json.dumps(selection), encoding="utf-8")
-            result = _run_precheck(code, root)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(result.stdout.strip(), "OK")
-
-            no_topology = json.loads(json.dumps(selection))
-            no_topology["topologies"] = []
-            no_topology["properties"] = {"is_list": True}
-            no_topology["optional_patterns"] = [
-                _ref(kb / "patterns" / "list.md", "patterns/list.md")
-            ]
-            no_topology["required_constraints"] = [
-                _ref(kb / "constraints" / "list.md", "constraints/list.md"),
-                _ref(kb / "constraints" / "target.md", "constraints/target.md"),
-                _ref(kb / "constraints" / "mandatory.md", "constraints/mandatory.md"),
-            ]
-            no_topology["no_matching_pattern"] = False
-            selection_path.write_text(json.dumps(no_topology), encoding="utf-8")
-            result = _run_precheck(code, root)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(result.stdout.strip(), "OK")
-
-            self._assert_topology_rejections(root, selection_path, code, selection)
-
-    def _assert_topology_rejections(
-        self, root: Path, selection_path: Path, code: str,
-        selection: dict[str, object],
-    ) -> None:
-        invalid_cases = (
-            ("scalar", "elementwise", "topologies must be an array"),
-            ("null", None, "topologies must be an array"),
-            ("non-string", ["elementwise", {}], "topology must be a string"),
-            ("unknown", ["elementwise", "made-up"], "topology is not declared"),
-        )
-        for name, topologies, message in invalid_cases:
-            with self.subTest(name=name):
-                candidate = json.loads(json.dumps(selection))
-                candidate["topologies"] = topologies
-                selection_path.write_text(json.dumps(candidate), encoding="utf-8")
-                result = _run_precheck(code, root)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(message, result.stdout)
-                self.assertEqual(result.stderr, "")
-
-        candidate = json.loads(json.dumps(selection))
-        candidate["topology"] = "made-up-legacy-value"
-        selection_path.write_text(json.dumps(candidate), encoding="utf-8")
-        result = _run_precheck(code, root)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("legacy field topology is not allowed", result.stdout)
-        self.assertEqual(result.stderr, "")
-
-    def _extract_kb_precheck(self, plan: str) -> str:
+        validator_path = PLAN / "scripts" / "validate_stage1.py"
+        self.assertTrue(validator_path.is_file())
+        self.assertIn("scripts/validate_stage1.py", plan)
         self.assertIn("未指定时默认 A5", plan)
-        self.assertIn("constraints/arch-a5.md", plan)
-        router = _read(KB / "ROUTER.md")
-        topology_map = json.loads(_read(KB / "topology-map.json"))
-        self.assertIn("workflow default A5", router)
-        self.assertIn("workflow default A5", topology_map["target_gated"]["constraints/arch-a5.md"])
-        self.assertIn("### 6. 收尾自检", plan)
-        match = re.search(r"python -c '\n(.*?)\n'\n```", plan, re.DOTALL)
-        self.assertIsNotNone(match)
-        return match.group(1)
+        self.assertNotIn("python -c '", plan)
+        planner = _read(VERIFIER.with_name("pypto-pro-op-planner.md"))
+        self.assertIn("validate_stage1.py", planner)
+
+    def test_kb_validator_accepts_flat_split_and_dynamic_topologies(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kb, selection = self._create_kb_fixture(root)
+            op_dir = root / "custom" / "demo"
+            op_dir.mkdir(parents=True)
+
+            flat = op_dir / "KB_SELECTION.json"
+            flat.write_text(json.dumps(selection), encoding="utf-8")
+            self.assertEqual(validator.check_kb(op_dir, kb, "demo"), [])
+
+            flat.unlink()
+            split = op_dir / "class_a" / "KB_SELECTION.json"
+            split.parent.mkdir()
+            selection["class_id"] = "class_a"
+            split.write_text(json.dumps(selection), encoding="utf-8")
+            self.assertEqual(validator.check_kb(op_dir, kb, "demo"), [])
+
+            selection["topologies"] = []
+            selection["optional_patterns"] = []
+            selection["no_matching_pattern"] = True
+            split.write_text(json.dumps(selection), encoding="utf-8")
+            self.assertEqual(validator.check_kb(op_dir, kb, "demo"), [])
+
+    def test_kb_validator_rejects_stale_unknown_and_escaping_references(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kb, selection = self._create_kb_fixture(root)
+            op_dir = root / "custom" / "demo"
+            op_dir.mkdir(parents=True)
+            path = op_dir / "KB_SELECTION.json"
+            selection["topologies"] = ["made-up"]
+            selection["properties"] = {"unknown": True}
+            selection["optional_patterns"][0]["reason"] = ""
+            selection["optional_patterns"][0]["path"] = "patterns/../constraints/demo.md"
+            selection["required_constraints"][0]["sha256"] = "sha256:stale"
+            path.write_text(json.dumps(selection), encoding="utf-8")
+            errors = "\n".join(validator.check_kb(op_dir, kb, "demo"))
+            for expected in (
+                "unknown, duplicate, or non-string topologies", "unknown properties", "reason must be non-empty",
+                "escapes patterns/", "stale sha256",
+            ):
+                self.assertIn(expected, errors)
+
+            path.write_text('{"op":"demo","op":"other"}', encoding="utf-8")
+            self.assertIn("duplicate JSON key", "\n".join(validator.check_kb(op_dir, kb, "demo")))
+
+            (kb / "topology-map.json").write_text(
+                '{"contract":[],"topologies":{}}', encoding="utf-8",
+            )
+            with self.assertRaises(validator.Stage1ConfigurationError):
+                validator.check_kb(op_dir, kb, "demo")
+
+    def test_kb_validator_requires_boolean_flags_and_integer_contract_versions(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kb, selection = self._create_kb_fixture(root)
+            op_dir = root / "custom/demo"
+            op_dir.mkdir(parents=True)
+            path = op_dir / "KB_SELECTION.json"
+            for flag in (0, 1, None, "false", True):
+                with self.subTest(flag=flag):
+                    selection["no_matching_pattern"] = flag
+                    path.write_text(json.dumps(selection), encoding="utf-8")
+                    self.assertEqual(
+                        validator.check_kb(op_dir, kb, "demo"),
+                        ["KB_SELECTION.json no_matching_pattern is invalid"],
+                    )
+            mapping_path = kb / "topology-map.json"
+            mapping = json.loads(_read(mapping_path))
+            for version in (True, False, 1.0, "1", None):
+                with self.subTest(contract_version=version):
+                    mapping["contract"]["contract_version"] = version
+                    mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+                    self.assertRaisesRegex(
+                        validator.Stage1ConfigurationError, "contract_version must be an integer",
+                        validator.check_kb, op_dir, kb, "demo",
+                    )
+
+    def test_report_validator_uses_template_and_index_contents(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        op_dir, paths, report, index = self._create_report_fixture()
+        self.assertEqual(validator.check_report(op_dir, "demo", index), [])
+        tutorial_row = f"| `{paths[1]}` | tutorials | pattern | applicable |"
+        misplaced = report.replace(tutorial_row, "").replace("### 5.2 来自教程的关键约束与建议", "")
+        (op_dir / "EXPLORE_REPORT.md").write_text(
+            misplaced.replace("## 6. Stage 3 设计事实输入", "## 6. Stage 3 设计事实输入\n" + tutorial_row),
+            encoding="utf-8",
+        )
+        errors = validator.check_report(op_dir, "demo", index)
+        self.assertTrue(any("tutorial paths not covered" in error for error in errors))
+        (op_dir / "EXPLORE_REPORT.md").write_text(
+            report.replace(f"| `{paths[1]}` |", "| `unrelated.md` |") + "\n" + paths[1],
+            encoding="utf-8",
+        )
+        errors = validator.check_report(op_dir, "demo", index)
+        self.assertTrue(any("tutorial paths not covered" in error for error in errors))
+        report = _report_with_paths(
+            _read(MATERIAL / "templates/explore_report.md"),
+            [paths[0], "pro_ops/a5/vector/unlisted.py"],
+            [paths[1], "docs/pypto_pro/tutorials/unlisted.md"],
+        )
+        (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
+        errors = "\n".join(validator.check_report(op_dir, "demo", index))
+        self.assertIn("sample table paths absent", errors)
+        self.assertIn("tutorial table paths absent", errors)
+
+    def test_report_validator_parses_frontmatter(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        op_dir, _, report, index = self._create_report_fixture()
+        for field, values, valid in (
+            ("op_name: demo", ('"demo"', "'demo' # operator"), True),
+            ("schema_version: 2", ('"2" # version', "'2'", "2 # version"), True),
+            ("feasibility: filled", ('"feasible # literal"', "'it''s feasible'", "feasible#literal"), True),
+            ("op_name: demo", ('"other"', '"demo', "'demo\"", "demo\nop_name: demo"), False),
+            ("schema_version: 2", ("999", "2#not-a-comment"), False),
+            ("feasibility: filled", ("", "# no value", '""', "' ' # empty", '"bad\\q"'), False),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    replacement = field.split(":", 1)[0] + ": " + value
+                    (op_dir / "EXPLORE_REPORT.md").write_text(
+                        report.replace(field, replacement), encoding="utf-8",
+                    )
+                    errors = validator.check_report(op_dir, "demo", index)
+                    self.assertEqual(not errors, valid, errors)
+        (op_dir / "EXPLORE_REPORT.md").write_text(
+            report.replace("op_name: demo", "# note\n\nop_name: 'it''s # feasible' # comment"),
+            encoding="utf-8",
+        )
+        self.assertEqual(validator.check_report(op_dir, "it's # feasible", index), [])
+
+    def test_report_validator_limits_table_coverage_to_its_section(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        op_dir, paths, report, index = self._create_report_fixture()
+        tutorial_row = f"| `{paths[1]}` | tutorials | pattern | applicable |"
+        for heading, valid in (("#### detail", True), ("### next", False), ("## next", False), ("# next", False)):
+            with self.subTest(heading=heading):
+                (op_dir / "EXPLORE_REPORT.md").write_text(
+                    report.replace(tutorial_row, heading + "\n" + tutorial_row), encoding="utf-8",
+                )
+                errors = validator.check_report(op_dir, "demo", index)
+                covered = not any("tutorial paths not covered" in error for error in errors)
+                self.assertEqual(covered, valid)
+
+    def test_stage1_validator_accepts_a_complete_fixture(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            op_dir, devkit = root / "custom/demo", root / "devkit"
+            (devkit / "docs/pypto_pro/api").mkdir(parents=True)
+            (devkit / "docs/pypto_pro/api/index.md").write_text("api", encoding="utf-8")
+            (devkit / "docs/pypto_pro/tutorials").mkdir(parents=True)
+            (devkit / "docs/pypto_pro/tutorials/guide.md").write_text("guide", encoding="utf-8")
+            manifest = _read(MATERIAL / "references" / "official_samples.md")
+            for relative in re.findall(r"`(pro_ops/[^`|]+\.py)`", manifest):
+                target = devkit / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("# sample", encoding="utf-8")
+
+            op_dir.mkdir(parents=True)
+            contract = {
+                "schema_version": 1, "op_name": "demo", "formula": "y = x",
+                "supported_dtypes": ["float32"],
+                "inputs": [{"name": "x", "shape": [4], "dtype": "float32", "value_range": [-1, 1]}],
+                "outputs": [{"name": "y", "shape": [4], "dtype": "float32", "value_range": [-1, 1]}],
+                "default_params": {}, "tolerance": {"atol": 0.001, "rtol": 0.001},
+                "dynamic_axes_ranges": {}, "shape_constraints": [],
+                "p0_cases": [{"name": "p0", "params": {}, "input_shapes": {"x": [4]}, "output_shapes": {"y": [4]}}],
+            }
+            (op_dir / "SPEC.md").write_text(
+                "```json machine-contract\n" + json.dumps(contract) +
+                "\n```\n\n## kernel 契约补充\n已确认。\n", encoding="utf-8",
+            )
+            material = self._load_module(MATERIAL / "scripts/build_material_index.py")
+            index, _ = material.build_index(devkit, material.manifest_path())
+            (op_dir / "PRO_MATERIAL_INDEX.md").write_text(index, encoding="utf-8")
+            template = _read(MATERIAL / "templates" / "explore_report.md")
+            covered = re.findall(
+                r"`((?:pro_ops/[^`]+\.py|docs/pypto_pro/tutorials/[^`]+\.md))`", index,
+            )
+            report = _report_with_paths(
+                template,
+                [path for path in covered if path.startswith("pro_ops/")],
+                [path for path in covered if path.startswith("docs/")],
+            )
+            (op_dir / "EXPLORE_REPORT.md").write_text(
+                report, encoding="utf-8",
+            )
+            (op_dir / "MEMORY.md").write_text(
+                "SPEC.md PRO_MATERIAL_INDEX.md EXPLORE_REPORT.md KB_SELECTION.json", encoding="utf-8",
+            )
+            kb, selection = self._create_kb_fixture(root)
+            (op_dir / "KB_SELECTION.json").write_text(json.dumps(selection), encoding="utf-8")
+            results = validator.validate(op_dir, devkit, kb)
+            self.assertTrue(all(not errors for _, errors in results), results)
+
+    def _load_module(self, path: Path):
+        spec = importlib.util.spec_from_file_location(f"_stage1_test_{path.stem}", path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _create_report_fixture(self) -> tuple[Path, tuple[str, str], str, str]:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        op_dir = Path(temporary.name) / "demo"
+        op_dir.mkdir()
+        paths = ("pro_ops/a5/vector/test_demo.py", "docs/pypto_pro/tutorials/guide.md")
+        report = _report_with_paths(_read(MATERIAL / "templates/explore_report.md"), [paths[0]], [paths[1]])
+        (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
+        index = "\n".join(f"- `{path}`" for path in paths)
+        return op_dir, paths, report, index
 
     def _create_kb_fixture(self, root: Path) -> tuple[Path, dict[str, object]]:
         production_version = json.loads(
             _read(KB / "topology-map.json")
         )["contract"]["contract_version"]
         contract_version = production_version + 1000
-        config = root / "config"
-        kb = config / "pypto-pro-op-kb"
-        pattern = kb / "patterns" / "demo.md"
-        list_pattern = kb / "patterns" / "list.md"
-        constraint = kb / "constraints" / "demo.md"
-        list_constraint = kb / "constraints" / "list.md"
-        target_constraint = kb / "constraints" / "target.md"
-        mandatory_constraint = kb / "constraints" / "mandatory.md"
-        pattern.parent.mkdir(parents=True)
-        constraint.parent.mkdir(parents=True)
-        pattern.write_bytes(b"pattern\n")
-        list_pattern.write_bytes(b"list pattern\n")
-        constraint.write_bytes(b"constraint\n")
-        list_constraint.write_bytes(b"list constraint\n")
-        target_constraint.write_bytes(b"target constraint\n")
-        mandatory_constraint.write_bytes(b"mandatory constraint\n")
+        kb = root / "config" / "pypto-pro-op-kb"
+        files = {
+            "patterns/demo.md": b"pattern\n",
+            "constraints/demo.md": b"constraint\n",
+        }
+        for relative, content in files.items():
+            target = kb / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
         (kb / "topology-map.json").write_text(json.dumps({
             "contract": {
                 "contract_version": contract_version,
                 "property_keys": ["dtypes", "is_list"],
             },
             "topologies": {"elementwise": {}, "row-reduction": {}},
-            "property_modifiers": {
-                "is_list": {
-                    "patterns": ["patterns/list.md"],
-                    "constraints": ["constraints/list.md"],
-                },
-            },
-            "target_gated": {"constraints/target.md": "fixture target"},
-            "mandatory_constraints": {
-                "constraints/mandatory.md": {
-                    "applies_to": ["architect", "coder", "verifier"],
-                },
-            },
         }), encoding="utf-8")
         selection = {
             "schema_version": contract_version,
@@ -308,59 +435,15 @@ class Stage1SkillContractTests(unittest.TestCase):
             "class_id": ".",
             "topologies": ["elementwise", "row-reduction"],
             "properties": {"dtypes": ["float16"]},
-            "optional_patterns": [_ref(pattern, "patterns/demo.md")],
-            "required_constraints": [_ref(constraint, "constraints/demo.md")],
+            "optional_patterns": [
+                _ref(kb / "patterns/demo.md", "patterns/demo.md")
+            ],
+            "required_constraints": [
+                _ref(kb / "constraints/demo.md", "constraints/demo.md")
+            ],
             "no_matching_pattern": False,
         }
         return kb, selection
-
-    def _assert_flat_selection(
-        self, root: Path, op_dir: Path, code: str, selection: dict[str, object],
-    ) -> None:
-        flat = op_dir / "KB_SELECTION.json"
-        flat.write_text(json.dumps(selection), encoding="utf-8")
-        result = _run_precheck(code, root)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.strip(), "OK")
-
-    def _assert_split_selection(
-        self, root: Path, op_dir: Path, code_template: str,
-        kb: Path, selection: dict[str, object],
-    ) -> tuple[Path, str]:
-        split_dir = op_dir / "class_a"
-        split_dir.mkdir()
-        split = split_dir / "KB_SELECTION.json"
-        selection["class_id"] = "class_a"
-        split.write_text(json.dumps(selection), encoding="utf-8")
-        code = code_template.replace(
-            "<selection>", "custom/demo/class_a/KB_SELECTION.json"
-        ).replace("<kb_root>", kb.as_posix())
-        result = _run_precheck(code, root)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return split, code
-
-    def _assert_invalid_selection(
-        self, root: Path, split: Path, code: str, selection: dict[str, object],
-    ) -> None:
-        selection["optional_patterns"][0]["sha256"] = "sha256:ABC"
-        selection["optional_patterns"][0]["reason"] = ""
-        selection["optional_patterns"][0]["path"] = "patterns/../constraints/demo.md"
-        selection["required_constraints"][0]["sha256"] = "sha256:ABC"
-        selection["schema_version"] += 1
-        selection["topologies"] = ["made-up"]
-        selection["class_id"] = "wrong"
-        selection["properties"] = {"unknown": True}
-        split.write_text(json.dumps(selection), encoding="utf-8")
-        result = _run_precheck(code, root)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("stale sha256", result.stdout)
-        self.assertIn("reference reason must be non-empty", result.stdout)
-        self.assertIn("schema_version does not match", result.stdout)
-        self.assertIn("topology is not declared", result.stdout)
-        self.assertIn("class_id must be class_a", result.stdout)
-        self.assertIn("unknown property keys", result.stdout)
-        self.assertIn("path escapes patterns/ namespace", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

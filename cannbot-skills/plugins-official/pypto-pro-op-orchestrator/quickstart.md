@@ -2,7 +2,7 @@
 
 ## 概述
 
-CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。采用 5 阶段工作流驱动，覆盖从需求理解、代码实现到证据化性能优化的完整流程，通过独立 verifier 在每个 Stage 结束时执行检查清单，确保各阶段产出符合质量要求。
+CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。采用 5 阶段工作流，覆盖从需求理解、代码实现到证据化性能优化的完整流程。
 
 ### 与 PyPTO 开发的区别
 
@@ -12,7 +12,7 @@ CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 
 | 编程语言 | Python（PyPTO-Pro API） | Python（PyPTO API） |
 | 开发内容 | PyPTO-Pro kernel + golden + test | PyPTO kernel + golden + test |
 | 阶段数 | 5 阶段工作流 | 7 阶段状态机驱动 |
-| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具 + lint 机械门禁 + verifier 语义门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
+| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具 + 阶段门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
 | 性能调优 | Stage 5：可比基线、优化循环与证据验收 | Stage 7 独立调优阶段 |
 
 ## 一、环境搭建
@@ -167,7 +167,7 @@ claude
 
 ### 核心工作流
 
-采用 5 阶段流程，每个 Stage 由独立 verifier 执行检查清单，确保各阶段产出符合质量要求：
+工作流如下：
 
 ```
 Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集可选）
@@ -175,9 +175,9 @@ Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集�
     → Stage 5: 可比基线驱动的性能优化与证据验收
 ```
 
-每一阶段通过 verifier 检查后才可进入下一阶段。verifier 失败时，orchestrator 将失败项反馈给对应 Stage 的子代理修正。Pro 流程**使用** `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具，随 OpenCode 插件安装；其他工具下按 AGENTS.md 降级协议手工维护同一账本）。详见 AGENTS.md「共享状态与 state_transition 工具」。
+Stage 1、3、4、5 通过 verifier 后才可推进；Stage 2 在 mathematician 满足 golden skill 完成条件后，经 `complete_stage(2)` 的原有 lint 门禁推进，用户明确要求 Stage 2 verifier 时才增加独立复核。失败项交回对应子代理修正。Pro 流程**使用** `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具，随 OpenCode 插件安装；其他工具下按 AGENTS.md 降级协议手工维护同一账本）。详见 AGENTS.md「共享状态与 state_transition 工具」。
 
-Stage 2 默认只生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），不采集 NPU golden 性能。用户在需求中明确说明“采集 NPU golden 性能”时，可额外生成一份可选的 `GOLDEN_PERF_REPORT.md`；Stage 2 不负责 Stage 5 机器合同。若 SPEC 未记录用户数值目标，Stage 5 optimizer 会使用 `pypto-pro-op-perf-tune` 自带的 `collect_golden_reference.py`，基于现有 Golden 和冻结 case 清单生成一次 Stage 5 专用报告，不回滚或重跑 Stage 2。
+Stage 2 默认生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），并生成 `GOLDEN_VALIDATION.json` 回执，不采集 NPU golden 性能。用户明确要求“采集 NPU golden 性能”时，必须额外生成 `GOLDEN_PERF_REPORT.md`；性能采集不自动启用 Stage 2 verifier。Stage 2 不负责 Stage 5 机器合同。若 SPEC 未记录用户数值目标，Stage 5 optimizer 会使用 `pypto-pro-op-perf-tune` 自带的 `collect_golden_reference.py`，基于现有 Golden 和冻结 case 清单生成一次 Stage 5 专用报告，不回滚或重跑 Stage 2。
 
 Stage 5 优先采用用户在 SPEC 中明确给出的可复算性能目标。用户未给数值目标时，把 `PERFORMANCE_CASES.json` 中每个 P0 case 的 `Golden 每迭代 NPU E2E / PyPTO 最终 target-kernel >= 1.0` 作为默认理想参考。该比值不是 PyPTO baseline→final 同口径加速比；用户目标和默认理想参考都不是能否交付的硬门禁，达到、未达到或不可用都必须如实报告。
 
@@ -200,6 +200,7 @@ custom/<op>/
 ├── MEMORY.md                  # 任务摘要与协作记录
 ├── {op}_golden.py             # NPU Golden 参考实现
 ├── {op}_golden_cpu.py         # CPU 更高精度 Golden（供精度校验）
+├── GOLDEN_VALIDATION.json     # 与当前 SPEC/Golden 哈希绑定的成功回执
 ├── GOLDEN_PERF_REPORT.md      # Stage 2 用户按需报告，或 Stage 5 默认目标人读报告
 ├── GOLDEN_PERF_REPORT.json    # 仅 Stage 5 默认目标分支生成的机器合同
 ├── DESIGN.md                  # Tile 数据流设计文档
@@ -233,7 +234,7 @@ custom/<op>/
 | `pypto-pro-op-architect` | Tile 数据流设计 | Stage 3 |
 | `pypto-pro-op-coder` | Kernel 实现与精度验证 | Stage 4 |
 | `pypto-pro-op-optimizer` | 可比证据驱动的性能优化 | Stage 5 |
-| `pypto-pro-op-verifier` | 每个 Stage 的独立检查 | Stage 1–5 |
+| `pypto-pro-op-verifier` | 独立阶段检查，调度规则见「核心工作流」 | Stage 1–5 |
 
 ## 四、常见问题
 
@@ -268,5 +269,4 @@ cd pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator && bash i
 1. PyPTO-Pro 通过 5 阶段工作流覆盖从需求规划到性能优化的完整流程：需求规划与资料索引→NPU/CPU Golden（性能采集可选）→Tile 数据流设计→Kernel 实现与精度验证→证据化性能优化
 2. 使用 `init.sh` 一键安装（OpenCode 推荐），支持项目级和全局级
 3. `opencode` / `claude` 是核心交互指令
-4. 每个 Stage 由独立 verifier 执行检查清单，确保质量门禁
-5. 产物全部写入 `custom/<op>/`，含 SPEC、资料报告、Golden、设计文档、Kernel 实现与可复算性能证据
+4. 产物全部写入 `custom/<op>/`，含 SPEC、资料报告、Golden、设计文档、Kernel 实现与可复算性能证据

@@ -99,7 +99,7 @@ Kernel只包含一个执行域时，分核信息可以在Section之前读取，�
 | 示例 | 适合参考的循环与Section结构 |
 |---|---|
 | `pro_ops/element_wise/test_add.py` | 单Vector Section、二维Tile循环和按核跨步分工 |
-| `pro_ops/matmul/test_matmul_8K_example.py` | 单Cube Section、M/N输出Tile循环和K循环 |
+| `pro_ops/matmul/test_matmul_8k_example.py` | 单Cube Section、M/N输出Tile循环和K循环 |
 | `pro_ops/matmul/test_matmul_perf_asw_4k_dn_move_offset_dynamic.py` | Cube Section中的动态M/N/K、K尾块和`phase`放置 |
 | `pro_ops/vf_api/test_softmax_tile_group_vf.py` | 单Vector Section、动态N轴和常规三遍Softmax状态的生命周期；该样例不包含在线更新 |
 | `pro_ops/fa/test_fa_with_mask.py` | Cube/Vector多Section、多层循环、mask分支和N-buffer轮转；仅在目标算子具有相近结构时参考 |

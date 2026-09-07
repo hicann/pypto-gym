@@ -38,16 +38,24 @@ API 签名、平台常量和能力边界以前三项为准。KB 或模型记忆�
 
 ### 1. 重建资料索引
 
-每次运行都重新扫描，不复用旧计数：
+`<skill-dir>` 替换为本 skill 的实际目录，每次仅用下列固定生成器重新扫描并重建索引：
+
+```bash
+python "<skill-dir>/scripts/build_material_index.py" \
+  --devkit "$PYPTO_DEVKIT_DIR" \
+  --output custom/<op>/PRO_MATERIAL_INDEX.md
+```
+
+生成器只读 devkit，失败时不覆盖已有索引；`pro_ops/` 清理由 orchestrator 负责。
 
 | 章节 | 来源 | 规则 |
 |------|------|------|
-| §A API | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/**/*.md` 与 API 总索引 | 全量、按实际目录分组 |
+| §A API | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/**/*.md`，总索引为 `docs/pypto_pro/api/index.md` | 全量、稳定排序 |
 | §B 官方样例 | `references/official_samples.md` | 只复制清单；先核对每个清单文件存在 |
 | §C 指南/教程 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/**/*.md` | 全量列出 |
 
-路径写成相对缓存路径并记录计数。§B 缺失项阻断；缓存中的清单外样例只记录为 ignored，
-不得参考。`tutorials/` 为空时阻断。
+路径写成相对缓存路径并记录计数。API 根索引、§B 清单项或教程缺失时生成器非零退出；
+缓存中的清单外样例不写入索引，也不得参考。
 
 ### 2. 按 SPEC 分解数学步骤
 
@@ -58,7 +66,8 @@ API 签名、平台常量和能力边界以前三项为准。KB 或模型记忆�
 
 对每个原子步骤：
 
-1. 从索引 §A 定位候选 API 并阅读全文；索引找不到时才补充文件系统搜索并更新索引。
+1. 从索引 §A 定位候选 API 并阅读全文；名称不足以定位时，只在 §A 已列文档中全文检索，
+   结论写入 EXPLORE_REPORT，不手工修改索引。
 2. 记录准确签名、参数单位/语义、dtype、shape、layout、MemorySpace、tile 和版本约束。
 3. Vector 步骤先查目标版本是否有单一 VF API；没有时再记录有文档依据的 VF 组合；两者
    都无法完整表达语义才标记 `unsupported`。不要在本阶段做 VF/tile-op 性能选择。
@@ -98,8 +107,7 @@ topology、Module、tile、同步事件或 KB_SELECTION。
 
 ## 完成条件
 
-- INDEX 含非空 §A、§B、§C；§C 覆盖 `tutorials/`；
-- §A/§C 文件数与本次扫描一致，§B 与清单一致且不存在缺失文件；
+- 上方生成器以 `--check` 检查现有 INDEX 时 exit code 为 0；
 - 每个公式步骤都有可行 API 链或带完整证据的 `unsupported`；
 - 所有采用的 API、平台常量、样例模式均带目标版本来源；
 - 所有官方样例和 §C 文档均有适用性记录；

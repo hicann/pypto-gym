@@ -213,7 +213,7 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           "Stage 4 path actions: plan_stage4 (set stage4_path L0/L1 based on is_fusion, init stage4_modules for L1), " +
           "start_module / submit_for_verify / complete_module / fail_module (L1 per-Module loop). " +
           "Lint gate fires on complete_stage / submit_for_verify / complete_module as a side effect " +
-          "(before state mutation; submit_for_verify is before verifier, the other two follow verifier PASS). " +
+          "(before state mutation; complete_stage follows verifier PASS except default Stage 2, which follows mathematician success). " +
           "SPEC.md freeze is enforced: " +
           "complete_stage(1) records the SPEC.md hash, and complete_stage(>=3) rejects if SPEC.md changed.",
         args: {
@@ -277,7 +277,9 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
           // ── Lint gate ──
           // Fires on complete_stage / submit_for_verify / complete_module as a side effect.
           // Runs before state mutation. submit_for_verify is the pre-verifier handoff;
-          // complete_stage / complete_module follow verifier PASS. lint FAIL keeps state unchanged.
+          // complete_stage follows verifier PASS except default Stage 2, which follows
+          // mathematician success. complete_module follows verifier PASS. A lint FAIL
+          // always keeps state unchanged.
           let gateSummary: GateSummary = { warnCount: 0, infoCount: 0, failFindings: [] };
           if (
             action === "complete_stage" ||
