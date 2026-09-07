@@ -115,17 +115,15 @@ def ai_infra_block_attn_res_forward_kernel(
 
         pypto.assemble(alpha, [bt_idx, 0], alpha_cache_3d)
 
-        alpha_3d = pypto.reshape(alpha, [tile_bt, 1, l_max], valid_shape=[tile_bt, 1, l])
-        if not enable_rmsnorm:
-            pypto.set_vec_tile_shapes(1, norm_m_tile, d)
-            v_fp32 = pypto.cast(v, pypto.DT_FP32)
+        alpha_16 = pypto.cast(alpha, dtype)
+        alpha_3d = pypto.reshape(alpha_16, [tile_bt, 1, l_max], valid_shape=[tile_bt, 1, l])
 
         pypto.set_semantic_label("Weighted Summation")
         if l_max == 32:
             pypto.set_cube_tile_shapes([1, 1], [l_max, l_max], [256, 256])
         else:
             pypto.set_cube_tile_shapes([1, 1], [128, 128], [128, 128])
-        h = pypto.matmul(alpha_3d, v_fp32, dtype)
+        h = pypto.matmul(alpha_3d, v, dtype)
 
         pypto.assemble(h, [bt_idx, 0, 0], h_out)
 
@@ -340,7 +338,7 @@ def ai_infra_block_attn_res(
     return tuple(results)
 
 
-@pypto.frontend.jit(runtime_options={"stitch_function_max_num": 32, "device_sched_mode": 1, "max_workspace_kb": 300000})
+@pypto.frontend.jit(runtime_options={"stitch_function_max_num": 32, "device_sched_mode": 1})
 def ai_infra_block_attn_res_backward_kernel_l_max_32(
     v_flat: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC, pypto.STATIC]),
     grad_h_3d: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC]),
@@ -358,7 +356,7 @@ def ai_infra_block_attn_res_backward_kernel_l_max_32(
     bt, l, d = v_flat.shape  # noqa: E741
     if d == 512:
         configs = {
-            "vec_nbuffer_setting": {"DEFAULT": 16, "func8_7": 2, "func8_1": 8, "func8_0": 32, "func8_8": 32},
+            "vec_nbuffer_setting": {"DEFAULT": 16, "func7_7": 2, "func7_1": 8, "func7_0": 32, "func7_8": 32},
             "cube_nbuffer_setting": {"DEFAULT": 16},
         }
     elif d == 1536:
