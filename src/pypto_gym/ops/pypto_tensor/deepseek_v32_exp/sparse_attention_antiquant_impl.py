@@ -113,7 +113,6 @@ def sparse_attention_antiquant_compute(
         cur_act_seq = kv_act_seqs[batch_idx]
         for slc_idx in pypto.loop(0, s1_sym, 1, name="LOOP_L1_s1_SA", idx_name="s1Idx"):
             cur_seq = (cur_act_seq - s1_sym + 1 + slc_idx).max(0).min(topk)
-            cur_seq.as_variable()
             bn_per_batch = (cur_seq + s2_tile - 1) // s2_tile
 
             for n_kv_idx in pypto.loop(0, n_kv_sym, 1, name="LOOP_L2_n_kv_SA", idx_name="n_kvIdx"):
@@ -519,7 +518,6 @@ def sparse_attention_antiquant_compute_950(
             # 规格 2
             cur_seq = (cur_act_seq - s1_sym + 1 + slc_idx).max(0).min(topk)
             # 规格 2048
-            cur_seq.as_variable()
             bn_per_batch = (cur_seq + s2_tile - 1) // s2_tile
             # 规格 2048//512_=4_
 

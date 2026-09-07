@@ -291,22 +291,23 @@ for i in pypto.loop(8):
 
 ---
 
-## 14. 从 tensor 元素提取动态循环边界：`tensor[idx].as_variable()`
+## 14. 从 tensor 元素提取动态循环边界：`tensor[idx]` + 符号算术
 
-paged attention 等场景中，循环次数由 tensor 中的值决定。直接用 tensor 元素做 loop 边界会触发 `Invalid value type`（见 §9）。
+paged attention 等场景中，循环次数由 tensor 中的值决定。`pypto.loop()` 边界只接受 Python int 或 `SymbolicScalar`。`tensor[符号索引]` 走 GetTensorData 直接返回 `SymbolicScalar`，经符号算术后即可作 loop 边界；而 `pypto.sub` 等 tensor 算术返回 `Tensor`，会被 loop 拒绝（见 §9）。
 
 ```python
-# ❌ 直接用 tensor 元素做 loop 边界
-cur_seq = actual_seqs[b_idx]
-for s in pypto.loop(cur_seq):  # TypeError
+# ❌ pypto.sub 等 tensor 算术 → Tensor 类型 → loop 拒绝
+s_count = pypto.sub(q_cur, q_off)
+for s in pypto.loop(s_count):  # Invalid value type
 
-# ✅ tensor 元素 → as_variable() → 符号算术 → loop
+# ✅ tensor[idx]（GetTensorData → SymbolicScalar）→ 符号算术 → loop
 cur_seq = actual_seqs[b_idx]
-cur_seq.as_variable()
 num_blocks = (cur_seq + BLOCK_SIZE - 1) // BLOCK_SIZE
 for s in pypto.loop(0, num_blocks, 1):
     ...
 ```
+
+> 历史注：早期版本此模式中出现的 `cur_seq.as_variable()` 是无实际行为的占位接口（返回 None，框架内无任何消费者），已从框架移除。真正让 loop 接受边界的是 GetTensorData 返回 SymbolicScalar 后的符号算术，与 `as_variable()` 无关。
 
 ---
 

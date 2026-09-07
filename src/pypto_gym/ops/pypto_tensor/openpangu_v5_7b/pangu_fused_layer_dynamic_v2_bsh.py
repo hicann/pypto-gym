@@ -246,7 +246,6 @@ def create_dynamic_fused_layer_kernel_v2_bsh(config: DynamicFusedLayerConfigV2BS
                 cur_s_start = s_idx * s_tile
                 cur_s_end = (cur_s_start + s_tile).min(actual_kv_len_val)
                 cur_s_len = cur_s_end - cur_s_start
-                cur_s_len.as_variable()
 
                 pypto.set_vec_tile_shapes(s_tile, head_dim)
                 k_tile = pypto.view(key_cache, [s_tile, head_dim],

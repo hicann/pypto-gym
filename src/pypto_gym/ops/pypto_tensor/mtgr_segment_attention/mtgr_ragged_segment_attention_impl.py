@@ -67,7 +67,6 @@ def mtgr_ragged_segment_attention(
                 q_seg_start = segment_starts[b_idx, seg_q_idx]
                 q_seg_end = segment_starts[b_idx, seg_q_idx + 1]
                 q_seg_len = q_seg_end - q_seg_start
-                q_seg_len.as_variable()
                 q_tile_count = (q_seg_len + Q_TILE_SIZE - 1) // Q_TILE_SIZE
                 rule_val = rules[seg_q_idx]
 
@@ -95,7 +94,6 @@ def mtgr_ragged_segment_attention(
                     k_pre_diag_start = segment_starts[b_idx, 0]
                     k_pre_diag_end = segment_starts[b_idx, seg_q_idx]
                     k_pre_diag_len = k_pre_diag_end - k_pre_diag_start
-                    k_pre_diag_len.as_variable()
                     k_pre_diag_tiles = (k_pre_diag_len + K_TILE_SIZE - 1) // K_TILE_SIZE
 
                     for k_tile_idx in pypto.loop(k_pre_diag_tiles, name="k_tile_loop_off_merged", \
@@ -171,7 +169,6 @@ def mtgr_ragged_segment_attention(
                     k_seg_start = segment_starts[b_idx, seg_q_idx]
                     k_seg_end = segment_starts[b_idx, seg_q_idx + 1]
                     k_seg_len = k_seg_end - k_seg_start
-                    k_seg_len.as_variable()
                     k_tile_count_in_seg = (k_seg_len + K_TILE_SIZE - 1) // K_TILE_SIZE
 
                     if rule_val == 1:

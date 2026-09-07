@@ -99,7 +99,6 @@ def incre_flash_attention_gqa_antiquant_kernel(
     for b_idx in pypto.loop(b, name="LOOP_b", idx_name="b_idx", parallel=True):
         for s1_idx in pypto.loop(s1, name="LOOP_s1", idx_name="s1_idx"):
             cur_seq_len = kv_actual_seqs[b_idx] - (s1 - 1 - s1_idx)
-            cur_seq_len.as_variable()
             s2_loop = pypto.ceildiv(cur_seq_len, s2_tile)
             bs_ofs = b_idx * s1 + s1_idx
             for n2_idx in pypto.loop(n2, name="LOOP_n2", idx_name="n2_idx"):

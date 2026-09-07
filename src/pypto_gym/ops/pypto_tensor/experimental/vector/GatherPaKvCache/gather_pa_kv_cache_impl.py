@@ -102,9 +102,7 @@ def _gather_pa_kv_cache_nd_kernel_npu(
         for q_inner in range(q_unroll):
             q_idx = q_base + q_inner
             out_start = seq_lens[q_idx]
-            out_start.as_variable()
             seq_len = seq_lens[q_idx + 1] - out_start
-            seq_len.as_variable()
             table_offset = seq_offset[q_idx] // block_size
             block_count = pypto.ceildiv(seq_len, block_size)
 

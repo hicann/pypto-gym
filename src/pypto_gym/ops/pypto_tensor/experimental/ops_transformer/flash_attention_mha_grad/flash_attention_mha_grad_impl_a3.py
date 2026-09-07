@@ -23,7 +23,7 @@ Flash Attention MHA Backward
   dQ/dK/dV 在同一双层循环内完成，dQ/dK/dV 用 atomic_add 累加输出。
   输出 tensor 由 host 端 torch.zeros 预初始化，kernel 不再做 assemble 清零。
 
-关键: s1_loop / s2_loop 基于 per-batch 的 s1 / s2 动态计算 (.as_variable());
+关键: s1_loop / s2_loop 基于 per-batch 的 s1 / s2 动态计算;
 is_loop_begin/end 用 Python if 即可。
 """
 

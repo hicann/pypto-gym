@@ -120,9 +120,7 @@ def sfa_forward_tnd_compute(q_nope, compressed_kv_norm, topk_indices,
         # Inner loop over s (per-batch query tokens)
         for s_idx in pypto.loop(0, s_per_batch, 1, name="LOOP_S", idx_name="sIdx"):
             eff_topk = (cur_kv_len - s_per_batch + 1 + s_idx).max(0).min(sparse_size)
-            eff_topk.as_variable()
             eff_topk_cond = (cur_kv_len - s_per_batch + 1 + s_idx).max(0)
-            eff_topk_cond.as_variable()
             t_idx = prev_q_prefix + s_idx
             # View to fixed shape [max_total_kv, D] with valid_shape [T2*N2, D]
             kv_2d = pypto.view(kv_2d_dyn, [max_total_kv, dn], [0, 0],

@@ -93,7 +93,7 @@
 | matmul 后未重置 vec tile | [external §16](experience_classified/external_error.md) |
 | `CHECK FAILED: dest.GetShape().size()` / `Assemble shape mismatch` | [function §6](experience_classified/function.md) |
 | `buf[a:b, :] = view(...)` 局部切片写入数据异常 / `valid_shape` 追踪失效 | [function §7](experience_classified/function.md) |
-| `tensor[idx].as_variable()` 提取动态 loop 边界 | [function §14](experience_classified/function.md) |
+| `tensor[idx]`（GetTensorData）+ 符号算术提取动态 loop 边界 | [function §14](experience_classified/function.md) |
 | `could not parse dispatch key: NPU` | [external §13](experience_classified/external_error.md) |
 | `from_torch()` 返回值传给 `@jit` kernel | [external §1](experience_classified/external_error.md) |
 | `pypto.empty()` 不存在 | [external §1](experience_classified/external_error.md) |

@@ -41,7 +41,7 @@ CachePolicy, CastMode, DataType, PrecisionType, LogBaseType, OpType, OutType, Re
 ## symbolic 符号/动态 shape
 本地 `$PYPTO_DEVKIT_DIR/docs/api/symbolic/<name>.md` / 在线 `_sources/api/symbolic/<name>.md.txt` —— `<name>` 取下列之一：
 
-pypto-SymbolicScalar_introduction, pypto-SymbolicScalar_constructor, pypto-SymbolicScalar-as_variable, pypto-SymbolicScalar-concrete, pypto-SymbolicScalar-is_concrete, pypto-SymbolicScalar-is_expression, pypto-SymbolicScalar-is_immediate, pypto-SymbolicScalar-is_symbol, pypto-SymbolicScalar-max, pypto-SymbolicScalar-min
+pypto-SymbolicScalar_introduction, pypto-SymbolicScalar_constructor, pypto-SymbolicScalar-concrete, pypto-SymbolicScalar-is_concrete, pypto-SymbolicScalar-is_expression, pypto-SymbolicScalar-is_immediate, pypto-SymbolicScalar-is_symbol, pypto-SymbolicScalar-max, pypto-SymbolicScalar-min
 
 
 ## controlflow 控制流

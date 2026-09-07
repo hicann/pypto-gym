@@ -496,7 +496,6 @@ def compute_loop_s1(ctx):
     cur_seq = lt.kv_actual_seqs[ctx.b_idx]
     for s1_idx in pypto.loop(kp.s1, name="LOOP_s1", idx_name="s1Idx"):
         seq = (cur_seq - kp.s1 + 1 + s1_idx)
-        seq.as_variable()
         ctx = replace(ctx, s1_idx=s1_idx, s2_loop=(seq + tc.s2_tile - 1) // tc.s2_tile, seq=seq)
         compute_loop_n2(ctx)
 

@@ -100,7 +100,6 @@ def flash_attention_score_grad_kernel(
     dv_2d = dv
 
     s_loop = (s + S_TILE - 1) // S_TILE
-    s_loop.as_variable()
 
     c_tile = [[S_TILE, S_TILE], [head_dim, 256], [S_TILE, S_TILE]]
     v_tile_s = [S_TILE, S_TILE]

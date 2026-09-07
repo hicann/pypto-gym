@@ -108,12 +108,10 @@ def flash_attention_fp8_varlen_forward_kernel(
         q_start = cu_seqlens_q[b_idx]
         q_end = cu_seqlens_q[b_idx + 1]
         seq_len_q = q_end - q_start
-        seq_len_q.as_variable()
 
         k_start = cu_seqlens_k[b_idx]
         k_end = cu_seqlens_k[b_idx + 1]
         seq_len_k = k_end - k_start
-        seq_len_k.as_variable()
 
         q_tile_count = (seq_len_q + q_tile - 1) // q_tile
         k_tile_count = (seq_len_k + k_tile - 1) // k_tile
