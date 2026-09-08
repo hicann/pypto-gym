@@ -262,7 +262,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--impl")
     ap.add_argument("--up-to-module", type=int, default=1)
-    ap.add_argument("--suite", default="./adversarial_suite.json")
+    ap.add_argument(
+        "--suite",
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "adversarial_suite.json"),
+    )
     ap.add_argument("--case")
     ap.add_argument("--levels", type=lambda s: s.split(","))
     ap.add_argument("--self-test", action="store_true")

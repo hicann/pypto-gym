@@ -213,6 +213,8 @@ Then author only `adversarial_suite.json` (Step B.2). The runner's CLI, report s
 
 ### Step B.2 — `adversarial_suite.json`
 
+写用例前，先读 `eval/module_interfaces.yaml`。adversarial_suite.json 产出的测试用例必须满足 module_interfaces.yaml 的规格定义，保证测试用例与算子接口规格自洽、无冲突；校验并遵守各输入 Shape 之间的推导关系、输入输出的数据类型映射关系，以及规格文档中规定的其余所有约束条件。
+
 Populate **≥ 2 cases per level L1–L5**:
 
 | Level | Purpose | Typical case |
