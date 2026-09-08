@@ -11,7 +11,7 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 SPEC、Golden
 - 每个决策必须包含**结论 + 推导过程 + 证据来源**
 - 力求后续 Agent 拿到 DESIGN.md 即可确定 kernel 的完整结构与关键决策；API 签名等细节仍须由 coder 以 API 文档原文为准确认（EXPLORE_REPORT 仅为派生的先行速查，不作签名权威）。设计验收通过后 DESIGN.md 成为实现合同；运行证据推翻设计时须返回 `design_violation`，由编排器重新调度设计修订
 - 每轮发现的矛盾必须回溯修正前序决策，不允许累积到 R8 再处理
-- 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
+- 本 skill 以**思维方法指导**为主，不教具体写法——具体 API 用法、tile 配置、同步写法等请查阅 API 文档（`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/`）、教学文档（`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/`、`$PYPTO_DEVKIT_DIR/docs/guide/quick_start/pro/` 与 `$PYPTO_DEVKIT_DIR/docs/guide/introduction.md`）、官方指定算子（见 `PRO_MATERIAL_INDEX.md` §B），理解后据实设计
 
 ## 两条实现约束（设计阶段须落实）
 
@@ -204,7 +204,7 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 **核心问题**：work item 如何分配到各物理核？
 
-> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`。分核策略全部照该文档执行，与经验推断冲突时以该文档为准。
 
 **本轮须在 DESIGN.md §5 落实的产出**：
 - 分核方案
@@ -259,7 +259,7 @@ EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不�
 
 **核心问题**：如何处理维度不整除 tile 尺寸的尾块？
 
-> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**Tile的物理shape固定，有效shape随当前块变化**。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/tail_block_handling.md`。尾块的完整机制全部照该文档执行，与经验推断冲突时以该文档为准。核心模型：**Tile的物理shape固定，有效shape随当前块变化**。
 
 **本轮须在 DESIGN.md §7 落实的产出**：将该文档的尾块机制落到本算子的循环与Section结构中（填入 §7 尾块处理方案）。
 

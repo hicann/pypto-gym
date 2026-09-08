@@ -8,7 +8,7 @@
 
 `pl.system.set_cross_core`和`pl.system.wait_cross_core`用于保证生产者和消费者之间的数据读写顺序。最常见的场景是同一个AI Core block内，Cube执行域与Vector执行域协同处理一组中间数据；接口也提供跨Block或subblock的同步模式。同步事件只传递“可以继续执行”的信号，不负责搬运数据，也不分配共享缓冲。
 
-设计跨核同步时，先确定中间数据存放在GM workspace、Mat（L1）还是Vec，再确定生产者和消费者，最后放置set/wait并分配`event_id`。接口参数见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/synchronization/set_cross_core_wait_cross_core.md`。
+设计跨核同步时，先确定中间数据存放在GM workspace、Mat（L1）还是Vec，再确定生产者和消费者，最后放置set/wait并分配`event_id`。接口参数见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/synchronization/`下的`set_cross_core.md`和`wait_cross_core.md`。
 
 ## 判断是否需要cross-core同步
 

@@ -101,13 +101,13 @@ skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 
 ### 6. 收尾自检
 
-`<skill-dir>` 为本 skill 的实际目录，`<kb-root>` 为第 5 步已读取的 KB 根；只运行以下只读检查器：
+`<skill-dir>` 为本 skill 的绝对路径，`<kb-root>` 为第 5 步已读取的 KB 根，`<缓存绝对路径>` 为编排器给定的 `PYPTO_DEVKIT_DIR` 值；替换后保留引号，只运行以下只读检查器：
 它复用 canonical SPEC/材料索引校验器，并检查报告结构与覆盖、MEMORY 指针和 KB_SELECTION 的动态字段、路径及哈希，不替代 verifier 的语义裁决。
 
 ```bash
 python "<skill-dir>/scripts/validate_stage1.py" \
-  --op-dir custom/<op> \
-  --devkit "$PYPTO_DEVKIT_DIR" \
+  --op-dir "custom/<op>" \
+  --devkit "<缓存绝对路径>" \
   --kb-root "<kb-root>"
 ```
 

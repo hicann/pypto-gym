@@ -51,7 +51,7 @@ def _report_with_paths(template: str, samples: list[str], tutorials: list[str]) 
     sample_rows = "\n".join(
         f"| {index} | `{path}` | `vf.add` |" for index, path in enumerate(samples, 1)
     )
-    tutorial_rows = "\n".join(f"| `{path}` | tutorials | pattern | applicable |" for path in tutorials)
+    tutorial_rows = "\n".join(f"| `{path}` | guide | pattern | applicable |" for path in tutorials)
     report = report.replace(
         "### 4.1 全量样例参考（按 cube/vec 组成分类）",
         "### 4.1 全量样例参考（按 cube/vec 组成分类）\n" + sample_rows,
@@ -93,16 +93,32 @@ class Stage1SkillContractTests(unittest.TestCase):
         ]
         self.assertEqual(positions, sorted(positions))
 
-    def test_material_indexes_only_current_tutorials_tree(self) -> None:
-        for path in (
-            MATERIAL / "SKILL.md",
-            MATERIAL / "templates" / "pro_material_index.md",
-            MATERIAL / "templates" / "explore_report.md",
+    def test_material_scans_all_pro_guide_ranges_and_rejects_missing_sources(self) -> None:
+        material = self._load_module(MATERIAL / "scripts/build_material_index.py")
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        devkit, guides = self._create_devkit_fixture(root)
+        index, counts = material.build_index(devkit, material.manifest_path())
+        self.assertEqual(re.findall(r"`(docs/guide/[^`]+\.md)`", index), sorted(guides))
+        self.assertEqual(counts[2], len(guides))
+        self.assertNotIn("docs/pypto_pro/tutorials/old.md", index)
+        for relative in (
+            "docs/guide/programming_guide/pro", "docs/guide/quick_start/pro",
+            "docs/guide/introduction.md",
+            "docs/guide/programming_guide/pro/index.md", "docs/guide/quick_start/pro/index.md",
         ):
-            text = _read(path)
-            self.assertIn("tutorial", text, path.name)
-            self.assertNotIn("guide/", text, path.name)
-            self.assertNotIn("{guide", text, path.name)
+            with self.subTest(missing=relative):
+                source, backup = devkit / relative, root / "missing source"
+                source.rename(backup)
+                try:
+                    path_pattern = re.escape(relative).replace("/", r"[/\\]")
+                    self.assertRaisesRegex(
+                        material.MaterialIndexError, path_pattern,
+                        material.build_index, devkit, material.manifest_path(),
+                    )
+                finally:
+                    backup.rename(source)
 
     def test_spec_template_has_no_operator_specific_defaults(self) -> None:
         text = _read(INTENT / "templates" / "spec-template.md")
@@ -275,29 +291,29 @@ class Stage1SkillContractTests(unittest.TestCase):
         validator = self._load_module(PLAN / "scripts/validate_stage1.py")
         op_dir, paths, report, index = self._create_report_fixture()
         self.assertEqual(validator.check_report(op_dir, "demo", index), [])
-        tutorial_row = f"| `{paths[1]}` | tutorials | pattern | applicable |"
+        tutorial_row = f"| `{paths[1]}` | guide | pattern | applicable |"
         misplaced = report.replace(tutorial_row, "").replace("### 5.2 来自教程的关键约束与建议", "")
         (op_dir / "EXPLORE_REPORT.md").write_text(
             misplaced.replace("## 6. Stage 3 设计事实输入", "## 6. Stage 3 设计事实输入\n" + tutorial_row),
             encoding="utf-8",
         )
         errors = validator.check_report(op_dir, "demo", index)
-        self.assertTrue(any("tutorial paths not covered" in error for error in errors))
+        self.assertTrue(any("guide paths not covered" in error for error in errors))
         (op_dir / "EXPLORE_REPORT.md").write_text(
             report.replace(f"| `{paths[1]}` |", "| `unrelated.md` |") + "\n" + paths[1],
             encoding="utf-8",
         )
         errors = validator.check_report(op_dir, "demo", index)
-        self.assertTrue(any("tutorial paths not covered" in error for error in errors))
+        self.assertTrue(any("guide paths not covered" in error for error in errors))
         report = _report_with_paths(
             _read(MATERIAL / "templates/explore_report.md"),
             [paths[0], "pro_ops/a5/vector/unlisted.py"],
-            [paths[1], "docs/pypto_pro/tutorials/unlisted.md"],
+            [paths[1], "docs/guide/programming_guide/tensor/unlisted.md"],
         )
         (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
         errors = "\n".join(validator.check_report(op_dir, "demo", index))
         self.assertIn("sample table paths absent", errors)
-        self.assertIn("tutorial table paths absent", errors)
+        self.assertIn("guide table paths absent", errors)
 
     def test_report_validator_parses_frontmatter(self) -> None:
         validator = self._load_module(PLAN / "scripts/validate_stage1.py")
@@ -327,30 +343,22 @@ class Stage1SkillContractTests(unittest.TestCase):
     def test_report_validator_limits_table_coverage_to_its_section(self) -> None:
         validator = self._load_module(PLAN / "scripts/validate_stage1.py")
         op_dir, paths, report, index = self._create_report_fixture()
-        tutorial_row = f"| `{paths[1]}` | tutorials | pattern | applicable |"
+        tutorial_row = f"| `{paths[1]}` | guide | pattern | applicable |"
         for heading, valid in (("#### detail", True), ("### next", False), ("## next", False), ("# next", False)):
             with self.subTest(heading=heading):
                 (op_dir / "EXPLORE_REPORT.md").write_text(
                     report.replace(tutorial_row, heading + "\n" + tutorial_row), encoding="utf-8",
                 )
                 errors = validator.check_report(op_dir, "demo", index)
-                covered = not any("tutorial paths not covered" in error for error in errors)
+                covered = not any("guide paths not covered" in error for error in errors)
                 self.assertEqual(covered, valid)
 
     def test_stage1_validator_accepts_a_complete_fixture(self) -> None:
         validator = self._load_module(PLAN / "scripts/validate_stage1.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            op_dir, devkit = root / "custom/demo", root / "devkit"
-            (devkit / "docs/pypto_pro/api").mkdir(parents=True)
-            (devkit / "docs/pypto_pro/api/index.md").write_text("api", encoding="utf-8")
-            (devkit / "docs/pypto_pro/tutorials").mkdir(parents=True)
-            (devkit / "docs/pypto_pro/tutorials/guide.md").write_text("guide", encoding="utf-8")
-            manifest = _read(MATERIAL / "references" / "official_samples.md")
-            for relative in re.findall(r"`(pro_ops/[^`|]+\.py)`", manifest):
-                target = devkit / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("# sample", encoding="utf-8")
+            op_dir = root / "custom/demo"
+            devkit, _ = self._create_devkit_fixture(root)
 
             op_dir.mkdir(parents=True)
             contract = {
@@ -371,7 +379,7 @@ class Stage1SkillContractTests(unittest.TestCase):
             (op_dir / "PRO_MATERIAL_INDEX.md").write_text(index, encoding="utf-8")
             template = _read(MATERIAL / "templates" / "explore_report.md")
             covered = re.findall(
-                r"`((?:pro_ops/[^`]+\.py|docs/pypto_pro/tutorials/[^`]+\.md))`", index,
+                r"`((?:pro_ops/[^`]+\.py|docs/guide/[^`]+\.md))`", index,
             )
             report = _report_with_paths(
                 template,
@@ -397,12 +405,35 @@ class Stage1SkillContractTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def _create_devkit_fixture(self, root: Path) -> tuple[Path, set[str]]:
+        devkit = root / "devkit cache"
+        guides = {
+            "docs/guide/programming_guide/pro/index.md",
+            "docs/guide/programming_guide/pro/development/tile guide.md",
+            "docs/guide/quick_start/pro/index.md",
+            "docs/guide/quick_start/pro/SIMD/Add_operator.md",
+            "docs/guide/introduction.md",
+        }
+        excluded = {
+            "docs/guide/programming_guide/tensor/index.md",
+            "docs/guide/quick_start/tensor/index.md",
+            "docs/guide/introduction_tensor.md",
+            "docs/pypto_pro/tutorials/old.md",
+        }
+        manifest = _read(MATERIAL / "references/official_samples.md")
+        samples = re.findall(r"`(pro_ops/[^`|]+\.py)`", manifest)
+        for relative in {"docs/pypto_pro/api/index.md", *guides, *excluded, *samples}:
+            target = devkit / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# fixture\n", encoding="utf-8")
+        return devkit, guides
+
     def _create_report_fixture(self) -> tuple[Path, tuple[str, str], str, str]:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         op_dir = Path(temporary.name) / "demo"
         op_dir.mkdir()
-        paths = ("pro_ops/a5/vector/test_demo.py", "docs/pypto_pro/tutorials/guide.md")
+        paths = ("pro_ops/a5/vector/test_demo.py", "docs/guide/programming_guide/pro/guide.md")
         report = _report_with_paths(_read(MATERIAL / "templates/explore_report.md"), [paths[0]], [paths[1]])
         (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
         index = "\n".join(f"- `{path}`" for path in paths)

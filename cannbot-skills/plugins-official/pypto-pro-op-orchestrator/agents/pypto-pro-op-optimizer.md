@@ -3,7 +3,7 @@ name: pypto-pro-op-optimizer
 description: "执行 pypto-pro-op-perf-tune 定义的 PyPTO-Pro Stage 5 性能优化，并向 pypto-pro-op-orchestrator 交接结果。"
 mode: subagent
 skills:
-  - pypto-docs-search
+  - pypto-pro-docs-search
   - pypto-pro-environment-check
   - pypto-pro-op-perf-tune
 ---
@@ -16,7 +16,7 @@ skills:
 
 ## 代理边界
 
-- 禁止改变会话环境（如 conda activate、source set_env.sh、export、pip install）。环境异常加载
+- 除按 `pypto-pro-docs-search` 传递既定资料路径外，禁止改变会话环境（如 conda activate、source set_env.sh、export、pip install）。环境异常加载
   `pypto-pro-environment-check` 取证，返回 `env_error`，不得自行修复环境或伪造性能结论。
 - 禁止调用 `state_transition`，禁止读写或创建 `.orchestrator_state.json`，禁止维护其它 Stage 状态。
 - 不得自行调度 verifier、推进 Stage、请求或执行 `rollback_to_stage`，也不得把 Stage 5 内可修复的

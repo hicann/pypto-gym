@@ -18,7 +18,7 @@ them.
 
 ## Why it works
 
-From `docs/pypto_pro/api/SIMD-API/operation/vf_computation/mask_operations/mask_reg.md:17,19`: a
+From `docs/pypto_pro/api/SIMD-API/vf_computation/mask_reg.md`: a
 `MaskReg` is a fixed **256-bit** object, and *width* is not a property of the register. It is the
 **stride at which the consuming instruction reads it** — b8 reads bit *i*, b16 bit 2*i*, b32 bit
 4*i*.

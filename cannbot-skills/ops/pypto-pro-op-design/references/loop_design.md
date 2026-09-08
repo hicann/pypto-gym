@@ -4,8 +4,8 @@ R4根据R0的Module划分组织循环和Section代码结构。本轮确定各Mod
 
 相关资料：
 
-- 多核任务分配：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`
-- 尾块处理：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`
+- 多核任务分配：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`
+- 尾块处理：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/tail_block_handling.md`
 
 ## 将Module放入Section
 
@@ -61,9 +61,9 @@ for m_idx in pl.range(core_idx, m_tiles, core_num):
 
 矩阵乘的M、N循环选择输出Tile，K循环放在输出Tile内部并持续更新同一个Acc Tile。具体写法直接参考以下官方文档：
 
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/Cube_matrix_computation.md`中的“K维分块累加”，包含K循环、首块`matmul`、后续`matmul_acc`、Tile配置和完整Kernel；
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/matrix_computation/matmul_acc.md`，用于核对`matmul_acc`参数、Acc Tile约束和分块累加示例；
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/matrix_computation/phase.md`，用于核对`AccPhase`、`STPhase`和`unit_flag`的配对要求。
+- `$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/Cube_matrix_computation.md`中的“K维分块累加”，包含K循环、首块`matmul`、后续`matmul_acc`、Tile配置和完整Kernel；
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/matrix_computation/matmul_acc.md`，用于核对`matmul_acc`参数、Acc Tile约束和分块累加示例；
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/matrix_computation/phase.md`，用于核对`AccPhase`、`STPhase`和`unit_flag`的配对要求。
 
 R4只需记录M/N输出循环与K循环的嵌套关系、K的Tile数，以及采用单次`matmul`还是K分块累加。接口参数和同步要求直接引用上述文档，不在设计资料中重复整理。
 

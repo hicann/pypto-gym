@@ -65,13 +65,14 @@ Attention的在线归一化还会维护输出累加量。`m`更新时，已有�
 
 Section接口和编程方式参见：
 
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/controlflow/section_vector_section_cube.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/quantization/quant.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/quantization/dequant.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/memory_data_movement/move.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/memory_data_movement/store.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/Cube_matrix_computation.md`
-- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/Reg_vector_computation.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/controlflow/section_vector.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/controlflow/section_cube.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/quantization/quant.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/quantization/dequant.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/memory_data_movement/move.md`
+- `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/memory_data_movement/store.md`
+- `$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/Cube_matrix_computation.md`
+- `$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/Reg_vector_computation.md`
 
 ### Cube与Vector组合算子示例
 

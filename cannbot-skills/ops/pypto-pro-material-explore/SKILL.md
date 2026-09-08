@@ -25,7 +25,7 @@ KB 路由由 plan 负责，最终 Module/tile/同步方案由 Stage 3 决定。
 
 1. 当前 `$PYPTO_DEVKIT_DIR` 中的目标版本 API 文档；
 2. `official_samples.md` 指定且缓存中存在的官方样例；
-3. 当前缓存中的 `tutorials/`；
+3. 当前缓存中的 Pro 编程指南、快速入门与共享简介（见下方 §C 范围）；
 4. KB 中与当前 class 匹配、状态为 validated 的补充材料。
 
 API 签名、平台常量和能力边界以前三项为准。KB 或模型记忆不能覆盖目标版本事实。
@@ -38,23 +38,23 @@ API 签名、平台常量和能力边界以前三项为准。KB 或模型记忆�
 
 ### 1. 重建资料索引
 
-`<skill-dir>` 替换为本 skill 的实际目录，每次仅用下列固定生成器重新扫描并重建索引：
+将 `<skill-dir>`、`<缓存绝对路径>` 分别替换为本 skill 的绝对路径和编排器给定的 `PYPTO_DEVKIT_DIR` 值，保留引号；每次仅用下列固定生成器重建索引：
 
 ```bash
 python "<skill-dir>/scripts/build_material_index.py" \
-  --devkit "$PYPTO_DEVKIT_DIR" \
-  --output custom/<op>/PRO_MATERIAL_INDEX.md
+  --devkit "<缓存绝对路径>" \
+  --output "custom/<op>/PRO_MATERIAL_INDEX.md"
 ```
 
-生成器只读 devkit，失败时不覆盖已有索引；`pro_ops/` 清理由 orchestrator 负责。
+生成器只读 devkit，失败时不覆盖已有索引；资源装配由 orchestrator 负责。
 
 | 章节 | 来源 | 规则 |
 |------|------|------|
 | §A API | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/**/*.md`，总索引为 `docs/pypto_pro/api/index.md` | 全量、稳定排序 |
 | §B 官方样例 | `references/official_samples.md` | 只复制清单；先核对每个清单文件存在 |
-| §C 指南/教程 | `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/**/*.md` | 全量列出 |
+| §C 指南/教程 | `$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/**/*.md`、`$PYPTO_DEVKIT_DIR/docs/guide/quick_start/pro/**/*.md` 与 `$PYPTO_DEVKIT_DIR/docs/guide/introduction.md` | 全量列出，含各目录的 `index.md`；不扫描 Tensor 专属指南目录 |
 
-路径写成相对缓存路径并记录计数。API 根索引、§B 清单项或教程缺失时生成器非零退出；
+路径写成相对缓存路径并记录计数。API 根索引、§B 清单项、§C 任一 Pro 目录及其根索引或简介缺失时生成器非零退出；
 缓存中的清单外样例不写入索引，也不得参考。
 
 ### 2. 按 SPEC 分解数学步骤
@@ -88,7 +88,7 @@ topology/dtype/layout/platform 匹配的代码；`study` 不能作为正确性�
 
 ### 5. 阅读指南与教程
 
-逐一评估索引 §C 中来自 `tutorials/` 的所有文档。记录与当前算子相关的设计
+逐一评估索引 §C 中的 Pro 编程指南、快速入门及共享简介。记录与当前算子相关的设计
 模式、适用条件和章节路径；不相关也要标记“不适用”，以证明遍历完整。
 
 ### 6. 汇总报告
@@ -100,7 +100,7 @@ topology/dtype/layout/platform 匹配的代码；`study` 不能作为正确性�
 - 官方样例与教程证据；
 - 环境常量快照；
 - 可行性、unsupported 阻断及可证实替代路线；
-- 按 API/样例/tutorial 分类的证据索引。
+- 按 API/样例/guide 分类的证据索引。
 
 本节是 Stage 3 的事实输入：报告可以提出 Stage 3 需解决的设计问题，但不得在这里冻结
 topology、Module、tile、同步事件或 KB_SELECTION。

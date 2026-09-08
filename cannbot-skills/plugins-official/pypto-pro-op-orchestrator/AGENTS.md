@@ -3,7 +3,7 @@ name: pypto-pro-op-orchestrator
 description: "PyPTO-Pro 算子开发编排者。驱动 Stage 1–5，调度专属子代理（子代理自行加载对应 skill），并按各 Stage 合同调度 pypto-pro-op-verifier。从不亲自编写 kernel 代码或执行检查。"
 mode: primary
 skills:
-  - pypto-docs-search
+  - pypto-pro-docs-search
 agents:
   - pypto-pro-op-architect
   - pypto-pro-op-coder
@@ -35,90 +35,31 @@ python {脚本路径}
 
 ## 资源缓存准备（会话开始，一次）
 
-**缓存目录设置**：资源缓存放于当前目录下的 `.devkit/` 子目录（已加入 `.gitignore`）。会话开始时先设置环境变量，后续所有命令和脚本均继承：
+使用独立 skill `pypto-pro-docs-search`，在当前项目的 `.devkit/` 中装配一次 Pro 资料。调度 Stage 1 前只做装配和校验，不检索 API、不做 explore 或算子设计；随后由 `pypto-pro-material-explore` 扫描同一缓存，生成 `PRO_MATERIAL_INDEX.md`。
+
+在项目根目录执行以下命令块。`--check` 输出 `READY` 且退出码为 0 时跳过装配，否则执行一次装配；脚本只获取 Pro 资料和官方清单指定样例，装配后自行校验，无需额外清理。
 
 ```bash
 export PYPTO_DEVKIT_DIR="$(pwd)/.devkit"
-
-# `init.sh` 安装时会将下方占位符渲染为实际资源根；prompt 不自行推断路径。
+# init.sh 将此占位符渲染为实际资源根，不自行推断安装路径。
 CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
-[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
+export CANNBOT_CONFIG_ROOT="$CANNBOT_ROOT"
+[ -d "$CANNBOT_ROOT/skills/pypto-pro-docs-search" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
+
+if python "$CANNBOT_ROOT/skills/pypto-pro-docs-search/scripts/sync_devkit.py" \
+    --samples "$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md" --check; then
+    echo "缓存就绪，进入 Stage 1"
+else
+    python "$CANNBOT_ROOT/skills/pypto-pro-docs-search/scripts/sync_devkit.py" \
+        --samples "$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md" || exit 1
+fi
 ```
 
-调度 Stage 1 子代理前，使用 skill `pypto-docs-search` **仅装配（部署）一次开发资源缓存**——此处只运行缓存装配，**不在此进行任何检索 / explore**（PyPTO-Pro 的 API 文档、pro_ops 样例、教程无在线形态，必须本地在场）。之后 Stage 1 的 `pypto-pro-material-explore` 扫描生成 `PRO_MATERIAL_INDEX.md`。
+缓存中的 Pro API 入口为 `docs/pypto_pro/api/`；指南保持上游原生路径：`docs/guide/programming_guide/pro/`、`docs/guide/quick_start/pro/` 与共享简介 `docs/guide/introduction.md`。`pro_ops/` 只含 `official_samples.md` 指定样例，作为全流程唯一的算子写法参考来源。缓存不包含 Tensor API/专属指南目录或 `docs/install/`。
 
-**跳过判定**：若 `$PYPTO_DEVKIT_DIR` 下 `docs/pypto_pro/api/`、`docs/pypto_pro/tutorials/` 与 `pro_ops/` 三者均已存在且非空，且 `pro_ops/` 下 `.py` 文件数与 `official_samples.md` 清单条目数一致（已清理过），则缓存就绪，**跳过装配与清理，直接进入 Stage 1**。否则执行下方装配 + 清理：
+记录本次缓存绝对路径、资料来源与版本，后续每次 dispatch 都传递同一缓存路径及已安装资源根。子代理独立命令按 `pypto-pro-docs-search` 的“子代理路径传递”规则复用这些值，不依赖上次 shell 状态，也不因切换目录改用另一份缓存。下游只读取已准备的资料，不自行同步。
 
-```bash
-# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
-CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
-[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
-
-# 跳过判定脚本——输出 READY 或 NEED_PROVISION
-python3 -c "
-import os, re
-from pathlib import Path
-cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path(
-    '$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md'
-).read_text(encoding='utf-8')
-expected = len(re.findall(r'\`pro_ops/[^\`]+\.py\`', manifest))
-dirs = [cache / 'docs/pypto_pro/api', cache / 'docs/pypto_pro/tutorials', cache / 'pro_ops']
-if all(d.is_dir() and any(d.rglob('*')) for d in dirs):
-    actual = len(list((cache / 'pro_ops').rglob('*.py')))
-    print('READY' if actual == expected else 'NEED_PROVISION')
-else:
-    print('NEED_PROVISION')
-"
-```
-
-**装配命令**：拉取源统一为 `https://gitcode.com/cann/pypto`（含 PyPTO-Pro 文档资料、pro_ops 样例与 ops 算子）：
-
-```bash
-# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
-CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
-[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
-
-PYPTO_SRC_URL=https://gitcode.com/cann/pypto.git \
-PYPTO_GYM_URL=https://gitcode.com/cann/pypto.git \
-PYPTO_PRO_OPS_URL=https://gitcode.com/cann/pypto.git \
-python $CANNBOT_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py
-```
-
-装配成功标准：`$PYPTO_DEVKIT_DIR` 下出现 `docs/pypto_pro/api/`、`docs/pypto_pro/tutorials/` 与 `pro_ops/`。装配失败（联网受限等）时先总结错误向用户汇报，不得凭空编造索引。
-
-**按清单清理 pro_ops**（装配成功后立即执行）：`sync_devkit.py` 拉取的是整个 a5 目录，其中大部分文件并非官方指定样例，质量无保障。官方指定样例清单定义在 `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-material-explore/references/official_samples.md`（统一索引来源），装配后须按该清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件：
-
-```bash
-# 每个 Bash 调用独立定义已安装的资源根，不依赖上一次 shell 状态。
-CANNBOT_ROOT="$CANNBOT_CONFIG_ROOT"
-[ -d "$CANNBOT_ROOT/skills/pypto-pro-op-develop" ] || { echo "cannbot 资源根无效；请重新运行 init.sh" >&2; exit 1; }
-
-# 解析清单提取白名单路径，删除 pro_ops/ 下不在白名单的 .py 文件
-python3 -c "
-import re, os
-from pathlib import Path
-cache = Path(os.environ.get('PYPTO_DEVKIT_DIR', os.path.join(os.getcwd(), '.devkit')))
-manifest = Path(
-    '$CANNBOT_ROOT/skills/pypto-pro-material-explore/references/official_samples.md'
-).read_text(encoding='utf-8')
-whitelist = set()
-for m in re.finditer(r'\`pro_ops/[^\`]+\.py\`', manifest):
-    whitelist.add(m.group(0).strip('\`'))
-pro_ops = cache / 'pro_ops'
-if not pro_ops.is_dir():
-    raise SystemExit('pro_ops/ 不存在，装配失败')
-removed = 0
-for f in pro_ops.rglob('*.py'):
-    rel = 'pro_ops/' + str(f.relative_to(pro_ops))
-    if rel not in whitelist:
-        f.unlink()
-        removed += 1
-print(f'清理完成：保留 {len(whitelist)} 个官方指定样例，删除 {removed} 个非指定文件')
-"
-```
-
-清理后 `$PYPTO_DEVKIT_DIR/pro_ops/` 下仅剩清单内文件，作为全流程唯一的算子写法参考来源。
+装配或校验失败时，汇报具体缺失路径和原始错误，暂不调度 Stage 1；不得凭空编造索引或改用普通 PyPTO 缓存。
 
 ---
 
@@ -212,7 +153,7 @@ Stage 5 → 调度 pypto-pro-op-optimizer（加载并完整执行 pypto-pro-op-p
      > coder 不得直接改 DESIGN。
 7. **capability_gap 必须先经 verifier 验证，不可直接回退**：coder 穷尽 DESIGN 已冻结实现的目标版本合法组合与循环结构替代后仍无法纯 kernel 实现算子时，可返回 `capability_gap` verdict + 失败证据。**编排器收到后不可直接 `rollback_to_stage(3)`**，必须先做以下流程：
    1. 编排器将 coder 报告的 `capability_gap` 完整内容（编译错误原文、精度报告、已尝试候选及各自失败原因、coder 的“无法解决”判断依据）**完整且准确**地传达给 verifier，调度 verifier 执行 `capability_gap_check` 模式
-   2. verifier 以**独立判官**身份，实际查阅 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` API 文档、`$PYPTO_DEVKIT_DIR/pro_ops/` 官方算子样例、`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/` 教程；静态证据不足时在 cwd 临时目录运行最小 probe，记录命令与原始输出后清理
+   2. verifier 以**独立判官**身份，实际查阅 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` API 文档、`$PYPTO_DEVKIT_DIR/pro_ops/` 官方算子样例，以及 `$PYPTO_DEVKIT_DIR/docs/guide/` 下的 `programming_guide/pro/`、`quick_start/pro/` 和 `introduction.md`；静态证据不足时在 cwd 临时目录运行最小 probe，记录命令与原始输出后清理
    3. verifier 返回三种结论之一：
       - **capability_gap 为虚假**（找到 working example 或发现 coder 的 API 误用）：返回 `verdict: false_gap` + working example 路径 + 正确用法分析 + coder 应参照修正的具体建议。编排器收到后，将 verifier 的分析结果**原样**告知 coder，让其继续开发任务（不调 state_transition，不回退）
       - **capability_gap 成立**（目标版本文档约束与可复现最小实验共同证明限制存在；仅未找到 working example 不足以确认）：返回 `verdict: confirmed_gap` + 验证过程及结论。编排器收到后，调 `rollback_to_stage(target_stage=3, failure_category="capability_gap")` 回退 Stage 3 重新设计或上报用户
@@ -225,7 +166,7 @@ Stage 5 → 调度 pypto-pro-op-optimizer（加载并完整执行 pypto-pro-op-p
 8. **引用 skills 下的脚本时一律用确切路径直接调用，不得用 Glob 搜索**——skills 以
    symlink 方式安装，Glob / find 默认不穿越符号链接会漏搜。已知确切路径的脚本（如
    `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-develop/scripts/gen_cleanup.py`、
-   `$CANNBOT_CONFIG_ROOT/skills/pypto-docs-search/scripts/sync_devkit.py`）直接按安装后的路径调用，
+   `$CANNBOT_CONFIG_ROOT/skills/pypto-pro-docs-search/scripts/sync_devkit.py`）直接按安装后的路径调用，
    不做 Glob 搜索。
 
 ---

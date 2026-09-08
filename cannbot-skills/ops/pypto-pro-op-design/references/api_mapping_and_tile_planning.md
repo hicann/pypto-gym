@@ -85,7 +85,7 @@ API调用链确定后，为每个输入、输出和临时量建立一个逻辑Ti
 - `dtype`同时服从输入输出契约、API支持范围、中间累加精度和cast链，不能简单理解为“由用户输入决定”。
 - `target_memory`由数据通路决定。Vector通常使用Vec；Cube路径使用Mat、Left、Right和Acc；量化路径还可能使用Scaling。
 - `layout`首先满足具体API要求，其次才考虑`TileType`按内存空间和架构给出的默认值。归约结果的ND/DN语义、Cube的NZ/ZN分形以及转置搬入都需要单独核对。
-- `valid_shape`描述Tile的有效区域；缺省时后端按`[-1, -1]`生成动态模板，并以物理shape作为初始值。动态尾块建议显式声明动态维度并逐块调用`set_validshape`。`pad`和`compact`只在对应计算语义或硬件路径需要时设置，具体方法见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`。
+- `valid_shape`描述Tile的有效区域；缺省时后端按`[-1, -1]`生成动态模板，并以物理shape作为初始值。动态尾块建议显式声明动态维度并逐块调用`set_validshape`。`pad`和`compact`只在对应计算语义或硬件路径需要时设置，具体方法见`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/tail_block_handling.md`。
 - 缓冲深度由数据流水和容量共同决定。双缓冲或N-buffer必须按所有槽位计算物理占用。
 
 例如，一个处理FP16二维动态尾块的Vec Tile可写为：
@@ -109,7 +109,7 @@ Tile shape的选择有稳定的优先顺序。首先满足API的维数、M/K/N�
 
 ### 创建Tile与缓冲轮转
 
-片上Tile通过`make_tile`或`make_tile_group`创建。接口定义见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/resource_management/`中的对应API文档。常规Kernel使用`make_tile_group`和`@pl.jit(auto_mutex=True)`，由框架根据mutex元数据管理核内跨Pipe依赖。
+片上Tile通过`make_tile`或`make_tile_group`创建。接口定义见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/resource_management/`中的对应API文档。常规Kernel使用`make_tile_group`和`@pl.jit(auto_mutex=True)`，由框架根据mutex元数据管理核内跨Pipe依赖。
 
 #### `make_tile_group`的使用范围
 
@@ -199,7 +199,7 @@ manual_sync_db = pl.make_tile_group(
 
 用于输入搬入、输出写回或跨迭代保存状态的Tile使用`make_tile_group`。ping-pong和N-buffer也使用`make_tile_group`，并通过`auto_mutex=True`管理核内跨Pipe依赖。Cube Section中的Tile不使用`make_tile`。
 
-以`select`为例，`tmp`是接口执行过程中使用的临时空间，其shape和dtype与输出Tile相同，并且不能与输出或两个输入Tile共用地址。接口定义见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/memory_vector_computation/selection/select.md`。示例中的`a`、`b`和`mask_in`从GM搬入，`out`写回GM，相应Tile使用TileGroup管理；比较结果`mask`也使用单槽TileGroup保存。`select_tmp`只供一次`select`调用使用，不从GM搬入、不写回GM，也不跨迭代保留，因此使用`make_tile`绑定固定地址：
+以`select`为例，`tmp`是接口执行过程中使用的临时空间，其shape和dtype与输出Tile相同，并且不能与输出或两个输入Tile共用地址。接口定义见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/tile_vector_computation/selection/select.md`。示例中的`a`、`b`和`mask_in`从GM搬入，`out`写回GM，相应Tile使用TileGroup管理；比较结果`mask`也使用单槽TileGroup保存。`select_tmp`只供一次`select`调用使用，不从GM搬入、不写回GM，也不跨迭代保留，因此使用`make_tile`绑定固定地址：
 
 ```python
 @pl.jit(auto_mutex=True)
@@ -247,7 +247,7 @@ def select_kernel(
 
 `select_tmp`包含`64 × 128`个FP32元素，占用`64 × 128 × 4 = 32768`字节，对应地址区间`[0x18000, 0x20000)`。它只参与当前一次`select`计算，不需要mutex元数据；调用结束后，该地址可以分配给生命周期不重叠的其他临时Tile。
 
-`make_tile`和`make_tile_group`的参数与调用方法见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/operation/resource_management/`中的对应API文档。
+`make_tile`和`make_tile_group`的参数与调用方法见`$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/SIMD-API/resource_management/`中的对应API文档。
 
 设计文档需要记录API调用链和Tile清单。API调用链按执行顺序写明计算步骤、所用接口、输入输出Tile、关键约束和对应的API参考页。Tile清单记录变量名、shape、dtype、MemorySpace、layout、有效形状、缓冲数、单槽字节数和使用范围。多槽TileGroup还要记录使用`next()`轮转还是用`group[i]`显式选择；采用下标时，写明下标表达式及其有界依据。每个Tile操作数都应能在清单中找到对应条目，每个Tile也应注明用于哪个计算步骤。
 

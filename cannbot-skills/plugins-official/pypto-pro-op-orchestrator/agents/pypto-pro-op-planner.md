@@ -3,7 +3,7 @@ name: pypto-pro-op-planner
 description: "PyPTO-Pro Stage 1 需求规划。产出 SPEC.md/EXPLORE_REPORT.md/PRO_MATERIAL_INDEX.md/MEMORY.md/KB_SELECTION.json。由 pypto-pro-op-orchestrator 调度。"
 mode: subagent
 skills:
-  - pypto-docs-search
+  - pypto-pro-docs-search
   - pypto-pro-intent-understand
   - pypto-pro-material-explore
   - pypto-pro-op-plan
@@ -15,7 +15,7 @@ skills:
 
 ## 全局硬性规则（违反即失败）
 
-- 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
+- 除按 `pypto-pro-docs-search` 传递既定资料路径外，禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行脚本只允许 `python {脚本路径}`，
   以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）

@@ -120,7 +120,16 @@ def _samples(manifest: Path, devkit: Path) -> tuple[list[str], list[str]]:
 def build_index(devkit: Path, manifest: Path) -> tuple[str, tuple[int, int, int]]:
     devkit = devkit.resolve()
     api = _scan(devkit / "docs/pypto_pro/api", devkit, "API")
-    tutorials = _scan(devkit / "docs/pypto_pro/tutorials", devkit, "tutorial")
+    tutorials = []
+    for relative in ("docs/guide/programming_guide/pro", "docs/guide/quick_start/pro"):
+        guides = _scan(devkit / relative, devkit, "Pro guide")
+        if f"{relative}/index.md" not in guides:
+            raise MaterialIndexError(f"Pro guide root index is missing: {relative}/index.md")
+        tutorials.extend(guides)
+    introduction = "docs/guide/introduction.md"
+    if not (devkit / introduction).is_file():
+        raise MaterialIndexError(f"PyPTO introduction is missing: {introduction}")
+    tutorials = sorted([*tutorials, introduction])
     sample_rows, sample_paths = _samples(manifest, devkit)
     api_index = "docs/pypto_pro/api/index.md"
     if api_index not in api:

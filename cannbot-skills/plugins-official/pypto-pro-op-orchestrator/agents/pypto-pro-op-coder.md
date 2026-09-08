@@ -3,7 +3,7 @@ name: pypto-pro-op-coder
 description: "PyPTO-Pro Stage 4 Kernel 实现与验证。L0 路径产出 test_{op}.py，L1 路径按 module_k 产出 staged 文件，并在 cleanup 尝试后按 finalize 完成最终交接。由 pypto-pro-op-orchestrator 调度。"
 mode: subagent
 skills:
-  - pypto-docs-search
+  - pypto-pro-docs-search
   - pypto-pro-environment-check
   - pypto-pro-op-develop
 ---
@@ -20,7 +20,7 @@ skills:
 
 ## 全局硬性规则（违反即失败）
 
-- 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
+- 除按 `pypto-pro-docs-search` 传递既定资料路径外，禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者，不得自行设置
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）
 - 算子必须使用 pypto_pro.language API（`import pypto_pro.language as pl` + `@pl.jit`），禁止使用 pypto（非 Pro）前端 API（`@pypto.frontend.jit` / `import pypto.frontend as pl` 等）

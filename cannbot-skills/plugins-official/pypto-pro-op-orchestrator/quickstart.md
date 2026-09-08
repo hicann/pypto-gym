@@ -225,7 +225,7 @@ custom/<op>/
 | `pypto-pro-op-design` | Tile 数据流设计 | Stage 3 |
 | `pypto-pro-op-develop` | Kernel 实现与精度验证 | Stage 4 |
 | `pypto-pro-op-perf-tune` | 默认 Golden 目标采集、性能分析与优化闭环 | Stage 5 |
-| `pypto-docs-search` | 算子 API 文档与参考实现检索 | 按需 |
+| `pypto-pro-docs-search` | Pro API、指南与指定样例的独立缓存装配及检索 | 会话开始装配，之后按需检索 |
 
 | Agent | 用途 | 负责阶段 |
 |-------|------|---------|

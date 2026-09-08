@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""装配 PyPTO 算子开发资源到本地缓存：docs（主仓）、ops/tests（算子仓）、pro_ops（PyPTO-Pro 样例，可选）。
+"""装配 PyPTO 算子开发资源到本地缓存：docs（主仓）、ops/tests（算子仓）。
 
 工作树已含某类资源则符号链接复用、免重复下载；否则 sparse-checkout 下载。
-pro_ops 为 PyPTO-Pro 工作流额外拉取项：默认跟随主仓源，源仓无该路径时自动跳过，不影响 docs/ops/tests。
 
 用法: python3 sync_devkit.py [--pin <git-ref>]
   环境变量覆盖:
     PYPTO_DEVKIT_DIR                       缓存目录
     PYPTO_SRC_URL / PYPTO_SRC              docs 主仓：远程 URL / 本地已有工作树
     PYPTO_GYM_URL / PYPTO_GYM_SRC          ops+tests 算子仓：远程 URL / 本地已有工作树
-    PYPTO_PRO_OPS_URL / PYPTO_PRO_OPS_SRC  pro_ops 样例：远程 URL（默认=PYPTO_SRC_URL）/ 本地已有工作树
 """
 import argparse
 import json
@@ -123,17 +121,26 @@ def _reuse_local(request, base, manifest):
 
 def _checkout_sparse_repo(request, tmp):
     clone_args = [
-        "clone", "--depth", "1", "--filter=blob:none", "--sparse",
+        "clone", "--depth", "1", "--filter=blob:none", "--no-checkout",
         request.url, str(tmp),
     ]
     if git(clone_args) != 0:
         LOGGER.error("[download failed] %s (set corresponding *_URL to override, or check the network)", request.url)
+        return 4
+    # 自定义 Git 模板可能省略 info；旧版 Git 的 sparse-checkout 不会补建。
+    (tmp / ".git/info").mkdir(parents=True, exist_ok=True)
+    if (git(["config", "core.sparseCheckout", "true"], cwd=tmp) != 0
+            or git(["config", "core.sparseCheckoutCone", "true"], cwd=tmp) != 0):
+        LOGGER.error("[sparse init failed] %s", request.tag)
         return 4
     subs = [sub for _name, sub in request.pairs]
     if git(["sparse-checkout", "set"] + subs, cwd=tmp) != 0:
         LOGGER.error("[sparse failed] %s", request.tag)
         return 4
     if not request.pin:
+        if git(["checkout", "--detach", "HEAD"], cwd=tmp) != 0:
+            LOGGER.error("[checkout failed] %s", request.tag)
+            return 4
         return 0
     if git(["fetch", "--depth", "1", "origin", request.pin], cwd=tmp) != 0:
         LOGGER.error("[pin failed] %s unable to fetch %s", request.tag, request.pin)
@@ -178,15 +185,10 @@ def provision(request, manifest):
 def _provision_requests(devkit, pin):
     src_url = os.environ.get("PYPTO_SRC_URL", "https://gitcode.com/cann/pypto.git")
     gym_url = os.environ.get("PYPTO_GYM_URL", "https://gitcode.com/cann/pypto-gym.git")
-    pro_ops_url = os.environ.get("PYPTO_PRO_OPS_URL", src_url)
-    pro_ops_pair = ("pro_ops", "python/tests/st/pypto_pro/frontend")
-    docs_pairs = [("docs", "docs/zh")]
-    if pro_ops_url == src_url:
-        docs_pairs.append(pro_ops_pair)
-    requests = [
+    return [
         ProvisionRequest(
             devkit, "pypto", "docs/zh/api", src_url,
-            os.environ.get("PYPTO_SRC", ""), docs_pairs, pin,
+            os.environ.get("PYPTO_SRC", ""), [("docs", "docs/zh")], pin,
         ),
         ProvisionRequest(
             devkit, "gym", "src/pypto_gym/ops", gym_url,
@@ -194,12 +196,6 @@ def _provision_requests(devkit, pin):
             [("ops", "src/pypto_gym/ops"), ("tests", "tests/ops")], pin,
         ),
     ]
-    if pro_ops_url != src_url:
-        requests.append(ProvisionRequest(
-            devkit, "pro_ops", "python/tests/st/pypto_pro/frontend", pro_ops_url,
-            os.environ.get("PYPTO_PRO_OPS_SRC", ""), [pro_ops_pair], pin,
-        ))
-    return requests
 
 
 def main(argv=None):

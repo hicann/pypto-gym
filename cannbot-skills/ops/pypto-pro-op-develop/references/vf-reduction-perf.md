@@ -132,10 +132,9 @@ scratch without one).
 
 1. `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` for the installed `pl` and `vf`
    signatures and constraints. In the current documentation layout, verify
-   `SIMD-API/计算API/VF计算/数据搬运/load_align.md`,
-   `SIMD-API/计算API/VF计算/归约/reduce_sum.md`, and
-   `SIMD-API/计算API/VF计算/数据搬运/store_align.md`; locate their renamed
-   equivalents when the installed tree differs.
+   `SIMD-API/vf_computation/data_movement/load_align.md`,
+   `SIMD-API/vf_computation/reduction/reduce_sum.md`, and
+   `SIMD-API/vf_computation/data_movement/store_align.md`.
 2. The official examples listed in
    [`../../pypto-pro-material-explore/references/official_samples.md`](../../pypto-pro-material-explore/references/official_samples.md).
 3. A correctness run and profiler capture on the detected target.

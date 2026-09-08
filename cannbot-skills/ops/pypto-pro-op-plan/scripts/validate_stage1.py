@@ -166,7 +166,7 @@ def check_report(op_dir: Path, op_name: str, index: str) -> list[str]:
     extra_errors = []
     for label, prefix, suffix, heading in (
         ("sample", "pro_ops/", "py", "4.1 全量样例参考（按 cube/vec 组成分类）"),
-        ("tutorial", "docs/pypto_pro/tutorials/", "md", "5.1 适用的设计模式"),
+        ("guide", "docs/guide/", "md", "5.1 适用的设计模式"),
     ):
         expected_paths = re.findall(rf"`({prefix}[^`]+\.{suffix})`", index)
         actual_paths = _section_table_paths(report, heading, prefix)

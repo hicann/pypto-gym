@@ -32,7 +32,7 @@ assert_config_root_substitutable() {
     # The substitution only rewrites the bare `$CANNBOT_CONFIG_ROOT` spelling. An
     # `os.environ['CANNBOT_CONFIG_ROOT']` read or a single-tool `$(pwd)/.opencode` default
     # passes through untouched, and on a non-opencode install both resolve to a directory
-    # that does not exist -- Stage-0 bootstrap dies and pro_ops is never pruned.
+    # that does not exist -- Stage-0 bootstrap dies and pro_ops is never prepared.
     if grep -q "os\.environ\[['\"]CANNBOT_CONFIG_ROOT['\"]\]" "$substituted" \
        || grep -q '\${CANNBOT_CONFIG_ROOT:-\$(pwd)' "$substituted"; then
         rm -f "$substituted"
@@ -184,7 +184,7 @@ VERSION="1.0.0"
 # --- Plugin-specific filters ---
 EXCLUDED_SKILL=""
 # Skill whitelist (space-separated list) - references shared ops
-INCLUDED_SKILLS="pypto-docs-search pypto-pro-environment-check pypto-pro-golden-generate pypto-pro-intent-understand pypto-pro-material-explore pypto-pro-op-design pypto-pro-op-develop pypto-pro-op-perf-tune pypto-pro-op-plan"
+INCLUDED_SKILLS="pypto-pro-docs-search pypto-pro-environment-check pypto-pro-golden-generate pypto-pro-intent-understand pypto-pro-material-explore pypto-pro-op-design pypto-pro-op-develop pypto-pro-op-perf-tune pypto-pro-op-plan"
 # Agent whitelist (shell pattern) - uses local agents/
 INCLUDED_AGENT_PATTERN="pypto-pro-op-*"
 SKILL_CATEGORY="ops"

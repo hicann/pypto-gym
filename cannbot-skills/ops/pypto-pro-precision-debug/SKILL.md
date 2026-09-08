@@ -67,8 +67,8 @@ description: 基于 PyPTO Pro Kernel 的设备侧 dump 数据与编译产物定�
 | load 合轴约束 | 读取错误位置或 padding 区域数据 | 合轴（将多个连续维度合并到一次 load）时，合并的维度必须连续，stride 必须与实际内存排布一致；排查时可改用未合轴的逐维 Tensor 视图对比 | `api/.../load.md` |
 | sync_all 核类型 | 纯 vector kernel 同步不存在的 cube 核导致设备错误 | 纯 vector kernel 须指定 `core_type=pl.SyncCoreType.AIV_ONLY` | `api/.../sync_all.md` |
 | gather/scatter 越界 | 结果不确定 | 索引值须在有效范围内；scatter 的索引值不重复（无写冲突） | `api/.../gather.md`、`api/.../scatter.md` |
-| phase 配对与收尾 | matmul 后 store 读到未完成数据、设备卡死 | matmul 和 store 的 `phase` 参数配对使用，段末用 `Final` 收尾；循环内 `store(Final)` 后不能再有 `matmul`（仅 Cube 场景） | `api/SIMD-API/operation/matrix_computation/phase.md` |
-| matmul_acc K 维累加 | K 维分块累加结果错误 | 三个硬性要求缺一不可：①每步 matmul/matmul_acc 都传 `phase`；②L0C 累加器设 `fractal=1024`（FP32）；③cube 段用 `set_mm_layout_transform(enabled=True)` 开启，段末关闭（仅 Cube 场景） | `api/SIMD-API/operation/matrix_computation/matmul_acc.md` |
+| phase 配对与收尾 | matmul 后 store 读到未完成数据、设备卡死 | matmul 和 store 的 `phase` 参数配对使用，段末用 `Final` 收尾；循环内 `store(Final)` 后不能再有 `matmul`（仅 Cube 场景） | `api/SIMD-API/matrix_computation/phase.md` |
+| matmul_acc K 维累加 | K 维分块累加结果错误 | 三个硬性要求缺一不可：①每步 matmul/matmul_acc 都传 `phase`；②L0C 累加器设 `fractal=1024`（FP32）；③cube 段用 `set_mm_layout_transform(enabled=True)` 开启，段末关闭（仅 Cube 场景） | `api/SIMD-API/matrix_computation/matmul_acc.md` |
 | Cube 尾块缺少 compact | 尾块计算结果错误、L1/L0 布局错位 | 数据路径涉及 Mat→Left/Right、Acc 搬出等分形转换时，Mat/Left/Right/Acc 的 TileType 须设 `compact=1`，按 `valid_shape` 紧凑解释片上排布；Vec ND 尾块不需要 | `tutorials/.../tail_block_handling.md`、`api/.../CompactMode.md` |
 
 ### dump 对执行时序的影响

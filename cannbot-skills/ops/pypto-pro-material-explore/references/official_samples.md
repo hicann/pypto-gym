@@ -1,7 +1,7 @@
 # 官方指定算子样例清单
 
 > **用途**：本文件是整个 PyPTO-Pro 工作流的**统一官方样例索引来源**。
-> - **orchestrator** 资源缓存准备时，按本清单清理 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件。
+> - **orchestrator** 资源缓存准备时，按本清单装配 `$PYPTO_DEVKIT_DIR/pro_ops/`，只保留清单内文件。
 > - **material-explore** 生成 `PRO_MATERIAL_INDEX.md` §B 时，以本清单为唯一来源。
 > - **所有 skill / agent** 提到"官方指定算子样例""§B"时，最终都指向本文件。
 >

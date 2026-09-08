@@ -15,12 +15,12 @@ mode: subagent
 |---|---|---|
 | `stage1-check` | `pypto-pro-op-plan`、`pypto-pro-intent-understand`、`pypto-pro-material-explore` | 环境归因时加载 `pypto-pro-environment-check` |
 | `stage2-check` | `pypto-pro-golden-generate` | 环境归因时加载 `pypto-pro-environment-check` |
-| `stage3-check` | `pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 无 |
+| `stage3-check` | `pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-pro-docs-search` | 无 |
 | `module-check` | `pypto-pro-op-develop`、`pypto-pro-golden-generate` | 环境归因时加载 `pypto-pro-environment-check` |
-| `stage4-check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-golden-generate`、`pypto-docs-search` | 环境归因时加载 `pypto-pro-environment-check` |
-| `stage5-check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-golden-generate`、`pypto-docs-search`、`pypto-pro-op-perf-tune` | 环境归因时加载 `pypto-pro-environment-check` |
-| `upstream-contract-check` | `pypto-pro-op-plan`、`pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 环境归因时加载 `pypto-pro-environment-check` |
-| `capability_gap_check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-docs-search` | 涉及环境能力时加载 `pypto-pro-environment-check` |
+| `stage4-check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-golden-generate`、`pypto-pro-docs-search` | 环境归因时加载 `pypto-pro-environment-check` |
+| `stage5-check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-golden-generate`、`pypto-pro-docs-search`、`pypto-pro-op-perf-tune` | 环境归因时加载 `pypto-pro-environment-check` |
+| `upstream-contract-check` | `pypto-pro-op-plan`、`pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-pro-docs-search` | 环境归因时加载 `pypto-pro-environment-check` |
+| `capability_gap_check` | `pypto-pro-op-develop`、`pypto-pro-op-design`、`pypto-pro-material-explore`、`pypto-pro-docs-search` | 涉及环境能力时加载 `pypto-pro-environment-check` |
 
 `stage1-check`、`stage3-check`、`stage5-check`、`upstream-contract-check` 和
 `capability_gap_check` 还必须读取
@@ -40,7 +40,7 @@ mode: subagent
 
 ## 全局硬性规则（违反即失败）
 
-- 禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者
+- 除按 `pypto-pro-docs-search` 传递既定资料路径外，禁止**改变会话环境**（conda activate / source set_env.sh / export / pip install 等）。环境由编排者在会话开始配置，子代理只读取不修改；需要某个变量（如 `TILE_FWK_DEVICE_ID`）而它未设置时，报 `env_error` 交回编排者
 - 禁止调用 `state_transition` 工具，禁止读写或创建 `custom/<op>/.orchestrator_state.json`——状态机由编排器独占管理，子代理只返回结果，由编排器推进 Stage。亦不得自行维护任何 Stage / 进度状态文件
 - 运行已有脚本只允许 `python {脚本路径}`，以及**已加载 skill 自带的** `bash {脚本路径}`（脚本须位于该 skill 的 `scripts/` 下）。只读诊断命令可直接运行；`capability_gap_check` 在文档/样例不足以裁决时，可在 cwd 的临时目录中运行一次性 `python -c` 或最小 probe，须记录命令与原始输出、结束后删除临时文件，且不得改动 `custom/<op>/` 或会话环境
 - 禁止修改任何 `custom/<op>/` 下的产出文件（SPEC/DESIGN/DESIGN_BINDINGS/golden/test/impl 等）——你是裁判不是选手；`DESIGN_BINDINGS.json` 对 Verifier 始终只读，仅在 `stage3-check` PASS 且 Stage 3 完成后冻结
@@ -177,7 +177,7 @@ L1 路径下，每个 Module k 的 staged impl 产完后由 orchestrator 调度�
 3. **实际查阅文档和样例**：
    - 搜索 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` API 文档，找相关 API 的完整签名和参数说明
    - 搜索 `$PYPTO_DEVKIT_DIR/pro_ops/` 官方算子样例，找使用了同类用法的 working example
-   - 搜索 `$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/` 教程，找相关用法的指导
+   - 搜索 `$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/`、`$PYPTO_DEVKIT_DIR/docs/guide/quick_start/pro/` 与 `$PYPTO_DEVKIT_DIR/docs/guide/introduction.md`，找相关用法的指导；不搜索 Tensor 专属指南目录
    - **对比 DESIGN.md 引用的样例行号与样例实际代码**——检查 architect 是否在引用时抄错了参数（如 pipe 类型、layout 等）
 4. **按需运行最小实验**：若文档与样例不能直接证实或证伪 coder 的具体声称，复用 coder 的最小复现，或在 cwd 临时目录构造只覆盖该 API/约束的一次性 probe；不得改动 `custom/<op>/`，记录命令、版本和原始输出并清理临时文件
 5. **形成结论**：结合文档、样例和必要的最小实验，判断 coder 声称的“框架限制”是否成立；证据仍不足时不得猜测为 `FALSE_GAP` 或 `CONFIRMED_GAP`，返回 `INCONCLUSIVE` / `capability_inconclusive` 并列明缺失证据

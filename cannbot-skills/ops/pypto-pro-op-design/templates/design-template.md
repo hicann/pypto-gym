@@ -223,7 +223,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ## §5 分核策略（R5 输出）
 
-> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`（分核方式、负载均衡、核数设置和tiling传参以此为准）。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/multi_core_partitioning_and_Tiling.md`（分核方式、负载均衡、核数设置和tiling传参以此为准）。
 
 ### 分核方式
 
@@ -280,7 +280,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 ## §7 尾块处理（R7 输出）
 
-> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/pypto_pro/tutorials/operator_development/tile_based_python_programming/tail_block_handling.md`（尾块处理以此为准）。
+> 📌 **权威依据（必读，官方标准）**：`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/development/tile_based_python_programming/tail_block_handling.md`（尾块处理以此为准）。
 
 ### 尾块处理方案
 
