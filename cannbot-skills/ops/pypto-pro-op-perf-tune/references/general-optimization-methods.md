@@ -1,9 +1,9 @@
 # 通用优化手段
 
-本页汇总旧 Stage 5 材料中经逐行对照当前 `pypto-pro-op-kb` 后仍未被完整覆盖的独特优化
-增量。它是 Stage 5 的一个独立预置优化项来源，不属于知识卡片库，也不替代已选 KB 合同。
+本页汇总历史性能调优材料中经逐行对照当前 `pypto-pro-op-kb` 后仍未被完整覆盖的独特优化
+增量。它是性能调优的一个独立预置优化项来源，不属于知识卡片库，也不替代已选 KB 合同。
 
-执行者必须逐行枚举下表中 `lifecycle=active && stage5_eligible=yes` 的 item，并使用
+执行者必须逐行枚举下表中 `lifecycle=active && optimization_eligible=yes` 的 item，并使用
 `source_kind=general_method` 登记。明确不适用时以 hard-gate 证据关闭；可能适用或现有证据
 不足以排除时进入受控实验。方法标题、历史经验或理论估计都不能代替当前算子的正确性、机制和
 同协议性能证据。
@@ -19,9 +19,9 @@ playbook 以 `quick_not_promoted` 和 quick 原始证据关闭。
 ## 原子项索引
 
 `source_ref` 应记录本文路径、item 锚点和运行时读取到的内容哈希。`source_anchor` 只标识整理
-这些方法所依据的旧 Stage 5 原文，不是当前设备的性能证据。
+这些方法所依据的历史性能调优原文，不是当前设备的性能证据。
 
-| item_id | 方法与锚点 | lifecycle | stage5_eligible | bound_hint | source_anchor |
+| item_id | 方法与锚点 | lifecycle | optimization_eligible | bound_hint | source_anchor |
 |---|---|---|---|---|---|
 | `general-01` | [为 fold 保留独立工作 Tile](#general-01) | active | yes | VEC / 访存 / 流水 | `SKILL.md@700fabe` §二.7；`optimization-playbook.md@700fabe` §5 |
 | `general-02` | [按 value_range 门控重关联](#general-02) | active | yes | VEC / 精度 / 算法 | `SKILL.md@700fabe` §三 |

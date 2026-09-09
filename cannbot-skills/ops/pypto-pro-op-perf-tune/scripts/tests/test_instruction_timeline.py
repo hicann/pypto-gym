@@ -21,7 +21,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 TIMELINE = importlib.import_module("instruction_timeline")
 
 
-class Stage5TimelineTest(unittest.TestCase):
+class InstructionTimelineTest(unittest.TestCase):
     def test_instruction_timeline_uses_unique_target_and_same_lane_overlap(self) -> None:
         target = "_Ztarget"
         events = [

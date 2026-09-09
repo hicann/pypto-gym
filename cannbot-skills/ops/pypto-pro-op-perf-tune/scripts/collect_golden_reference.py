@@ -2,7 +2,7 @@
 # coding: utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2026. All rights reserved.
 
-"""Collect the Stage 5 Golden NPU reference with a small, strict contract."""
+"""Collect the Golden NPU performance reference with a small, strict contract."""
 
 from __future__ import annotations
 
@@ -434,7 +434,7 @@ def collect(config: Config) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Collect the Stage 5 Golden NPU reference contract",
+        description="Collect the Golden NPU performance reference contract",
     )
     parser.add_argument("golden", type=Path, help="Generated *_golden.py")
     parser.add_argument("--function", required=True, help="Golden function name")

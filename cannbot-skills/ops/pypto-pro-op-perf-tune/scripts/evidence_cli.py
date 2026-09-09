@@ -2,7 +2,7 @@
 # coding: utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2026. All rights reserved.
 
-"""Stage 5 的 CLI/校验/时间线/报告渲染与采集辅助（从 msprof_perf_summary 拆分）。
+"""性能采集的 CLI/校验/时间线/报告渲染与采集辅助（从 msprof_perf_summary 拆分）。
 
 本模块延迟导入 msprof_perf_summary 的共享工具，避免模块级循环依赖；被
 msprof_perf_summary 的对应入口按需导入。
@@ -498,7 +498,7 @@ def run_timeline_mode(args) -> int:
         if executable_error:
             raise RuntimeError(executable_error)
         if executable_sha256 != context["performance"].get("executable_sha256"):
-            raise RuntimeError("Stage 5 executable changed during timeline collection")
+            raise RuntimeError("profiling executable changed during timeline collection")
         _stage_timeline_evidence(
             archive_dir, session, analysis,
             TimelineArtifacts(trace_path, reports_path, biu_db, task_db),
@@ -516,7 +516,7 @@ def run_timeline_mode(args) -> int:
 
 
 def run_case_function(test_script: str, manifest_path: str, case_id: str) -> int:
-    """Invoke one existing no-argument Stage 4 test through a Stage 5 adapter."""
+    """Invoke one validated no-argument correctness test through a case adapter."""
     _, source, error = parse_case_manifest(manifest_path)
     if error:
         raise ValueError(error)
@@ -552,7 +552,7 @@ def run_case_function(test_script: str, manifest_path: str, case_id: str) -> int
         if required:
             raise ValueError(
                 f"test function {test_function!r} requires arguments {required}; "
-                "the automatic Stage 5 adapter accepts no-argument test functions only"
+                "the automatic case adapter accepts no-argument test functions only"
             )
         function()
     finally:
@@ -697,9 +697,11 @@ def _validate_measurement_args(args, manifest=False):
     if getattr(args, "timeline_timeout", 600) <= 0:
         LOGGER.error("[ERROR] --timeline-timeout must be > 0")
         return False
+    if manifest and getattr(args, "seed", None) == 0:
+        args.seed = None  # 0 视为未指定，manifest 协议固定 42
     if manifest and getattr(args, "seed", None) not in (None, 42):
         LOGGER.error(
-            "[ERROR] Stage 5 keeps the validated Stage 4 seed fixed at 42; "
+            "[ERROR] manifest profiling requires the validated runner seed to stay fixed at 42; "
             "omit --seed or pass --seed=42"
         )
         return False
@@ -745,7 +747,7 @@ def _validate_selector_runtime(out_dir, performance_cases, args, device_id):
             test_script, [case[0] for case in performance_cases], args, device_id
         )
     else:
-        # A single-case Stage 4 runner needs no Stage 5-specific protocol.
+        # A validated single-case runner needs no additional case selector.
         # It will be executed normally during profiling with its existing seed=42.
         error = None
     if error:
@@ -814,7 +816,7 @@ def _add_compare_header(lines, report):
             f"(iterations={report['golden_iterations']}, normalized per iteration)"
         )
         lines.append(
-            "- **Ratio semantics**: this ratio is valid for the Stage 5 default Golden target; "
+            "- **Ratio semantics**: this ratio is valid for the default Golden reference target; "
             "it is not baseline-to-final optimization speedup."
         )
     lines.append("")
@@ -963,10 +965,10 @@ def _add_analysis_sections(lines, report):
             f"- Golden 每迭代 E2E / PyPTO target-kernel 平均目标比值为 "
             f"{ratio_stats['mean']:.3f}；默认理想参考为每个 P0 case 均不低于 "
             f"{report['default_target_threshold']:.1f}。该比值不是 baseline→final 优化加速比，"
-            f"也不作为 Stage 5 交付门禁。"
+            f"也不作为性能调优交付门禁。"
         )
     elif golden_status == "not_provided":
-        lines.append("- Golden JSON 不存在；PyPTO 采集有效，默认理想参考状态为 unavailable，且不作为 Stage 5 交付门禁。")
+        lines.append("- Golden JSON 不存在；PyPTO 采集有效，默认理想参考状态为 unavailable，且不作为性能调优交付门禁。")
     else:
         lines.append("- Golden JSON 已联接，但当前参考比值不可复算；性能证据无效，修复后才能判断理想参考状态。")
     lines.append("- 详细瓶颈分析见 msprof 归档目录（op_summary_*.csv + summary.txt）。")
@@ -1198,7 +1200,7 @@ def _log_compare_header(out_dir, args):
     """Log the compare mode header."""
     LOGGER.info("=" * 100)
     effective_seed = args.seed if args.seed is not None else 42
-    seed_source = "CLI override" if args.seed is not None else "Stage 4 default"
+    seed_source = "CLI override" if args.seed is not None else "runner default"
     LOGGER.info(f"PyPTO Performance Collection (msprof): {out_dir.name}  "
           f"(warmup={args.warmup}, repeats={args.repeats}, "
           f"seed={effective_seed}, source={seed_source})")

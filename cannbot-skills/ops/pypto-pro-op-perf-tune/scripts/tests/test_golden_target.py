@@ -163,6 +163,18 @@ class GoldenDefaultTargetTest(unittest.TestCase):
         self.assertFalse(report["default_target_met"])
         self.assertEqual(report["default_target_status"], "not_met")
 
+    def test_seed_provenance_distinguishes_runner_default_and_cli_override(self) -> None:
+        for seed, expected_source in ((None, "runner_default"), (42, "cli_override")):
+            with self.subTest(seed=seed):
+                args = self._args("joined")
+                args.seed = seed
+                rows = [{"case": "p0", "ref_us": 10.0, "asc_us": 5.0}]
+                report = MSPROF.compute_compare_summary(MSPROF.CompareSummaryInput(
+                    Path("op"), rows, [], [], [], 1, args, 0, "test",
+                ))
+                self.assertEqual(report["seed"], 42)
+                self.assertEqual(report["seed_source"], expected_source)
+
     def test_no_golden_keeps_pypto_valid_but_target_unavailable(self) -> None:
         report = self._summary([
             {"case": "p0", "ref_us": None, "asc_us": 5.0},
@@ -582,6 +594,8 @@ class GoldenDefaultTargetTest(unittest.TestCase):
             self.assertEqual(result, 1)
             saved = json.loads(collection_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["status"], "failed")
+            self.assertEqual(saved["seed"], 42)
+            self.assertEqual(saved["seed_source"], "runner_default")
             self.assertIn("changed during formal compare", saved["failure"])
 
     def test_timeline_checks_final_runner_before_selector_execution(self) -> None:
@@ -775,7 +789,7 @@ class GoldenDefaultTargetTest(unittest.TestCase):
         op_dir = Path(directory) / "op"
         op_dir.mkdir()
         test_script = op_dir / "test_fixture.py"
-        test_script.write_text("# Stage 5 executable fixture\n", encoding="utf-8")
+        test_script.write_text("# Profiling executable fixture\n", encoding="utf-8")
         executable_sha256 = CONTRACT.source_file_record(test_script)["sha256"]
         args, source, iterations, cases = self._fixture_args_source(op_dir)
         args.executable_sha256 = executable_sha256

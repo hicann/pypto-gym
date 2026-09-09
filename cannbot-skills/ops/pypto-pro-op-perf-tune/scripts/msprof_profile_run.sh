@@ -14,11 +14,11 @@
 # 支持四种模式：
 #   1. 标准模式 (默认): 对单个可执行文件/PyPTO-Pro Python runner 采集 7 组 aic-metrics + sample-based
 #   2. --compare 模式:  未传 --case-manifest：从 GOLDEN_PERF_REPORT.md 读 golden 数据 + msprof
-#                       采集 PyPTO 算子计算加速比（既有行为）；传 --case-manifest：Stage 5
+#                       采集 PyPTO 算子计算加速比（既有行为）；传 --case-manifest：
 #                       manifest 证据协议（Golden JSON exact-id join、逐 case/逐 repeat、seed=42）
 #   3. --quick 模式:    每次 repeat 只采集 kernel 时间（既有行为）；传 manifest 时逐 case 严格归属
 #   4. --batch 模式:    批量扫描目录下的多个算子子目录，并行执行对比测试；算子目录提供
-#                       PERFORMANCE_CASES.json 或传入 map 时启用 Stage 5 证据批，否则保持
+#                       PERFORMANCE_CASES.json 或传入 map 时启用 manifest 证据批，否则保持
 #                       既有 batch（flock 锁 + ASCEND_RT_VISIBLE_DEVICES）
 #
 # Usage (标准模式):
@@ -51,7 +51,7 @@
 #   对比模式: <output_dir>/performance.json + performance.log + perf_report.md
 #   快速模式: <output_dir>/performance.json + performance.log + perf_report.md
 #   批量模式: <base_dir>/batch_performance.log + 各子目录 performance.json
-#   Stage 5（传 --case-manifest）: quick 产物为 quick_* 三件套；逐 case 证据在 docs/perf/round_NNN/
+#   manifest 模式（传 --case-manifest）: quick 产物为 quick_* 三件套；逐 case 证据在 docs/perf/round_NNN/
 # ----------------------------------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -124,7 +124,7 @@ Usage: bash msprof_profile_run.sh [OPTIONS] -- python3 test_op.py [args...]
 
 标准模式 (默认):
   bash msprof_profile_run.sh [通用选项] -- <executable> [args...]
-  （Stage 5 协议）首次 discovery 采集后先用 msprof_perf_summary.py <PROF_GROUP> --list-op-names
+  （性能证据协议）首次 discovery 采集后先用 msprof_perf_summary.py <PROF_GROUP> --list-op-names
   列出 lowering 后的完整 Op Name；选定目标后再用
   msprof_perf_summary.py <PROF_GROUP> <ops_dir> --op-name=<exact> 正式解析。
 
@@ -138,10 +138,10 @@ Usage: bash msprof_profile_run.sh [OPTIONS] -- python3 test_op.py [args...]
   --seed=N               传递给测试脚本的 PYPTO_PERF_SEED（默认 0）
   --retry=N              单 case 解析失败重试次数（默认 2）
   --keep-prof            保留 msprof 原始 PROF 目录（用于深度分析）
-  （Stage 5 协议，传 --case-manifest 时启用）
+  （manifest 证据协议，传 --case-manifest 时启用）
   --case-arg=<flag>      逐 case CLI 选择器，例如 --case-id；脚本依次追加 <flag> <case-id>
   --case-env=<name>      逐 case 环境变量选择器，例如 PYPTO_PERF_CASE；与 --case-arg 二选一
-  --case-manifest=<path> 可选；传后启用 Stage 5 证据协议（exact Op Name、逐 case/逐 repeat、
+  --case-manifest=<path> 可选；传后启用 manifest 证据协议（exact Op Name、逐 case/逐 repeat、
                          seed=42、Golden JSON exact-id join）。selector 精确命中时须输出唯一
                          一行 PYPTO_PERF_SELECTED_CASE=<case-id>，未知 id 非零退出。
 
@@ -154,14 +154,14 @@ Usage: bash msprof_profile_run.sh [OPTIONS] -- python3 test_op.py [args...]
   --seed=N               传递给测试脚本的 PYPTO_PERF_SEED（默认 0）
   --retry=N              单 case 解析失败重试次数（默认 2）
   --keep-prof            保留 msprof 原始 PROF 目录
-  （Stage 5 协议，传 --case-manifest 时启用）--case-arg/--case-env/--case-manifest 同 compare 模式
+  （manifest 证据协议，传 --case-manifest 时启用）--case-arg/--case-env/--case-manifest 同 compare 模式
 
  批量模式 (--batch):
   --batch                启用批量模式：扫描 base-dir 下所有子目录并行测试
   --base-dir=<dir>       包含多个算子输出子目录的根目录
-  --max-jobs=N           最大并发数（默认 7；Stage 5 批限制 1..8）
+  --max-jobs=N           最大并发数（默认 7；manifest 批限制 1..8）
   --device-start=N       起始 NPU 设备 ID（默认 1；既有流程按 1..7 轮转）
-  （Stage 5 证据批：任一下属算子目录存在 PERFORMANCE_CASES.json，或传入下列参数时启用证据批）
+  （manifest 证据批：任一下属算子目录存在 PERFORMANCE_CASES.json，或传入下列参数时启用证据批）
   --op-name-map=<file>   异构 batch 专用 TSV：每行 <operator-directory><TAB><exact Op Name>
   --case-manifest-map=<file> 可选 TSV：每行 <operator-directory><TAB><manifest path>
   默认读取每个算子目录必需的 PERFORMANCE_CASES.json。
@@ -282,7 +282,7 @@ run_standard() {
     echo "=== Done. PROF group = ${GROUP_DIR} ==="
     echo "Next:"
     echo "  python3 ${SCRIPT_DIR}/msprof_perf_summary.py ${GROUP_DIR} <ops_dir>"
-    echo "  # Stage 5 协议：discovery 后可用 --list-op-names 列出精确 lowering 名称，再带 --op-name 解析"
+    echo "  # 性能证据协议：discovery 后可用 --list-op-names 列出精确 lowering 名称，再带 --op-name 解析"
 }
 
 # ============================================================================
@@ -367,35 +367,35 @@ run_batch() {
         exit 1
     fi
 
-    # 双模式分发：任一带 manifest 输入即走 Stage 5 证据批；否则既有 batch。
-    local use_stage5=0
+    # 双模式分发：任一带 manifest 输入即走 manifest 证据批；否则既有 batch。
+    local use_manifest=0
     if [[ -n "$OP_NAME_MAP_FILE" || -n "$CASE_MANIFEST_MAP_FILE" || -n "$CASE_MANIFEST" ]]; then
-        use_stage5=1
+        use_manifest=1
     else
         for dir in "$BASE_DIR"/*; do
             if [[ -f "$dir/PERFORMANCE_CASES.json" ]]; then
-                use_stage5=1
+                use_manifest=1
                 break
             fi
         done
     fi
-    if [[ "$use_stage5" == "1" ]]; then
-        run_batch_stage5
+    if [[ "$use_manifest" == "1" ]]; then
+        run_batch_manifest
     else
         run_batch_legacy
     fi
 }
 
 # ============================================================================
-# 批量模式（Stage 5 证据批）：先完整预检再启动
+# 批量模式（manifest 证据批）：先完整预检再启动
 # ============================================================================
-run_batch_stage5() {
+run_batch_manifest() {
     if ! [[ "$MAX_JOBS" =~ ^[1-8]$ ]]; then
         echo "ERROR: --max-jobs 必须是 1..8" >&2
         exit 1
     fi
     if ! [[ "$DEVICE_START" =~ ^[0-7]$ ]]; then
-        echo "ERROR: --device-start 必须是当前 8 卡编排约定内的 0..7" >&2
+        echo "ERROR: --device-start 必须在当前脚本支持的设备 ID 范围 0..7 内" >&2
         exit 1
     fi
     if [[ -n "$OP_NAME" && -n "$OP_NAME_MAP_FILE" ]]; then

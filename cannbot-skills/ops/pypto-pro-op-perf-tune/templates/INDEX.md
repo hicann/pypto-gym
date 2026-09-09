@@ -1,7 +1,7 @@
-# Stage 5 模板优化项索引
+# 性能调优模板优化项索引
 
-本目录是 Stage 5 的独立预置优化项来源。`INDEX.md` 是模板项生命周期和枚举的唯一入口；文件
-存在本身不使模板生效。Stage 5 只登记下表中 `lifecycle=active && stage5_eligible=yes` 的原子项，
+本目录是性能调优的独立预置优化项来源。`INDEX.md` 是模板项生命周期和枚举的唯一入口；文件
+存在本身不使模板生效。调优时只登记下表中 `lifecycle=active && optimization_eligible=yes` 的原子项，
 使用 `source_kind=template` 和表内稳定 `item_id`，并记录 INDEX 行与模板文件的运行时内容哈希。
 `active` 表示必须评估并关闭，不表示必须采用。KB 原文中即使使用 pattern/template 命名，只要由
 `KB_SELECTION.json` 选中仍归 `kb_selected`，不归本来源。
@@ -10,7 +10,7 @@
 
 ## Active atomic items
 
-| item_id | 模板与原子优化意图 | lifecycle | stage5_eligible | bound_hint | hard_applicability_gates | target/api_gate |
+| item_id | 模板与原子优化意图 | lifecycle | optimization_eligible | bound_hint | hard_applicability_gates | target/api_gate |
 |---|---|---|---|---|---|---|
 | `template-cube-output-wave-reuse` | [`cube-output-wave-reuse.py.tmpl`](cube-output-wave-reuse.py.tmpl)：同一 partition/K block 的多个输出复用一份 left Tile | active | yes | Cube / 搬运 / 流水 | 至少两个输出共享完全相同的 left operand；每个固定 partition 内的 q 链独立开闭；每个输出的 K 顺序、FP32 partition reduction tree 和 GM owner 不变；Acc/Right/Left 容量足够 | 当前 Cube、Acc phase、TileGroup 与 parser 能力经目标环境核对 |
 | `template-cube-shared-left-output-pair` | [`cube-shared-left-output-pair.py.tmpl`](cube-shared-left-output-pair.py.tmpl)：相邻输出对复用同一组 left residual | active | yes | Cube / 搬运 | 存在完整相邻输出对且 left residual 完全相同；单 residual 使用一次 `Final` 专门路径；逐输出累加顺序、odd tail 与唯一写者不变；双 Acc/RHS 及相关 TileGroup 容量足够 | 显式 Tile handle、精确 phase 链和目标 parser 行为经核对 |
@@ -32,4 +32,4 @@
 
 不得扫描本目录补充来源，也不得把未登记文件或模板内部的可选变体匿名加入账本。确有
 独立原子优化价值的新模板，须先与 KB 中可选的 pattern/constraint、通用方法、active 卡片和
-active 模板去重或说明独特增量，再以新稳定 ID 加入本 INDEX，之后才能进入 Stage 5 运行。
+active 模板去重或说明独特增量，再以新稳定 ID 加入本 INDEX，之后才能作为预置项参与调优。

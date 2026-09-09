@@ -1,18 +1,37 @@
-## 使用说明（贡献卡片时删除本节）
+---
+type: "PyPTO Performance Optimization Card Template"
+title: "PyPTO-Pro 性能优化知识卡片模板"
+description: "整理 PyPTO-Pro 性能优化方法、适用条件和验证方式的模板。"
+status: "stable"
+tags: ["pypto-pro", "performance", "knowledge-card", "template"]
+---
 
-将本文件复制到对应类别子目录；先分配 `item_id=<类别>-<两位递增序号>`，再命名为
-`<item_id>-<短名>.md`，并按目录深度修正相对链接。新卡先以 draft 状态加入
-[INDEX.md](INDEX.md)，完成文末检查后再晋升为 active。
-`general-*` 前缀由[通用优化手段](../general-optimization-methods.md)独占。
+# 使用说明
 
-# 技术卡片 <id>：<一个原子优化动作>
+1. 第一次贡献先阅读[贡献指南](CONTRIBUTING.md)，准备事实包并用其中的提示词让 Agent 生成
+   卡片；字段用法见[OKF 格式约定](PROFILE.md)。
+2. 按 [index.md](index.md) 的分类与编号规则，创建
+   `<类别>/<item_id>-<短名>.md`。
+3. 将下面的“卡片内容”复制到新文件。frontmatter 使用 YAML，可保留示例的 flow 写法或展开为多行。
+   默认使用下列 `status=stable`，登记到 [index.md](index.md) 的 Active 表。
+4. 将卡片和索引变更一并提交 PR，合入前由专业人员 review。
 
-- **item_id**：<类别>-<两位递增序号；与文件名前缀一致>
-- **lifecycle**：draft
-- **stage5_eligible**：no
-- **适用范围**：<VEC / Cube / Scalar / 访存 / 调度；可多选>
-- **一句话**：<在什么条件下，把什么结构改成什么结构>
-- **目标/API 门**：<支持的 SoC、版本或必须现场核验的能力>
+本文件顶部 frontmatter 描述模板文档自身，不属于新卡片；只复制下方 fenced block 的内容：
+
+```markdown
+---
+type: "PyPTO Performance Optimization Card"
+title: "<优化方法名称>"
+description: "<在什么条件下，把什么结构改成什么结构>"
+status: "stable"
+tags: ["pypto-pro", "<方法主题>"]
+item_id: "<类别>-<两位递增序号>"
+bound_hint: "<compute|memory|scalar|scheduling|mixed>"
+applicability: "<方法适用的场景、数据特征和技术条件>"
+target_api_gate: "<所需设备、公开 API 及已知限制>"
+---
+
+# 技术卡片 <item_id>：<优化方法名称>
 
 ## 何时用（诊断特征）
 
@@ -20,53 +39,35 @@
 
 ## 何时不适用
 
-列出可以关闭为 `not_applicable` 的明确条件和容易误判的相邻情形。
+列出方法不成立的技术条件和容易误判的相邻情形。
 
 ## 原理
 
-解释改动减少或重排的工作、搬运、依赖、冲突或固定开销。一个卡片只承载一个主要机制；独立
-动作拆成新卡，并用稳定 ID 声明关系。
+解释改动减少或重排的工作、搬运、依赖、冲突或固定开销；涉及多个步骤或分支时，说明它们的关系。
 
 ## 怎么改（before / after）
 
-当前公开 PyPTO-Pro API 能表达核心动作时，active 卡片必须至少给出一个 PyPTO-Pro `after`
-片段；能用最小 before/after 清楚表达时同时给出两者。代码 fence 标为以下一种：
+用最小 before/after 说明主要改动；API 已核验时优先给出 PyPTO-Pro 片段。代码 fence 标为以下一种：
 
 - `结构示意`：只展示数据流，明确缺少哪些上下文且不可直接编译或交付；
 - `嵌入片段`：使用已核验的公开 `pl.*` / `vf.*` API，并说明嵌入的 kernel/VF 上下文、
-  目标版本以及 dtype、shape、tail 等必要前提；
-- `能力门控伪码`：API 尚未确认，禁止直接复制实现。核心动作只能这样表达时，本卡保持
-  `lifecycle=draft`、`stage5_eligible=no`，直到能力与数值验证补齐；可选增强必须与已验证的
-  核心动作明确分开。
+  dtype、shape、tail 等必要前提；
+- `能力门控伪码`：API 尚未确认或存在已知缺口，禁止直接复制实现；写清缺口和补证方法，
+  不因卡片 Active 而视为可用。核心动作与可选增强分别标明能力边界。
 
 不得臆造 PyPTO-Pro API，也不得把生成 C++ 或 AscendC 写法伪装成 Python API。
-示例不能替代当前算子的完整正确性、quick 筛选和 formal compare。
 
 ## 性能与验证指标
 
-写明预期指标、正确性覆盖、quick 筛选和 formal compare。外部或历史数字必须标注来源及
-`unverified_external_historical`，当前算子未复现前不能当收益承诺。
+写明预期变化的指标、正确性覆盖及已有性能和机制证据。外部或历史数字注明“未在当前算子
+复现”；未实测时不填写收益结论。
 
-## 红线（Stop rules）
+## 技术限制与风险
 
-列出精度、语义、dtype/layout、容量、tail、同步、并发、wrapper、目标版本和恢复条件。卡片不能
-放宽 SPEC、Stage 4 铁律或统一测量协议。
+说明本方法涉及的精度、dtype/layout、容量、tail、同步等技术限制，以及额外开销或实现风险。
 
-## 关系与事实锚点
+## 参考资料（可选）
 
-- **事实锚点**：<官方文档、源码、ST 或可复核实验；写清版本和适用边界>
-- **与 KB 的关系**：<无重合；或列出 KB 路径及本卡独特增量>
-- **与通用优化手段的关系**：<无重合；或列出 general item id 及本卡独特增量>
-- **与模板优化项的关系**：<无重合；或列出 template item id 及本卡独特增量>
-- **卡片关系**：<requires / enables / conflicts / overlaps + card id>
-
-## Active 晋级检查
-
-- [ ] ID、文件名和标题一致，编号未复用，且未使用 `general-*`。
-- [ ] 是可执行、可证伪的单一优化动作，适用与不适用条件可由当前证据判断。
-- [ ] 目标/API 能力有事实锚点；核心动作不是仅由能力门控伪码表达，没有伪 API。
-- [ ] 公开 API 能表达核心动作时，已有符合上述边界的 PyPTO-Pro `after`；before/after、正确性
-      和性能验证方法完整，示例等级明确。
-- [ ] 历史数字未冒充当前设备结论。
-- [ ] 已与 active 卡片、active 模板、KB 和通用优化手段去重，或写清独特增量。
-- [ ] 所有相对链接有效，关系使用稳定 ID。
+附有帮助的 API 文档、代码路径或实验资料。
+没有资料时删除本节；需要逐项归因时按 PROFILE 的 sources 与脚注写法填写。
+```

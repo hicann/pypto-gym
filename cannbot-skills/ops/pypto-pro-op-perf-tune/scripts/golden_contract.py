@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Golden report and performance-case contracts used by Stage 5."""
+"""Golden report and performance-case contracts for performance tuning."""
 
 import hashlib
 import json
@@ -56,7 +56,7 @@ def _golden_protocol_values(payload: Dict[str, Any]) -> GoldenProtocol:
     except ValueError as error:
         return GoldenProtocol(None, None, None, None, None, str(error))
     if iterations != 1:
-        return GoldenProtocol(None, None, None, None, None, "Stage 5 Golden iterations must be exactly 1")
+        return GoldenProtocol(None, None, None, None, None, "Golden reference iterations must be exactly 1")
     if seed != 42:
         return GoldenProtocol(None, None, None, None, None, "Golden seed must be 42")
     if payload.get("timing_scope") != "all_golden_npu_kernels":
@@ -276,7 +276,7 @@ def performance_case_source_error(record: Any) -> Optional[str]:
 
 
 def parse_case_manifest(raw_path: str):
-    """Parse the explicit Stage 5 performance-case manifest.
+    """Parse the explicit performance-case manifest.
 
     The manifest defines which existing runner cases are measured. Golden
     JSON is joined separately when it exactly covers the manifest.

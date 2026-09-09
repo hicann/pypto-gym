@@ -29,11 +29,19 @@ skills:
 调度目标位于 `custom/<op>/`。完整执行 perf Skill 的“开始前读取”和按需路由；不得用 Stage 4
 摘要或事实记录代替直接读取权威输入。
 
+本工作流的必需输入为 SPEC、两份数学 Golden、EXPLORE_REPORT、PRO_MATERIAL_INDEX、MEMORY、
+DESIGN、DESIGN_BINDINGS、module_interfaces、最终测试及全部 P0、各 class 的 KB_SELECTION、
+已选参考和 KB_USAGE，以及 `$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`。
+它们按 perf Skill 的冻结/可更新边界处理，不能套用独立使用时的可选资料分支跳过。
+目标 case 与选择方式必须由 dispatch 预先给定并原样写入 manifest；缺失或不合法时立即返回调用方
+补齐，不自行重选或二次提问。
+
 随后完整执行 perf Skill，不在本文件另建一套 Stage 5 流程、字段或验收规则。Verifier 返回 FAIL
 时，在 Stage 5 内按原始证据定点修复，并重新执行该 Skill 要求的受影响验证和最终验收。
 
 若冻结输入缺失、损坏、不可解析且无可恢复记录，或冻结合同之间存在客观矛盾，返回
-`stage5_contract_blocked` 及原始证据；不得猜测、重建冻结输入或回退上游规避。性能目标差距和
+`stage5_contract_blocked` 及原始证据（将 perf Skill 的 `tuning_contract_blocked` 映射为此类别）；
+不得猜测、重建冻结输入或回退上游规避。性能目标差距和
 残留瓶颈只用于发现、排序候选；全部来源、候选与 final sweep 合法闭合后，性能目标未达
 不构成阻断。冻结 SPEC 中的用户目标定义本身矛盾或不可复算时属于上述合同阻断；目标定义有效后，
 Stage 5 Golden 或测量证据矛盾、不可复算时属于待修复的性能证据错误。用户未给数值目标且性能

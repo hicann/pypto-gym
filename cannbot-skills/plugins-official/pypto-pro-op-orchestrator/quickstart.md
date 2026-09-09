@@ -182,7 +182,7 @@ Stage 2 默认生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`�
 Stage 5 优先采用用户在 SPEC 中明确给出的可复算性能目标。用户未给数值目标时，把 `PERFORMANCE_CASES.json` 中每个 P0 case 的 `Golden 每迭代 NPU E2E / PyPTO 最终 target-kernel >= 1.0` 作为默认理想参考。该比值不是 PyPTO baseline→final 同口径加速比；用户目标和默认理想参考都不是能否交付的硬门禁，达到、未达到或不可用都必须如实报告。
 
 Stage 5 由 optimizer 完整加载 `pypto-pro-op-perf-tune`：审计 selected KB 全部原子点并补齐
-未落实缺口，闭合全部 active/eligible 通用方法、知识卡与模板项；四类预置来源全部闭合后，按当前
+未落实缺口，闭合全部 Active 知识卡及 active/eligible 通用方法与模板项；四类预置来源全部闭合后，按当前
 瓶颈建立并闭合 `bottleneck_derived`；冻结 baseline 与正式评价候选只在正确、合规时纳入排名，
 最终保留冻结聚合指标最优版本，再独立重采并验收。
 采集协议、来源账本、逐项实验、最佳版本选择、停止条件和交付物均以

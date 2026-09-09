@@ -4,9 +4,9 @@
 
 """既有 compare/quick/batch 流程的保留实现。
 
-这些函数是 Stage 5 证据协议引入前既有代码的逐字保留（仅改名 *_legacy），由
+这些函数保留 manifest 证据协议引入前的采集与汇总逻辑（函数名为 *_legacy），由
 msprof_perf_summary.py 在"未传 --case-manifest"时延迟导入，行为与既有流程一致，
-不参与 Stage 5 证据协议。
+不参与 manifest 证据协议。
 """
 
 from __future__ import annotations
@@ -425,8 +425,9 @@ def _add_analysis_sections_legacy(lines, report):
         "可运行："
     )
     lines.append("```bash")
+    lines.append("# PERF_SKILL_ROOT 为本 skill 实际目录的绝对路径")
     lines.append(
-        f"python3 ${{SKILL_PATH}}/scripts/msprof_perf_summary.py "
+        f'python3 "${{PERF_SKILL_ROOT}}/scripts/msprof_perf_summary.py" '
         f"{report.get('prof_group_dir', './PROF_GROUP_*')} {report['task']}"
     )
     lines.append("```")

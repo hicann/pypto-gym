@@ -2,7 +2,7 @@
 # coding: utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2026. All rights reserved.
 
-"""Stage 5 批量汇总的证据复核与渲染。
+"""性能采集批量汇总的证据复核与渲染。
 
 batch 汇总前从每个算子的七组原始 CSV 重建计时与 bound 诊断，与
 performance.json/measurement.json/evidence_status.json 逐项对照，防止派生数字

@@ -1,5 +1,7 @@
 # `msprof` 采集与分析
 
+本文命令中的 `PERF_SKILL_ROOT` 为本 skill 实际目录的绝对路径，执行前按安装位置设置。
+
 ## Contents
 
 - [适用场景](#scope)
@@ -36,7 +38,7 @@
 
 ## <a id="script-modes"></a>脚本运行模式
 
-本节保留不传 `--case-manifest` 时的既有兼容模式及命令语义。Stage 5 的 compare、quick 和 batch
+本节保留不传 `--case-manifest` 时的既有兼容模式及命令语义。本 skill 性能调优使用的 compare、quick 和 batch
 必须改按[证据协议](evidence-protocol.md#compare-quick-batch)执行；两种模式的 Golden、seed、逐 case
 选择和输出文件不同，不能混用。
 
@@ -49,7 +51,7 @@
 
 从 `GOLDEN_PERF_REPORT.md` 读取 Golden 非噪声 device-kernel E2E 总时长，用 msprof 采集 PyPTO
 target-kernel Task Duration，计算 `Golden E2E / PyPTO target-kernel` 参考比值。两端计时范围不同，
-该值不是同口径 optimization speedup，也不能作为 Stage 5 formal compare。为兼容既有产物，脚本
+该值不是同口径 optimization speedup，也不能作为正式性能对比（formal compare）。为兼容既有产物，脚本
 仍使用 `speedup`、`*_speedup` 和“加速比”等旧字段名；解释时必须遵循本段语义。
 
 行为说明：
@@ -60,12 +62,12 @@ target-kernel Task Duration，计算 `Golden E2E / PyPTO target-kernel` 参考�
 - msprof 临时数据写入算子目录下的 `.msprof/`，并使用 PID 和时间戳隔离并发任务。
 
 ```bash
-bash scripts/msprof_profile_run.sh --compare \
+bash "$PERF_SKILL_ROOT/scripts/msprof_profile_run.sh" --compare \
     --output-dir=./custom/{op} --warm-up=3 \
     --device=0 --op-name=<Op Name> --repeats=3 --seed=0
 ```
 
-> **前置条件**：兼容 `--compare`、`--quick` 均需要 `custom/{op}/GOLDEN_PERF_REPORT.md`，兼容 `--batch` 的每个算子目录也需要该报告。Stage 2 默认不生成该报告；只有用户明确要求 golden 性能采集或 golden 基线对比时，才先以 `collect_golden_perf=true` 调用 `pypto-pro-golden-generate` 生成报告。若用户只要求 PyPTO kernel 自身的性能采集或瓶颈分析，使用标准模式，不要为了它自动采集 golden。
+> **前置条件**：兼容 `--compare`、`--quick` 均需要 `custom/{op}/GOLDEN_PERF_REPORT.md`，兼容 `--batch` 的每个算子目录也需要该报告。正确性 Golden 不代表已采集性能报告；只有用户明确要求 golden 性能采集或 golden 基线对比时，才先以 `collect_golden_perf=true` 调用 `pypto-pro-golden-generate` 生成报告。若用户只要求 PyPTO kernel 自身的性能采集或瓶颈分析，使用标准模式，不要为了它自动采集 golden。
 >
 > **必须指定 `--op-name`**：与标准采集模式同理，PyPTO 测试脚本含多个 case + `torch.randn`，不指定会选到非目标 op。Op Name 获取方法见 [Step 3](#archive-summary)。
 >
@@ -78,7 +80,7 @@ bash scripts/msprof_profile_run.sh --compare \
 只采集 kernel Task Duration，不采集 7 个 aic-metrics，适合快速验证优化效果。`--warm-up`、`--repeats`、`--seed` 和逐 case 限制与对比模式一致。
 
 ```bash
-bash scripts/msprof_profile_run.sh --quick \
+bash "$PERF_SKILL_ROOT/scripts/msprof_profile_run.sh" --quick \
     --output-dir=./custom/{op} --warm-up=3 \
     --device=0 --op-name=<Op Name> --repeats=3 --seed=0
 ```
@@ -90,20 +92,20 @@ bash scripts/msprof_profile_run.sh --quick \
 扫描目录下所有算子子目录，多 NPU 并行执行对比测试：
 
 ```bash
-bash scripts/msprof_profile_run.sh --batch --base-dir=./custom --max-jobs=7 --device-start=1
+bash "$PERF_SKILL_ROOT/scripts/msprof_profile_run.sh" --batch --base-dir=./custom --max-jobs=7 --device-start=1
 ```
 
 输出：各子目录 `performance.json` + `batch_performance.log` + `batch_report.md` + `batch_summary.json`
 
-> **使用边界**：该兼容 batch 不传逐目录 `--op-name`，仅适用于每个 runner 的目标 kernel 可唯一归属的目录；含多个 AI_CORE op 时，使用 Stage 5 manifest batch，并传入精确的 `--op-name` 或 `--op-name-map`。
+> **使用边界**：该兼容 batch 不传逐目录 `--op-name`，仅适用于每个 runner 的目标 kernel 可唯一归属的目录；含多个 AI_CORE op 时，使用 manifest batch，并传入精确的 `--op-name` 或 `--op-name-map`。
 
 ---
 
 ## <a id="pypto-io"></a>PyPTO-Pro 输入与输出
 
-采集脚本执行算子目录中已有、已通过对应开发流程验收的 runner；本页不规定
-`test_{op}.py` 的 wrapper、Golden 或精度校验结构，也不能覆盖其 owner Skill 合同。PyPTO-Pro
-工作流的测试结构以 [Develop Skill](../../pypto-pro-op-develop/SKILL.md) 为准；Stage 5 的逐 case
+采集脚本执行算子目录中已有、已按算子合同通过全量正确性测试的 runner；优化前后必须保留
+wrapper 边界、Golden 语义与精度门槛。独立输入的要求见[主 Skill](../SKILL.md)；若项目使用
+[Develop Skill](../../pypto-pro-op-develop/SKILL.md)，也须保留其测试合同。逐 case
 输入、Golden 机器合同和输出证据以[证据协议](evidence-protocol.md)为准。不传 manifest 的兼容
 compare/quick 输出仍按上面的模式说明生成。
 
@@ -130,7 +132,7 @@ compare/quick 输出仍按上面的模式说明生成。
    两者皆可用时向用户确认或遵循项目约定；两者皆不可用时报错并检查 CANN / `ASCEND_HOME`。
 
 完整 `test_{op}.py` 的 profile 会混入输入生成、Golden 和精度检查，不能把其中的 `aclnn*`
-直接归因给 wrapper，也不能据此计算 wrapper 占比。PyPTO-Pro wrapper 合规由 Stage 4 的
+直接归因给 wrapper，也不能据此计算 wrapper 占比。PyPTO-Pro wrapper 合规由
 [wrapper 边界合同](../../pypto-pro-op-kb/constraints/wrapper-boundary.md)裁决；profile 只提供性能
 证据，不能授权越界。性能结论只使用可唯一归属到目标 kernel 或冻结 case 的字段和计时口径。
 
@@ -166,8 +168,7 @@ bash build.sh --run_example {operator_name} eager cust --vendor_name=custom
 一键脚本：
 
 ```bash
-# 位于 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_profile_run.sh
-bash $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_profile_run.sh \
+bash "$PERF_SKILL_ROOT/scripts/msprof_profile_run.sh" \
      --warm-up=3 \
      --output=./msprof_output \
      -- ./demo arg1 arg2 ...
@@ -186,7 +187,7 @@ GROUP_DIR=$(ls -td <output_dir>/PROF_GROUP_* | head -1)
 CSV=$(ls $GROUP_DIR/PROF_PipeUtilization/*/mindstudio_profiler_output/op_summary_*.csv | head -1)
 grep -i {kernel_func} "$CSV"        # {kernel_func} = @pl.jit 装饰的函数名
 
-python3 $CANNBOT_CONFIG_ROOT/skills/pypto-pro-op-perf-tune/scripts/msprof_perf_summary.py $GROUP_DIR ops/{operator_name} --op-name=<Op Name>
+python3 "$PERF_SKILL_ROOT/scripts/msprof_perf_summary.py" $GROUP_DIR ops/{operator_name} --op-name=<Op Name>
 ```
 
 > **重要**：PyPTO 测试脚本（`test_{op}.py`）通常包含多个 case + `torch.randn`，`op_summary` 中会有大量非目标 op（如 `StatelessNormal` 噪声注入）。**必须指定 `--op-name`** 选中目标 kernel，否则会选到非目标 op 导致结果完全错误。`--op-name` 取同名 kernel 中 Task Duration 最大的行（即最大 workload 的 case）。
@@ -288,7 +289,7 @@ ops/{算子名}/docs/perf/
 
 ## <a id="analysis-discipline"></a>通用分析纪律
 
-本节只提供分析证据；Stage 5 的来源、建项时机和登记要求以[主 Skill](../SKILL.md)及
+本节只提供分析证据；调优项的来源、建项时机和登记要求以[主 Skill](../SKILL.md)及
 [优化项实验闭环](optimization-playbook.md)为准，不能仅凭本节文字建立优化项。
 
 - **kernel 总耗时不是 DMA floor。** 要估计纯搬运下界，单独运行只含合同 load+store 的 sweep；

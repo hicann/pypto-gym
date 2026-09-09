@@ -1,4 +1,4 @@
-# Stage 5 优化项实验闭环
+# 优化项实验闭环
 
 本页定义五类优化项如何登记、实验、重开和关闭。采集命令与归档格式见
 [证据协议](evidence-protocol.md)，指标解释见[msprof 指南](msprof-guide.md)与
@@ -11,12 +11,12 @@
 
 - 当前正确实现及其可恢复副本或 diff；
 - device、型号、软件版本、模块路径、竞争进程和影响性能的环境变量；
-- `PERFORMANCE_CASES.json`（含完整 P0 与冻结目标 case；本项须在任何 Stage 5 采集或改码前确定）、输入分布、seed、warm-up、repeats、精确 `Op Name` 和计时范围；
+- `PERFORMANCE_CASES.json`（含完整 P0 与冻结目标 case；本项须在任何调优采集或改码前确定）、输入分布、seed、warm-up、repeats、精确 `Op Name` 和计时范围；
 - 完整正确性标准、quick→formal 晋级规则、稳定性判据、聚合指标及并列处理规则；
 - baseline/final 的 formal 协议；quick 只用于候选筛选。
 
 “正确候选”必须通过完整正确性；“合规候选”还必须满足冻结 SPEC、全部 selected-KB 义务、
-Module/public wrapper 合同、Stage 4 铁律和资源硬限制。Stage 4 实现存在已登记的 KB 缺口时仍可作为
+Module/public wrapper 合同、[主 Skill](../SKILL.md)的实现约束和资源硬限制。输入实现存在已登记的 KB 缺口时仍可作为
 修复起点和性能 baseline，但补齐全部义务前不能进入最终候选排名。用户性能目标、Golden 理想参考
 及 Roofline/Scalar/流水的理想状态用于发现候选和披露差距，不属于合规门禁。
 
@@ -28,12 +28,12 @@ Module/public wrapper 合同、Stage 4 铁律和资源硬限制。Stage 4 实现
 
 第一次改代码前，枚举四类预置来源：
 
-1. selected KB 中全部 `kind=obligation` 的原子要求；
+1. 项目 selected KB 中全部 `kind=obligation` 的原子要求；无已选 KB 时记录 0 项；
 2. [通用优化手段](general-optimization-methods.md)中的全部 active/eligible item；
-3. [知识卡片索引](knowledge-cards/INDEX.md)中的全部 active/eligible item；
+3. [知识卡片索引](knowledge-cards/index.md)的 Active 表中的全部 item；
 4. [模板优化项索引](../templates/INDEX.md)中的全部 active/eligible item。
 
-selected KB 先按 Design Skill 的 source-first 合同核对 `DESIGN_BINDINGS.json`，再以原子 requirement
+有 selected KB 时先按 Design Skill 的 source-first 合同核对 `DESIGN_BINDINGS.json`，再以原子 requirement
 为账本项；其稳定身份使用完整原子键 `(class_id, selection_field, reference, req_id)`，不得只使用
 组内唯一的 `req_id`。precondition 和 validation scope 只作为适用性与验证依据。进入自主优化后，
 每个新假设在改代码前追加为第五类 `bottleneck_derived`。
@@ -58,11 +58,11 @@ selected KB 先按 Design Skill 的 source-first 合同核对 `DESIGN_BINDINGS.j
 
 同一改动可以为多个来源提供实验，但每个 source id 都要有独立结论。某非 KB 项被其它项完整
 覆盖时，保留该行并记录覆盖关系；只重合一部分时仍实验独特增量。实现或前提变化使旧证据失效时，
-重开原 ID。账本状态只属于 Stage 5，不得直接复制成 `KB_USAGE.json` 状态。
+重开原 ID。账本状态描述调优实验，不得直接复制成 `KB_USAGE.json` 状态。
 
 ## 3. Baseline、瓶颈与排序
 
-先对未修改的 Stage 4 最终实现运行完整正确性和 JIT 预热，再按 manifest 建立逐 P0 formal
+先对未修改的输入实现运行完整正确性和 JIT 预热，再按 manifest 建立逐 P0 formal
 baseline。对每个 P0 记录绝对 Task Duration、AIC/AIV 时间、Vector/Cube/Scalar/MTE、分层带宽、
 冲突、逐核信息，以及可获得的生成物和 Tile DAG。
 
@@ -91,9 +91,9 @@ control。两版按第 6 节比较：保留含动作版本则记 `accepted`；�
 记录 `control_faster` 或 `no_stable_gain`。control 若违反 selected-KB 义务或已登记依赖关系则不适用。
 
 selected-KB 的真实缺口必须落实并通过该 requirement 的验证方法，不能因性能无收益而拒绝；若其与
-冻结合同或当前能力确实无法同时满足，报告 `stage5_contract_blocked`。card 与 template 只按各自
-INDEX 枚举；目录中的未登记、draft、retired 或不 eligible 文件不进入账本。模板只是待适配骨架，
-不能替代 API、正确性或性能证明。
+冻结合同或当前能力确实无法同时满足，报告 `tuning_contract_blocked`。card 与 template 只按各自
+index/INDEX 枚举：卡片取 Active 表，模板取 active/eligible 项；未登记文件不进入账本。知识卡片由
+技术 review 把关，采用时按本节完成实验。模板只是待适配骨架，不能替代 API、正确性或性能证明。
 
 全部 selected-KB 缺口闭合后，对当前完整修复版本重新执行 formal compare；其通过正确性与合规
 检查后，作为首个可排名版本进入第 6 节。此前的 KB 中间版本只记录修复影响，不参与最终排名。
@@ -120,7 +120,7 @@ INDEX 枚举；目录中的未登记、draft、retired 或不 eligible 文件不
 
 ## 6. 选择最佳版本
 
-目标 case 在任何 Stage 5 采集或改码前冻结；候选聚合指标在第一次正式采集前冻结。
+目标 case 在任何调优采集或改码前冻结；候选聚合指标在第一次正式采集前冻结。
 `all_p0_no_questions` 固定对全部 P0 使用下述默认算法；其它模式若 `SPEC` 已针对冻结目标 case 记录
 用户给出的可复算指标或权重，则原样使用。没有上述专用规则时，对 `optimization_target.case_ids` 逐项计算
 `case_speedup = frozen_baseline_duration / candidate_duration`，取等权算术平均。非目标 P0 不进入
@@ -147,7 +147,7 @@ Scalar 残留需要时间线时先补采。新证据使预置项结论失效时�
 `bottleneck_derived`。没有新项时记录扫描范围、发现及其与已关闭项、冻结合同或当前能力的对应关系。
 最终验收 timeline 暴露新项时按同一规则重开闭环；代码或最佳候选变化后重新执行最终验收。
 
-Stage 5 完成必须同时满足：
+调优完成必须同时满足：
 
 - 四类预置来源和全部已创建的自主项均已合法关闭，没有未决或需要重开的项；
 - final sweep 没有新的合法候选；

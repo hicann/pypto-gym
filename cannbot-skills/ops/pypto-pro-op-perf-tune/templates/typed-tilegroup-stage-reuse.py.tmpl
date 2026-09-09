@@ -31,19 +31,19 @@ wide_rhs_g = pl.make_tile_group(
 )
 
 with pl.section_cube():
-    ...  # inline stage 1 with narrow_rhs_g; do not call an ordinary Python helper
+    ...  # first narrow_rhs_g computation; inline it rather than call an ordinary Python helper
 
 # Every launched AIC/AIV lane must reach this unconditionally.  auto_mutex does
 # not discover that two differently typed groups alias the same address.
 pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
 
 with pl.section_cube():
-    ...  # inline stage 2 with wide_rhs_g
+    ...  # inline wide_rhs_g computation
 
 pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
 
 with pl.section_cube():
-    ...  # inline stage 3 with narrow_rhs_g
+    ...  # inline final narrow_rhs_g computation
 
 # Gate each stage on target A5.  pl.move compares physical TileType shapes:
 # setting wide_rhs_g valid_shape to TN does not permit a [TK,TN] Mat ->

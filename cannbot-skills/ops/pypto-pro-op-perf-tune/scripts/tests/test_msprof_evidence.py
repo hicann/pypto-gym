@@ -17,7 +17,9 @@ import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from itertools import product
 from pathlib import Path
+from unittest.mock import patch
 
 
 MSPROF_SCRIPT = Path(__file__).parents[1] / "msprof_perf_summary.py"
@@ -40,7 +42,44 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-class Stage5RoutingAndAdapterTest(unittest.TestCase):
+class PerformanceRoutingAndAdapterTest(unittest.TestCase):
+    def test_compare_and_quick_seed_defaults_preserve_legacy(self) -> None:
+        for mode, manifest, seed in product(("compare", "quick"), (False, True), (None, 0, 42, 7, -1)):
+            with self.subTest(mode=mode, manifest=manifest, seed=seed):
+                argv = [str(MSPROF_SCRIPT), f"--{mode}", "--output-dir=.", "--device=0"]
+                if manifest:
+                    argv.append("--case-manifest=unused.json")
+                if seed is not None:
+                    argv.append(f"--seed={seed}")
+                valid = not manifest or seed in (None, 0, 42)
+                with patch.object(MSPROF, f"_run_{mode}_mode", return_value=0) as collect, \
+                        patch(f"legacy_compare._run_{mode}_mode_legacy", return_value=0) as legacy, \
+                        patch.object(MSPROF, f"run_{mode}_mode",
+                                     wraps=getattr(MSPROF, f"run_{mode}_mode")) as route, \
+                        patch.object(sys, "argv", argv), patch.object(sys, "exit") as exit_call:
+                    MSPROF.main()
+                exit_call.assert_called_once_with(0 if valid else 1)
+                self.assertEqual(collect.called, manifest and valid)
+                self.assertEqual(legacy.called, not manifest)
+                expected_seed = None if manifest and seed in (None, 0) else (seed or 0)
+                self.assertEqual(route.call_args.args[0].seed, expected_seed)
+
+    def test_timeline_seed_defaults_reach_evidence_preflight(self) -> None:
+        for seed in (None, 0, 42, 7, -1):
+            with self.subTest(seed=seed):
+                argv = [str(MSPROF_SCRIPT), "--timeline", "--output-dir=.", "--device=0",
+                        "--case-manifest=unused.json", "--case-id=p0"]
+                if seed is not None:
+                    argv.append(f"--seed={seed}")
+                # Stop at the first evidence read; no profiler or NPU is needed.
+                with patch.object(CLI, "_validated_performance_cases", return_value=None) as evidence, \
+                        patch.object(CLI, "run_timeline_mode", wraps=CLI.run_timeline_mode) as route, \
+                        patch.object(sys, "argv", argv), patch.object(sys, "exit") as exit_call:
+                    MSPROF.main()
+                exit_call.assert_called_once_with(1)
+                self.assertEqual(evidence.called, seed in (None, 0, 42))
+                self.assertEqual(route.call_args.args[0].seed, None if seed in (None, 0) else seed)
+
     def test_bound_route_uses_core_time_and_keeps_overlap_unverified(self) -> None:
         diagnosis = CLI.diagnose_bound_route({
             "aicore_time(us)": "2.0",

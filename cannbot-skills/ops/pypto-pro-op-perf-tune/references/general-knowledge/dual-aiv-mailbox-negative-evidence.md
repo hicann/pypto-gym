@@ -1,7 +1,7 @@
 # Dual-AIV mailbox 负向证据
 
 本页只保留旧 `dual-aiv-mailbox.py.tmpl` 中独特的 liveness 与 tail 失败边界。该原型未经
-production-shaped 验证，已从 `templates/` 移除；它不是 Stage 5 优化项、实现骨架或可复用 API
+production-shaped 验证，已从 `templates/` 移除；它不是预置优化项、实现骨架或可复用 API
 范式。
 
 ## 已知风险

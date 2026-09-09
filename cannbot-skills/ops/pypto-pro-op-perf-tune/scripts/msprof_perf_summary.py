@@ -16,7 +16,7 @@
 #      python3 msprof_perf_summary.py <PROF_GROUP_dir> <ops_dir>
 #
 #   2. 对比模式 (--compare): 按 manifest 采集 PyPTO target kernel；
-#      Golden 完整覆盖时计算 Stage 5 默认目标比值（Golden E2E / PyPTO target kernel）。
+#      Golden 完整覆盖时计算默认目标比值（Golden E2E / PyPTO target kernel）。
 #      python3 msprof_perf_summary.py --compare --output-dir <op_dir> --case-manifest <path>
 #
 #   3. 批量模式 (--batch): 扫描多个算子目录，汇总批量报告
@@ -164,7 +164,7 @@ def find_op_summary(prof_metric_dir: str, strict: bool = False) -> Optional[str]
     pattern = os.path.join(prof_metric_dir, "**", "mindstudio_profiler_output", "op_summary_*.csv")
     hits = sorted(glob.glob(pattern, recursive=True))
     if strict:
-        # Stage 5：一次指标采集只应产出一份证据样本；多份时拒绝按路径排序猜测。
+        # manifest 协议：一次指标采集只应产出一份证据样本；多份时拒绝按路径排序猜测。
         return hits[0] if len(hits) == 1 else None
     # 既有行为：取最后一个命中。
     return hits[-1] if hits else None
@@ -180,7 +180,7 @@ def pick_target_row(
     if target_name:
         matched = [r for r in rows if r.get("Op Name", "").strip() == target_name]
         if strict:
-            # Stage 5 正式样本必须唯一归属一次 measured launch；既有非严格路径保留取最大行。
+            # manifest 协议的正式样本必须唯一归属一次 measured launch；既有非严格路径保留取最大行。
             if len(matched) == 1:
                 return matched[0]
             # 显式目标是证据合同而不是提示；取最长行会把其它 kernel 的计时归到拼错或缺失的目标上。
@@ -253,7 +253,7 @@ def load_per_core_cycles(group_dir: str) -> List[Tuple[int, int]]:
 
 
 def load_per_core_cycles_scoped(group_dir: str) -> Tuple[List[Tuple[int, int]], str]:
-    """Stage 5：进程级逐核样本（device_*，唯一性要求 + 作用域标注）。"""
+    """manifest 协议：进程级逐核样本（device_*，唯一性要求 + 作用域标注）。"""
     candidates = glob.glob(
         os.path.join(group_dir, "PROF_Sample", "PROF_*", "device_*", "sqlite", "aicore.db")
     )
@@ -749,7 +749,7 @@ def profile_case_contract_error(cases, args):
         f"the selected performance case source contains {len(cases)} cases, but test_<op>.py "
         "needs an explicit per-case selector. Refusing to reuse one aggregate "
         "msprof duration for every case; rerun with --case-arg/--case-env, or add a "
-        "validated test_function to every manifest case for the Stage 5 adapter."
+        "validated test_function to every manifest case for the function adapter."
     )
 
 
@@ -758,7 +758,7 @@ def _find_test_script(out_dir: Path, strict: bool = False):
     if not test_scripts:
         return None, "no test_*.py found in operator directory"
     if strict:
-        # Stage 5：优先 test_{dirname}.py；多个候选时拒绝猜测。
+        # manifest 协议：优先 test_{dirname}.py；多个候选时拒绝猜测。
         preferred = out_dir / f"test_{out_dir.name}.py"
         if preferred in test_scripts:
             return str(preferred), None
@@ -766,7 +766,7 @@ def _find_test_script(out_dir: Path, strict: bool = False):
             return str(test_scripts[0]), None
         names = ", ".join(path.name for path in test_scripts)
         return None, (
-            f"multiple test_*.py files found ({names}); expected the Stage4 runner "
+            f"multiple test_*.py files found ({names}); expected the runner "
             f"test_{out_dir.name}.py and refusing to guess"
         )
     # 既有行为：取排序后第一个。
@@ -774,14 +774,14 @@ def _find_test_script(out_dir: Path, strict: bool = False):
 
 
 def _selected_executable_sha256(out_dir: Path):
-    """Resolve the strict Stage 5 runner and hash its current bytes."""
+    """Resolve the runner under the manifest protocol and hash its current bytes."""
     test_script, error = _find_test_script(out_dir, strict=True)
     if not test_script:
         return None, None, error
     try:
         digest = hashlib.sha256(Path(test_script).read_bytes()).hexdigest()
     except OSError as source_error:
-        return None, None, f"cannot hash Stage 5 executable: {source_error}"
+        return None, None, f"cannot hash runner executable: {source_error}"
     return test_script, digest, None
 
 
@@ -816,7 +816,7 @@ def _find_msprof_script():
 def _profile_env(device_id, seed=None, case_env=None, case_name=None, tile_fwk=False):
     env = os.environ.copy()
     if tile_fwk:
-        # Stage 5：PyPTO-Pro runner 用 TILE_FWK_DEVICE_ID 作物理设备 id。
+        # manifest 协议：PyPTO-Pro runner 用 TILE_FWK_DEVICE_ID 作物理设备 id。
         # 同时设置 visibility mask 会把物理卡重编号为逻辑 0，使 TILE_FWK_DEVICE_ID>0 失效。
         env.pop("ASCEND_RT_VISIBLE_DEVICES", None)
         env["TILE_FWK_DEVICE_ID"] = str(device_id)
@@ -1145,7 +1145,7 @@ def _select_device_id(args, tile_fwk: bool = False):
     if args.device is not None:
         return args.device, "cli"
     if tile_fwk:
-        # Stage 5：TILE_FWK_DEVICE_ID 是物理 id；只有非零 visibility mask 且未设置
+        # manifest 协议：TILE_FWK_DEVICE_ID 是物理 id；只有非零 visibility mask 且未设置
         # TILE_FWK_DEVICE_ID 时拒绝猜测（mask 会把物理卡重编号为逻辑 0）。
         if os.environ.get("TILE_FWK_DEVICE_ID"):
             return int(os.environ["TILE_FWK_DEVICE_ID"].split(",")[0]), "env.TILE_FWK_DEVICE_ID"
@@ -1615,7 +1615,7 @@ def _summary_payload(csi: CompareSummaryInput, rows: list, ratios: list,
         "warmup": csi.args.warmup,
         "repeats": csi.args.repeats,
         "seed": csi.args.seed if csi.args.seed is not None else 42,
-        "seed_source": "cli_override" if csi.args.seed is not None else "stage4_default",
+        "seed_source": "cli_override" if csi.args.seed is not None else "runner_default",
         "device_id": csi.device_id,
         "device_select_source": csi.device_src,
         **_target_fields(
@@ -1832,7 +1832,7 @@ def _build_collection_record(args, out_dir, device_id, performance_cases):
         "target_op_name": args.op_name,
         "device_id": device_id,
         "seed": args.seed if args.seed is not None else 42,
-        "seed_source": "cli_override" if args.seed is not None else "stage4_default",
+        "seed_source": "cli_override" if args.seed is not None else "runner_default",
         "warmup": args.warmup,
         "repeats": args.repeats,
         "expected_cases": [str(case[0]) for case in performance_cases],
@@ -1889,7 +1889,7 @@ def _execute_compare_loop(
         if executable_error:
             raise RuntimeError(executable_error)
         if executable_sha256 != collection.record.get("executable_sha256"):
-            raise RuntimeError("Stage 5 executable changed during formal compare")
+            raise RuntimeError("runner executable changed during formal compare")
         summary["executable_sha256"] = executable_sha256
         _log_and_save_compare_reports(summary, out_dir, speedups, len(performance_cases))
         collection.record["status"] = "complete"
@@ -1963,8 +1963,6 @@ def _resolve_mode_entry(args):
     if not _validate_measurement_args(args, manifest=manifest):
         raise ValueError("invalid measurement arguments")
     device_id, device_src = _select_device_id(args, tile_fwk=manifest)
-    if manifest and getattr(args, "seed", None) == 0:
-        args.seed = None  # 0 视为未指定，Stage 5 固定 42
     return manifest, out_dir, device_id, device_src
 
 
@@ -1972,7 +1970,7 @@ def run_compare_mode(args):
     """执行对比模式。
 
     未传 --case-manifest：既有 GOLDEN_PERF_REPORT.md 流程；
-    传入 --case-manifest：Stage 5 manifest 证据协议。
+    传入 --case-manifest：manifest 证据协议。
     """
     try:
         manifest, out_dir, device_id, device_src = _resolve_mode_entry(args)
@@ -2028,7 +2026,7 @@ def _run_quick_mode(args, out_dir, device_id, device_src):
 def run_quick_mode(args):
     """执行快速模式。
 
-    未传 --case-manifest：既有流程；传入：Stage 5 manifest 证据协议。
+    未传 --case-manifest：既有流程；传入：manifest 证据协议。
     """
     try:
         manifest, out_dir, device_id, device_src = _resolve_mode_entry(args)
@@ -2223,11 +2221,11 @@ def _add_compare_args(parser) -> None:
     )
     parser.add_argument("--output-dir", dest="output_dir", help="算子输出目录（对比模式/快速模式）")
     parser.add_argument("--warmup", type=int, default=3, help="msprof warmup 次数")
-    parser.add_argument("--repeats", type=int, default=1, help="重复采集次数（既有流程默认 1；Stage 5 协议建议 3）")
+    parser.add_argument("--repeats", type=int, default=1, help="重复采集次数（既有流程默认 1；manifest 协议建议 3）")
     parser.add_argument(
         "--seed", type=int, default=0,
         help="既有流程：随机种子，经 PYPTO_PERF_SEED/PYTHONHASHSEED 传入 runner；"
-             "Stage 5（--case-manifest）协议仅接受 42（0 视为未指定）",
+             "manifest（--case-manifest）协议仅接受 42（0 视为未指定）",
     )
     parser.add_argument("--retry", type=int, default=2, help="单 case 解析失败重试次数")
     parser.add_argument("--device", type=int, default=None, help="NPU 设备 id")
