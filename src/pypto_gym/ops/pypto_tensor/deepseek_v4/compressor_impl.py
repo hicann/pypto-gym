@@ -665,7 +665,7 @@ def compressor_ratio_4_rotate_kernel(
 
             # Compression exists
             else:
-                is_compress = pypto.SymbolicScalar("is_compress") + 1
+                is_compress = is_compress + 1
                 pypto.set_vec_tile_shapes(1, 16, 256)
                 kv_block_idx = kv_block_table[
                     b_idx * b + c_idx, start_pos // block_size
