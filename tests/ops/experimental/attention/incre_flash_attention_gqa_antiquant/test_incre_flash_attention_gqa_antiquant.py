@@ -460,7 +460,7 @@ def get_tile_config(case_config):
     tile_config = AttentionTileConfig(
         g_tile=g_tile,
         s2_tile=512,
-        v0_tile=[256, 128],
+        v0_tile=[64, 128],
         c1_tile=[[16, 16], [128, 128], [256, 256]],
         v1_tile=[128, 512],
         c2_tile=[[16, 16], [256, 512], [128, 128]],

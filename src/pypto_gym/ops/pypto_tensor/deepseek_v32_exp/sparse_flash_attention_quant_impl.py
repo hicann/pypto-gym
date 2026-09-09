@@ -136,7 +136,13 @@ def sparse_flash_attention_quant_compute(query_nope, query_rope, key_nope_2d, ke
                             kn_quant = gather_in_ub(k_nope_2d_view, cur_topk_indices, cur_block_table, block_size, -2)
                             kn_quant_fp16 = pypto.cast(kn_quant, pypto.DT_FP16)
                             kn_quant_fp32 = pypto.cast(kn_quant_fp16, pypto.DT_FP32)
-                            kn_quant_fp32 = pypto.concat([kn_quant_fp32, kn_quant_fp32], -1)
+                            temp_tensor = pypto.full(
+                                kn_quant_fp32.shape,
+                                0.0,
+                                pypto.DT_FP32,
+                                valid_shape=[(cur_seq - s2_idx * cur_s2_tile).min(cur_s2_tile), dn],
+                            )
+                            kn_quant_fp32 = pypto.concat([kn_quant_fp32, temp_tensor], -1)
                             kn_quant_fp32_tmp = pypto.reshape(kn_quant_fp32, [s2_tile * 8, 128])
                             kn_scale_tmp = pypto.reshape(kn_scale, [s2_tile * 8, 1])
                             pypto.set_vec_tile_shapes(128, 128)

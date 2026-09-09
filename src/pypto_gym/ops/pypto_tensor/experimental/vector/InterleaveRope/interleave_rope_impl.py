@@ -41,7 +41,8 @@ S_TILE_128 = 16
 S_TILE_128_SHORT = 2
 S_UNROLL_128 = [4, 2, 1]
 S_TILE_1 = 64
-S_TILE_128_950 = 12
+S_TILE_128_950 = 16
+N_TILE_128_950 = 32
 D = 64
 HALF = 32  
 ASCEND_950_NPUARCH = "DAV_3510"
@@ -164,7 +165,7 @@ def interleave_rope_kernel_n128_bf16_unroll(
         "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
-    pass_options={"vec_nbuffer_setting": {-1: 8}},
+    pass_options={"vec_nbuffer_setting": {-1: 2}},
 )
 def interleave_rope_kernel_n128_bf16_950(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
@@ -173,19 +174,19 @@ def interleave_rope_kernel_n128_bf16_950(
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, D)
+    pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, D)
     B = x.shape[0]
     S = x.shape[2]
     s_loops = (S + S_TILE_128_950 - 1) // S_TILE_128_950
     for b in pypto.loop(B, name="b_loop"):
-        for n_blk in pypto.loop(128 // N_TILE_128, name="n_loop"):
-            n_off = n_blk * N_TILE_128
+        for n_blk in pypto.loop(128 // N_TILE_128_950, name="n_loop"):
+            n_off = n_blk * N_TILE_128_950
             for s_blk in pypto.loop(s_loops, name="s_loop"):
                 s_off = s_blk * S_TILE_128_950
                 valid_s = (S - s_off).min(S_TILE_128_950)
-                vshape_x = [1, N_TILE_128, valid_s, D]
+                vshape_x = [1, N_TILE_128_950, valid_s, D]
                 vshape_cs = [1, 1, valid_s, D]
-                x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128_950, D], [b, n_off, s_off, 0],
+                x_t = pypto.view(x, [1, N_TILE_128_950, S_TILE_128_950, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
                 c_t = pypto.view(cos, [1, 1, S_TILE_128_950, D], [b, 0, s_off, 0],
                                  valid_shape=vshape_cs)
@@ -195,13 +196,13 @@ def interleave_rope_kernel_n128_bf16_950(
                 x_e, x_o = pypto.deinterleave(x_t)
                 c_e, c_o = pypto.deinterleave(c_t)
                 s_e, s_o = pypto.deinterleave(s_t)
-                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, HALF)
+                pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, HALF)
                 ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
                 yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_pass_options(sg_set_scope=-1)
-                pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_950, D)
+                pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, D)
 
 
 @pypto.frontend.jit(
