@@ -366,10 +366,10 @@ def get_ifa_tile_cfg():
     m_tile = 256
     k_tile = 128
     n_tile = 128
-    s2_tile = 4096
+    s2_tile = 2048
 
     tile_cfg = AttentionTileConfig(
-        g_tile=6,
+        g_tile=12,
         s2_tile=s2_tile,
         c1_tile=[[m_tile, m_tile], [k_tile, k_tile], [n_tile, n_tile]],
         v1_tile=[6, s2_tile],
@@ -848,15 +848,13 @@ def reshape_qkv_to_2d(q, k, v, kernel_params):
 
 @pypto.frontend.jit(
     runtime_options={
-        "stitch_function_max_num": 256,
-        "device_sched_mode": 1,
-        "ready_on_host_tensors": ["block_table", "kv_act_seqs"]
+        "stitch_function_max_num": 128,
+        "device_sched_mode": 1
     },
     pass_options={
-        "cube_l1_reuse_setting": {-1: 16, 1: 1},
-        "vec_nbuffer_setting": {-1: 2, 0: 4},
-        "auto_mix_partition": 1
-    },
+        "cube_l1_reuse_setting": {0: 8},
+        "vec_nbuffer_setting": {0: 2}
+    }
 )
 def ifa_func_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
