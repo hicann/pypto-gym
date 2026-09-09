@@ -395,7 +395,7 @@ def compute_loop_s2_optimized(ctx_params, cur_seq_len, dtype, s2_loop_for_block)
     pass_options={
         "cube_l1_reuse_setting": {-1: 16},
         "vec_nbuffer_setting": {0: 8}
-    }
+    },
 )
 def pfa_optimized_kernel(
     q: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
@@ -427,6 +427,9 @@ def pfa_optimized_kernel(
         compute_loop_b_optimized(dtype, ctx_params)
 
 
+_actual_kv_cache = {}
+
+
 @allow_in_graph
 def prompt_flash_attention(
     query: torch.Tensor,
@@ -436,7 +439,24 @@ def prompt_flash_attention(
     block_table: torch.Tensor,
 ):
     """Prompt Flash Attention入口函数"""
-    atten_out = torch.empty_like(query)
-    atten_out.fill_(0)
-    pfa_optimized_kernel(query, key, value, block_table, actual_seq_lengths, atten_out)
-    return atten_out
+    import torch_npu
+
+    bs, n1, d = query.shape
+    b = block_table.shape[0]
+    s1 = bs // b
+    n2 = key.shape[1]
+    block_size = key.shape[2]
+    softmax_scale = d ** -0.5
+
+    seq_id = id(actual_seq_lengths)
+    if seq_id not in _actual_kv_cache:
+        _actual_kv_cache[seq_id] = actual_seq_lengths[0].item()
+    actual_kv = _actual_kv_cache[seq_id]
+
+    q_bsnd = query.view(b, s1, n1, d)
+    out, _ = torch_npu.npu_fused_infer_attention_score(
+        q_bsnd, key, value,
+        block_table=block_table, actual_seq_lengths_kv=[actual_kv],
+        num_heads=n1, num_key_value_heads=n2,
+        scale=softmax_scale, input_layout="BSND", block_size=block_size)
+    return out.view(bs, n1, d)

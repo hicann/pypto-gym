@@ -65,6 +65,7 @@ _BwdMasks = namedtuple('_BwdMasks',
 _BwdSpecificInputs = namedtuple('_BwdSpecificInputs',
     ['do_2d', 'o_2d', 'lse_2d', 'dq_2d', 'dk_2d', 'dv_2d',
      'q_c', 'do_c', 'o_c', 'lse_c', 'inner_mask', 'max_inner'])
+_BwdAuxTensors = namedtuple('_BwdAuxTensors', ['hints', 'masks'])
 
 
 DYNAMIC_B = pypto.frontend.dynamic('DYNAMIC_B')
@@ -93,12 +94,14 @@ _BWD_RT_OPTS = {}
 _BWD_OPTIMAL_UNROLL = [4, 2, 1]
 
 _bwd_cache = {}
+_bwd_prep_cache = {}
 _PERF_OUTPUT_BASE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
 # PyPTO runtime writes output to CWD-relative "output/", not to the
 # module-relative path above.  Search both so that _snapshot_output_dirs
 # and _find_newest_created_dir can find swimlane data regardless of CWD.
 _PERF_SEARCH_BASES = [_PERF_OUTPUT_BASE, os.path.abspath("output")]
 _last_backward_perf_dirs = {}
+_last_backward_aicore_evt = {"start": None, "end": None}
 
 
 def _snapshot_bwd_dirs():
@@ -140,11 +143,13 @@ def _get_bwd_kernel(cfg, *, bx=None, by=None, extra_runtime_options=None, inner_
     kv_block = block_y
     sub_split = block_x // 64
     sub_block = block_x // sub_split
-    ct = _CUBE_TILE_LIST
+    ct = [128, 128]
     vtl = _VEC_TILE_LOAD
 
-    @pypto.frontend.jit(**_make_jit_opts(cfg, extra_pass_options=_BWD_PASS_OPTS,
-                                          extra_runtime_options=_bwd_rt))
+    _bwd_jit_opts = _make_jit_opts(cfg, extra_pass_options=_BWD_PASS_OPTS,
+                                   extra_runtime_options=_bwd_rt)
+
+    @pypto.frontend.jit(**_bwd_jit_opts)
     # JIT kernel: cannot be split (PyPTO DSL requirement)
     def kernel(
         b_hint: pypto.Tensor([DYNAMIC_B, 1], pypto.DT_FP32),
@@ -424,27 +429,10 @@ def _prepare_bwd_specific_inputs(call_inputs, prepared):
         inner_mask=dkdv_result.inner_mask, max_inner=dkdv_result.max_inner)
 
 
-def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
-    """Dispatch BWD kernel: create hints, masks, run kernel, reshape outputs."""
-    global _last_backward_perf_dirs
-    _last_backward_perf_dirs = {}
-    cfg = call_inputs.cfg
-    b, hq, hkv, sq, skv, d = prepared.b, prepared.hq, prepared.hkv, prepared.sq, prepared.skv, prepared.d
-    num_qb, num_kb = prepared.num_qb, prepared.num_kb
-    sq_pad, skv_pad = prepared.sq_pad, prepared.skv_pad
+def _run_bwd_kernel(cfg, prepared, bwd_inputs, sparse_kv_result, aux):
+    """Run BWD kernel and record profiling information."""
+    hints, masks = aux.hints, aux.masks
     bx, by = prepared.bx, prepared.by
-
-    hints = _make_bwd_hint_tensors(_BwdHintConfig(
-        b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, num_qb=num_qb, num_kb=num_kb,
-        max_sel=sparse_kv_result.max_sel, max_inner=bwd_inputs.max_inner,
-        device=call_inputs.query.device))
-
-    masks = _make_bwd_masks(_BwdMasksConfig(
-        valid_mask=sparse_kv_result.valid_mask, inner_mask=bwd_inputs.inner_mask,
-        softmax_scale=cfg.softmax_scale, large_neg=cfg.large_neg,
-        do_2d=bwd_inputs.do_2d, o_2d=bwd_inputs.o_2d,
-        do_c=bwd_inputs.do_c, o_c=bwd_inputs.o_c))
-
     torch.npu.synchronize()
 
     bwd_rt_opts = {'device_sched_mode': 3}
@@ -454,6 +442,9 @@ def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
                                                extra_runtime_options=bwd_rt_opts,
                                                inner_unroll=inner_unroll)
     before_bwd = _snapshot_bwd_dirs()
+    _aicore_evt_start = torch.npu.Event(enable_timing=True)
+    _aicore_evt_end = torch.npu.Event(enable_timing=True)
+    _aicore_evt_start.record()
     bwd_kernel_fn(
         hints.b_hint, hints.hq_hint, hints.hkv_hint, hints.sq_hint, hints.skv_hint,
         hints.num_qb_hint, hints.num_kb_hint, hints.max_sel_hint, hints.max_inner_hint,
@@ -463,6 +454,9 @@ def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
         bwd_inputs.q_c, bwd_inputs.do_c, bwd_inputs.lse_c,
         masks.scaled_mask_dkdv, masks.neg_inf_mask_dkdv, masks.d_row_dkdv,
         prepared.k_2d, prepared.v_2d, bwd_inputs.dk_2d, bwd_inputs.dv_2d)
+    _aicore_evt_end.record()
+    _last_backward_aicore_evt["start"] = _aicore_evt_start
+    _last_backward_aicore_evt["end"] = _aicore_evt_end
     new_bwd_dir = _find_newest_bwd_dir(before_bwd)
     if new_bwd_dir:
         _unroll_key = tuple(_BWD_OPTIMAL_UNROLL)
@@ -471,6 +465,44 @@ def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result):
         bwd_dir = new_bwd_dir
     _last_backward_perf_dirs["dQ"] = bwd_dir
     _last_backward_perf_dirs["dK/dV"] = bwd_dir
+
+
+def _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result,
+                         *, hints=None, masks=None, cache_key=None):
+    """Dispatch BWD kernel: create hints, masks, run kernel, reshape outputs."""
+    global _last_backward_perf_dirs
+    _last_backward_perf_dirs = {}
+    cfg = call_inputs.cfg
+    b, hq, hkv, sq, skv, d = prepared.b, prepared.hq, prepared.hkv, prepared.sq, prepared.skv, prepared.d
+    num_qb, num_kb = prepared.num_qb, prepared.num_kb
+    sq_pad, skv_pad = prepared.sq_pad, prepared.skv_pad
+    bx = prepared.bx
+
+    if hints is None:
+        hints = _make_bwd_hint_tensors(_BwdHintConfig(
+            b=b, hq=hq, hkv=hkv, sq=sq, skv=skv, num_qb=num_qb, num_kb=num_kb,
+            max_sel=sparse_kv_result.max_sel, max_inner=bwd_inputs.max_inner,
+            device=call_inputs.query.device))
+
+    if masks is None:
+        masks = _make_bwd_masks(_BwdMasksConfig(
+            valid_mask=sparse_kv_result.valid_mask, inner_mask=bwd_inputs.inner_mask,
+            softmax_scale=cfg.softmax_scale, large_neg=cfg.large_neg,
+            do_2d=bwd_inputs.do_2d, o_2d=bwd_inputs.o_2d,
+            do_c=bwd_inputs.do_c, o_c=bwd_inputs.o_c))
+
+    if cache_key is not None and cache_key not in _bwd_prep_cache:
+        _bwd_prep_cache[cache_key] = (prepared, sparse_kv_result,
+            _BwdSpecificInputs(
+                do_2d=bwd_inputs.do_2d, o_2d=bwd_inputs.o_2d, lse_2d=bwd_inputs.lse_2d,
+                dq_2d=None, dk_2d=None, dv_2d=None,
+                q_c=bwd_inputs.q_c, do_c=bwd_inputs.do_c, o_c=bwd_inputs.o_c,
+                lse_c=bwd_inputs.lse_c, inner_mask=bwd_inputs.inner_mask,
+                max_inner=bwd_inputs.max_inner),
+            hints, masks)
+
+    _run_bwd_kernel(cfg, prepared, bwd_inputs, sparse_kv_result,
+                    _BwdAuxTensors(hints=hints, masks=masks))
 
     # 后处理: 将 valid_mask 全零的 Q block 的 dQ 强制归零 ----
     # 原因：kernel 的 online softmax 在 valid_mask 全零时，
@@ -510,6 +542,31 @@ def block_sparse_attention_backward(call_inputs):
     Returns:
         BSABackwardResult(d_q, d_k, d_v) where gradients are [B, H, S, D] FP16
     """
+    cache_key = (
+        call_inputs.query.data_ptr(), call_inputs.key.data_ptr(),
+        call_inputs.value.data_ptr(), call_inputs.dout.data_ptr(),
+        call_inputs.attention_out.data_ptr(), call_inputs.softmax_lse.data_ptr(),
+        call_inputs.block_sparse_mask.data_ptr(),
+    )
+    cached = _bwd_prep_cache.get(cache_key)
+    if cached is not None:
+        prepared, sparse_kv_result, bwd_fixed, hints, masks = cached
+        b, hq, hkv, sq, d = prepared.b, prepared.hq, prepared.hkv, prepared.sq, prepared.d
+        sq_pad, skv_pad = prepared.sq_pad, prepared.skv_pad
+        device = call_inputs.query.device
+        dq_2d = torch.zeros(b * hq * sq_pad, d, dtype=torch.float32, device=device)
+        dk_2d = torch.zeros(b * hkv * skv_pad, d, dtype=torch.float32, device=device)
+        dv_2d = torch.zeros(b * hkv * skv_pad, d, dtype=torch.float32, device=device)
+        bwd_inputs = _BwdSpecificInputs(
+            do_2d=bwd_fixed.do_2d, o_2d=bwd_fixed.o_2d, lse_2d=bwd_fixed.lse_2d,
+            dq_2d=dq_2d, dk_2d=dk_2d, dv_2d=dv_2d,
+            q_c=bwd_fixed.q_c, do_c=bwd_fixed.do_c, o_c=bwd_fixed.o_c,
+            lse_c=bwd_fixed.lse_c, inner_mask=bwd_fixed.inner_mask,
+            max_inner=bwd_fixed.max_inner)
+        return _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result,
+                                     hints=hints, masks=masks)
+
     prepared, sparse_kv_result = _prepare_and_build_sparse_kv(call_inputs)
     bwd_inputs = _prepare_bwd_specific_inputs(call_inputs, prepared)
-    return _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result)
+    return _dispatch_bwd_kernel(call_inputs, prepared, bwd_inputs, sparse_kv_result,
+                                 cache_key=cache_key)

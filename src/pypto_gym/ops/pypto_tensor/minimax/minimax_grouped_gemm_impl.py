@@ -138,12 +138,12 @@ def _build_kernel(activation):
 
     @pypto.frontend.jit(
         runtime_options={"device_sched_mode": 1, "stitch_function_max_num": 64,
-                         # expert_cumsum read on host for per-expert slicing (required under CANN 9.1.0)
                          "ready_on_host_tensors": ["expert_cumsum"]},
         pass_options={
             "cube_l1_reuse_setting": {-1: l1_reuse},
             "cube_nbuffer_setting": {-1: cube_nbuf},
             "vec_nbuffer_setting": {-1: vec_nbuf},
+            "auto_mix_partition": 1,
         },
     )
     def _kernel(
