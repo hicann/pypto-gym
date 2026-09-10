@@ -9,8 +9,8 @@ okf_version: "0.2"
 内容质量在合入前由技术人员把关。
 
 本文件是卡片清单的**唯一入口**，调优时只从 Active 表获取候选，不通过扫描目录自动采用卡片。
-实际卡片按稳定类别放入子目录。初始内置 14 张 VF/VEC 卡片，位于 `vec/`，编号为 `vec-01` 至
-`vec-14`，均以 `status=stable` 登记到 Active 表。
+实际卡片按稳定类别放入子目录。已内置 15 张 VF/VEC 卡片，位于 `vec/`，编号为 `vec-01` 至
+`vec-15`，均以 `status=stable` 登记到 Active 表。
 
 ## Active items
 
@@ -33,6 +33,7 @@ okf_version: "0.2"
 | `vec-12` | [寄存器溢出时按条件拆分 VF](vec/vec-12-preg-split.md) | `stable` | `scheduling` | 目标路径生成物或 trace 出现 spill/reload，分支条件可证明，且专用 VF 能真正删除整段逻辑和活跃值 | 仅限 Ascend 950PR 或 950DT；通过 TilingKey 或合法控制流分流，RegTraitNumTwo 仅作后端风险模型 |
 | `vec-13` | [VF 尾块统一 mask](vec/vec-13-vf-tail-unified-mask.md) | `stable` | `mixed` | full 与 tail 代码体重复，逐拍 active 可由 total 减 offset 精确重算，offset 与 mask 使用同一元素粒度，且不违反已选 KB 中前提成立的 full-mask 外提义务 | 仅限 Ascend 950PR 或 950DT；须核验 vf.update_mask 不回写 Python 标量，lane 常量按 dtype 与生成物确定 |
 | `vec-14` | [对齐分段 Tile 布局](vec/vec-14-aligned-split-copy.md) | `stable` | `memory` | 非 32B 段起点在生成物或 trace 中造成对齐退化，且独立 Tile 及 padding 可被 Vec 容量容纳 | 仅限 Ascend 950PR 或 950DT；须核验 pl.load/store 元素 offset、Tile physical/valid shape、TileGroup 地址与对齐合同 |
+| `vec-15` | [布局先行 + 64-lane 向量树化，消除跨 lane 归约与标量 pack](vec/vec-15-layout-first-vector-tree.md) | `stable` | `mixed` | VF 热点沿某一轴做归约（在线 softmax 行 max/段和等），分数矩阵布局可翻转为列=query（cube 侧把 Q·Kᵀ 改写为 K·Q̃ 类形式并按 N 维拆分搬运），每条 64-lane load 覆盖一个归约行 × 64 个查询，归约结果无跨行交叉消费且翻布局后 live set 可被容量容纳 | 仅限 Ascend 950PR 或 950DT；依赖已核验的 vf.load_align/vf.store_align、vf.max/muls/add 树、vf.reduce_max/reduce_sum 与 AccToVecMode.DualModeSplitN；store_unalign tracker 语义须按当前版本复核 |
 
 ## ID 与状态规则
 
