@@ -46,9 +46,9 @@ psgId | type | tasks |    used/total (usage%) |  avg(us) | total(us) |    status
     8 |  AIC |     8 |             8/24 (33%) |      8.1 |      64.9 |  NOT FULL | FILL CORES FIRST (reduce TileShape)
     6 |  AIV |     4 |              4/48 (8%) |      6.4 |      25.5 |  NOT FULL | FILL CORES FIRST (reduce TileShape)
 
-Summary:	 
-    NOT FULL (fill cores first): 4 leafHash(es)	 
-    FULL (can merge): 0 leafHash(es)	 
+Summary:
+    NOT FULL (fill cores first): 4 leafHash(es)
+    FULL (can merge): 0 leafHash(es)
 
 Next step: For NOT FULL leafHashes, use leafhash_to_code.py to map to frontend code,
            then adjust set_cube_tile_shapes() to increase task count.
