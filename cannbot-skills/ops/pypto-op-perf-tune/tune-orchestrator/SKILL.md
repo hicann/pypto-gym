@@ -118,7 +118,7 @@ S4_TUNE = PHASE_FRONTEND → PHASE_SUMMARY_F
 |---------|---------|--------|---------|------------------------|
 | INIT | 用户已提供目标（如"提升X倍"/"≤X us"）或用户确认 | S1_SETUP | 记录目标到 Todo，计算目标执行时间 | 完成时调用 `state_transition(opDir, "complete_stage", 0)` |
 | S1_SETUP | 环境检查全部通过（见下方「环境检查清单」）+ 精度通过 | S2_COLLECT | ⛔ S1a 环境检查：逐项检查环境；⛔ S1b 精度校验：环境通过后运行精度校验；⛔ 全部通过后强制创建完整 Todo | S1a通过时调用 `state_transition(opDir, "start_stage", 1)`，全部通过后调用 `state_transition(opDir, "complete_stage", 1)` |
-| S2_COLLECT | swimlane.json 存在 + ⛔ S-20 检查完成（max_workspace_kb 已按 NPU 推荐值设置，host_options 已配置） | S3_ANALYZE | ⛔ S2 阶段首次运行时检查 stdout 中 "Recommended: set max_workspace_kb near XXX KB" 提示，提取推荐值设置到 runtime_options；同时设置 host_options={"compile_monitor_enable": 0} | 完成时调用 `state_transition(opDir, "start_stage", 2)` → 验证后调用 `complete_stage(2)` |
+| S2_COLLECT | swimlane.json 存在 + ⛔ S-20 检查完成（max_workspace_kb 已按 NPU 推荐值设置，host_options 已配置） | S3_ANALYZE | ⛔ S2 阶段首次运行时检查 stdout 中 "Recommended: set max_workspace_kb near XXXX KB" 提示，提取推荐值设置到 runtime_options；同时设置 host_options={"compile_monitor_enable": 0} | 完成时调用 `state_transition(opDir, "start_stage", 2)` → 验证后调用 `complete_stage(2)` |
 | S3_ANALYZE | 性能报告文件存在 | S4_TUNE | 记录基准性能 | 完成时调用 `state_transition(opDir, "start_stage", 3)` → 验证后调用 `complete_stage(3)` |
 | S4_TUNE | ⛔ 提前达标（PHASE_SUMMARY_F / PHASE_SUMMARY_I_n 达标时直接→S5）或 外循环≤3轮全部完成（FRONTEND + [SWIMLANE→INCORE]×≤3 及其对应的 SUMMARY） | S5_REPORT | ⛔ 各PHASE间通过SUMMARY强制交接；⛔ 每轮外循环从SWIMLANE_n入口重新独立采集性能数据 | 每个 PHASE 完成时调用 `state_transition(opDir, "complete_stage", 4)` |
 | S5_REPORT | 报告文件已保存 | DONE | ⛔ 还原 debug_options | 完成时调用 `state_transition(opDir, "complete_stage", 5)` |
