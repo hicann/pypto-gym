@@ -48,7 +48,8 @@ def _get_indexer_kernel(nb):
 
     @pypto.frontend.jit(
         runtime_options={"device_sched_mode": 1, "stitch_function_max_num": 64},
-        pass_options={"cube_l1_reuse_setting": {-1: 4}, "vec_nbuffer_setting": {-1: 2}},
+        pass_options={"cube_l1_reuse_setting": {-1: 4}, "vec_nbuffer_setting": {-1: 2},
+                      "auto_mix_partition": 1},
     )
     def kernel(
         idx_q: pypto.Tensor([NPAD, D], pypto.DT_BF16),       # 4 real heads + 12 zero-pad rows
@@ -68,6 +69,9 @@ def _get_indexer_kernel(nb):
     return kernel
 
 
+_scores_cache = {}
+
+
 @allow_in_graph
 @torch.no_grad()
 def minimax_m3_msa_indexer(idx_q, idx_k, nb):
@@ -84,14 +88,14 @@ def minimax_m3_msa_indexer(idx_q, idx_k, nb):
         ``topk(k)`` out-of-range crash when fewer than ``TOPK`` blocks exist (short context).
     """
     dev = idx_q.device
-    q_pad = torch.zeros(NPAD, D, dtype=idx_q.dtype, device=dev)
-    q_pad[:NIDX] = idx_q
-    scores = torch.zeros(NPAD, nb * BY, dtype=torch.float32, device=dev)
-    _get_indexer_kernel(nb)(q_pad.contiguous(), idx_k.contiguous(), scores)
-    blk = scores[:NIDX].view(NIDX, nb, BY).amax(-1).amax(0)          # block max-pool, then head max
     ksel = min(TOPK, nb)
     if LOCAL > 0 and nb > ksel:
-        ids = blk[:nb - LOCAL].topk(ksel - LOCAL, sorted=False).indices.to(torch.int32)
-        loc = torch.arange(nb - LOCAL, nb, device=dev, dtype=torch.int32)
+        if nb not in _scores_cache:
+            _scores_cache[nb] = torch.empty(NIDX, nb * BY, dtype=torch.bfloat16, device=dev)
+        scores = _scores_cache[nb]
+        torch.mm(idx_q, idx_k.t(), out=scores)
+        blk = scores.view(NIDX, nb, BY).amax(dim=(0, 2))
+        ids = blk[:nb - LOCAL].topk(ksel - LOCAL, sorted=False).indices
+        loc = torch.arange(nb - LOCAL, nb, device=dev)
         return torch.cat([ids, loc]).view(1, ksel)
     return torch.arange(nb, device=dev, dtype=torch.int32).view(1, nb)

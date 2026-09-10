@@ -116,6 +116,19 @@ def _get_decode_kernel(bsz, topk):
     return kernel
 
 
+_attn_buf_cache = {}
+
+
+def _get_attn_bufs(topk, dev):
+    key = (topk, dev)
+    if key not in _attn_buf_cache:
+        _attn_buf_cache[key] = (
+            torch.empty(HKV, GROUP, topk * BY, dtype=torch.bfloat16, device=dev),
+            torch.empty(HKV, GROUP, D, dtype=torch.bfloat16, device=dev),
+        )
+    return _attn_buf_cache[key]
+
+
 @allow_in_graph
 @torch.no_grad()
 def minimax_m3_msa_sparse_decode(q, k_blocks, v_blocks, block_ids, seq_len):
@@ -134,20 +147,21 @@ def minimax_m3_msa_sparse_decode(q, k_blocks, v_blocks, block_ids, seq_len):
     dev = q.device
     cur_block = (seq_len - 1) // BY
     cur_valid = seq_len - cur_block * BY
-    k_cmp = torch.empty(bsz * HKV * topk * BY, D, dtype=torch.bfloat16, device=dev)
-    v_cmp = torch.empty(bsz * HKV * topk * BY, D, dtype=torch.bfloat16, device=dev)
-    valid_mask = torch.ones(bsz, topk * BY, dtype=torch.float32, device=dev)
-    for b in range(bsz):
-        sel = block_ids[b].long()
+    sel = block_ids[0].long()
+    kg = k_blocks[0, :, sel].reshape(HKV, topk * BY, D)
+    vg = v_blocks[0, :, sel].reshape(HKV, topk * BY, D)
+    q_g = q.reshape(HKV, GROUP, D)
+    sc, out = _get_attn_bufs(topk, dev)
+    torch.bmm(q_g, kg.transpose(-1, -2), out=sc)
+    sc.mul_(SCALE)
+    if cur_valid < BY:
+        col_valid = torch.ones(topk * BY, device=dev, dtype=torch.bool)
         for j, blk in enumerate(sel.tolist()):
             if blk == cur_block:
-                valid_mask[b, j * BY + cur_valid:(j + 1) * BY] = 0.0
+                col_valid[j * BY + cur_valid:(j + 1) * BY] = False
             elif blk > cur_block:
-                valid_mask[b, j * BY:(j + 1) * BY] = 0.0
-        for hkv in range(HKV):
-            base = (b * HKV + hkv) * topk * BY
-            k_cmp[base:base + topk * BY] = k_blocks[b, hkv, sel].reshape(topk * BY, D)
-            v_cmp[base:base + topk * BY] = v_blocks[b, hkv, sel].reshape(topk * BY, D)
-    out = torch.zeros(bsz * HQ, D, dtype=torch.bfloat16, device=dev)
-    _get_decode_kernel(bsz, topk)(q.reshape(bsz * HQ, D).contiguous(), k_cmp, v_cmp, valid_mask, out)
+                col_valid[j * BY:(j + 1) * BY] = False
+        sc.masked_fill_(~col_valid[None, None, :], float("-inf"))
+    torch.softmax(sc, dim=-1, out=sc)
+    torch.bmm(sc, vg, out=out)
     return out.reshape(bsz, HQ, D)

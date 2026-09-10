@@ -78,9 +78,9 @@ DYNAMIC_TOTAL_KV = pypto.frontend.dynamic('DYNAMIC_TOTAL_KV')
 DYNAMIC_TOTAL_MASK = pypto.frontend.dynamic('DYNAMIC_TOTAL_MASK')
 
 _fwd_cache = {}
-_FWD_PERF_THRESHOLD_SQ = 1024
+_FWD_PERF_THRESHOLD_SQ = 512
 _FWD_PERF_HIGH_SQ = 2048
-_FWD_SUB_SPLIT = 1
+_FWD_SUB_SPLIT = 4
 _last_forward_perf_dir = None
 _PERF_OUTPUT_BASE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
 # PyPTO runtime writes output to CWD-relative "output/", not to the
@@ -118,16 +118,16 @@ def _auto_configure_fwd_opts(sq, extra_pass_options, extra_runtime_options):
     - l1=16 pairs best with sched=3 (the baseline default)
     """
     if sq < _FWD_PERF_THRESHOLD_SQ:
+        if extra_pass_options is None:
+            extra_pass_options = {'auto_mix_partition': 1}
         return extra_pass_options, extra_runtime_options
 
     if extra_pass_options is None:
-        extra_pass_options = {'cube_l1_reuse_setting': {-1: 64}}
+        extra_pass_options = {'cube_l1_reuse_setting': {-1: 64},
+                              'auto_mix_partition': 1}
 
     if extra_runtime_options is None:
-        if sq < _FWD_PERF_HIGH_SQ:
-            extra_runtime_options = {'device_sched_mode': 1}
-        else:
-            extra_runtime_options = {'device_sched_mode': 3}
+        extra_runtime_options = {'device_sched_mode': 3}
 
     return extra_pass_options, extra_runtime_options
 
