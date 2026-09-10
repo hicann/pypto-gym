@@ -184,7 +184,7 @@ VERSION="1.0.0"
 # --- Plugin-specific filters ---
 EXCLUDED_SKILL=""
 # Skill whitelist (space-separated list) - references shared ops
-INCLUDED_SKILLS="pypto-pro-docs-search pypto-pro-environment-check pypto-pro-golden-generate pypto-pro-intent-understand pypto-pro-material-explore pypto-pro-op-design pypto-pro-op-develop pypto-pro-op-perf-tune pypto-pro-op-plan"
+INCLUDED_SKILLS="pypto-pro-docs-search pypto-pro-environment-check pypto-pro-golden-generate pypto-pro-intent-understand pypto-pro-material-explore pypto-pro-op-design pypto-pro-op-develop pypto-pro-op-perf-tune pypto-pro-op-plan pypto-pro-precision-debug pypto-pro-cann-delivery"
 # Agent whitelist (shell pattern) - uses local agents/
 INCLUDED_AGENT_PATTERN="pypto-pro-op-*"
 SKILL_CATEGORY="ops"

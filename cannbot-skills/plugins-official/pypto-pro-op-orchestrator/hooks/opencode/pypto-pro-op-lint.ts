@@ -9,6 +9,7 @@
 // ----------------------------------------------------------------------------------------------------------
 
 import type { Plugin } from "@opencode-ai/plugin";
+import fs from "node:fs";
 import path from "node:path";
 import {
   formatPluginError,
@@ -113,6 +114,19 @@ export const PyptoProOpLintPlugin: Plugin = async (input) => {
     agentBySession.set(input.sessionID, input.agent);
   }
   function shouldRunLint(input: { sessionID?: unknown }, toolOutput?: unknown): boolean {
+    // Project config: true/false; an empty file preserves the legacy opt-in.
+    try {
+      const configPath = path.join(baseDir, ".pypto-pro-op-lint-enabled");
+      if (!fs.lstatSync(configPath).isFile()) throw new Error("lint 配置必须为普通文件");
+      const enabled = fs.readFileSync(configPath, "utf8").trim();
+      if (enabled === "false") return false;
+      if (enabled !== "true" && enabled !== "") {
+        console.warn("[pypto-pro-op-lint] 配置值应为 true/false；保留原 lint，请修正 .pypto-pro-op-lint-enabled。");
+      }
+    } catch (error) {
+      if ((error as { code?: string })?.code === "ENOENT") return false;
+      console.warn("[pypto-pro-op-lint] 无法读取 .pypto-pro-op-lint-enabled；保留原 lint。", error);
+    }
     const sessionID = typeof input.sessionID === "string" ? input.sessionID : "";
     const agent = sessionID ? agentBySession.get(sessionID) : undefined;
     const serialized = JSON.stringify([input, toolOutput]).replaceAll("\\\\", "/");

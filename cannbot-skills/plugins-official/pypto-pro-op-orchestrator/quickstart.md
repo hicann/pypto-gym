@@ -2,7 +2,7 @@
 
 ## 概述
 
-CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。采用 5 阶段工作流，覆盖从需求理解、代码实现到证据化性能优化的完整流程。
+CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 算子。默认由 agent 自主安排开发与验证；用户明确要求深度编排时，采用 5 阶段流程。
 
 ### 与 PyPTO 开发的区别
 
@@ -11,9 +11,9 @@ CANNBot PyPTO-Pro 算子开发模式适用于通过 PyPTO-Pro 开发 Ascend NPU 
 | 适用场景 | PyPTO-Pro 框架算子开发 | PyPTO 框架算子开发 |
 | 编程语言 | Python（PyPTO-Pro API） | Python（PyPTO API） |
 | 开发内容 | PyPTO-Pro kernel + golden + test | PyPTO kernel + golden + test |
-| 阶段数 | 5 阶段工作流 | 7 阶段状态机驱动 |
-| 状态管理 | `.orchestrator_state.json`（`state_transition` 工具 + 阶段门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
-| 性能调优 | Stage 5：可比基线、优化循环与证据验收 | Stage 7 独立调优阶段 |
+| 开发流程 | 默认自主开发；深度编排为 5 阶段流程 | 7 阶段状态机驱动 |
+| 状态管理 | 深度编排使用 `.orchestrator_state.json`（`state_transition` 工具 + 阶段门禁） | `.orchestrator_state.json`（`state_transition` 工具 + lint 门禁） |
+| 性能调优 | 按需优化；深度编排在 Stage 5 执行 | Stage 7 独立调优阶段 |
 
 ## 一、环境搭建
 
@@ -159,15 +159,15 @@ claude
 
 ### 开发算子示例
 
-在交互界面中输入算子开发需求，CANNBot 会自动启动 5 阶段流程：
+在交互界面中输入算子开发需求，agent 默认自主安排开发与验证：
 
 ```
 使用 PyPTO-Pro 开发 softmax 算子，支持 [1, 128]、[4, 2048] 和 [32, 4096] 的 float16 输入。
 ```
 
-### 核心工作流
+### 深度编排工作流（按需）
 
-工作流如下：
+需要原 5 阶段流程时，在上述提示词前加上“启用深度编排”。agent 按 [入口说明](AGENTS.md) 自动加载 [编排协议](references/orchestration.md)；在 OpenCode 中开启自动 lint 并初始化或恢复状态机。
 
 ```
 Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集可选）
@@ -175,7 +175,7 @@ Stage 1: 需求规划与资料索引 → Stage 2: NPU/CPU Golden（性能采集�
     → Stage 5: 可比基线驱动的性能优化与证据验收
 ```
 
-Stage 1、3、4、5 通过 verifier 后才可推进；Stage 2 在 mathematician 满足 golden skill 完成条件后，经 `complete_stage(2)` 的原有 lint 门禁推进，用户明确要求 Stage 2 verifier 时才增加独立复核。失败项交回对应子代理修正。Pro 流程**使用** `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具，随 OpenCode 插件安装；其他工具下按 AGENTS.md 降级协议手工维护同一账本）。详见 AGENTS.md「共享状态与 state_transition 工具」。
+Stage 1、3、4、5 通过 verifier 后才可推进；Stage 2 在 mathematician 满足 golden skill 完成条件后，经 `complete_stage(2)` 的原有 lint 门禁推进，用户明确要求 Stage 2 verifier 时才增加独立复核。失败项交回对应子代理修正。深度编排使用 `custom/<op>/.orchestrator_state.json` 状态机推进 Stage（`state_transition` 工具由 OpenCode 插件提供）。详见 [编排协议的“共享状态与 state_transition 工具”](references/orchestration.md)。
 
 Stage 2 默认生成并验证 `{op}_golden.py`（NPU）与 `{op}_golden_cpu.py`（CPU FP32），并生成 `GOLDEN_VALIDATION.json` 回执，不采集 NPU golden 性能。用户明确要求“采集 NPU golden 性能”时，必须额外生成 `GOLDEN_PERF_REPORT.md`；性能采集不自动启用 Stage 2 verifier。Stage 2 不负责 Stage 5 机器合同。若 SPEC 未记录用户数值目标，Stage 5 optimizer 会使用 `pypto-pro-op-perf-tune` 自带的 `collect_golden_reference.py`，基于现有 Golden 和冻结 case 清单生成一次 Stage 5 专用报告，不回滚或重跑 Stage 2。
 
@@ -188,9 +188,9 @@ Stage 5 由 optimizer 完整加载 `pypto-pro-op-perf-tune`：审计 selected KB
 采集协议、来源账本、逐项实验、最佳版本选择、停止条件和交付物均以
 [`pypto-pro-op-perf-tune`](../../ops/pypto-pro-op-perf-tune/SKILL.md) 为准；Stage 5 修复只在本 Stage 内完成，不回退。
 
-### 产出物示例
+### 深度编排产出物示例
 
-PyPTO-Pro 算子开发模式下，CANNBot 会在 `custom/<op>/` 目录下生成以下文件：
+自主开发的产物和目录按用户交付要求确定。以下为深度编排的 `custom/<op>/` 产物示例，按实际执行的阶段和选项生成：
 
 ```
 custom/<op>/
@@ -215,6 +215,8 @@ custom/<op>/
 
 ## 三、可用技能
 
+自主开发按需使用专业资源；完整 skills 列表见 [入口的可用资料](AGENTS.md)。下表列出深度编排的阶段分工。
+
 | Skill | 用途 | 触发阶段 |
 |-------|------|---------|
 | `pypto-pro-op-plan` | 串行组织需求理解与资料探索 | Stage 1 |
@@ -234,7 +236,7 @@ custom/<op>/
 | `pypto-pro-op-architect` | Tile 数据流设计 | Stage 3 |
 | `pypto-pro-op-coder` | Kernel 实现与精度验证 | Stage 4 |
 | `pypto-pro-op-optimizer` | 可比证据驱动的性能优化 | Stage 5 |
-| `pypto-pro-op-verifier` | 独立阶段检查，调度规则见「核心工作流」 | Stage 1–5 |
+| `pypto-pro-op-verifier` | 独立阶段检查，调度规则见 [编排协议](references/orchestration.md) | Stage 1–5 |
 
 ## 四、常见问题
 
@@ -260,13 +262,13 @@ cd pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator && bash i
 | 场景 | 推荐模式 |
 |------|---------|
 | 使用 PyPTO 框架开发算子 | PyPTO |
-| 使用 PyPTO-Pro API，并按 5 阶段逐项检查 | PyPTO-Pro |
+| 使用 PyPTO-Pro API 开发算子 | PyPTO-Pro |
 
 ---
 
 ## 总结
 
-1. PyPTO-Pro 通过 5 阶段工作流覆盖从需求规划到性能优化的完整流程：需求规划与资料索引→NPU/CPU Golden（性能采集可选）→Tile 数据流设计→Kernel 实现与精度验证→证据化性能优化
+1. 默认自主开发与验证；用户明确要求时启用 5 阶段深度编排
 2. 使用 `init.sh` 一键安装（OpenCode 推荐），支持项目级和全局级
 3. `opencode` / `claude` 是核心交互指令
-4. 产物全部写入 `custom/<op>/`，含 SPEC、资料报告、Golden、设计文档、Kernel 实现与可复算性能证据
+4. 按用户需求交付实现与验证结果；深度编排产物写入 `custom/<op>/`
