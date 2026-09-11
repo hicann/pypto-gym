@@ -885,11 +885,11 @@ def engram_backward_kernel(
                         pl.set_validshape(gamma16, [1, h])
                         gamma32 = gamma32_grp.current()
                         pl.set_validshape(gamma32, [1, h])
-                        pl.load(gamma16, query_gamma, [m_head, h_off], order=[0])
+                        pl.load(gamma16, query_gamma, [m_head, h_off])
                         pl.cast(gamma32, gamma16, mode=pl.RoundMode.CAST_NONE)
                         gamma32_k = gamma32_k_grp.current()
                         pl.set_validshape(gamma32_k, [1, h])
-                        pl.load(gamma16, key_gamma, [m_head, h_off], order=[0])
+                        pl.load(gamma16, key_gamma, [m_head, h_off])
                         pl.cast(gamma32_k, gamma16, mode=pl.RoundMode.CAST_NONE)
 
                     for bs_start in pl.range(0, bs_tile_rows, tile_bs_vec):
