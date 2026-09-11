@@ -51,7 +51,9 @@ orchestrator 按 `pypto-pro-docs-search` 先用 `--check` 检查缓存，就绪�
 | 环境诊断与 smoke 检查 | `pypto-pro-environment-check` |
 | 已跑通 kernel 的 CANN ACLNN/GEIR 交付与验收 | `pypto-pro-cann-delivery` |
 
-知识库入口：`$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/ROUTER.md`；
+算子开发时通过知识库入口 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/ROUTER.md`，根据计算拓扑、算子属性和目标硬件选择并阅读适用的 KB 约束与设计模式，在设计、实现和调试中落实并验证。
+算子功能验证通过后，主要使用 `pypto-pro-op-perf-tune` 进行性能调优，并对照开发时选中的 KB 补齐、验证遗漏的约束与设计模式。
+
 共享实现与性能约束：`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`。
 
 ## 深度编排（按需）
