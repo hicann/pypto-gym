@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 # coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software: you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See the License in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""PyPTO interleave_rope golden reference implementation.
+"""PyPTO interleave_rope golden reference implementation (ASC ops-transformer 兼容).
 
 算子: interleave_rope
-公式 (interleave 模式 RoPE，对最后维相邻元素对 (x[2i], x[2i+1]) 应用旋转):
-    y[..., 2i]   = x[..., 2i] * cos_eff[..., 2i]   - x[..., 2i+1] * sin_eff[..., 2i]
-    y[..., 2i+1] = x[..., 2i] * sin_eff[..., 2i+1] + x[..., 2i+1] * cos_eff[..., 2i+1]
+公式 (与 ASC ops-transformer posembedding/interleave_rope 一致, half-split cos/sin 配对):
 
-其中 cos_eff / sin_eff 来自 cos / sin，沿 N（=1）和可能的 S（S_cs=1）维 broadcast 到 [B, N, S, D]。
+    x 为 interleave 排布: x_even[k] = x[..., 2k], x_odd[k] = x[..., 2k+1]  (k = 0..31)
+    cos/sin 半区配对 (任意逐位值, 不假设前后半区相等):
+        c_lo = cos[..., 0:32],  c_hi = cos[..., 32:64]
+        s_lo = sin[..., 0:32],  s_hi = sin[..., 32:64]
+
+    y[..., 0:32 ] = x_even · c_lo − x_odd · s_lo
+    y[..., 32:64] = x_even · s_hi + x_odd · c_hi
+
+    等价于 ASC README 公式: q = reshape(x,[B,N,S,D//2,2]).transpose(-1,-2).reshape([B,N,S,D]);
+    q_embed = q·cos + RotateHalf(q)·sin。
 
 数据规格:
     x   : [B, N, S, D=64], dtype ∈ {float16, bfloat16}, contiguous ND
@@ -35,18 +42,13 @@ import torch
 
 
 def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """Interleave-style RoPE 参考实现 (pure torch).
+    """Interleave-style RoPE 参考实现 (pure torch, ASC 半区配对).
 
-    对 x 的最后维 D=64 上的相邻元素对 (x[..., 2i], x[..., 2i+1]) 应用旋转：
+    对 x 的最后维 D=64 上的相邻元素对 (x[..., 2i], x[..., 2i+1]) 应用旋转，
+    cos/sin 按 ASC 约定以前后半区配对（cos[..., i] 配 x 偶位，cos[..., 32+i] 配 x 奇位）：
 
-        y[..., 2i]   = x[..., 2i]   * c_i - x[..., 2i+1] * s_i
-        y[..., 2i+1] = x[..., 2i]   * s_i + x[..., 2i+1] * c_i
-
-    其中 c_i, s_i 来自 cos, sin。本实现按"位置取值"方式工作：
-    直接读取 cos[..., 2i]/cos[..., 2i+1] 与 sin[..., 2i]/sin[..., 2i+1]，
-    因此对两种常见输入约定都正确：
-        (a) cos/sin 的偶位与奇位相同（即 cos[2i] == cos[2i+1] = cos(θ_i)）— 默认 interleave 假设；
-        (b) cos/sin 已展开为完整 D 长度且偶/奇位置可不同 — 按位置直接读取。
+        y[..., 0:32 ] = x_even · cos[..., 0:32 ] − x_odd · sin[..., 0:32 ]
+        y[..., 32:64] = x_even · sin[..., 32:64] + x_odd · cos[..., 32:64 ]
 
     内部 cast 到 float32 累积，最后 cast 回原 dtype。
 
@@ -77,31 +79,28 @@ def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
         f"unsupported dtype {x.dtype}; expected float16 or bfloat16"
 
     orig_dtype = x.dtype
+    half = D // 2
 
     # ---- 2. cast 到 fp32 内部累积 ----
     x_f = x.to(torch.float32)
     cos_f = cos.to(torch.float32)
     sin_f = sin.to(torch.float32)
 
-    # ---- 3. 沿 N 维 broadcast cos/sin 到 [B, N, S, D]（S_cs=1 时同时沿 S broadcast）----
-    # cos/sin: [B, 1, S_cs, D]，利用 torch 隐式 broadcast 即可。
-    # 因此 x_f * cos_f / x_f * sin_f 在最后两维上自动 broadcast。
+    # ---- 3. x 奇偶位拆分 (interleave → split-half) ----
     x_even = x_f[..., 0::2]  # [B, N, S, D/2]
-    x_odd = x_f[..., 1::2]  # [B, N, S, D/2]
+    x_odd = x_f[..., 1::2]   # [B, N, S, D/2]
 
-    # cos/sin 在偶/奇位置直接按位置取（支持两种约定）
-    cos_even = cos_f[..., 0::2]  # [B, 1, S_cs, D/2]  对应 cos[..., 2i]
-    cos_odd = cos_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 cos[..., 2i+1]
-    sin_even = sin_f[..., 0::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i]
-    sin_odd = sin_f[..., 1::2]  # [B, 1, S_cs, D/2]  对应 sin[..., 2i+1]
+    # ---- 4. cos/sin 半区切分（ASC 半区配对，零奇偶假设）----
+    c_lo = cos_f[..., :half]    # [B, 1, S_cs, D/2]  配 x 偶位
+    c_hi = cos_f[..., half:]    # [B, 1, S_cs, D/2]  配 x 奇位
+    s_lo = sin_f[..., :half]    # [B, 1, S_cs, D/2]  配 x 偶位
+    s_hi = sin_f[..., half:]    # [B, 1, S_cs, D/2]  配 x 奇位
 
     # ---- 5. 计算 ----
-    y_even = x_even * cos_even - x_odd * sin_even  # [B, N, S, D/2]
-    y_odd = x_even * sin_odd + x_odd * cos_odd   # [B, N, S, D/2]
+    y_even = x_even * c_lo - x_odd * s_lo  # [B, N, S, D/2]
+    y_odd = x_even * s_hi + x_odd * c_hi   # [B, N, S, D/2]
 
-    # ---- 6. split-half 输出 layout (v2.3) ----
-    # 不再做 interleave 重组。约定：
-    # 下游 attention QK^T 在 Q/K 同 layout 时数值等价。
+    # ---- 6. split-half 输出 layout ----
     y = torch.cat((y_even, y_odd), dim=-1)  # [B, N, S, D]
 
     # ---- 7. cast 回原 dtype ----
@@ -112,29 +111,42 @@ def interleave_rope_golden(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 # 参考交叉实现（用于自验证；仅 _validate 内使用）
 # ==========================================
 
-def _interleave_rope_complex_ref(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """使用 torch.view_as_complex 的等价实现，作为交叉验证基线。
+def _asc_rotate_half_ref(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """ASC README 公式的直接翻译，作为交叉验证基线（对任意逐位 cos/sin 等价）。
 
-    仅当 cos/sin 满足 interleave 约定 cos[..., 2i] == cos[..., 2i+1] 时与上面 golden 等价；
-    在通用情形下作为 sanity check（数值上应近似一致）。
+    q = reshape(x, [B,N,S,D//2,2]).transpose(-1,-2).reshape([B,N,S,D])   # interleave → split-half
+    RotateHalf(q)[..., :32] = -q[..., 32:],  RotateHalf(q)[..., 32:] = q[..., :32]
+    q_embed = q·cos + RotateHalf(q)·sin
     """
     orig_dtype = x.dtype
     x_f = x.to(torch.float32)
-    cos_f = cos.to(torch.float32)
-    sin_f = sin.to(torch.float32)
+    B, N, S, D = x_f.shape
+    half = D // 2
 
-    # 取每对的 θ_i 系数：interleave 假设下取偶位即可
-    c = cos_f[..., 0::2]   # [B, 1, S_cs, D/2]
-    s = sin_f[..., 0::2]   # [B, 1, S_cs, D/2]
+    # interleave → split-half
+    q = x_f.reshape(B, N, S, half, 2).transpose(-1, -2).reshape(B, N, S, D)
+    # RotateHalf
+    rot = torch.cat((-q[..., half:], q[..., :half]), dim=-1)
+    y = q * cos.to(torch.float32) + rot * sin.to(torch.float32)
+    return y.to(orig_dtype)
 
-    x_pair = x_f.reshape(*x_f.shape[:-1], x_f.shape[-1] // 2, 2)  # [B, N, S, D/2, 2]
-    xe = x_pair[..., 0]
-    xo = x_pair[..., 1]
+
+def _rope_rotation_ref(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """真实 RoPE 旋转语义参考（要求 cos/sin 为 half-duplicated: cat(freqs, freqs)）。
+
+    对每个相邻对 (x[2i], x[2i+1]) 以角度 θ_i（cosθ_i = cos[..., i] = cos[..., 32+i]）旋转：
+        y_even[i] = x[2i]·cosθ_i − x[2i+1]·sinθ_i
+        y_odd[i]  = x[2i]·sinθ_i + x[2i+1]·cosθ_i
+    """
+    orig_dtype = x.dtype
+    x_f = x.to(torch.float32)
+    c = cos.to(torch.float32)[..., :32]  # half-duplicated 时前后半区相同
+    s = sin.to(torch.float32)[..., :32]
+    xe = x_f[..., 0::2]
+    xo = x_f[..., 1::2]
     ye = xe * c - xo * s
     yo = xe * s + xo * c
-    # v2.3: split-half layout
-    y = torch.cat((ye, yo), dim=-1)
-    return y.to(orig_dtype)
+    return torch.cat((ye, yo), dim=-1).to(orig_dtype)
 
 
 # ==========================================
@@ -143,16 +155,27 @@ def _interleave_rope_complex_ref(x: torch.Tensor, cos: torch.Tensor, sin: torch.
 
 def _make_inputs(B: int, N: int, S: int, D: int, S_cs: int, dtype: torch.dtype,
                  seed: int = 0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """构造 ASC 约定的输入：x 随机；cos/sin 为 half-duplicated（cat(freqs, freqs)）。"""
     g = torch.Generator().manual_seed(seed)
     x = torch.randn(B, N, S, D, generator=g, dtype=torch.float32).to(dtype)
 
-    # 构造 cos/sin 满足 interleave 约定 cos[2i]==cos[2i+1]==cos(θ_i)
+    # cos/sin 满足 half-duplicated 约定：cos[..., i] == cos[..., 32+i] == cos(θ_i)
     theta = torch.randn(B, 1, S_cs, D // 2, generator=g, dtype=torch.float32) * 0.5
     cos_half = torch.cos(theta)
     sin_half = torch.sin(theta)
-    # 沿最后维 repeat 到 D：[c0, c0, c1, c1, ...]
-    cos = cos_half.unsqueeze(-1).expand(B, 1, S_cs, D // 2, 2).reshape(B, 1, S_cs, D).to(dtype)
-    sin = sin_half.unsqueeze(-1).expand(B, 1, S_cs, D // 2, 2).reshape(B, 1, S_cs, D).to(dtype)
+    # 沿最后维 cat 成完整 D：[c0..c31 | c0..c31]
+    cos = torch.cat((cos_half, cos_half), dim=-1).to(dtype)
+    sin = torch.cat((sin_half, sin_half), dim=-1).to(dtype)
+    return x, cos, sin
+
+
+def _make_inputs_positional(B: int, N: int, S: int, D: int, S_cs: int, dtype: torch.dtype,
+                            seed: int = 0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """构造任意逐位 cos/sin（前后半区独立，ASC example 风格）——最严格的配对测试。"""
+    g = torch.Generator().manual_seed(seed)
+    x = torch.randn(B, N, S, D, generator=g, dtype=torch.float32).to(dtype)
+    cos = torch.randn(B, 1, S_cs, D, generator=g, dtype=torch.float32).clamp_(-1, 1).to(dtype)
+    sin = torch.randn(B, 1, S_cs, D, generator=g, dtype=torch.float32).clamp_(-1, 1).to(dtype)
     return x, cos, sin
 
 
@@ -206,22 +229,40 @@ def _validate_generalization_cases():
 
 
 def _validate_mathematical_correctness():
-    """Cross-validate against complex-style reference."""
-    print("\n[数学正确性检查 vs complex-ref]")
+    """Cross-validate against ASC README formula (rotate-half) on arbitrary positional data."""
+    print("\n[数学正确性检查 vs ASC rotate_half-ref（任意逐位 cos/sin）]")
     all_pass = True
     for B, N, S, S_cs, dtype in [
         (1, 4, 16, 16, torch.bfloat16),
         (2, 8, 32, 1, torch.float16),
         (1, 1, 8, 8, torch.bfloat16),
+        (2, 3, 24, 24, torch.bfloat16),
     ]:
-        x, cos, sin = _make_inputs(B, N, S, 64, S_cs, dtype, seed=7)
+        x, cos, sin = _make_inputs_positional(B, N, S, 64, S_cs, dtype, seed=7)
         y_a = interleave_rope_golden(x, cos, sin).to(torch.float32)
-        y_b = _interleave_rope_complex_ref(x, cos, sin).to(torch.float32)
+        y_b = _asc_rotate_half_ref(x, cos, sin).to(torch.float32)
         diff = (y_a - y_b).abs().max().item()
-        atol = 1e-4 if dtype == torch.float16 else 5e-3
-        cond = diff <= atol
+        cond = diff == 0.0
         all_pass &= _check(f"B={B},N={N},S={S},S_cs={S_cs},dt={dtype}",
-                           cond, f"max_abs_diff={diff:.2e} (atol={atol})")
+                           cond, f"max_abs_diff={diff:.2e}")
+    return all_pass
+
+
+def _validate_rope_semantics():
+    """With half-duplicated cos/sin, the op must equal true rotation by θ."""
+    print("\n[RoPE 旋转语义检查（half-duplicated cos/sin）]")
+    all_pass = True
+    for B, N, S, S_cs, dtype in [
+        (1, 4, 16, 16, torch.bfloat16),
+        (2, 2, 32, 1, torch.float16),
+    ]:
+        x, cos, sin = _make_inputs(B, N, S, 64, S_cs, dtype, seed=13)
+        y_a = interleave_rope_golden(x, cos, sin).to(torch.float32)
+        y_b = _rope_rotation_ref(x, cos, sin).to(torch.float32)
+        diff = (y_a - y_b).abs().max().item()
+        cond = diff == 0.0
+        all_pass &= _check(f"B={B},N={N},S={S},S_cs={S_cs},dt={dtype}",
+                           cond, f"max_abs_diff={diff:.2e}")
     return all_pass
 
 
@@ -231,6 +272,7 @@ def _validate_boundary_special():
     all_pass = True
     B, N, S, D = 1, 2, 4, 64
 
+    # cos 全 1（前后半区同为 1）、sin 全 0 → 纯 interleave→split-half 换排
     x = torch.randn(B, N, S, D, dtype=torch.float32).to(torch.bfloat16)
     cos = torch.ones(B, 1, S, D, dtype=torch.bfloat16)
     sin = torch.zeros(B, 1, S, D, dtype=torch.bfloat16)
@@ -238,6 +280,15 @@ def _validate_boundary_special():
     expected = torch.cat((x[..., 0::2], x[..., 1::2]), dim=-1)
     diff = (y.to(torch.float32) - expected.to(torch.float32)).abs().max().item()
     all_pass &= _check("cos=1,sin=0 \u2192 y==split_half(x)", diff < 1e-2, f"max_abs_diff={diff:.2e}")
+
+    # 仅前半区为 1：y_even==x_even, y_odd==x_odd（半区配对的直接验证）
+    cos = torch.zeros(B, 1, S, D, dtype=torch.bfloat16)
+    cos[..., :32] = 1.0
+    sin = torch.zeros(B, 1, S, D, dtype=torch.bfloat16)
+    y = interleave_rope_golden(x, cos, sin)
+    expected = torch.cat((x[..., 0::2], torch.zeros_like(x[..., 1::2])), dim=-1)
+    diff = (y.to(torch.float32) - expected.to(torch.float32)).abs().max().item()
+    all_pass &= _check("仅 c_lo=1 \u2192 y_odd==0（半区配对）", diff < 1e-2, f"max_abs_diff={diff:.2e}")
 
     x = torch.zeros(B, N, S, D, dtype=torch.bfloat16)
     cos_in = torch.randn(B, 1, S, D, dtype=torch.float32).to(torch.bfloat16)
@@ -274,13 +325,14 @@ def _validate_scs1_broadcast():
 
 def _validate():
     print("=" * 60)
-    print("interleave_rope_golden 验证报告")
+    print("interleave_rope_golden 验证报告 (ASC 半区配对)")
     print("=" * 60)
 
     all_pass = True
     all_pass &= _validate_typical_cases()
     all_pass &= _validate_generalization_cases()
     all_pass &= _validate_mathematical_correctness()
+    all_pass &= _validate_rope_semantics()
     all_pass &= _validate_boundary_special()
     all_pass &= _validate_scs1_broadcast()
 
@@ -292,11 +344,11 @@ def _validate():
 
 
 # ==========================================
-# Smoke test (Stage 3 要求)
+# Smoke test
 # ==========================================
 
 def _smoke_test():
-    """Required smoke test: B=2, N=128, S=2048, D=64, dtype=bfloat16, S_cs=S 与 S_cs=1。"""
+    """Smoke test: B=2, N=128, S=2048, D=64, dtype=bfloat16, S_cs=S 与 S_cs=1。"""
     print("\n" + "=" * 60)
     print("Smoke test: interleave_rope_golden")
     print("=" * 60)

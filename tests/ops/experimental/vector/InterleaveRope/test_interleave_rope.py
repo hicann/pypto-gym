@@ -10,22 +10,30 @@
 # -----------------------------------------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# Precision test for interleave_rope (PyPTO).
+# Precision test for interleave_rope (PyPTO, ASC ops-transformer 兼容计算流).
+#
+# Contract (ASC half-split cos/sin pairing):
+#   x_even[k]=x[...,2k], x_odd[k]=x[...,2k+1]
+#   y[..., 0:32 ] = x_even·cos[..., 0:32] − x_odd·sin[..., 0:32]
+#   y[..., 32:64] = x_even·sin[..., 32:64] + x_odd·cos[..., 32:64]
+#   cos/sin 为任意逐位值（ASC example 风格，不假设前后半区相等）；
+#   kernel 内部 FP32 计算，仅 x 做 gathermask，cos/sin 零 gather（半区 view）。
 #
 # Test levels (loaded from test_cases.json):
-#   - level0: bf16, [1,1,1024,64],   S_cs=S       (smallest functional)
-#   - level1: bf16, [1,128,2048,64], S_cs=S       (typical multi-head)
+#   - level0: bf16, [1,1,1024,64],   S_cs=S       (smallest functional, n1 kernel)
+#   - level1: bf16, [1,128,2048,64], S_cs=S       (typical multi-head, main kernel)
 #   - level2: bf16, [2,128,4096,64], S_cs=1       (broadcast path)
 #   - level3: fp16, [1,1,1024,64],   S_cs=S       (fp16 dispatch)
-#   - level4: bf16, [4,128,8192,64], S_cs=S       (max dynamic axes)
-#   - level5: bf16, [4,128,2,64],    S_cs=S       (short sequence)
+#   - level4: bf16, [4,128,8192,64], S_cs=S       (max dynamic axes, unroll kernel)
+#   - level5: bf16, [4,128,2,64],    S_cs=S       (short sequence, short_s_btile)
 #   - level6: bf16, [4,1,2,64],      S_cs=S       (short sequence N=1)
 #   - level7: bf16, [2,1,8192,64],   S_cs=S       (large sequence N=1)
 #   - level8: bf16, [2,128,8192,64], S_cs=S       (large sequence multi-head)
-#   - level9: bf16, [8,128,1024,64], S_cs=S       (950 path)
-#   - level10: bf16, [2,128,1024,64], S_cs=S      (950 path)
+#   - level9: bf16, [8,128,1024,64], S_cs=S       (950 path, deinterleave)
+#   - level10: bf16, [2,128,1024,64], S_cs=S      (950 path, deinterleave)
 #
 # Compares the PyPTO kernel output against the pure-PyTorch golden using
+# arbitrary positional cos/sin data (strictest pairing test, ASC example style).
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -93,7 +101,8 @@ def _make_inputs(case: dict, device: str):
     sin_shape = tuple(inp["sin_shape"])
 
     x = torch.randn(x_shape, dtype=torch.float32).to(dtype).to(device)
-    # cos/sin clamped to [-1,1] like real RoPE values
+    # cos/sin: 任意逐位值 clamp 到 [-1,1]（ASC example 风格——前后半区独立，
+    # 不假设重复；对半区配对契约是最严格的测试数据）
     cos = torch.randn(cos_shape, dtype=torch.float32).clamp_(-1.0, 1.0).to(dtype).to(device)
     sin = torch.randn(sin_shape, dtype=torch.float32).clamp_(-1.0, 1.0).to(dtype).to(device)
     return x, cos, sin
@@ -202,8 +211,8 @@ def main() -> int:
         print(f"Using device: {device}")
 
         all_ok = True
-        # 取消注释你要跑的 level；默认跑 950 分支新增规格。
-        for runner in (test_level9, test_level10):
+        runners = (test_level9, test_level10)
+        for runner in runners:
             try:
                 ok = runner(device)
             except Exception:

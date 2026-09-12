@@ -1,33 +1,39 @@
 #!/usr/bin/env python3
 # coding: utf-8
 # Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software: you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See the License in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 """
-interleave_rope PyPTO implementation 
+interleave_rope PyPTO implementation (ASC ops-transformer 兼容计算流)
 
-数学计算 (interleave 模式 RoPE)：
-  y_origin[2k]   = x[2k] · cos[2k]   - x[2k+1] · sin[2k]
-  y_origin[2k+1] = x[2k] · sin[2k+1] + x[2k+1] · cos[2k+1]
+数学计算 (与 ASC ops-transformer posembedding/interleave_rope 一致, half-split cos/sin 配对):
 
-输出 layout (split-half, NOT interleaved):
-  out[..., 0:32 ] = y_even = [y_origin[0], y_origin[2], ..., y_origin[62]]
-  out[..., 32:64] = y_odd  = [y_origin[1], y_origin[3], ..., y_origin[63]]
+  x 为 interleave 排布: x_even[k] = x[..., 2k], x_odd[k] = x[..., 2k+1]  (k = 0..31)
+  cos/sin 为半区配对排布 (等价 cat(freqs, freqs), 与 ASC 相同, 不做奇偶假设):
+      c_lo = cos[..., 0:32],  c_hi = cos[..., 32:64]
+      s_lo = sin[..., 0:32],  s_hi = sin[..., 32:64]
 
+  输出 layout (split-half, 与 ASC 相同):
+      out[..., 0:32 ] = y_even = x_even · c_lo − x_odd · s_lo
+      out[..., 32:64] = y_odd  = x_even · s_hi + x_odd · c_hi
 
-Wrapper 做：输入校验 / 输出张量分配 / 按 (N, dtype, S_cs) 派发。
-Kernel 全程 4D，无 5D reshape/concat：
-  1. ceil-div: s_loops = (S + S_TILE - 1) // S_TILE
-  2. valid_s = (S - s_off).min(S_TILE)
-  3. view(x|cos|sin, ..., valid_shape=[..., valid_s, ...])
-  4. 910 使用 gathermask；950(DAV_3510) 使用 deinterleave → cast fp32 → mul/sub/add → cast 回 → assemble 写左/右半
+计算流 (对齐 ASC kernel):
+  1. 仅对 x 做奇偶抽取 (gathermask PM=1/2, 等价 ASC GatherMask stride 1/2;
+     950 用 deinterleave 单指令取双半)
+  2. cos/sin 零 gather —— 直接 view 切前后半区 ([..., 0:32] / [..., 32:64]),
+     等价 ASC 的地址偏移配对
+  3. 全 dtype 强制 FP32 计算 (等价 ASC 的 Cast fp32 → mul/sub/add → Cast back)
+  4. 出口 cast: bf16 用 CAST_RINT, fp16 用 CAST_NONE (与 ASC RoundMode 一致)
 
-4 个 kernel 实例：{N=1, N=128} × {bf16, fp16}。
+Wrapper 做：输入校验 / 输出张量分配 / 按 (arch, N, dtype, S, S_cs) 派发。
+Kernel 全程 4D，无 5D reshape/concat。
+
+kernel 实例：{N=1, N=128} × {bf16, fp16} + 变体 (broadcast / short_s / unroll / 950)。
 """
 
 from dataclasses import dataclass
@@ -41,10 +47,8 @@ S_TILE_128 = 16
 S_TILE_128_SHORT = 2
 S_UNROLL_128 = [4, 2, 1]
 S_TILE_1 = 64
-S_TILE_128_950 = 16
-N_TILE_128_950 = 32
 D = 64
-HALF = 32  
+HALF = 32
 ASCEND_950_NPUARCH = "DAV_3510"
 
 
@@ -63,7 +67,7 @@ class RopeTileConfig:
         "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
-    pass_options={"vec_nbuffer_setting": {-1: 8}},
+    pass_options={"vec_nbuffer_setting": {-2: 1, 1: 8}},
 )
 def interleave_rope_kernel_n128_bf16(
     x: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
@@ -89,27 +93,41 @@ def interleave_rope_kernel_n128_bf16(
 
                 x_t = pypto.view(x, [1, n_length, unroll_length, dim], [b_idx, n_off, s_blk, 0],
                                  valid_shape=[1, n_length, unroll_length, dim])
-                c_t = pypto.view(cos, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
-                                 valid_shape=[1, 1, unroll_length, dim])
-                s_t = pypto.view(sin, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
-                                 valid_shape=[1, 1, unroll_length, dim])
+                # cos/sin 半区 view：零 gather，等价 ASC 的地址偏移配对
+                c_lo = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                c_hi = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                s_lo = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                s_hi = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
+                                  valid_shape=[1, 1, unroll_length, HALF])
 
                 pypto.set_pass_options(sg_set_scope=1)
                 pypto.set_vec_tile_shapes(gather_tile[0], gather_tile[1], gather_tile[2], gather_tile[3])
 
-                x_e = pypto.gathermask(x_t, pattern_mode=1) #
-                x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
+                # 计算流开头：全部输入先 cast 到 FP32（与加载融合），再进行后续计算流
+                x_f = pypto.cast(x_t, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+
+                # 仅 x 做奇偶抽取（FP32 域，等价 ASC GatherMask real/imag）
+                x_e = pypto.gathermask(x_f, pattern_mode=1)
+                x_o = pypto.gathermask(x_f, pattern_mode=2)
 
                 pypto.set_vec_tile_shapes(elem_tile[0], elem_tile[1], elem_tile[2], elem_tile[3])
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                # FP32 计算（ASC 全 dtype 强制 fp32）
+                ye_f = pypto.sub(pypto.mul(x_e, cl_f), pypto.mul(x_o, sl_f))
+                yo_f = pypto.add(pypto.mul(x_e, sh_f), pypto.mul(x_o, ch_f))
+                # bf16 出口 CAST_RINT（与 ASC 一致）
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
 
                 pypto.assemble(ye, [b_idx, n_off, s_blk, 0], out)
-                pypto.assemble(yo, [b_idx, n_off, s_blk, 32], out)
+                pypto.assemble(yo, [b_idx, n_off, s_blk, HALF], out)
+
                 pypto.set_pass_options(sg_set_scope=-1)
 
 
@@ -138,22 +156,30 @@ def interleave_rope_kernel_n128_bf16_unroll(
                 s_off = s_blk * S_TILE_128
                 valid_s = (S - s_off).min(S_TILE_128)
                 vshape_x = [1, N_TILE_128, valid_s, D]
-                vshape_cs = [1, 1, valid_s, D]
+                vshape_cs = [1, 1, valid_s, HALF]
                 x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
-                c_t = pypto.view(cos, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+                c_lo = pypto.view(cos, [1, 1, S_TILE_128, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                c_hi = pypto.view(cos, [1, 1, S_TILE_128, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
+                s_lo = pypto.view(sin, [1, 1, S_TILE_128, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                s_hi = pypto.view(sin, [1, 1, S_TILE_128, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
                 x_e = pypto.gathermask(x_t, pattern_mode=1)
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, HALF)
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                xe_f = pypto.cast(x_e, pypto.DT_FP32)
+                xo_f = pypto.cast(x_o, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+                yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
@@ -165,44 +191,64 @@ def interleave_rope_kernel_n128_bf16_unroll(
         "stitch_function_max_num": 512,
         "device_sched_mode": 3,
     },
-    pass_options={"vec_nbuffer_setting": {-1: 2}},
+    pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4}},
 )
 def interleave_rope_kernel_n128_bf16_950(
     x:   pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
     cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
+    tile_config = RopeTileConfig()
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
-    pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, D)
-    B = x.shape[0]
-    S = x.shape[2]
-    s_loops = (S + S_TILE_128_950 - 1) // S_TILE_128_950
-    for b in pypto.loop(B, name="b_loop"):
-        for n_blk in pypto.loop(128 // N_TILE_128_950, name="n_loop"):
-            n_off = n_blk * N_TILE_128_950
-            for s_blk in pypto.loop(s_loops, name="s_loop"):
-                s_off = s_blk * S_TILE_128_950
-                valid_s = (S - s_off).min(S_TILE_128_950)
-                vshape_x = [1, N_TILE_128_950, valid_s, D]
-                vshape_cs = [1, 1, valid_s, D]
-                x_t = pypto.view(x, [1, N_TILE_128_950, S_TILE_128_950, D], [b, n_off, s_off, 0],
-                                 valid_shape=vshape_x)
-                c_t = pypto.view(cos, [1, 1, S_TILE_128_950, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [1, 1, S_TILE_128_950, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+    batch = x.shape[0]
+    seq_len = x.shape[2]
+    dim = x.shape[3]
+    n_length = tile_config.n_length
+    gather_tile = tile_config.gather_tile
+    elem_tile = tile_config.elem_tile
+
+    for b_idx in pypto.loop(batch, name="b_loop"):
+        for n_blk in pypto.loop(128 // n_length, name="n_loop"):
+            n_off = n_blk * n_length
+            for s_blk, unroll_length in pypto.loop_unroll(
+                0, seq_len, 1, name="s_loop", idx_name="bs_blk_offset", unroll_list=tile_config.unroll_list
+            ):
+
+                x_t = pypto.view(x, [1, n_length, unroll_length, dim], [b_idx, n_off, s_blk, 0],
+                                 valid_shape=[1, n_length, unroll_length, dim])
+                # cos/sin 半区 view：零 gather，等价 ASC 的地址偏移配对
+                c_lo = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                c_hi = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                s_lo = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+                s_hi = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
+                                  valid_shape=[1, 1, unroll_length, HALF])
+
                 pypto.set_pass_options(sg_set_scope=1)
-                x_e, x_o = pypto.deinterleave(x_t)
-                c_e, c_o = pypto.deinterleave(c_t)
-                s_e, s_o = pypto.deinterleave(s_t)
-                pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, HALF)
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
-                pypto.assemble(ye, [b, n_off, s_off, 0], out)
-                pypto.assemble(yo, [b, n_off, s_off, HALF], out)
+                pypto.set_vec_tile_shapes(gather_tile[0], gather_tile[1], gather_tile[2], gather_tile[3])
+
+                # 计算流开头：全部输入先 cast 到 FP32，再进行后续计算流
+                x_f = pypto.cast(x_t, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+
+                # 950: x 在 FP32 域用 deinterleave 单指令取奇偶双半；cos/sin 仍为零 gather 半区 view
+                x_e, x_o = pypto.deinterleave(x_f)
+
+                pypto.set_vec_tile_shapes(elem_tile[0], elem_tile[1], elem_tile[2], elem_tile[3])
+                ye_f = pypto.sub(pypto.mul(x_e, cl_f), pypto.mul(x_o, sl_f))
+                yo_f = pypto.add(pypto.mul(x_e, sh_f), pypto.mul(x_o, ch_f))
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+
+                pypto.assemble(ye, [b_idx, n_off, s_blk, 0], out)
+                pypto.assemble(yo, [b_idx, n_off, s_blk, HALF], out)
                 pypto.set_pass_options(sg_set_scope=-1)
-                pypto.set_vec_tile_shapes(1, N_TILE_128_950, S_TILE_128_950, D)
 
 
 @pypto.frontend.jit(
@@ -224,8 +270,11 @@ def interleave_rope_kernel_n128_bf16_broadcast(
     S = x.shape[2]
     s_loops = (S + S_TILE_128 - 1) // S_TILE_128
     for b in pypto.loop(B, name="b_loop"):
-        c_t = pypto.view(cos, [1, 1, 1, D], [b, 0, 0, 0])
-        s_t = pypto.view(sin, [1, 1, 1, D], [b, 0, 0, 0])
+        # cos/sin 半区 view 提升到 n/s 循环之外（每 batch 取一次，跨 N/S tile 复用）
+        c_lo = pypto.view(cos, [1, 1, 1, HALF], [b, 0, 0, 0])
+        c_hi = pypto.view(cos, [1, 1, 1, HALF], [b, 0, 0, HALF])
+        s_lo = pypto.view(sin, [1, 1, 1, HALF], [b, 0, 0, 0])
+        s_hi = pypto.view(sin, [1, 1, 1, HALF], [b, 0, 0, HALF])
         for n_blk in pypto.loop(128 // N_TILE_128, name="n_loop"):
             n_off = n_blk * N_TILE_128
             for s_blk in pypto.loop(s_loops, name="s_loop"):
@@ -237,13 +286,17 @@ def interleave_rope_kernel_n128_bf16_broadcast(
                 pypto.set_pass_options(sg_set_scope=1)
                 x_e = pypto.gathermask(x_t, pattern_mode=1)
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, HALF)
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                xe_f = pypto.cast(x_e, pypto.DT_FP32)
+                xo_f = pypto.cast(x_o, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+                yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_pass_options(sg_set_scope=-1)
@@ -275,22 +328,30 @@ def interleave_rope_kernel_n128_bf16_short_s(
                 s_off = s_blk * S_TILE_128_SHORT
                 valid_s = (S - s_off).min(S_TILE_128_SHORT)
                 vshape_x = [1, N_TILE_128, valid_s, D]
-                vshape_cs = [1, 1, valid_s, D]
+                vshape_cs = [1, 1, valid_s, HALF]
                 x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128_SHORT, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
-                c_t = pypto.view(cos, [1, 1, S_TILE_128_SHORT, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [1, 1, S_TILE_128_SHORT, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+                c_lo = pypto.view(cos, [1, 1, S_TILE_128_SHORT, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                c_hi = pypto.view(cos, [1, 1, S_TILE_128_SHORT, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
+                s_lo = pypto.view(sin, [1, 1, S_TILE_128_SHORT, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                s_hi = pypto.view(sin, [1, 1, S_TILE_128_SHORT, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
                 x_e = pypto.gathermask(x_t, pattern_mode=1)
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_SHORT, HALF)
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                xe_f = pypto.cast(x_e, pypto.DT_FP32)
+                xo_f = pypto.cast(x_o, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+                yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128_SHORT, D)
@@ -324,25 +385,35 @@ def interleave_rope_kernel_n128_bf16_short_s_btile(
                 s_off = s_blk * S_TILE_128_SHORT
                 valid_s = (S - s_off).min(S_TILE_128_SHORT)
                 vshape_x = [valid_b, N_TILE_128, valid_s, D]
-                vshape_cs = [valid_b, 1, valid_s, D]
+                vshape_cs = [valid_b, 1, valid_s, HALF]
                 x_t = pypto.view(x, [B_TILE_128_SHORT, N_TILE_128, S_TILE_128_SHORT, D],
                                  [b_off, n_off, s_off, 0],
                                  valid_shape=vshape_x)
-                c_t = pypto.view(cos, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, D],
-                                 [b_off, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, D],
-                                 [b_off, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+                c_lo = pypto.view(cos, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, HALF],
+                                  [b_off, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                c_hi = pypto.view(cos, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, HALF],
+                                  [b_off, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
+                s_lo = pypto.view(sin, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, HALF],
+                                  [b_off, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                s_hi = pypto.view(sin, [B_TILE_128_SHORT, 1, S_TILE_128_SHORT, HALF],
+                                  [b_off, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
                 x_e = pypto.gathermask(x_t, pattern_mode=1)
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
                 pypto.set_vec_tile_shapes(B_TILE_128_SHORT, N_TILE_128, S_TILE_128_SHORT, HALF)
-                ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-                yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+                xe_f = pypto.cast(x_e, pypto.DT_FP32)
+                xo_f = pypto.cast(x_o, pypto.DT_FP32)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+                yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+                ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+                yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
                 pypto.assemble(ye, [b_off, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b_off, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(B_TILE_128_SHORT, N_TILE_128, S_TILE_128_SHORT, D)
@@ -369,30 +440,31 @@ def interleave_rope_kernel_n128_fp16(
                 s_off = s_blk * S_TILE_128
                 valid_s = (S - s_off).min(S_TILE_128)
                 vshape_x = [1, N_TILE_128, valid_s, D]
-                vshape_cs = [1, 1, valid_s, D]
+                vshape_cs = [1, 1, valid_s, HALF]
                 x_t = pypto.view(x, [1, N_TILE_128, S_TILE_128, D], [b, n_off, s_off, 0],
                                  valid_shape=vshape_x)
-                c_t = pypto.view(cos, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
-                s_t = pypto.view(sin, [1, 1, S_TILE_128, D], [b, 0, s_off, 0],
-                                 valid_shape=vshape_cs)
+                c_lo = pypto.view(cos, [1, 1, S_TILE_128, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                c_hi = pypto.view(cos, [1, 1, S_TILE_128, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
+                s_lo = pypto.view(sin, [1, 1, S_TILE_128, HALF], [b, 0, s_off, 0],
+                                  valid_shape=vshape_cs)
+                s_hi = pypto.view(sin, [1, 1, S_TILE_128, HALF], [b, 0, s_off, HALF],
+                                  valid_shape=vshape_cs)
                 x_e = pypto.gathermask(x_t, pattern_mode=1)
                 x_o = pypto.gathermask(x_t, pattern_mode=2)
-                c_e = pypto.gathermask(c_t, pattern_mode=1)
-                c_o = pypto.gathermask(c_t, pattern_mode=2)
-                s_e = pypto.gathermask(s_t, pattern_mode=1)
-                s_o = pypto.gathermask(s_t, pattern_mode=2)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, HALF)
                 xe_f = pypto.cast(x_e, pypto.DT_FP32)
                 xo_f = pypto.cast(x_o, pypto.DT_FP32)
-                ce_f = pypto.cast(c_e, pypto.DT_FP32)
-                co_f = pypto.cast(c_o, pypto.DT_FP32)
-                se_f = pypto.cast(s_e, pypto.DT_FP32)
-                so_f = pypto.cast(s_o, pypto.DT_FP32)
-                ye_f = pypto.sub(pypto.mul(xe_f, ce_f), pypto.mul(xo_f, se_f))
-                yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
-                ye = pypto.cast(ye_f, pypto.DT_FP16)
-                yo = pypto.cast(yo_f, pypto.DT_FP16)
+                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+                yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+                # fp16 出口 CAST_NONE（与 ASC 一致）
+                ye = pypto.cast(ye_f, pypto.DT_FP16, mode=pypto.CastMode.CAST_NONE)
+                yo = pypto.cast(yo_f, pypto.DT_FP16, mode=pypto.CastMode.CAST_NONE)
                 pypto.assemble(ye, [b, n_off, s_off, 0], out)
                 pypto.assemble(yo, [b, n_off, s_off, HALF], out)
                 pypto.set_vec_tile_shapes(1, N_TILE_128, S_TILE_128, D)
@@ -418,19 +490,26 @@ def interleave_rope_kernel_n1_bf16(
         for s_blk in pypto.loop(s_loops, name="s_loop"):
             s_off = s_blk * S_TILE_1
             valid_s = (S - s_off).min(S_TILE_1)
-            vshape = [1, 1, valid_s, D]
-            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
-            c_t = pypto.view(cos, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
-            s_t = pypto.view(sin, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
+            vshape_x = [1, 1, valid_s, D]
+            vshape_cs = [1, 1, valid_s, HALF]
+            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape_x)
+            c_lo = pypto.view(cos, [1, 1, S_TILE_1, HALF], [b, 0, s_off, 0], valid_shape=vshape_cs)
+            c_hi = pypto.view(cos, [1, 1, S_TILE_1, HALF], [b, 0, s_off, HALF], valid_shape=vshape_cs)
+            s_lo = pypto.view(sin, [1, 1, S_TILE_1, HALF], [b, 0, s_off, 0], valid_shape=vshape_cs)
+            s_hi = pypto.view(sin, [1, 1, S_TILE_1, HALF], [b, 0, s_off, HALF], valid_shape=vshape_cs)
             x_e = pypto.gathermask(x_t, pattern_mode=1)
             x_o = pypto.gathermask(x_t, pattern_mode=2)
-            c_e = pypto.gathermask(c_t, pattern_mode=1)
-            c_o = pypto.gathermask(c_t, pattern_mode=2)
-            s_e = pypto.gathermask(s_t, pattern_mode=1)
-            s_o = pypto.gathermask(s_t, pattern_mode=2)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, HALF)
-            ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-            yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+            xe_f = pypto.cast(x_e, pypto.DT_FP32)
+            xo_f = pypto.cast(x_o, pypto.DT_FP32)
+            cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+            ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+            sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+            sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+            ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+            yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+            ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+            yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
             pypto.assemble(ye, [b, 0, s_off, 0], out)
             pypto.assemble(yo, [b, 0, s_off, HALF], out)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, D)
@@ -451,8 +530,10 @@ def interleave_rope_kernel_n1_bf16_broadcast(
     S = x.shape[2]
     s_loops = (S + S_TILE_1 - 1) // S_TILE_1
     for b in pypto.loop(B, name="b_loop"):
-        c_t = pypto.view(cos, [1, 1, 1, D], [b, 0, 0, 0])
-        s_t = pypto.view(sin, [1, 1, 1, D], [b, 0, 0, 0])
+        c_lo = pypto.view(cos, [1, 1, 1, HALF], [b, 0, 0, 0])
+        c_hi = pypto.view(cos, [1, 1, 1, HALF], [b, 0, 0, HALF])
+        s_lo = pypto.view(sin, [1, 1, 1, HALF], [b, 0, 0, 0])
+        s_hi = pypto.view(sin, [1, 1, 1, HALF], [b, 0, 0, HALF])
         for s_blk in pypto.loop(s_loops, name="s_loop"):
             s_off = s_blk * S_TILE_1
             valid_s = (S - s_off).min(S_TILE_1)
@@ -460,13 +541,17 @@ def interleave_rope_kernel_n1_bf16_broadcast(
                              valid_shape=[1, 1, valid_s, D])
             x_e = pypto.gathermask(x_t, pattern_mode=1)
             x_o = pypto.gathermask(x_t, pattern_mode=2)
-            c_e = pypto.gathermask(c_t, pattern_mode=1)
-            c_o = pypto.gathermask(c_t, pattern_mode=2)
-            s_e = pypto.gathermask(s_t, pattern_mode=1)
-            s_o = pypto.gathermask(s_t, pattern_mode=2)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, HALF)
-            ye = pypto.sub(pypto.mul(x_e, c_e), pypto.mul(x_o, s_e))
-            yo = pypto.add(pypto.mul(x_e, s_o), pypto.mul(x_o, c_o))
+            xe_f = pypto.cast(x_e, pypto.DT_FP32)
+            xo_f = pypto.cast(x_o, pypto.DT_FP32)
+            cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+            ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+            sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+            sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+            ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+            yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+            ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
+            yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
             pypto.assemble(ye, [b, 0, s_off, 0], out)
             pypto.assemble(yo, [b, 0, s_off, HALF], out)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, D)
@@ -490,27 +575,26 @@ def interleave_rope_kernel_n1_fp16(
         for s_blk in pypto.loop(s_loops, name="s_loop"):
             s_off = s_blk * S_TILE_1
             valid_s = (S - s_off).min(S_TILE_1)
-            vshape = [1, 1, valid_s, D]
-            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
-            c_t = pypto.view(cos, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
-            s_t = pypto.view(sin, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape)
+            vshape_x = [1, 1, valid_s, D]
+            vshape_cs = [1, 1, valid_s, HALF]
+            x_t = pypto.view(x, [1, 1, S_TILE_1, D], [b, 0, s_off, 0], valid_shape=vshape_x)
+            c_lo = pypto.view(cos, [1, 1, S_TILE_1, HALF], [b, 0, s_off, 0], valid_shape=vshape_cs)
+            c_hi = pypto.view(cos, [1, 1, S_TILE_1, HALF], [b, 0, s_off, HALF], valid_shape=vshape_cs)
+            s_lo = pypto.view(sin, [1, 1, S_TILE_1, HALF], [b, 0, s_off, 0], valid_shape=vshape_cs)
+            s_hi = pypto.view(sin, [1, 1, S_TILE_1, HALF], [b, 0, s_off, HALF], valid_shape=vshape_cs)
             x_e = pypto.gathermask(x_t, pattern_mode=1)
             x_o = pypto.gathermask(x_t, pattern_mode=2)
-            c_e = pypto.gathermask(c_t, pattern_mode=1)
-            c_o = pypto.gathermask(c_t, pattern_mode=2)
-            s_e = pypto.gathermask(s_t, pattern_mode=1)
-            s_o = pypto.gathermask(s_t, pattern_mode=2)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, HALF)
             xe_f = pypto.cast(x_e, pypto.DT_FP32)
             xo_f = pypto.cast(x_o, pypto.DT_FP32)
-            ce_f = pypto.cast(c_e, pypto.DT_FP32)
-            co_f = pypto.cast(c_o, pypto.DT_FP32)
-            se_f = pypto.cast(s_e, pypto.DT_FP32)
-            so_f = pypto.cast(s_o, pypto.DT_FP32)
-            ye_f = pypto.sub(pypto.mul(xe_f, ce_f), pypto.mul(xo_f, se_f))
-            yo_f = pypto.add(pypto.mul(xe_f, so_f), pypto.mul(xo_f, co_f))
-            ye = pypto.cast(ye_f, pypto.DT_FP16)
-            yo = pypto.cast(yo_f, pypto.DT_FP16)
+            cl_f = pypto.cast(c_lo, pypto.DT_FP32)
+            ch_f = pypto.cast(c_hi, pypto.DT_FP32)
+            sl_f = pypto.cast(s_lo, pypto.DT_FP32)
+            sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+            ye_f = pypto.sub(pypto.mul(xe_f, cl_f), pypto.mul(xo_f, sl_f))
+            yo_f = pypto.add(pypto.mul(xe_f, sh_f), pypto.mul(xo_f, ch_f))
+            ye = pypto.cast(ye_f, pypto.DT_FP16, mode=pypto.CastMode.CAST_NONE)
+            yo = pypto.cast(yo_f, pypto.DT_FP16, mode=pypto.CastMode.CAST_NONE)
             pypto.assemble(ye, [b, 0, s_off, 0], out)
             pypto.assemble(yo, [b, 0, s_off, HALF], out)
             pypto.set_vec_tile_shapes(1, 1, S_TILE_1, D)
@@ -529,6 +613,7 @@ def interleave_rope_wrapper(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
+    """ASC 兼容 interleave_rope：cos/sin 半区配对，FP32 内部计算，split-half 输出。"""
 
     assert x.is_contiguous(), "x must be contiguous"
     assert cos.is_contiguous() and sin.is_contiguous(), "cos/sin must be contiguous"
