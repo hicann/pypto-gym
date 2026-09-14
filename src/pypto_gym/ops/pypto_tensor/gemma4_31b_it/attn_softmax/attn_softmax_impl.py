@@ -24,7 +24,7 @@ import pypto
 import torch
 from torch._dynamo import allow_in_graph
 
-S_TILE = 64
+S_TILE = 1024
 
 
 @pypto.frontend.jit
@@ -82,7 +82,7 @@ def attn_softmax_kernel(
             r = pypto.mul(r, scale)
             r = pypto.sub(r, gmax)
             r = pypto.exp(r)
-            r = pypto.div(r, tsum)
+            r = pypto.div(r, tsum, precision_type=pypto.PrecisionType.INTRINSIC)
             r = pypto.cast(r, pypto.DT_BF16)
             pypto.assemble(r, [m_idx, s_off], out)
 

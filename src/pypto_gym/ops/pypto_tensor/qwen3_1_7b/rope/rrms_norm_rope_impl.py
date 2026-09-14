@@ -49,13 +49,13 @@ def _rms_norm_per_d(x_3d_fp32, w_fp32_n, mean_coff, eps):
     RMSNorm along last dimension
 
     Args:
-        x_3d_fp32: [BS_TILE, N, D] FP32
+        x_3d_fp32: [BS_TILE, num_heads, D] FP32
         w_fp32_n: [1, num_heads, D] FP32 (broadcast)
         mean_coff: 1.0 / D
         eps: 1e-6
 
     Returns:
-        normed: [BS_TILE, N, D] FP32
+        normed: [BS_TILE, num_heads, D] FP32
     """
     sq = pypto.mul(x_3d_fp32, x_3d_fp32)
     mean = pypto.sum(sq, -1, keepdim=True)
@@ -109,15 +109,15 @@ def _make_qk_rope_kernel(num_heads: int):
         w_fp32_n = pypto.expand_clone(w_fp32_1, [1, num_heads, D])
 
         # Loop: 遍历 sequence 维度
-        for bs_idx in pypto.loop(bs_loop, name="LOOP_BS_QKROPE", idx_name="bs_idx"):
+        for bs_idx in pypto.loop(bs_loop, name="LOOP_BS_QKROPE", idx_name="bs_idx", unroll_list=[8, 4, 2, 1]):
             cur_bs = (seq_len - bs_idx * BS_TILE).min(BS_TILE)
 
             # Step 1: View input tile
-            x_tile = pypto.view(x, [BS_TILE, N, D], [bs_idx * BS_TILE, 0, 0],
-                                valid_shape=[cur_bs, N, D])
+            x_tile = pypto.view(x, [BS_TILE, num_heads, D], [bs_idx * BS_TILE, 0, 0],
+                                valid_shape=[cur_bs, num_heads, D])
 
             # Step 2: RMSNorm
-            pypto.set_vec_tile_shapes(BS_TILE, N, D)
+            pypto.set_vec_tile_shapes(BS_TILE, num_heads, D)
             x_fp32 = pypto.cast(x_tile, pypto.DT_FP32)
             normed_fp32 = _rms_norm_per_d(x_fp32, w_fp32_n, d_mean_coff, EPS)
 
@@ -142,19 +142,19 @@ def _make_qk_rope_kernel(num_heads: int):
             sin_b = pypto.reshape(sin_half_fp32, [BS_TILE, 1, HALF_D], inplace=False)
 
             # Step 4: RoPE computation
-            pypto.set_vec_tile_shapes(BS_TILE, N, HALF_D)
+            pypto.set_vec_tile_shapes(BS_TILE, num_heads, HALF_D)
 
             # Split into left/right halves
-            x_left = pypto.view(normed_fp32, [BS_TILE, N, HALF_D], [0, 0, 0],
-                                 valid_shape=[cur_bs, N, HALF_D])
-            x_right = pypto.view(normed_fp32, [BS_TILE, N, HALF_D], [0, 0, HALF_D],
-                                 valid_shape=[cur_bs, N, HALF_D])
+            x_left = pypto.view(normed_fp32, [BS_TILE, num_heads, HALF_D], [0, 0, 0],
+                                 valid_shape=[cur_bs, num_heads, HALF_D])
+            x_right = pypto.view(normed_fp32, [BS_TILE, num_heads, HALF_D], [0, 0, HALF_D],
+                                 valid_shape=[cur_bs, num_heads, HALF_D])
 
 
             o1 = pypto.sub(pypto.mul(x_left, cos_b), pypto.mul(x_right, sin_b))
             o2 = pypto.add(pypto.mul(x_right, cos_b), pypto.mul(x_left, sin_b))
 
-            # Concat: [BS_TILE, N, D] FP32
+            # Concat: [BS_TILE, num_heads, D] FP32
             roped_fp32 = pypto.concat([o1, o2], 2)
 
             # Cast to BF16

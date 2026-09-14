@@ -17,7 +17,7 @@ from torch._dynamo import allow_in_graph
 from torch._subclasses.fake_tensor import FakeTensor
 
 
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU},)
+@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 256})
 def _rms_norm_kernel_d3072(
     x: pypto.Tensor([pypto.DYNAMIC, 3072], pypto.DT_FP16),
     gamma: pypto.Tensor([3072], pypto.DT_FP16),
@@ -51,8 +51,8 @@ def _rms_norm_kernel_d3072(
         mean = pypto.mul(x2, inv_d)
         mean_sum = pypto.sum(mean, -1, keepdim=True)
         eps_add = pypto.add(mean_sum, 1e-5)
-        rms = pypto.sqrt(eps_add)
-        norm = pypto.div(x_fp32, rms)
+        inv_rms = pypto.rsqrt(eps_add)
+        norm = pypto.mul(x_fp32, inv_rms)
         weighted = pypto.mul(norm, gamma_fp32)
         result = pypto.cast(weighted, pypto.DT_FP16)
 

@@ -58,8 +58,8 @@ D = 256
 SCALE = 1.0  # Model uses QK RMSNorm which absorbs scaling
 W = 1024  # sliding window size
 
-# S2_TILE: 64 — Nkv=4 * 64 * 256 * 2B = 128KB per K/V tile, fits 192KB UB
-S2_TILE = 64
+# S2_TILE: 256 — Nkv=4 * 256 * 256 * 2B = 512KB per K/V tile
+S2_TILE = 256
 
 # Dynamic dimension for KV sequence length
 Skv_dyn = pypto.frontend.dynamic("Skv")
@@ -96,8 +96,8 @@ def _compensated_pv(p_ij, v_tile):
 
 
 @pypto.frontend.jit(
-    runtime_options={"device_sched_mode": 1, "run_mode": pypto.RunMode.NPU},
-    pass_options={"cube_l1_reuse_setting": {0: 4}},
+    runtime_options={"device_sched_mode": 1, "run_mode": pypto.RunMode.NPU, "stitch_function_max_num": 512},
+    pass_options={"cube_l1_reuse_setting": {0: 8}, "vec_nbuffer_setting": {-1: 8}},
 )
 def gemma4_decode_attn_gqa(
     q: pypto.Tensor([Nq, D], pypto.DT_BF16),
@@ -119,7 +119,7 @@ def gemma4_decode_attn_gqa(
     li = pypto.tensor([Nkv, GROUPS, 1], pypto.DT_FP32, "li")
     mi = pypto.tensor([Nkv, GROUPS, 1], pypto.DT_FP32, "mi")
 
-    for s2_idx in pypto.loop(s2_loop, name="LOOP_S2", idx_name="s2_idx"):
+    for s2_idx in pypto.loop(s2_loop, name="LOOP_S2", idx_name="s2_idx", unroll_list=[2, 1]):
         s2_start = s2_idx * S2_TILE
         s2_valid = pypto.min(s2_start + S2_TILE, Skv) - s2_start
 
@@ -140,7 +140,10 @@ def gemma4_decode_attn_gqa(
         pypto.set_vec_tile_shapes(Nkv, GROUPS, D)
         if pypto.is_loop_begin(s2_idx):
             if pypto.is_loop_end(s2_idx):
-                out[:] = pypto.reshape(pypto.cast(pypto.div(o_ij, l_ij), pypto.DT_BF16), [Nq, D])
+                out[:] = pypto.reshape(
+                    pypto.cast(pypto.div(o_ij, l_ij, precision_type=pypto.PrecisionType.INTRINSIC),
+                               pypto.DT_BF16),
+                    [Nq, D])
             else:
                 oi[:] = o_ij
             li[:] = l_ij
@@ -152,7 +155,10 @@ def gemma4_decode_attn_gqa(
             li_new = pypto.add(pypto.mul(alpha, li), pypto.mul(beta, l_ij))
             oi_new = pypto.add(pypto.mul(oi, alpha), pypto.mul(o_ij, beta))
             if pypto.is_loop_end(s2_idx):
-                out[:] = pypto.reshape(pypto.cast(pypto.div(oi_new, li_new), pypto.DT_BF16), [Nq, D])
+                out[:] = pypto.reshape(
+                    pypto.cast(pypto.div(oi_new, li_new, precision_type=pypto.PrecisionType.INTRINSIC),
+                               pypto.DT_BF16),
+                    [Nq, D])
             else:
                 oi[:] = oi_new
             li[:] = li_new

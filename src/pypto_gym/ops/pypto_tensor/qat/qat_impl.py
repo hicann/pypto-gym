@@ -74,7 +74,7 @@ def ai_infra_qat_asymmetric_per_group_kernel(
         alpha = pypto.mul(protected_scale, n_levels)
 
         weight_shifted = pypto.sub(weight_fp32, offset_fp32)
-        weight_norm = pypto.div(weight_shifted, alpha)
+        weight_norm = pypto.div(weight_shifted, alpha, precision_type=pypto.PrecisionType.INTRINSIC)
         weight_clipped = pypto.clip(weight_norm, neg_clip_val, clip_val)
 
         weight_scaled = pypto.mul(weight_clipped, n_levels)
@@ -82,7 +82,7 @@ def ai_infra_qat_asymmetric_per_group_kernel(
         weight_rounded = pypto.round(weight_shifted2, decimals=0)
 
         weight_unshifted = pypto.add(weight_rounded, shift)
-        weight_denorm = pypto.div(weight_unshifted, n_levels)
+        weight_denorm = pypto.div(weight_unshifted, n_levels, precision_type=pypto.PrecisionType.INTRINSIC)
 
         weight_rescaled = pypto.mul(weight_denorm, alpha)
         output = pypto.add(weight_rescaled, offset_fp32)
@@ -169,7 +169,8 @@ def ai_infra_qat_asymmetric_per_group_backward_kernel(
         alpha = pypto.mul(protected_scale, n_levels)
 
         weight_shifted = pypto.sub(weight_fp32, offset_fp32)
-        weight_norm = pypto.div(weight_shifted, alpha)  # 对应前向的 weight_scaled，未截断
+        # 对应前向的 weight_scaled，未截断
+        weight_norm = pypto.div(weight_shifted, alpha, precision_type=pypto.PrecisionType.INTRINSIC)
 
         # 重新计算 weight_denorm 用于求解 scale 梯度
         weight_clipped = pypto.clip(weight_norm, neg_clip_val, clip_val)
@@ -177,7 +178,7 @@ def ai_infra_qat_asymmetric_per_group_backward_kernel(
         weight_shifted2 = pypto.sub(weight_scaled, shift)
         weight_rounded = pypto.round(weight_shifted2, decimals=0)
         weight_unshifted = pypto.add(weight_rounded, shift)
-        weight_denorm = pypto.div(weight_unshifted, n_levels)
+        weight_denorm = pypto.div(weight_unshifted, n_levels, precision_type=pypto.PrecisionType.INTRINSIC)
 
         # --- 3. 掩码生成 (Mask Generation) ---
         # 判断元素是否在 clip 范围内 (-clip_val <= w <= clip_val)
@@ -291,7 +292,7 @@ def ai_infra_qat_symmetric_per_channel_kernel(
         scale_fp32 = pypto.cast(scale_tile, pypto.DT_FP32)
 
         protected_scale = pypto.maximum(scale_fp32, eps)
-        normalized = pypto.div(weight_fp32, protected_scale)
+        normalized = pypto.div(weight_fp32, protected_scale, precision_type=pypto.PrecisionType.INTRINSIC)
         rounded = pypto.round(normalized, decimals=0)
         clamped = pypto.clip(rounded, min_v, max_v)
         output = pypto.mul(clamped, protected_scale)
@@ -359,7 +360,7 @@ def ai_infra_qat_symmetric_per_channel_backward_kernel(
         scale_mask_fp32_tile = pypto.where(scale_mask_tile, 1.0, 0.0)
 
         # 重算前向计算
-        normalized = pypto.div(weight_fp32, protected_scale_tile)
+        normalized = pypto.div(weight_fp32, protected_scale_tile, precision_type=pypto.PrecisionType.INTRINSIC)
         rounded = pypto.round(normalized, decimals=0)
         clamped = pypto.clip(rounded, min_v, max_v)
 
@@ -384,7 +385,8 @@ def ai_infra_qat_symmetric_per_channel_backward_kernel(
 
         # 除法路径: grad_output * mask * (-weight / protected_scale)
         neg_weight_fp32 = pypto.mul(weight_fp32, -1.0)
-        weight_div_scale_tile = pypto.div(neg_weight_fp32, protected_scale_tile)
+        weight_div_scale_tile = pypto.div(
+            neg_weight_fp32, protected_scale_tile, precision_type=pypto.PrecisionType.INTRINSIC)
         grad_scale_div_step1 = pypto.mul(grad_out_fp32, mask_float)
         grad_scale_div_tile = pypto.mul(grad_scale_div_step1, weight_div_scale_tile)
         grad_scale_div_tile_sum = pypto.sum(grad_scale_div_tile, dim=1, keepdim=True)
@@ -447,7 +449,7 @@ def ai_infra_qat_symmetric_per_tensor_kernel(
         weight_fp32 = pypto.cast(weight_tile, pypto.DT_FP32)
 
         scale_n = pypto.expand_clone(protected_scale, [tile_n, 1])
-        normalized = pypto.div(weight_fp32, scale_n)
+        normalized = pypto.div(weight_fp32, scale_n, precision_type=pypto.PrecisionType.INTRINSIC)
         rounded = pypto.round(normalized, decimals=0)
         clamped = pypto.clip(rounded, min_v, max_v)
         output = pypto.mul(clamped, scale_n)
@@ -518,7 +520,7 @@ def ai_infra_qat_symmetric_per_tensor_backward_kernel(
 
         # 重算前向计算
         scale_n = pypto.expand_clone(protected_scale, [tile_n, 1])
-        normalized = pypto.div(weight_fp32, scale_n)
+        normalized = pypto.div(weight_fp32, scale_n, precision_type=pypto.PrecisionType.INTRINSIC)
         rounded = pypto.round(normalized, decimals=0)
         clamped = pypto.clip(rounded, min_v, max_v)
 
@@ -543,7 +545,7 @@ def ai_infra_qat_symmetric_per_tensor_backward_kernel(
 
         # 除法路径: grad_output * mask * (-weight / protected_scale)
         neg_weight_fp32 = pypto.mul(weight_fp32, -1.0)
-        weight_div_scale_tile = pypto.div(neg_weight_fp32, scale_n)
+        weight_div_scale_tile = pypto.div(neg_weight_fp32, scale_n, precision_type=pypto.PrecisionType.INTRINSIC)
         grad_scale_div_step1 = pypto.mul(grad_out_fp32, mask_float)
         grad_scale_div_tile = pypto.mul(grad_scale_div_step1, weight_div_scale_tile)
         grad_scale_div_tile_m = pypto.sum(grad_scale_div_tile, dim=1, keepdim=True)
