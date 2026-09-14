@@ -177,11 +177,23 @@ kernel 参数类型注解中，部分参数的同一维度使用 `pypto.DYNAMIC`
 
 ---
 
-## 15. INT8 Tensor JIT 签名 format 必须为 ND
+## 15. matmul 权重 TILEOP_NZ 入参须以 FRACTAL_NZ 传入（F00002）
 
-JIT 签名中 INT8 tensor 声明 `format=NZ`，但 wrapper 传入的是 ND 格式。`torch_npu.npu_format_cast` 对 INT8 tensor 为 no-op，无法运行时转换。
+JIT 签名声明 `format=pypto.TileOpFormat.TILEOP_NZ`，wrapper 却传入 ND 布局 tensor，报
+`F00002: The format of input tensor ND does not match ... TileOpFormat.TILEOP_NZ`。
 
-**解决方案**：将 JIT 签名中的 `format=NZ` 改为 `format=ND`。`pypto.matmul` 内部会处理 ND→NZ 格式转换。
+根因：`torch_npu.npu.config.allow_internal_format` 未置 True。开关关闭时，
+`torch_npu.npu_format_cast(t, torch_npu.Format.FRACTAL_NZ)` 对 BF16/INT8/FP32 均静默返回 ND，权重未实际转换。
+
+```python
+import torch_npu
+torch_npu.npu.config.allow_internal_format = True   # 无条件赋值；hasattr 在 torch_npu 2.12 误判 False
+w_nz = torch_npu.npu_format_cast(w.contiguous(), torch_npu.Format.FRACTAL_NZ)
+```
+
+- `pypto.Tensor(shape, dtype, format=...)` 的 `format` 是入参格式契约，非可选优化；SPEC 声明权重 NZ，须同时落地「签名 TILEOP_NZ + host 转 FRACTAL_NZ」。
+- 开关开启后，`npu_format_cast` 对 BF16/INT8/FP32 均真转 NZ（`get_npu_format` 返回 FRACTAL_NZ）。
+- 仅当权重不满足 NZ 对齐（内轴 32B、外轴 16 元素整除）时，回退 ND 交由 `pypto.matmul` 内部转换。
 
 ---
 

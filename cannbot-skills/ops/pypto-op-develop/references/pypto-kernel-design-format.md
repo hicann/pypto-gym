@@ -291,7 +291,7 @@ Rule of thumb:
 
 ### 11c. Tile shape scope — per-stage, not per-kernel
 
-`set_vec_tile_shapes` and `set_cube_tile_shapes` change the active tile layout for every PyPTO call that follows them in the same JIT body. When a kernel has multiple stages with different tile-optimal shapes (e.g. one matmul wants `[64, 128]` cube tiles and another wants `[128, 64]`), setting tiles **once at the top of `_kernel_impl`** forces every stage to share the same tiles and loses optimization headroom. The example values below illustrate scope only; concrete tile values come from DESIGN.md §3.2.5.
+`set_vec_tile_shapes` and `set_cube_tile_shapes` change the active tile layout for every PyPTO call that follows them in the same JIT body. When a kernel has multiple stages with different tile-optimal shapes (e.g. one matmul wants `[64, 128]` cube tiles and another wants `[128, 64]`), setting tiles **once at the top of `_kernel_impl`** forces every stage to share the same tiles and loses optimization headroom. The example values below illustrate scope only; concrete tile values come from DESIGN.md 「范式与设计决策」.
 
 The recommended pattern is to push the tile-shape call **into each `pypto_*` sub-kernel** so each stage sets its own optimal layout:
 
@@ -346,11 +346,11 @@ out = pypto.matmul(a, b, pypto.DT_BF16)      # [M, N]
 **3. Tile config lines show tile shape**
 
 ```python
-pypto.set_vec_tile_shapes(1, 1, 8, 8)                         # tile dimensions per DESIGN.md §3.2.5
+pypto.set_vec_tile_shapes(1, 1, 8, 8)                         # tile dimensions per DESIGN.md 「范式与设计决策」
 pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128]) # each list is [L0, L1]
 ```
 
-> Tile shape 具体值、参数格式规则和约束详见 skill `pypto-op-design` SKILL.md "第 2 轮：Tiling 推导" + quick_ref.md。
+> Tile shape 具体值和约束详见 skill `pypto-op-design/constraints/tiling.md`；算子级设计决策记录在 DESIGN.md 「范式与设计决策」。
 
 **4. Loop body tensors show the slice shape, not the full shape**
 

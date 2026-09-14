@@ -18,7 +18,9 @@ You are responsible for gate checks and regression verification. You are a **jud
 
 ## Path conditioning (read first)
 
-Before any verification work, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md §0.3):
+For design-review and Stage 4 scaffolding, read DESIGN.md and eval/module_interfaces.yaml directly. MEMORY.md does not exist yet. In design-review mode follow the design review section of pypto-op-verify, return findings, and do not run implementation tests. The rules below apply to implementation verification.
+
+Before any verification work, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md 「分解与模块边界」):
 
 - **`module_count == 1` (L0 path)** — your only artifact is `custom/<op>/test_<op>.py`. **Skip** scaffolding step A (per-module goldens), step B (adversarial runner + prefix-eval), and step C (per-module tests). Skip per-Phase gates and prefix evaluation. Run a single E2E `detailed_tensor_compare` on `<op>_impl.py` against `<op>_golden.py` for every leaf output.
 - **`module_count ≥ 2` (L1 path)** — current full flow described below (scaffolding A/B/C + per-Phase gates + prefix eval + E2E).
@@ -163,7 +165,7 @@ The cumulative wrapper for module<suffix_N> (the full composition) must numerica
 Validate the module graph with the bundled script (the six wiring/shape/dtype rules are codified there):
 
 ```
-python ../skills/pypto-op-verify/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
+python ../skills/pypto-op-design/scripts/validate_yaml.py custom/<op>/eval/module_interfaces.yaml --json
 ```
 
 On any reported violation, append a `## Architecture/Design Rejection — <timestamp>` block to `custom/<op>/MEMORY.md` with the script's violation list, stop, and report the rejection (the dispatching layer handles re-dispatch of the design roles). The rules: (1) `inputs[*].source: primary` exists in `primary_inputs`; (2) `inputs[*].source: module_j` has `j < current id` and the name exists in `module_j.outputs`; (3) `final_outputs[*].source: module_j` has `j ≤ N` and the name exists; (4) no duplicate `(module_id, name)`; (5) shape exprs use only `+ - * //` and name/int tokens; (6) dtype in `{float32, float16, bfloat16, int32, int64, bool, int}`.

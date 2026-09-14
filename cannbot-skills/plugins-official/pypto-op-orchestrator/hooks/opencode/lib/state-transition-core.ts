@@ -289,19 +289,8 @@ export function applyTransition(
     }
 
     case "submit_design": {
-      // Designer finished producing the Stage 4 design artifacts and is
-      // handing Stage 4 off to the Verifier (scaffolding mode). Symmetric to
-      // submit_for_verify (which sits between Coder and Verifier in Stage 5):
-      // the plugin layer runs `--check-design-gate` synchronously as a side
-      // effect of this transition; lint FAIL throws before any further work.
-      // The gate scope is DESIGN.md only (OL12 + OL55 in code blocks);
-      // module_interfaces.yaml is intentionally NOT lint-checked by OL55 —
-      // it is a structural YAML, not executable code, so pypto.<attr>
-      // existence checks do not apply.
-      // On PASS, no state mutation is required — Stage 4 remains in_progress
-      // until complete_stage(4) is invoked after the Verifier completes the
-      // adversarial harness. This action's job is purely to gate the
-      // Designer → Verifier handoff with a DESIGN.md lint check.
+      // The architect produced both outputs in stage 3. The plugin checks
+      // design and interfaces before independent review and test preparation.
       if (input.stage !== 4) {
         throw new Error(`submit_design only valid for stage 4, got stage ${input.stage}`);
       }
@@ -444,17 +433,17 @@ export function applyTransition(
       if (target < 5) {
         next.stage5_phases = emptyStage5Phases();
       }
-      // Drop artifact hashes that were computed at stages strictly after target.
+      // Drop artifact hashes that were computed at the repeated stage and subsequent stages.
       const HASH_STAGE: Record<string, number> = {
         spec_md: 1,
         api_report_md: 1,
         golden_py: 2,
         design_md: 3,
-        module_interfaces_yaml: 4,
+        module_interfaces_yaml: 3,
       };
       if (next.artifact_hashes) {
         for (const [name, owningStage] of Object.entries(HASH_STAGE)) {
-          if (owningStage > target && name in next.artifact_hashes) {
+          if (owningStage >= target && name in next.artifact_hashes) {
             delete next.artifact_hashes[name];
           }
         }

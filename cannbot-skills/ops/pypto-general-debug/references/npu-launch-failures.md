@@ -4,7 +4,7 @@
 
 Related reference material:
 - Kernel code format and per-file invariants: skill `pypto-op-develop`'s `../../pypto-op-develop/references/pypto-kernel-design-format.md`
-- Pipe-class conventions (vector vs cube vs mixed): skill `pypto-op-design`'s `../../pypto-op-design/references/quick_ref.md`
+- Pipe-class conventions (vector vs cube vs mixed): skill `pypto-op-develop`'s `../../pypto-op-develop/references/pypto-kernel-design-format.md`
 
 ## Issue: `Errcode: FFFFFF! launch aicpu failed: 107003`
 

@@ -53,7 +53,7 @@ from pathlib import Path
 # stays machine-parseable for the caller (which reads stdout).
 _LOGGER = logging.getLogger("validate_yaml")
 
-DTYPE_VOCAB = {"float32", "float16", "bfloat16", "int32", "int64", "bool", "int"}
+DTYPE_VOCAB = {"float32", "float16", "bfloat16", "int32", "int64", "bool", "int", "int8"}
 _MODULE_RE = re.compile(r"^module_(\d+)$")
 _ALLOWED_NODES = (
     ast.Expression, ast.BinOp, ast.UnaryOp, ast.Name, ast.Load,
@@ -184,6 +184,19 @@ def _validate_final_outputs(final_outputs, module_count, outputs_by_id, errors):
 
 def validate(spec: dict) -> list[str]:
     """Return a list of violation strings; empty list means valid."""
+    if not isinstance(spec, dict):
+        return ['interface must be a mapping']
+    for field in ('primary_inputs', 'modules', 'final_outputs'):
+        rows = spec.get(field)
+        if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) for row in rows):
+            return [f'{field} must be a non-empty list of mappings']
+    for i, module in enumerate(spec['modules'], 1):
+        if type(module.get('id')) is not int or module['id'] != i:
+            return ['module ids must be consecutive integers starting at 1']
+        for field in ('inputs', 'outputs'):
+            rows = module.get(field)
+            if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) for row in rows):
+                return [f'module {i} {field} must be a non-empty list of mappings']
     errors: list[str] = []
     primary_inputs = spec.get("primary_inputs", [])
     primary = {
@@ -249,6 +262,15 @@ def _self_test() -> int:
     c8 = copy.deepcopy(_VALID)
     c8["primary_inputs"][0]["dtype"] = "float8"
     cases.append(("rule6_bad_primary_dtype", c8, "rule6"))
+    c9 = {
+        "primary_inputs": [{"name": "x", "shape": "[B, T]", "dtype": "int8"}],
+        "modules": [
+            {"id": 1, "inputs": [{"name": "x", "source": "primary"}],
+             "outputs": [{"name": "y", "shape": "[B, T]", "dtype": "int8"}]},
+        ],
+        "final_outputs": [{"name": "y", "source": "module_1"}],
+    }
+    cases.append(("rule6_int8_single_module", c9, ""))  # expect no error
 
     bad = 0
     for name, spec, want in cases:

@@ -84,7 +84,6 @@ sources:
    | `pypto-op-planner` | 1 — Planning |
    | `pypto-op-mathematician` | 2 — Algorithm |
    | `pypto-op-architect` | 3 — Architecture |
-   | `pypto-op-designer` | 4 — Design |
    | `pypto-op-coder` | 5 — Construction |
    | `pypto-op-debugger` | 5 — Construction |
    | `pypto-op-optimizer` | 7 — Optimization |

@@ -194,37 +194,13 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
     "../hooks/pypto-op-lint/pypto_op_lint.py",
     import.meta.url,
   ).pathname;
+  const designChecker = new URL(
+    "../skills/pypto-op-design/scripts/validate_artifacts.py",
+    import.meta.url,
+  ).pathname;
 
-  /**
-   * Run the lint gate when:
-   * - `complete_stage` is invoked — full Stage delivery gate
-   *   (`--check-gate --stage <N>`, covers all impl/test/golden/gate rules for
-   *   the stage including integrated artifacts).
-   * - `submit_design` is invoked — Stage 4 design gate
-   *   (`--check-design-gate`, covers ONLY OL12 + OL55 over DESIGN.md so the
-   *   Designer's pseudo-code is lint-clean BEFORE the Verifier is dispatched
-   *   for Stage 4 scaffolding; module_interfaces.yaml is intentionally NOT
-   *   in scope because it is a structural YAML, not executable code).
-   * - `complete_phase` / `submit_for_verify` is invoked — per-Phase M_k
-   *   phase-scoped gate (`--check-phase-gate --phase M_k`, covers ONLY the
-   *   phase's cumulative module impl file `modules/<op>_module<suffix>_impl.py`;
-   *   integrated `<op>_impl.py` and `test_<op>.py` are excluded because they
-   *   are Stage 5 cleanup artifacts produced after the inner loop finishes).
-   *
-   * Rationale (phase gate): invoking the full `--check-gate --stage 5` at
-   * `complete_phase` surfaces OL01/OL07/OL08/OL18/etc. against placeholder
-   * integrated artifacts and falsely blocks a phase that did its job.
-   * Phase-scoping eliminates the false positive while still enforcing
-   * impl-target rules on the new module file.
-   *
-   * Rationale (design gate): catching `pypto.empty`-style typos at Designer
-   * exit (rather than at `complete_stage(4)` after the Verifier already
-   * produced the adversarial harness) avoids wasting the Verifier's work
-   * on a DESIGN.md whose pseudo-code references nonexistent PyPTO APIs.
-   *
-   * On block the orchestrator should re-dispatch the upstream agent
-   * (Designer for submit_design, Coder for submit_for_verify/complete_phase)
-   * with the failure details listed in fix_hints.
+  /** Check both design outputs before leaving design or preparing verification.
+   * Existing lint remains responsible for API checks and implementation gates.
    */
   async function runGateIfNeeded(
     opDir: string,
@@ -232,11 +208,17 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
     stage: number | undefined,
     phase: string | undefined,
   ): Promise<GateSummary> {
+    if (action === "submit_design" || (action === "complete_stage" && (stage === 3 || stage === 4))) {
+      const check = await $`python3 ${designChecker} --op-dir ${opDir}`.cwd(baseDir).quiet().nothrow();
+      if (check.exitCode !== 0) {
+        throw new Error(`Design or module interfaces are incomplete. Re-dispatch pypto-op-architect.\n${check.stdout.toString()}${check.stderr.toString()}`);
+      }
+    }
     let lintCmd;
     if (action === "complete_stage" && stage !== undefined) {
       lintCmd = $`python3 ${lintScript} --check-gate --op-dir ${opDir} --stage ${stage}`;
     } else if (action === "submit_design") {
-      // Stage 4 design gate: OL12 + OL55 on DESIGN.md only. Designer → Verifier
+      // Stage 4 design gate: OL12 + OL55 on DESIGN.md only. Architect → Verifier
       // handoff; refuse if pseudo-code references nonexistent pypto.<attr>.
       lintCmd = $`python3 ${lintScript} --check-design-gate --op-dir ${opDir}`;
     } else if (
@@ -271,9 +253,9 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
           "instruct it to fix the violations listed above, and call complete_phase (or " +
           "submit_for_verify) again."
         : action === "submit_design"
-          ? "\n\nRecommended next step: re-dispatch pypto-op-designer with the violations " +
+          ? "\n\nRecommended next step: re-dispatch pypto-op-architect with the violations " +
             "listed above (typically a `pypto.<attr>` typo in DESIGN.md pseudo-code). " +
-            "After Designer fixes DESIGN.md, call submit_design again to re-gate before " +
+            "After Architect fixes DESIGN.md, call submit_design again to re-gate before " +
             "the Verifier (Stage 4 scaffolding) is dispatched."
           : "";
       throw new Error(
@@ -293,7 +275,7 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
           "Safely transition .orchestrator_state.json (schema v2.0). " +
           "Stage actions: init (stage=1 only, first call), start_stage (set stage to in_progress for retry), " +
           "complete_stage (lint gate check + mark done + auto-advance), fail_stage (mark failed + increment retry). " +
-          "Stage 4 design action: submit_design (Designer→Verifier handoff — runs design-scoped lint OL12+OL55 on DESIGN.md only, throws on FAIL so the Designer is re-dispatched BEFORE the Verifier wastes a cycle on a typo-bearing DESIGN.md; module_interfaces.yaml is intentionally not in scope). " +
+          "Stage 4 design action: submit_design (Architect→Verifier handoff — runs design-scoped lint OL12+OL55 on DESIGN.md only, throws on FAIL so the Architect is re-dispatched BEFORE the Verifier wastes a cycle on a typo-bearing DESIGN.md; module interfaces are checked structurally before lint). " +
           "Stage 5 phase actions (per-Phase M_k loop): start_phase, submit_for_verify (Coder→Verifier handoff — runs phase-scoped lint, moves status to awaiting_verify on success), complete_phase, fail_phase. " +
           "Other actions: record_artifact_hash (snapshot SPEC.md/DESIGN.md/etc. hashes), " +
           "rollback_to_stage (return to an earlier stage with reason and optional failure_category — wipes downstream stages and stage5_phases when target<5).",
@@ -358,7 +340,7 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
           // Lint gate fires on:
           // - complete_stage  — full stage delivery rules.
           // - submit_design   — Stage 4 design gate (OL12 + OL55 on DESIGN.md).
-          //   Designer → Verifier handoff; catches `pypto.empty`-style typos
+          //   Architect → Verifier handoff; catches `pypto.empty`-style typos
           //   before Verifier wastes a cycle producing the adversarial harness.
           // - complete_phase  — phase-scoped final gate (Coder + Verifier done).
           // - submit_for_verify — phase-scoped gate at Coder→Verifier handoff.

@@ -21,7 +21,7 @@ You are invoked by pypto-op-orchestrator **only** when a verification failure is
 
 ## Path conditioning (read first)
 
-Before opening any sub-skill, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md §0.3):
+Before opening any sub-skill, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md 「分解与模块边界」):
 
 - **`module_count == 1` (L0 path)** — there is no per-Phase verification verdict, no `failing_module_boundary`, no `eval/evaluation_report.json`. The failure signal is the single E2E `test_<op>.py` log. Localize directly in `<op>_impl.py`; the prefix-eval / boundary-contract framings below don't apply. Use the same sub-skill router as L1, but route by failure category from the single E2E run (precision / aicore / structural / runtime / infra) — not by `failing_module_boundary`.
 - **`module_count ≥ 2` (L1 path)** — current full flow described below (per-Phase verdicts + prefix eval + failing_module_boundary).

@@ -371,9 +371,9 @@ PENDING_STUB_MARKER = "PYPTO_PENDING_STUB"
 
 
 def _is_pending_stub(ctx: CheckContext, file_rel: str) -> bool:
-    """True iff the file is marked as a "pending stub" by the designer.
+    """True iff the file is marked as a "pending stub" by the architect.
 
-    Convention: a stub created by :mod:`pypto-op-designer` for a not-yet-active
+    Convention: a stub created by :mod:`pypto-op-architect` for a not-yet-active
     phase contains a single comment line near the top:
 
         # PYPTO_PENDING_STUB: phase=M_k — implementation pending

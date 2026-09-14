@@ -249,7 +249,7 @@ def _rule_ids_for_filename(filename: str, source: Optional[str] = None) -> list[
     if filename == SPEC_FILE:
         return SPEC_RULE_IDS
     if filename == DESIGN_FILE:
-        # DESIGN.md 编辑后即时校验 PyPTO API 存在性 (OL55), 阻止 Designer
+        # DESIGN.md 编辑后即时校验 PyPTO API 存在性 (OL55), 阻止 Architect
         # 在伪代码块写出不存在的 pypto.<attr> (如 `pypto.empty`)。
         return DESIGN_RULE_IDS
     return []

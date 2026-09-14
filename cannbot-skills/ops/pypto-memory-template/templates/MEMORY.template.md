@@ -8,9 +8,8 @@ Copy to: `custom/<operator_name>/MEMORY.md` and keep **machine-readable** fields
 
 ```yaml
 phase: 0|1|2|3|4|5|6
-decomposition_level: L0|L1                    # from DESIGN.md §0.3; L0 = single module, L1 = multi-module
-module_count: 1                               # from DESIGN.md §0.3; 1 for L0, ≥2 for L1
-total_complexity: 0.67                        # from DESIGN.md §0.2 (snapshot)
+decomposition_level: L0|L1                    # from DESIGN.md 「分解与模块边界」; L0 = single module, L1 = multi-module
+module_count: 1                               # from DESIGN.md 「分解与模块边界」; 1 for L0, ≥2 for L1
 active_module: M1   # or M2, …, none          # for L1 only; L0 sets active_module: M1 (single)
 current_staged_file: custom/<operator_name>/<operator_name>_module1.py   # L1 only; L0 uses custom/<operator_name>/<operator_name>_impl.py
 modules_pypto_verified:
@@ -23,8 +22,8 @@ optimization: not_started | … | complete | skipped_user_request
 blockers: []
 ```
 
-> **L0 vs L1 path** (see DESIGN.md §0 and skill `pypto-op-construct`'s **Decomposition Gate**):
-> - `module_count == 1` (L0): skip Stage 4 module decomposition; produce single `<op>_impl.py` directly; verify with one `detailed_tensor_compare` on the final output (see skill `pypto-op-verify`'s **L0 path**).
+> **L0 vs L1 path** (see DESIGN.md 「分解与模块边界」):
+> - `module_count == 1` (L0): skip multi-module test preparation; produce a single `<op>_impl.py` and compare every final output with golden (see skill `pypto-op-verify`'s **L0 path**).
 > - `module_count ≥ 2` (L1): follow the staged file chain, freeze per module, per-module verification log applies as usual.
 
 ## Task summary
@@ -44,23 +43,22 @@ blockers: []
 
 Document **how** the kernel is split and **why**, per `decomposition_level`:
 
-- **L0 (`module_count == 1`)**: fill one row covering the entire kernel; rationale = "single complexity unit (total_complexity = {value} < 1.3 per DESIGN.md §0.3)".
-- **L1 (`module_count ≥ 2`)**: fill `module_count` rows. Boundary tensors come from DESIGN.md §0.5 (architect-chosen breakpoints); each module ≈ 1 complexity unit; every row must have **≥ 1 heavy op** (skill `pypto-op-construct` Module Boundary Rules R2).
+- **L0 (`module_count == 1`)**: record the single module and the actual reason for keeping its computation together, as stated in DESIGN.md.
+- **L1 (`module_count ≥ 2`)**: record each module from DESIGN.md and eval/module_interfaces.yaml. Follow the confirmed boundaries; do not impose a fixed complexity score or require a matrix operation in every module.
 
 ### Modules (overview)
 
-| ID | One-line role | Boundary tensors (golden checkpoint names) | Heavy ops (≥1) | Light ops merged | CU estimate | Depends on |
-|----|---------------|---------------------------------------------|----------------|------------------|-------------|------------|
-| M1 | …             | …                                           | matmul, …      | view (entry), …  | ~1.0        | —          |
-| M2 | …             | …                                           | matmul, …      | assemble (exit)  | ~1.0        | M1         |
+| ID | Role | Output tensors (golden checkpoint names) | Main computation | Input sources |
+|----|------|-----------------------------------------|------------------|---------------|
+| M1 | …    | …                                       | …                | …             |
+| M2 | …    | …                                       | …                | …             |
 
 ### Rationale
 
-- **Decomposition level:** `L0 | L1`, from DESIGN.md §0.3 (total_complexity = {value}, module_count = {value}).
-- **Heavy/light classification:** see DESIGN.md §0.4.
-- **Why these breakpoints:** (from DESIGN.md §0.5 — semantic stage boundaries on the data flow)
+- **Decomposition level:** `L0 | L1`, from DESIGN.md 「分解与模块边界」 (module_count = {value}).
+- **Why these breakpoints:** (from DESIGN.md 「分解与模块边界」 — semantic stage boundaries on the data flow)
 - **Why this order:** (dependency / debuggability)
-- **Alternatives considered and rejected:** (optional; e.g. "merging M1+M2 considered but module would exceed 1.5 CU")
+- **Alternatives considered and rejected:** (optional; reference the actual design reason, such as the cost of storing a large intermediate tensor).
 
 ## Staged module files (L1 path only)
 
@@ -189,7 +187,7 @@ Paste output of:
 
 ## skill `pypto-general-debug`'s `references/DEBUG_GUIDEBOOK.md` §9 — pre-write checklist
 
-Before writing each module's PyPTO code, review the matching subsections from **skill `pypto-general-debug`'s `references/DEBUG_GUIDEBOOK.md` §9**. Check off after reading. See full lookup table in **skill `pypto-op-construct` (SKILL.md auto-loads)** → **Before writing PyPTO code**.
+Before writing each module's PyPTO code, review the matching subsections from **skill `pypto-general-debug`'s `references/DEBUG_GUIDEBOOK.md` §9**. Check off after reading. See full lookup table in **skill `pypto-op-design` (SKILL.md auto-loads)** → **Before writing PyPTO code**.
 
 | Subsection | Applies to this kernel? | Reviewed? |
 |------------|------------------------|-----------|

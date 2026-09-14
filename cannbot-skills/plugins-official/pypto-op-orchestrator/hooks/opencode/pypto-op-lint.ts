@@ -189,7 +189,6 @@ export const PyptoOpLintPlugin: Plugin = async (input) => {
     "pypto-op-planner",
     "pypto-op-mathematician",
     "pypto-op-architect",
-    "pypto-op-designer",
     "pypto-op-coder",
     "pypto-op-verifier",
     "pypto-op-debugger",

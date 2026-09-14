@@ -14,6 +14,16 @@
 
 在编写新参考前，优先用 skill `pypto-docs-search` 搜索现有实现——搜索 "<operator name>" 的 算子参考实现、golden 用法与 API 文档；另可扫描当前算子工作树 `grep -rn "<operator name>" custom/`。
 
+## 输入工厂：kernel 需用、golden 可不用的输入须给真实值
+
+有些输入（如 softmax 的 `m`/`l`，即 `l_input`/`m_input`）：kernel 为性能直接读取使用，golden 可不使用（自己重算）。
+
+规则：
+- kernel 直接使用，禁止重算（如 SK-16）。
+- golden 可重算、不使用该输入；输入工厂仍须以前向一次计算产出真实值（`m=scores.max(-1, keepdim=True)[0]`、`l=exp(scores-m).sum(-1, keepdim=True)`），禁止随机占位。
+
+依据：真实值使「kernel 用真实输入」与「golden 重算」数值一致，否则 kernel 无法按真实输入验证。
+
 ## 审计参考实现的 PyPTO 不友好模式
 
 主动扫描以下不友好模式：
@@ -33,7 +43,7 @@
 将参考改写为 PyPTO 友好的 golden。规范化强度取决于 Stage 3（DESIGN.md §0.3）
 选择的分解路径：
 
-> 路径在该步骤之后由 architect 通过 `count_golden_lines.py` 决定。但可以基于算法类型预判：
+> 路径在该步骤之后由 architect 通过 `derive_decomposition.py` 决定。但可以基于算法类型预判：
 > - 纯逐元素 / softmax / layernorm / 标准 attention / FlashAttention forward → 可能 **L0 路径**（轻量规范化）
 > - 多状态递归（gated_delta_rule / mamba）/ 复杂算子 backward → 可能 **L1 路径**（完整规范化）
 >

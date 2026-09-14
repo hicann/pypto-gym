@@ -362,6 +362,8 @@ for q_block_idx in pypto.loop(num_q_blocks, name="LOOP_Q"):  # 4 次
 - 平衡任务粒度和内存占用
 - 调整中间 tensor 的 shape
 
+**🔥 特例：调大 online softmax 的序列分块 tile 跨过 flash 临界点要同步删 flash 操作。** 调大 online softmax 的分块 tile（如 `S2_TILE`，取值非固定、属可调）时，一旦放大到 softmax 不再是 flash/online（单块覆盖全序列、bn=1），必须**同步删除** running-max 状态机（mi/li/oi 累加器、`is_loop_begin` 分支、跨块 rescale），改为普通 full softmax。
+
 ##### 1.3 尽可能合并 loop
 
 检查算子代码是否有可以合并的 loop 块：

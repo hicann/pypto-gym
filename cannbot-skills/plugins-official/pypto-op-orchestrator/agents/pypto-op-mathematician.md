@@ -36,4 +36,4 @@ Cap active skills at 1.
 
 ## Handoff
 
-Run profiling via `pypto-golden-generate` §15 (`scripts/profile_golden.py`) to produce `GOLDEN_PERF_REPORT.md`. Return to pypto-op-orchestrator. Do NOT start pypto-op-architect or pypto-op-designer work.
+Run profiling via `pypto-golden-generate` §15 (`scripts/profile_golden.py`) to produce `GOLDEN_PERF_REPORT.md`. Return to pypto-op-orchestrator. Do NOT start pypto-op-architect work.

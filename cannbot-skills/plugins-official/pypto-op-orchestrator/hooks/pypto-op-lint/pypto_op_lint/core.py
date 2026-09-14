@@ -50,7 +50,7 @@ IMPL_RULE_IDS = [
     "OL62",  # impl 内 torch 仅限 layout/alloc/cast; 数值计算必须在 @jit 图内 (dummy-JIT 防护)
 ]
 
-# DESIGN.md post-edit 适用规则 (在 Stage 4 Designer 编辑 DESIGN.md 时即时校验)。
+# DESIGN.md post-edit 适用规则 (在 Stage 4 Architect 编辑 DESIGN.md 时即时校验)。
 # OL55 (PyPTO API 存在性) + OL56 (unroll_list 单一值) 进入此列表; OL12 等 DESIGN
 # 结构性检查在 stop / complete_stage gate 中校验, 不在 post-edit 阶段触发,
 # 避免半成品 block。

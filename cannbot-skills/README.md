@@ -62,7 +62,7 @@ opencode
 | 需求理解 | `pypto-intent-understand` | 用户需求分析、规格化与歧义澄清 |
 | 方案与计划 | `pypto-op-design`、`pypto-op-plan` | 算子方案设计与实施计划 |
 | 知识参考 | `pypto-op-knowledge`、`pypto-api-explore`、`pypto-docs-search`、`pypto-memory-template` | 领域知识库、API 速查、文档检索、经验模板复用 |
-| 代码开发 | `pypto-op-develop`、`pypto-op-construct` | 算子核心实现与工程脚手架搭建 |
+| 代码开发 | `pypto-op-develop`、`pypto-op-design` | 算子核心实现与工程脚手架搭建 |
 | Golden 与精度 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug` | Golden 生成、精度对比、精度问题排查 |
 | 验证与检视 | `pypto-op-verify`、`pypto-op-review`、`pypto-kernel-validate` | 算子功能验证、代码检视与产物校验（反作弊 + 精度 + 性能） |
 | 性能调优 | `pypto-op-perf-tune` | 算子性能采集、分析与自动调优 |
@@ -122,8 +122,8 @@ cannbot-skills/
 ╠══════════════════════════════════════════════════════════════════════╣
 ║                                                                      ║
 ║  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   ║
-║  │   planner   │ │mathematician│ │  architect  │ │  designer   │   ║
-║  │ 需求与计划  │ │  数学推导   │ │  方案设计   │ │  方案细化   │   ║
+║  │   planner   │ │mathematician│ │  architect  │                  ║
+║  │ 需求与计划  │ │  数学推导   │ │设计与接口   │                  ║
 ║  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   ║
 ║  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   ║
 ║  │    coder    │ │  verifier   │ │  debugger   │ │  optimizer  │   ║
@@ -150,7 +150,7 @@ cannbot-skills/
 ║  │  pypto-op-plan               实施计划                            │  ║
 ║  │  pypto-op-design             方案设计                            │  ║
 ║  │  pypto-op-develop            代码开发                            │  ║
-║  │  pypto-op-construct          工程脚手架                          │  ║
+║  │  pypto-op-design          工程脚手架                          │  ║
 ║  └─────────────────────────────────────────────────────────────────┘  ║
 ║                                                                      ║
 ║  ┌─ 验证与调优类 ─────────────────────────────────────────────────┐  ║

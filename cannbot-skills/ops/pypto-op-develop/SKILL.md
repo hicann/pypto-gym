@@ -5,6 +5,8 @@ description: PyPTO 算子 impl 编码手册。用于 per-Phase 累计构建 `<op
 
 # PyPTO 算子 impl 实现
 
+单模块直接实现与多模块逐步实现的分支、边界验证及失败定位，见[逐模块实现](references/module-development.md)。
+
 基于 Layer A–L 设计规范，生成 PyPTO kernel 实现文件。**仅负责 impl 部分**（Layer G–K）；golden 与 test 不由本 skill 生成。
 
 > 资料获取统一使用 skill `pypto-docs-search`：按需搜索算子 API 文档、参考实现与 golden 等文件/目录/内容。
@@ -199,8 +201,8 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 3. **优先使用 `@pypto.frontend.jit` 写法**：选择最新的非 wrapper 包装写法，参考 `https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/config/pypto-frontend-jit.md`，与现有示例和文档保持一致。
 4. **golden / impl / test 必须职责分离**：不要把 golden 逻辑、实现逻辑和测试逻辑混写到同一个文件中（OL15 强制 impl 不能 `import pypto`，OL46 强制 test 不能 `import pypto`，OL47 强制 impl 不能 `import torch`）。
 5. **动态数据范围使用 valid_shape**：当最后一块数据量可能小于固定块大小时，`pypto.view` / `pypto.reshape` 中必须指定 `valid_shape`。
-6. **动态循环边界使用 unroll_list**：当循环次数为动态值时，需要使用 `unroll_list`；多层循环嵌套时，最内层使用 `unroll_list`。**实现阶段 `unroll_list` 只能含单一值**（默认 `[1]`）——照搬 DESIGN.md §4 中选定的单值，禁止自行扩成多值（如 `[16, 8, 4, 2, 1]`）；多值会触发编译路径爆炸、拖慢编译并使开发流程超时，多值展开调优仅允许在性能优化阶段（OL56 强制 FAIL，S0）。
-7. **matmul / cube 场景**：必须确认 `set_cube_tile_shapes(...)` 已正确配置，并优先放在使用它的 `pypto_*` 子内核内部（详见 design-format §11c）。具体 tile 值见 DESIGN.md §3.2.5。
+6. **动态循环边界使用 unroll_list**：当循环次数为动态值时，需要使用 `unroll_list`；多层循环嵌套时，最内层使用 `unroll_list`。实现阶段沿用 DESIGN 「范式与设计决策」 中选定的单值；多值展开属于性能调优阶段。
+7. **matmul / cube 场景**：必须确认 `set_cube_tile_shapes(...)` 已正确配置，并优先放在使用它的 `pypto_*` 子内核内部（详见 design-format §11c）。具体 tile 值见 DESIGN.md 「范式与设计决策」。
 8. **输出写回必须显式完成**：使用 `output[:] = ...`、`output.move(...)` 或 `pypto.assemble(..., output)`；不要写 `output = ...`（OL02）。
 9. **动态轴必须显式标注**：所有动态 shape 输入和输出都必须在 Tensor 注解中标成 `pypto.DYNAMIC` / `pypto.DYN`。**禁止** `pypto.Tensor()` / `pypto.Tensor([], dtype)` 这类空注解写法（门禁 OL25 会直接判 FAIL）；静态轴写常量整数，动态轴写 `pypto.DYNAMIC`，不可混淆。
 10. **声明动态轴时 kernel 必须含真实 `pypto.loop`**：DESIGN.md `dynamic_axes` 非空时，JIT 函数内必须存在遍历动态轴的 `pypto.loop(...)` 调用，trip count 必须来自动态轴（`tensor.shape[i]`、函数参数或其符号表达式）；**禁止**用 `pypto.loop(1)`、`pypto.loop(常量)` 等空循环或注释里写 `pypto.loop` 来糊弄门禁 OL43，门禁正向校验为 FAIL。
@@ -261,7 +263,34 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
     ```
 
     **设计含义**：当 DESIGN.md 把 Layer I 设计为独立辅助函数（如 `_<op>_kernel_impl`），如果该 body 含 `pypto.is_loop_begin` / `pypto.is_loop_end`，Coder 必须把整个 body inline 到 Layer J 的 `@pypto.frontend.jit` 函数里，或在 Layer I 上加 `@pypto.frontend.function`。**这是模板 `impl_template.py.tmpl` 默认 Layer I/J 切分的已知陷阱**。
-20. **直接采用 DESIGN.md tile**（默认）：第一次写 `<op>_module<k>_impl.py` 或集成 kernel 时，按 DESIGN.md §3.2.5 的 tile shape 原样落码。**禁止在实现阶段擅自引入训练/decode/核利用率等 cube-tile 分支**——性能调优是后续优化阶段的工作。若 DESIGN.md §3.2.5 未填好，交回上层而不要猜。
+20. **直接采用 DESIGN.md tile**（默认）：第一次写 `<op>_module<k>_impl.py` 或集成 kernel 时，按 DESIGN.md 「范式与设计决策」 的 tile shape 原样落码。禁止在实现阶段擅自引入训练/decode/核利用率等 cube-tile 分支。若 DESIGN.md 「范式与设计决策」 未填好，交回上层而不要猜。
+
+---
+
+## 实现阶段高频陷阱（反模式清单）
+
+以下反模式在本仓库实测中反复触发编译 / 精度失败，编码与自检时逐项排查：
+
+| # | 反模式 | 后果 | 正确写法 |
+|---|--------|------|----------|
+| 1 | 循环携带累加器在循环前 `pypto.full([X,1], ...)` 物化初始化 | F00003（FP32 尾轴 4B 未满足 32B 对齐）；后续 padding 连锁 | `pypto.tensor` 纯声明（零物化），`is_loop_begin` 分支内 shape-matched 赋值（`acc[:] = cur`，`[X,1]←[X,1]`） |
+| 2 | 用 `acc[:] = src` 期望 `[X,1]→[X,8]` 广播 | `[:]=` 为 assemble 语义，只写首列，其余列保持原值 → 列发散精度错 | binary op 广播：`pypto.mul(src [X,1], ones [X,8])` 后再 shape-matched 写回 |
+| 3 | `pypto.view([X,8]→[X,1])` 提取列 + 大 vec tile | vec tile 尾维 > tensor 尾维时越界读（OOB），提取值为垃圾 | `pypto.amax(t, dim=-1, keepdim=True)` 归约提取物理 `[X,1]` |
+| 4 | `pypto.assemble` 源未按 `valid_shape` 裁剪尾块 | 尾块 padding 行写入输出，污染尾部 batch 数据 | assemble 源先 `pypto.view(..., valid_shape=[tile_len, ·])` 裁剪 |
+| 5 | 遇 F40005 / F00003 未定位分配物即缩小 tile | 掩盖死代码物化（pre-init）导致的工作集问题，误判「tile 硬上限」 | 先定位具体分配物（哪个 tensor、是否死代码物化），删除死代码物化而非缩 tile |
+
+## Production 级配置用法
+
+以下生产配置项在本仓库参考实现中验证有效，DESIGN / impl 按需采用：
+
+| 配置 | 位置 | 作用 |
+|------|------|------|
+| `ready_on_host_tensors: ["cu_seqlens_q", ...]` | `runtime_options` | 标量索引 tensor 驻留 host，避免 device→host 同步读取 |
+| `seq_len.as_variable()` | JIT body | 将运行时标量显式标记为变量 |
+| `pypto.experimental.set_operation_options(combine_axis=True)` | kernel 入口 | 轴合并优化 |
+| `cube_l1_reuse_setting` / `cube_nbuffer_setting` / `vec_nbuffer_setting` 的 per-op keyed 形式（如 `{0: 8, 1: 1}` / `{-2: 1, 0: 8, 1: 2}`） | `pass_options` | 按算子索引精调 L1 复用与流水缓冲，优于全局 `{-1: x}` |
+| `sg_set_scope=N` 包裹 reduce / softmax 链 | `pypto.set_pass_options` | 融合为一次向量超算子，中间量流式通过、不逐个物化 UB |
+| `unroll_list` 多值（如 `{2, 1}`） | 最内层 `pypto.loop` | 循环全展开流水化，消除串行依赖等待（仅 Stage 7 调优使用；Stage 6 之前 OL56 强制单值） |
 
 ---
 
@@ -272,7 +301,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 1. **BFloat16 转 NumPy 失败**：必须先 `.float()` 再 `.numpy()`
 2. **环境变量未设置**：先运行 `bash scripts/list_idle_chip_ids.sh` 确认可用 chip id，再设置 `export TILE_FWK_DEVICE_ID=<空闲 chip id>`
 3. **动态轴定义位置错误**：必须在 jit 函数外部定义
-4. **Tile Shape 未设置或过小**：matmul 前必须调用 `set_cube_tile_shapes`；vec 操作前需要 `set_vec_tile_shapes`；具体值按 DESIGN.md §3.2.5
+4. **Tile Shape 未设置或过小**：matmul 前必须调用 `set_cube_tile_shapes`；vec 操作前需要 `set_vec_tile_shapes`；具体值按 DESIGN.md 「范式与设计决策」
 5. **精度标准不合理**：bfloat16 使用 `atol=0.0001, rtol=0.0078125`
 6. **使用 PyTorch 作为 Golden**：使用 NumPy 实现 golden 函数时，bfloat16 数据类型转换不够准确；golden 必须独立在 `{op}_golden.py`，使用纯 torch 实现
 7. **SymbolicScalar 用作 list 索引报错**：`TypeError: list indices must be integers or slices, not SymbolicScalar`。原因：`pypto.loop` 返回的是编译时符号值，不是 Python runtime 对象。解决方法：使用 tensor slice 或 `pypto.view`/`pypto.assemble` 构建数据流。
@@ -311,7 +340,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 
 **Layer I + Layer H**
 6. 所有 `pypto.loop(...)` 调用都在 Layer I；Layer K 内零 `pypto.loop`。
-7. Tile shape 设置遵循 design-format §11c：单 stage 用全局，多 stage 各 stage 局部设置；具体值按 DESIGN.md §3.2.5。
+7. Tile shape 设置遵循 design-format §11c：单 stage 用全局，多 stage 各 stage 局部设置；具体值按 DESIGN.md 「范式与设计决策」。
 8. 没有冗余的 `pypto.loop(1)` 包裹真实循环（OL46）。
 
 **类型与签名**

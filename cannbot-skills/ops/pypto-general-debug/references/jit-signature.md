@@ -105,6 +105,6 @@ kernel will OOM or silently truncate at runtime. It also violates OL31
 4. View: `pypto.view(x, [concrete shape], [b, ...])` inside the loop
 
 Cross-reference: `pypto-op-design/SKILL.md` §2.4 "动态轴模式" and
-`../../pypto-op-design/references/quick_ref.md` for the canonical production
+`../../pypto-op-develop/references/pypto-kernel-design-format.md` for the canonical production
 pattern. The lint rules OL25, OL29, OL31, OL43 enforce these requirements
 at every `_impl.py` and `_module*_impl.py` file.

@@ -491,7 +491,7 @@ def test_pending_stub_excluded_from_post_edit(tmp_path: Path):
              "current_stage": 5, "stage_status": {"5": "in_progress"}}
     write_file(op_dir / ".orchestrator_state.json", json.dumps(state))
     (op_dir / "demo_impl.py").unlink()
-    # Designer commits a stub
+    # Architect commits a stub
     impl_path = op_dir / "modules" / "demo_module2_impl.py"
     write_file(impl_path, _PENDING_STUB)
     rc, out = _run_hook("post-edit", {"tool_input": {"file_path": str(impl_path)}})

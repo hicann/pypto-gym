@@ -676,7 +676,7 @@ def test_ol56_pass_single_value_one(tmp_path: Path):
 
 
 def test_ol56_pass_single_value_nonone(tmp_path: Path):
-    """单一非 1 值（Designer 有依据时可选）也应 PASS。"""
+    """单一非 1 值（Architect 有依据时可选）也应 PASS。"""
     mod = load_lint_module()
     op_dir = build_stateless_op_dir(tmp_path, "demo")
     write_file(op_dir / "demo_impl.py", _ol56_impl("[16]"))

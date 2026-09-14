@@ -79,6 +79,10 @@ def _make_inputs(device):
     对于有语义约束的算子（block table 索引、状态缓存、位置编码等），
     必须在此函数中构造合法值，不能使用随机值。
 
+    ⚠️ kernel 需用、golden 可不用的输入（如 softmax `m`/`l`）：即使 golden 重算不读，
+    本工厂也必须给真实值（`m=scores.max(-1)[0]`、`l=exp(scores-m).sum(-1)`），
+    禁止随机占位。规则见 references/reference-normalization.md。
+
     SPEC.md 中有多个性能 P0 shape 时，必须为每个 shape 生成一组 case。
 
     Returns:

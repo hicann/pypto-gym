@@ -1402,7 +1402,7 @@ def check_ol56(ctx: CheckContext) -> Finding:
     """Stage 6 之前 `pypto.loop` 的 `unroll_list` 只能含单一值。
 
     覆盖范围（与 OL55 相同的两个着火点）：
-    - `DESIGN.md`：仅扫描 Markdown 中的 ```python``` 代码块（Designer 写完
+    - `DESIGN.md`：仅扫描 Markdown 中的 ```python``` 代码块（Architect 写完
       DESIGN.md 后着火）。
     - `<op>_impl.py` / `modules/<op>_module*_impl.py`：扫描 JIT 函数体
       （Coder 写完 impl 后着火）。

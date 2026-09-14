@@ -830,7 +830,7 @@ def _wrapper_contract_finding(
     if not expected and "primary_inputs" not in interfaces:
         fix_hint = (
             "\nhint: expected=[] is empty because the YAML lacks the top-level `primary_inputs`; "
-            "please add this field back per the `.opencode/agents/pypto-op-designer.md` "
+            "please add this field back per the `.opencode/agents/pypto-op-architect.md` "
             "`module_interfaces.yaml` schema, "
             "`source: primary` cannot replace it."
         )

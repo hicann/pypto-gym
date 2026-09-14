@@ -2,7 +2,7 @@
 
 ## 概述
 
-CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。采用 7 阶段状态机驱动，9 智能体团队协作，覆盖从需求理解到性能调优的完整开发流程，支持断点续跑与失败恢复。每个阶段完成门禁校验后才能进入下一阶段，Stage 5+ 通过 `MEMORY.md` 协作账本记录 pass/fail 与推理过程。
+CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。采用 7 阶段状态机驱动，8 智能体团队协作，覆盖从需求理解到性能调优的完整开发流程，支持断点续跑与失败恢复。每个阶段完成门禁校验后才能进入下一阶段，Stage 5+ 通过 `MEMORY.md` 协作账本记录 pass/fail 与推理过程。
 
 ### 与 PyPTO-Pro 开发的区别
 
@@ -120,7 +120,7 @@ bash /path/to/pypto-gym/cannbot-skills/plugins-official/pypto-op-orchestrator/in
 ```bash
 # OpenCode
 opencode agent list
-# 应看到 pypto-op-planner / pypto-op-mathematician / pypto-op-architect / pypto-op-designer / pypto-op-coder / pypto-op-verifier / pypto-op-debugger / pypto-op-optimizer
+# 应看到 pypto-op-planner / pypto-op-mathematician / pypto-op-architect / pypto-op-coder / pypto-op-verifier / pypto-op-debugger / pypto-op-optimizer
 
 # Claude Code
 ls .claude/
@@ -165,19 +165,19 @@ claude
 
 ### 核心工作流
 
-采用 7 阶段状态机驱动，9 智能体团队协作，确保算子开发质量：
+采用 7 阶段状态机驱动，8 智能体团队协作，确保算子开发质量：
 
 ```
 Stage 1: 需求规划与 API 可行性 → Stage 2: Golden 生成
-    → Stage 3: 架构设计 → Stage 4: 模块分解与契约
+    → Stage 3: 设计与模块接口 → Stage 4: 独立检查与验证准备
     → Stage 5: 按模块编码闭环 → Stage 6: 最终 E2E 验证
     → Stage 7: 性能调优
 ```
 
 - **Stage 1**（planner）：完成需求规划和 API 可行性，产出 SPEC.md、API_REPORT.md
 - **Stage 2**（mathematician）：生成 `<op>_golden.py` 参考实现与 GOLDEN_PERF_REPORT.md
-- **Stage 3**（architect）：生成 DESIGN.md 架构设计文档
-- **Stage 4**（designer）：产出 `eval/module_interfaces.yaml` 模块接口契约；L1 时 verifier 再生成模块验证脚手架
+- **Stage 3**（architect）：一次完成 DESIGN.md 和 eval/module_interfaces.yaml
+- **Stage 4**（verifier）：独立检查设计与接口；多模块时准备测试文件
 - **Stage 5**（coder、verifier、debugger）：按模块闭环，逐模块完成编码→验证→修复，产出 `modules/`、集成 `<op>_impl.py`、`test_<op>.py` 与 README.md；MEMORY.md 从 Stage 5 开始写入
 - **Stage 6**（verifier）：最终 E2E 精度验证与 layout 校验
 - **Stage 7**（optimizer）：性能采集、分析与迭代调优，verifier 回归确认精度无损，生成 `<op>_tuning_report.md`
@@ -218,8 +218,7 @@ custom/<op>/
 | `pypto-intent-understand` | 需求意图理解与规格生成 | Stage 1 |
 | `pypto-api-explore` | API 可行性探索与分析 | Stage 1 |
 | `pypto-golden-generate` | Golden 参考实现生成 | Stage 2 |
-| `pypto-op-design` | 算子架构设计与模块分解 | Stage 3–4 |
-| `pypto-op-construct` | 模块构建脚手架 | Stage 4–5 |
+| `pypto-op-design` | 算子设计、模块划分及接口生成 | Stage 3 |
 | `pypto-op-develop` | 算子代码实现 | Stage 5 |
 | `pypto-op-verify` | 模块、E2E 与回归验证 | Stage 4–7 |
 | `pypto-general-debug` | 通用错误定位与修复 | Stage 5 |
@@ -238,7 +237,6 @@ custom/<op>/
 | `pypto-op-planner` | 需求规划与 API 可行性 | Stage 1 |
 | `pypto-op-mathematician` | Golden 参考实现 | Stage 2 |
 | `pypto-op-architect` | 架构、tiling 与 loop 设计 | Stage 3 |
-| `pypto-op-designer` | 模块分解与接口契约 | Stage 4 |
 | `pypto-op-coder` | Kernel 实现 | Stage 5 |
 | `pypto-op-verifier` | 独立裁决与检查 | Stage 4–7 |
 | `pypto-op-debugger` | 失败定位与补丁建议 | Stage 5 |
@@ -286,7 +284,7 @@ cd pypto-gym/cannbot-skills/plugins-official/pypto-op-orchestrator && bash init.
 
 ## 总结
 
-1. PyPTO 算子开发模式通过 7 阶段状态机与 9 智能体团队实现端到端自动化：需求规划→Golden 生成→架构设计→模块分解→编码闭环→E2E 验证→性能调优
+1. PyPTO 算子开发模式通过 7 阶段状态机与 8 智能体团队实现端到端自动化：需求规划→Golden 生成→架构设计→模块分解→编码闭环→E2E 验证→性能调优
 2. 使用 `init.sh` 脚本一键安装（OpenCode 推荐），支持项目级和全局级
 3. `opencode` / `claude` 是核心交互指令
 4. 所有阶段通过门禁驱动，支持断点续跑与失败恢复

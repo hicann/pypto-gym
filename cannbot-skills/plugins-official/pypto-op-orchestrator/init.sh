@@ -120,7 +120,7 @@ VERSION="1.0.0"
 # --- Plugin-specific filters ---
 EXCLUDED_SKILL=""
 # Skill whitelist (space-separated list) - references shared ops
-INCLUDED_SKILLS="pypto-api-explore pypto-docs-search pypto-general-debug pypto-golden-generate pypto-intent-understand pypto-memory-template pypto-op-construct pypto-op-design pypto-op-develop pypto-op-knowledge pypto-op-monitor pypto-op-perf-tune pypto-op-plan pypto-op-review pypto-op-verify pypto-orchestration-manual pypto-precision-compare pypto-precision-debug"
+INCLUDED_SKILLS="pypto-api-explore pypto-docs-search pypto-general-debug pypto-golden-generate pypto-intent-understand pypto-memory-template pypto-op-design pypto-op-develop pypto-op-knowledge pypto-op-monitor pypto-op-perf-tune pypto-op-plan pypto-op-review pypto-op-verify pypto-orchestration-manual pypto-precision-compare pypto-precision-debug"
 # Agent whitelist (shell pattern) - uses local agents/
 INCLUDED_AGENT_PATTERN="pypto-op-*"
 SKILL_CATEGORY="ops"

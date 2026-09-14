@@ -23,7 +23,6 @@ not inspect what skills each agent loads.
 | 1 | `pypto-op-planner` | Stage 1 |
 | 2 | `pypto-op-mathematician` | Stage 2 |
 | 3 | `pypto-op-architect` | Stage 3 |
-| 4 | `pypto-op-designer` | Stage 4 |
 | 5 | `pypto-op-coder` | Stage 5 (per-module + cleanup) |
 | 6 | `pypto-op-verifier` | Stage 4 scaffolding (Step B) + Stage 5 phase scaffolding + Stage 5 composition + Stage 6 E2E + Stage 7 regression |
 | 7 | `pypto-op-debugger` | Stage 5 failure investigation |
@@ -55,29 +54,16 @@ kernel code. The orchestrator does not edit kernel code in Stage 1–7.
   `allclose(original, normalized)` passes; **`GOLDEN_PERF_REPORT.md` exists with Op Performance section** (mandatory — generated via `../../pypto-golden-generate/scripts/profile_golden.py` §15; do NOT defer to orchestrator).
 - **Handoff:** Returns to orchestrator → dispatch `pypto-op-architect`.
 
-### 3. pypto-op-architect — Stage 3
+### pypto-op-architect — 设计与模块接口
 
-- **Inputs:** `SPEC.md`, `<op>_golden.py` (含 golden inventory 头部注释；从该文件读取，不读 MEMORY.md).
-- **Deliverables:** `custom/<op>/DESIGN.md` (§0 decomposition decision,
-  §1 API mapping + precision routing, §3 tiling, §4 loop / data flow, §5
-  cross-validation).
-- **Gate:** §0.3 `module_count` set; if `module_count ≥ 2`, §0.5 lists
-  `module_count - 1` data-flow breakpoints; Layers A–L populated; vec
-  tile axes ∈ [16, 64] (or rationale for going below 16); cube tile by
-  the M-based recommendation table. **Performance target sheet is NOT
-  produced here** — it is produced at Stage 7 entry by pypto-op-optimizer.
-- **Handoff:** Returns to orchestrator → dispatch `pypto-op-designer`.
+- **Inputs:** SPEC.md、API_REPORT.md 和 golden。
+- **Deliverables:** `custom/<op>/DESIGN.md` 与 `custom/<op>/eval/module_interfaces.yaml`。
+- **Completion:** 一次调度完成设计和接口。模块数、输入来源、输出 shape/dtype 与设计一致，完成 design skill 的结构检查。
+- **Handoff:** 调用 `complete_stage(3)` 进入验证准备，随后调用 `submit_design(stage=4)`。失败时携带问题重新调度 architect，成功后调度 verifier。
 
-### 4. pypto-op-designer — Stage 4
+### 验证准备 — Stage 4
 
-- **Inputs:** `DESIGN.md` (§0 decomposition decision + breakpoints).
-- **Deliverables:** `custom/<op>/module_interfaces.yaml`.
-- **Gate (Step 1, designer handoff):** `state_transition(submit_design)`
-  runs the DESIGN-side lint gate (OL12 structural sections; OL55
-  `pypto.<attr>` existence in fenced code blocks). FAIL throws →
-  re-dispatch designer with the failure details.
-- **Handoff:** On `submit_design` PASS → dispatch `pypto-op-verifier` in
-  **Scaffolding mode (Step B)** to produce the adversarial harness.
+本阶段不再生成设计或模块接口。verifier 独立检查设计与接口；多模块时准备对抗测试文件，单模块时不生成多模块测试文件。完成后调用 `complete_stage(4)`，进入实现。
 
 ### 5. pypto-op-coder — Stage 5
 
@@ -215,5 +201,4 @@ adopted/failed optimizations, constraints, and code config to
 - **Forbidden:** calling `state_transition`; loading debug sub-skills;
   executing stages not specified in the dispatch prompt; modifying
   `.orchestrator_state.json`.
-
 

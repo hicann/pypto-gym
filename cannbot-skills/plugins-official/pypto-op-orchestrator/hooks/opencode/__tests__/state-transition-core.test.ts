@@ -404,7 +404,7 @@ describe("rollback_to_stage", () => {
     expect(next.stage5_phases?.active_phase).toBeNull();
   });
 
-  test("drops artifact hashes for stages after target", () => {
+  test("invalidates both design outputs when returning to design", () => {
     const next = applyTransition(stage5InDebug(), {
       action: "rollback_to_stage",
       target_stage: 3,
@@ -412,10 +412,9 @@ describe("rollback_to_stage", () => {
     });
     // Stage 1 hashes survive (target=3, owning_stage=1 < 3)
     expect(next.artifact_hashes?.spec_md).toBe("spec-hash");
-    // Stage 4+ hashes are dropped
+    // Both outputs belong to the design stage being repeated.
     expect(next.artifact_hashes?.module_interfaces_yaml).toBeUndefined();
-    // design_md (stage 3) is preserved because it equals target
-    expect(next.artifact_hashes?.design_md).toBe("design-hash");
+    expect(next.artifact_hashes?.design_md).toBeUndefined();
   });
 
   test("appends an entry to rollback_history", () => {

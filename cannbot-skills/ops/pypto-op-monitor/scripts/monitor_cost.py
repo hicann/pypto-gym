@@ -51,12 +51,12 @@ logger = logging.getLogger("pypto-op-monitor")
 # --- workflow model -------------------------------------------------------------
 
 STAGE_TITLE = {
-    1: "Planning", 2: "Algorithm", 3: "Architecture", 4: "Design",
+    1: "Planning", 2: "Algorithm", 3: "Design", 4: "Verification preparation",
     5: "Construction", 6: "Verification", 7: "Optimization",
 }
 ROLE_DEFAULT_STAGE = {
     "pypto-op-planner": 1, "pypto-op-mathematician": 2, "pypto-op-architect": 3,
-    "pypto-op-designer": 4, "pypto-op-coder": 5, "pypto-op-debugger": 5,
+    "pypto-op-coder": 5, "pypto-op-debugger": 5,
     "pypto-op-optimizer": 7,
 }
 SUPPORT = "support"

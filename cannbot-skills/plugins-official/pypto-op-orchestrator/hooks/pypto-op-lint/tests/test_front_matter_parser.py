@@ -35,3 +35,13 @@ def test_validate_doc_schema_requires_fields_by_doc_type():
     assert any("supported_dtypes" in err for err in spec_errors)
     assert any("dynamic_axes" in err for err in design_errors)
     assert any("op_name" in err for err in api_errors)
+
+
+def test_design_requires_nonempty_dynamic_axes():
+    mod = load_lint_module()
+    meta = {"schema_version": 1, "op_name": "demo", "dynamic_axes": ["B"]}
+    assert mod.validate_doc_schema("DESIGN", meta) == []
+    for invalid in ([], None, "N", {}):
+        assert mod.validate_doc_schema("DESIGN", dict(meta, dynamic_axes=invalid))
+    del meta["dynamic_axes"]
+    assert mod.validate_doc_schema("DESIGN", meta)

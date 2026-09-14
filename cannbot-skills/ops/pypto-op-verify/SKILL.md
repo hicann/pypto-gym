@@ -5,7 +5,13 @@ description: Validation runner requirements, detailed_tensor_compare usage, succ
 
 # PyPTO Complex Kernel — Validation and Deliverables
 
-## Templates (skill-owned skeletons)
+## 设计检查
+
+design-review 模式读取 SPEC.md、golden、DESIGN.md 和 eval/module_interfaces.yaml，不依赖 MEMORY.md。
+对照参考计算检查模块划分、输入来源、输出 shape/dtype、跨迭代状态与最终输出覆盖；按[模块接口说明](../pypto-op-design/references/module-interfaces.md)检查接口。
+只报告问题及依据，不修改设计或接口。单模块也需要设计检查；多模块通过后继续准备验证文件。此时实现尚未生成，不运行实现测试。
+
+## 实现验证模板
 
 | File | Used at | Purpose |
 |------|---------|---------|
@@ -20,7 +26,7 @@ The golden skeleton (for both `<op>_golden.py` and per-module `<op>_module<k>_go
 
 ## Verification path selection (L0 vs L1)
 
-Before running any validation step, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md §0.3, consumed by skill `pypto-op-construct`'s Decomposition Gate):
+Before running any validation step, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md 「分解与模块边界」, consumed by the design document):
 
 | `module_count` | Verification path | What runs |
 |---|---|---|
@@ -93,7 +99,7 @@ The task is complete only when all of the following are true:
 
 **Always (both L0 and L1):**
 - the normalized golden matches the original golden within tolerance,
-- `custom/<operator_name>/MEMORY.md` documents the decomposition decision (`decomposition_level`, `module_count`) and the rationale from DESIGN.md §0.3,
+- `custom/<operator_name>/MEMORY.md` documents the decomposition decision (`decomposition_level`, `module_count`) and the rationale from DESIGN.md 「分解与模块边界」,
 - the final production design is one integrated `@pypto.frontend.jit` kernel (L0 single-shot, or L1 cumulative `<op>_module1…N.py` collapsed into `<op>_impl.py`),
 - the user can run one script to execute validation, and that script compares every kernel output tensor.
 
@@ -117,7 +123,7 @@ The agent must produce all of the following (deliverable set is path-conditional
 2. **Normalized golden reference** — consistent with the final kernel.
 3. **Validation runner script** — `custom/<operator_name>/test_<operator_name>.py` run from repo root with simply `python custom/<operator_name>/test_<operator_name>.py` — the test file's path-bootstrap preamble locates `detailed_tensor_compare` automatically (no PYTHONPATH env var needed); must compare all outputs. Do not use `pytest` as the default.
 4. **Production kernel implementation** — `<op>_impl.py`.
-5. **Summary** of: decomposition decision (level + complexity signals from DESIGN.md §0), module contracts (L1 only), frozen checkpoints (L1 only), current known limitations.
+5. **Summary** of: decomposition decision (level + complexity signals from DESIGN.md 「分解与模块边界」), module contracts (L1 only), frozen checkpoints (L1 only), current known limitations.
 
 **L1 path additionally (`module_count ≥ 2`):**
 6. **Staged module files** — `<op>_module1.py`, `…_module12.py`, …, `…_module1…N.py`; each stage passes before the next exists. The final staged file is the source of `<op>_impl.py` (cleanup dispatch).

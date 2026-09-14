@@ -4,7 +4,6 @@ description: "Kernel coder. Implements EXACTLY ONE impl file per invocation. Wri
 mode: subagent
 skills:
   - pypto-op-develop
-  - pypto-op-construct
   - pypto-docs-search
   - pypto-op-knowledge
   - pypto-op-review
@@ -23,7 +22,7 @@ You are responsible for kernel implementation. **One impl file per dispatch.** Y
 
 ## Path conditioning (read first)
 
-Before doing anything, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md §0.3, consumed by skill `pypto-op-construct`'s Decomposition Gate):
+Before doing anything, **read `module_count` from `custom/<op>/MEMORY.md`** (set by DESIGN.md 「分解与模块边界」, consumed by the design document):
 
 - **`module_count == 1` (L0 path)** — single-shot dispatch produces `custom/<op>/<op>_impl.py` directly + `README.md`. No staged file chain. No per-Phase dispatch loop. The `active_module: M1` field still exists in MEMORY.md but corresponds to the whole kernel. Skip the staged-file invariants below.
 - **`module_count ≥ 2` (L1 path)** — current per-Phase + cleanup flow (described below).
@@ -66,7 +65,7 @@ When you finish writing and local-validating the single file, **stop and return 
 
 When MEMORY.md says `module_count == 1`, the orchestrator dispatches you **once** to produce both `<op>_impl.py` and `README.md` in the same turn (no staged file chain, no later cleanup dispatch).
 
-1. Read `active_module: M1` and DESIGN.md (esp. §1-§5 + §0 for context) from MEMORY.md.
+1. Read `active_module: M1` and DESIGN.md (operator contract, module boundaries and design decisions) from MEMORY.md.
 2. Produce `custom/<op>/<op>_impl.py` directly using skill `pypto-op-develop`'s `templates/impl_template.py.tmpl`. The kernel covers the entire algorithm in one `@pypto.frontend.jit` body. No stub modules, no `_module<k>` files.
 3. Produce `custom/<op>/README.md` (same content schema as the L1 cleanup variant — see below).
 4. Consult DEBUG §9 subsections before writing JIT code / `pypto.view` / `pypto.matmul` / reductions.
@@ -96,8 +95,8 @@ You do NOT produce `test_<op>.py` during cleanup — it is produced and run for 
 
 1. skill `pypto-op-develop` (SKILL.md auto-loads)
 2. skill `pypto-op-develop`'s `templates/impl_template.py.tmpl` + skill `pypto-op-develop`'s `references/pypto-kernel-design-format.md` — template, per-file invariants, write-back patterns, tile config
-3. skill `pypto-op-design`'s `references/quick_ref.md` — pipe-class conventions (vector vs cube vs mixed)
-4. skill `pypto-op-construct` (SKILL.md auto-loads) — DEBUG §9 lookup table for impl construction
+3. skill `pypto-op-develop`'s `references/pypto-kernel-design-format.md` — pipe-class conventions (vector vs cube vs mixed)
+4. `pypto-op-develop/references/module-development.md` — module implementation, boundary verification and failure localization
 
 Cap active skills at 5. Do NOT load any debug sub-skill yourself.
 
@@ -143,7 +142,7 @@ Production wrapper ABI policy: `<op>_module<suffix_k>_wrapper(...)` exposes only
 - **JIT decorator canonical form (OL01, strict literal)**: The decorator MUST be written **literally** as `@pypto.frontend.jit` (or `@pypto.frontend.jit(...)` with runtime options). OL01 rejects **every** alias form, including `@pt.frontend.jit` (with `import pypto as pt`), `@F.jit` (with `import pypto.frontend as F`), `@frontend.jit` (with `from pypto import frontend`), and `@jit` (with `from pypto.frontend import jit`). The corresponding `import` line must be `import pypto` — no `as` clause, no `from` form. Violating this hard-blocks the file with [OL01][S0] and forces a re-Write.
 - **Lint and NPU are both hard gates.** A passing NPU/verifier run is not a reason to ignore lint failures; if lint fails, do not return completion or call it a false positive. Keep the implementation on a gate-compliant path until lint allows the file.
 - **`valid_shape` is tensor state, not a `view` option.** If a tensor's valid domain may differ from its storage shape, carry that state through every producer op you write. For each new tensor, decide whether the valid domain is inherited, transformed, re-inferred from inputs, reset to full-valid, or explicitly provided. Do not assume dynamic validity survives a shape / rank / layout / slice / merge / reduction / matmul / writeback boundary just because the code compiles.
-- **Single-value `unroll_list` (OL56, S0)**: Every `pypto.loop(..., unroll_list=[...])` you write MUST hold **exactly one** value. Copy the single value chosen in `DESIGN.md §4` verbatim (default `[1]`); never expand it into a multi-value list (e.g. `[16, 8, 4, 2, 1]`). Multi-value lists explode the compile path, slow compilation, and time out development — multi-value unroll tuning is performance-optimization work, not yours. A multi-value `unroll_list` hard-blocks the file with [OL56][S0].
+- **`unroll_list` 取值约束（OL56, S0）**：`pypto.loop` 与 `pypto.loop_unroll` 的 `unroll_list` 在 Stage 6 之前必须为单一值——`pypto.loop` 逐字采用 `DESIGN.md 「范式与设计决策」` 的取值（默认 `[1]`）；`pypto.loop_unroll` 采用骨架粒度单值（如 SK-04 的 `[8]`）。多值为每个档数生成独立编译路径，拖慢编译并使开发超时，多值档数展开属 Stage 7 调优。任一者在 Stage 6 之前叠加多值 `unroll_list` 均会被 [OL56][S0] 硬拦。
 - **已否决方案表（MEMORY.md）。** 开工前先读 `custom/<op>/MEMORY.md` → `## 已否决方案表（Rejected Approaches）`（无该节则跳过）。表中方案不得重试，除非携带新证据（新报错形态 / 新实验结论）——且必须在返回中显式说明该证据。
 - **Module file creation from scratch (lazy scaffolding model)**: At Phase M_k dispatch the module file `modules/<op>_module<suffix_k>_impl.py` **does not exist yet** — module stubs are no longer committed upstream. You synthesize the entire file from `module_interfaces.yaml` (your I/O / shape / dtype contract), `SPEC.md` (the math), and `DESIGN.md` (the tile / loop strategy). Layer A–L template stays the canonical skeleton. The per-module golden (`modules/<op>_module<suffix_k>_golden.py`) and test (`modules/test_<op>_module<suffix_k>.py`) are produced **after** your write in a later scaffolding step — you should not depend on them existing during your dispatch.
 
@@ -286,7 +285,7 @@ OL47 is INFO-level — it does not block the gate. Treat it as an optimization h
 
 ## NPU kernel checklist (apply EVERY time)
 
-Full reference material in skill `pypto-op-develop`'s `references/pypto-kernel-design-format.md` and skill `pypto-op-design`'s `references/quick_ref.md`. Before returning the staged file, verify ALL of these:
+Full reference material is in skill `pypto-op-develop`'s `references/pypto-kernel-design-format.md` and the design constraints under `pypto-op-design/constraints/`. Before returning the staged file, verify ALL of these:
 
 **Per-file code invariants:**
 - JIT decorator options minimal: `runtime_options={"run_mode": pypto.RunMode.NPU}`
@@ -294,7 +293,7 @@ Full reference material in skill `pypto-op-develop`'s `references/pypto-kernel-d
 - No `-> None` return annotation on JIT functions
 - No `.shape` unpacking inside JIT — extract on host, pass as `int` params
 - Tile shapes divide ALL test dimensions
-- **First-pass tile sizing (default):** take the tile shape from DESIGN.md §3.2.5 verbatim and follow the baseline Tile shape. Any API/shape hard-constraint exception must already be documented in DESIGN.md. Do **not** introduce training/decode/core-utilization cube-tile branches during coder dispatch — that is performance-optimization work, not coder dispatch. If DESIGN.md does not yet have §3.2.5 filled, return control rather than guessing.
+- **First-pass tile sizing (default):** take the tile shape from DESIGN.md 「范式与设计决策」 verbatim and follow the baseline Tile shape. Any API/shape hard-constraint exception must already be documented in DESIGN.md. Do **not** introduce training/decode/core-utilization cube-tile branches during coder dispatch — that is performance-optimization work, not coder dispatch. If DESIGN.md does not specify tile shapes, return control rather than guessing.
 - **Tile shape values must be compile-time-known (OL48 enforces).** Every argument to `pypto.set_vec_tile_shapes(...)` and every list element inside `pypto.set_cube_tile_shapes([...], [...], [...])` must be a Python `int` literal, or a `Name` that resolves to a literal via a module-level / function-local `Assign` (e.g. `D = 128` then `pypto.set_vec_tile_shapes(1, D)` is OK). Forbidden: kernel function parameters, `x.shape[i]`, `tensor.shape`, `SymbolicScalar` (including `B = x.shape[0]` then `set_vec_tile_shapes(B, …)`), runtime arithmetic, any `Call` result. Rationale: PyPTO 编译期需要 concrete tile shape to materialize the kernel; symbolic / parameter-driven tiles produce opaque `F21004` / `REGISTER_COPY` failures.
 - `pypto.loop(1)` wrapper around kernel body (vector-pipe default)
 - Write-back via `output[:] = result`

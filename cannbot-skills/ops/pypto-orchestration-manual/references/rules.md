@@ -24,7 +24,7 @@ If you cannot complete a step, **document the blocker** — Stage 5+ in `custom/
 
 ## Non-negotiable
 
-> **Path conditioning**: rules 1, 2, and 14 below — plus the entire "Module-at-a-time enforcement" section — apply **only when `module_count ≥ 2`** (L1 path, set by DESIGN.md §0.3). On the **L0 path** (`module_count == 1`), Stage 4 module decomposition is skipped entirely (see skill `pypto-op-construct`'s **Decomposition Gate**); the deliverable is a single `<op>_impl.py` produced by Stage 5, verified once against the golden's final output (skill `pypto-op-verify`'s **L0 path**). All other rules apply to both paths.
+> **Path conditioning**: rules 1, 2, and 14 below — plus the entire "Module-at-a-time enforcement" section — apply **only when `module_count ≥ 2`** (L1 path, set by DESIGN.md §0.3). On the **L0 path** (`module_count == 1`), Stage 4 multi-module test preparation is skipped (see DESIGN.md 的模块划分); the deliverable is a single `<op>_impl.py` produced by Stage 5, verified once against the golden's final output (skill `pypto-op-verify`'s **L0 path**). All other rules apply to both paths.
 
 1. **One module at a time in PyPTO** *(L1 only)* — Only one semantic module's real `pypto` logic may be unfrozen at a time; later stages **stub** or use **golden boundary tensors** until the current module passes.
 2. **No full fused `@jit` in one shot** *(L1 only)* before per-module boundary checks pass.
@@ -33,7 +33,7 @@ If you cannot complete a step, **document the blocker** — Stage 5+ in `custom/
 5. **Golden frozen** before PyPTO implementation; **do not** change it without evidence. Record the freeze in the `<op>_golden.py` header (Stage 2); any change during Stage 5+ is additionally logged in `custom/<op>/MEMORY.md`.
 6. **Shape comments** on tensor lines in kernel code (see **Shape Annotation Convention** in skill `pypto-op-develop`'s `../../pypto-op-develop/references/pypto-kernel-design-format.md`).
 7. **Stuck on PyPTO errors** — read **skill `pypto-general-debug`'s `../../pypto-general-debug/references/DEBUG_GUIDEBOOK.md`**, then run skill `pypto-op-review`'s `../../pypto-op-review/scripts/extract_pypto_calls.py`, then **op-by-op protocol** in **skill `pypto-general-debug` (SKILL.md auto-loads)**.
-7b. **Before writing PyPTO code** — consult **skill `pypto-general-debug`'s `../../pypto-general-debug/references/DEBUG_GUIDEBOOK.md` §9** for the subsection matching what you are about to write (JIT signatures §9.1, `pypto.view` §9.4, `matmul` §9.19, reductions §9.19, dynamic shapes §9.2, tensor type hints §9.13, Python ops inside JIT §9.14, tile config §9.15). See the full lookup table in **skill `pypto-op-construct` (SKILL.md auto-loads)** → **Stage 5 → Before writing PyPTO code**. Skipping this is non-compliant.
+7b. **Before writing PyPTO code** — consult **skill `pypto-general-debug`'s `../../pypto-general-debug/references/DEBUG_GUIDEBOOK.md` §9** for the subsection matching what you are about to write (JIT signatures §9.1, `pypto.view` §9.4, `matmul` §9.19, reductions §9.19, dynamic shapes §9.2, tensor type hints §9.13, Python ops inside JIT §9.14, tile config §9.15). See `pypto-op-develop/references/module-development.md` for implementation guidance. Skipping this is non-compliant.
 8. **End-to-end validation runner** — **`custom/<operator_name>/test_<operator_name>.py`** (not `pytest` as the default driver). From repo root: **`python custom/<operator_name>/test_<operator_name>.py`** (the test file's bootstrap preamble locates `detailed_tensor_compare` automatically; no PYTHONPATH needed) (see **skill `pypto-op-verify` (SKILL.md auto-loads)**).
 9. **Golden vs PyPTO comparison** — use **`detailed_tensor_compare`** from **skill `pypto-op-verify`'s `../../pypto-op-verify/scripts/detailed_tensor_compare.py`** (`from detailed_tensor_compare import detailed_tensor_compare`); do not substitute a different implementation for the primary report.
 10. **Every output** — **`test_<operator_name>.py`** must compare **all** kernel outputs (tuple/list/dict/nested → every leaf tensor). **Forbidden:** validating only one output when the kernel returns several. Exceptions only in **`custom/<operator_name>/MEMORY.md`** → **blockers** with justification.
@@ -100,7 +100,7 @@ Pause only if one of these is true:
 
 ## Memory file (every turn — Stage 5+ only)
 
-> **Stage 1-4 不写 MEMORY.md。** Planner / Mathematician / Architect / Designer 的产物分别是 `SPEC.md`、`API_REPORT.md`、`<op>_golden.py`（含 golden inventory 头部注释）、`DESIGN.md`、`module_interfaces.yaml`。`MEMORY.md` 在进入 Stage 5 时由 Coder 基于模板创建，此后每轮更新：
+> **Stage 1-4 不写 MEMORY.md。** Planner / Mathematician / Architect 的产物分别是 `SPEC.md`、`API_REPORT.md`、`<op>_golden.py`（含 golden inventory 头部注释）、`DESIGN.md`、`module_interfaces.yaml`。`MEMORY.md` 在进入 Stage 5 时由 Coder 基于模板创建，此后每轮更新：
 
 Update `custom/<operator_name>/MEMORY.md`:
 

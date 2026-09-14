@@ -1,6 +1,6 @@
 import { expect, mock, test } from "bun:test";
 import { $ } from "bun";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -102,5 +102,49 @@ test("init resolves custom under the active directory rather than a broader work
     expect(existsSync(join(worktree, "custom", "smoke_op", ".orchestrator_state.json"))).toBeFalse();
   } finally {
     rmSync(worktree, { recursive: true, force: true });
+  }
+});
+
+test("design output failure blocks progress and retry checks both outputs again", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pypto-design-handoff-"));
+  let complete = false;
+  const calls: string[] = [];
+  const shell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const command = strings.reduce((s, part, i) => s + part + String(values[i] ?? ""), "");
+    calls.push(command);
+    const result = {
+      cwd: () => result,
+      quiet: () => result,
+      nothrow: async () => ({
+        exitCode: command.includes("validate_artifacts.py") && !complete ? 1 : 0,
+        stdout: Buffer.from(command.includes("validate_artifacts.py") ? "interface check" : '{}'),
+        stderr: Buffer.from(""),
+      }),
+    };
+    return result;
+  };
+  try {
+    const initial = await makeTool(directory);
+    await initial.execute({action: "init", stage: 1, max_stage: 7, opDir: "custom/demo"}, {agent: "build"});
+    const statePath = join(directory, "custom/demo/.orchestrator_state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    state.current_stage = 3;
+    state.stage_status["1"] = state.stage_status["2"] = "completed";
+    state.stage_status["3"] = "in_progress";
+    writeFileSync(statePath, JSON.stringify(state));
+    const plugin = await PyptoStateTransitionPlugin({ $: shell, directory, worktree: directory,
+      client: {app: {log: async () => {}}}, project: {} } as never);
+    const transition = plugin.tool?.state_transition as unknown as StateTransitionTool;
+    await expect(transition.execute({action: "complete_stage", stage: 3, opDir: "custom/demo"}, {agent: "build"}))
+      .rejects.toThrow("pypto-op-architect");
+    expect(JSON.parse(readFileSync(statePath, "utf8")).current_stage).toBe(3);
+    complete = true;
+    await transition.execute({action: "complete_stage", stage: 3, opDir: "custom/demo"}, {agent: "build"});
+    expect(JSON.parse(readFileSync(statePath, "utf8")).current_stage).toBe(4);
+    await transition.execute({action: "submit_design", stage: 4, opDir: "custom/demo"}, {agent: "build"});
+    expect(JSON.parse(readFileSync(statePath, "utf8")).current_stage).toBe(4);
+    expect(calls.filter(c => c.includes("validate_artifacts.py"))).toHaveLength(3);
+  } finally {
+    rmSync(directory, {recursive: true, force: true});
   }
 });
