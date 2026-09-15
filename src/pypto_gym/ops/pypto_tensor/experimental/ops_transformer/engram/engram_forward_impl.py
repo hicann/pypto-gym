@@ -41,7 +41,7 @@ def sign_sqrt_clamp(tensor, clamp_value):
 @pypto.frontend.jit(
     pass_options={
         "cube_l1_reuse_setting": {"DEFAULT": 4},
-        "vec_nbuffer_setting": {"DEFAULT": 4, "func11_3": 32, "func8_0": 32},
+        "vec_nbuffer_setting": {"DEFAULT": 4, "func7_3": 32, "func5_0": 32},
     },
     runtime_options={
         "stitch_function_max_num": 64,
@@ -64,6 +64,7 @@ def engram_forward_kernel(
     # attrs
     clamp_value,
     eps,
+    return_cache,
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
     bs, m, h = hidden_states_in.shape
@@ -80,9 +81,10 @@ def engram_forward_kernel(
         pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 128])
         embeddings = embeddings_in[offset:offset + tile]
         value_proj = pypto.matmul(embeddings, proj_weights_value_in, pypto.DT_FP32)
-        pypto.set_vec_tile_shapes(first_axis, h)
-        value_bf16 = pypto.cast(value_proj, pypto.DT_BF16)
-        value_cache_out[offset:offset + tile] = value_bf16
+        if return_cache:
+            pypto.set_vec_tile_shapes(first_axis, h)
+            value_bf16 = pypto.cast(value_proj, pypto.DT_BF16)
+            value_cache_out[offset:offset + tile] = value_bf16
 
         # ── 逐头 key/query/gate/output ──
         for m_idx in pypto.loop(m):
@@ -90,9 +92,10 @@ def engram_forward_kernel(
             pypto.set_cube_tile_shapes([128, 128], [128, 256], [128, 128])
             embeddings = embeddings_in[offset:offset + tile]
             key_proj = pypto.matmul(embeddings, proj_weights_key_in[m_idx], pypto.DT_FP32)
-            pypto.set_vec_tile_shapes(first_axis, h)
-            key_bf16 = pypto.cast(key_proj, pypto.DT_BF16)
-            key_cache_out[offset:offset + tile, m_idx] = key_bf16
+            if return_cache:
+                pypto.set_vec_tile_shapes(first_axis, h)
+                key_bf16 = pypto.cast(key_proj, pypto.DT_BF16)
+                key_cache_out[offset:offset + tile, m_idx] = key_bf16
 
             pypto.set_semantic_label("score")
             pypto.set_vec_tile_shapes(first_axis, h)
@@ -108,13 +111,15 @@ def engram_forward_kernel(
             prod = (key_proj * query_fp32) * gamma_qk
             score = pypto.div(pypto.div(pypto.sum(prod, dim=-1), (rms_k * rms_q),
                                         pypto.PrecisionType.INTRINSIC), sqrt_h, pypto.PrecisionType.INTRINSIC)
-            score_cache_out[offset:offset + tile, m_idx] = score
+            if return_cache:
+                score_cache_out[offset:offset + tile, m_idx] = score
 
             pypto.set_semantic_label("gate")
             pypto.set_vec_tile_shapes(first_axis)
             sign_qk = sign_sqrt_clamp(score, clamp_value)
             gate = sign_qk.sigmoid()
-            gate_cache_out[offset:offset + tile, m_idx] = gate
+            if return_cache:
+                gate_cache_out[offset:offset + tile, m_idx] = gate
             gate_unsq = gate.unsqueeze(-1)
             pypto.set_vec_tile_shapes(first_axis, h)
             out = pypto.cast(gate_unsq * value_proj, pypto.DT_BF16)
@@ -130,6 +135,7 @@ def engram_forward_wrapper(
     gamma_query_in,         # [m, h]       BF16
     clamp_value=1e-6,
     eps=1e-6,
+    return_cache=True,
 ) -> tuple:
     """
     Inputs:
@@ -139,21 +145,39 @@ def engram_forward_wrapper(
       proj_weights_value_in: [de, h]           BF16
       gamma_key_in:          [m, h]            BF16
       gamma_query_in:        [m, h]            BF16
+      return_cache:            推理场景置 False, 跳过 4 个 cache 的分配/写出/回传, 节省开销
 
     Returns:
-      output:                [b, s, m, h]      BF16
-      score_cache_out:       [b, s, m]         FP32
-      key_cache_out:         [b, s, m, h]      BF16
-      value_cache_out:       [b, s, h]         BF16
-      gate_cache_out:        [b, s, m]         FP32
+      5 元组 (output, score_cache_out, key_cache_out, value_cache_out, gate_cache_out)
+      return_cache=True (训练):  后 4 项为反向 cache
+      return_cache=False (推理): 后 4 项为 None (返回签名一致, 调用方无需分支解包)
     """
+    # ── 输入校验: 拦截空 tensor 和非连续 tensor ──
+    for name, t in (("hidden_states_in", hidden_states_in),
+                    ("embeddings_in", embeddings_in),
+                    ("proj_weights_key_in", proj_weights_key_in),
+                    ("proj_weights_value_in", proj_weights_value_in),
+                    ("gamma_key_in", gamma_key_in),
+                    ("gamma_query_in", gamma_query_in)):
+        if t.numel() == 0:
+            raise ValueError(f"engram_forward: input '{name}' must not be empty, got shape {tuple(t.shape)}")
+        if not t.is_contiguous():
+            raise ValueError(f"engram_forward: input '{name}' must be contiguous, got shape {tuple(t.shape)}")
+
     b, s, m, h = hidden_states_in.shape
     de = embeddings_in.shape[-1]
     device = hidden_states_in.device
-    key_cache_out = torch.zeros([b * s, m, h], dtype=torch.bfloat16, device=device)
-    value_cache_out = torch.zeros([b * s, h], dtype=torch.bfloat16, device=device)
-    gate_cache_out = torch.zeros([b * s, m], dtype=torch.float32, device=device)
-    score_cache_out = torch.zeros([b * s, m], dtype=torch.float32, device=device)
+    if return_cache:
+        key_cache_out = torch.zeros([b * s, m, h], dtype=torch.bfloat16, device=device)
+        value_cache_out = torch.zeros([b * s, h], dtype=torch.bfloat16, device=device)
+        gate_cache_out = torch.zeros([b * s, m], dtype=torch.float32, device=device)
+        score_cache_out = torch.zeros([b * s, m], dtype=torch.float32, device=device)
+    else:
+        # 推理场景: 不分配 cache, 传最小 dummy 占位 (return_cache=False 时 kernel 不生成 cache 写出代码)
+        key_cache_out = torch.zeros([1], dtype=torch.bfloat16, device=device)
+        value_cache_out = torch.zeros([1], dtype=torch.bfloat16, device=device)
+        gate_cache_out = torch.zeros([1], dtype=torch.float32, device=device)
+        score_cache_out = torch.zeros([1], dtype=torch.float32, device=device)
     output = torch.zeros([b * s, m, h], dtype=torch.bfloat16, device=device)
 
     engram_forward_kernel(
@@ -170,9 +194,13 @@ def engram_forward_wrapper(
         output,
         clamp_value,
         eps,
+        return_cache,
     )
 
     output = output.view(b, s, m, h)
+    if not return_cache:
+        # 推理场景: 返回签名与训练一致, 4 个 cache 以 None 占位
+        return output, None, None, None, None
     score_cache_out = score_cache_out.view(b, s, m)
     key_cache_out = key_cache_out.view(b, s, m, h)
     value_cache_out = value_cache_out.view(b, s, h)

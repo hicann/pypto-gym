@@ -36,7 +36,7 @@ import pypto
 @pypto.frontend.jit(
     pass_options={
         "cube_l1_reuse_setting": {"DEFAULT": 32},
-        "vec_nbuffer_setting": {"DEFAULT": 32, "func11_1": 2, "func11_2": 8, "func16_2": 4, "func25_0": 8},
+        "vec_nbuffer_setting": {"DEFAULT": 32, "func9_1": 2, "func9_2": 8, "func13_2": 4, "func23_0": 8},
     },
     runtime_options={
         "stitch_function_max_num": 32,
@@ -79,7 +79,7 @@ def engram_backward_kernel(
     if h > 1536:
         first_axis = 4
         pypto.set_pass_options(vec_nbuffer_setting={
-            "DEFAULT": 32, "func11_1": 4, "func11_2": 8, "func16_2": 4, "func25_0": 8})
+            "DEFAULT": 32, "func9_1": 4, "func9_2": 8, "func13_2": 4, "func23_0": 8})
 
     # ── Value weight accumulators (FP32: 跨 head/tile 累加保精度) ──
     pypto.set_vec_tile_shapes(128, 128)  # vec tile (de, h)
@@ -244,6 +244,23 @@ def engram_backward_wrapper(
       grad_gamma_key_out:      [m, h]        BF16
       grad_gamma_query_out:    [m, h]        BF16
     """
+    # ── 输入校验: 拦截空 tensor 和非连续 tensor ──
+    for name, t in (("grad_out_in", grad_out_in),
+                    ("hidden_states_in", hidden_states_in),
+                    ("embeddings_in", embeddings_in),
+                    ("weight_key_in", weight_key_in),
+                    ("weight_value_in", weight_value_in),
+                    ("gamma_key_in", gamma_key_in),
+                    ("gamma_query_in", gamma_query_in),
+                    ("score_cache_in", score_cache_in),
+                    ("gate_cache_in", gate_cache_in),
+                    ("key_cache_in", key_cache_in),
+                    ("value_cache_in", value_cache_in)):
+        if t.numel() == 0:
+            raise ValueError(f"engram_backward: input '{name}' must not be empty, got shape {tuple(t.shape)}")
+        if not t.is_contiguous():
+            raise ValueError(f"engram_backward: input '{name}' must be contiguous, got shape {tuple(t.shape)}")
+
     b, s, m, h = hidden_states_in.shape
     de = embeddings_in.shape[-1]
     device = grad_out_in.device

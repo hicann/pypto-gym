@@ -20,6 +20,10 @@ Run on NPU (直接调用):
     python test_engram_forward.py
     python test_engram_forward.py -k pypto       # 仅直接调用 pytest
 
+推理模式 (return_cache=False, cache 返回 None, 仅比较 value_out):
+    python test_engram_forward.py --no-cache
+    pytest test_engram_forward.py -k pypto       # parametrize 已覆盖 True/False
+
 ACLGraph 入图 (PyPTO + npugraph_ex):
     python test_engram_forward.py --acl
     pytest test_engram_forward.py -k acl
@@ -117,14 +121,18 @@ def _make_case(device, b, s, m_h=4, h=1280, de=512, dtype=torch.bfloat16, seed=4
 # Core case runner: kernel vs benchmark vs FP64 golden
 # ═══════════════════════════════════════════════════════════════════
 
-def run_engram_forward_case(b, s, m_h=4, h=1280, de=512, seed=42):
-    """Run one case. Returns dict of per-output PASS/FAIL booleans."""
+def run_engram_forward_case(b, s, m_h=4, h=1280, de=512, seed=42, return_cache=True):
+    """Run one case. Returns dict of per-output PASS/FAIL booleans.
+
+    return_cache=True (训练): 5 元组输出, 全量三方对比;
+    return_cache=False (推理): wrapper 返回 (value_out, None, ...), 精度比较也只比较 value_out.
+    """
     device = _get_device()
 
     inputs = _make_case(device, b, s, m_h, h, de, seed=seed)
 
-    # Kernel
-    npu_outputs = engram_forward_wrapper(*inputs)
+    # Kernel: 恒返回 5 元组 (return_cache=False 时后 4 项为 None, zip 按 compare_names 截断)
+    npu_outputs = engram_forward_wrapper(*inputs, return_cache=return_cache)
 
     # Benchmark: same inputs at low-precision dtype
     with torch.no_grad():
@@ -138,9 +146,10 @@ def run_engram_forward_case(b, s, m_h=4, h=1280, de=512, seed=42):
     with torch.no_grad():
         golden_outputs = _forward_outputs(*golden_args)
 
+    compare_names = FORWARD_NAMES if return_cache else FORWARD_NAMES[:1]
     results = {}
     for name, nt, bt, gt in zip(
-        FORWARD_NAMES, npu_outputs, benchmark_outputs, golden_outputs
+        compare_names, npu_outputs, benchmark_outputs, golden_outputs
     ):
         result, mare, mere, rmse, small_value = _compare(nt, bt, gt)
         log.info(
@@ -154,6 +163,8 @@ def run_engram_forward_case(b, s, m_h=4, h=1280, de=512, seed=42):
 
 # ═══════════════════════════════════════════════════════════════════
 # Test case matrix: (b, s, m_h, h, de)
+# return_cache 不进矩阵: pytest 由第二层 parametrize 覆盖, 直调 main() 由
+# 命令行 --no-cache 控制 (与 --acl 同款风格)
 # ═══════════════════════════════════════════════════════════════════
 
 CASES = [
@@ -163,10 +174,17 @@ CASES = [
 
 
 @pytest.mark.soc("910")
+@pytest.mark.parametrize("return_cache", [True, False])
 @pytest.mark.parametrize("b,s,m_h,h,de", CASES)
-def test_engram_forward_pypto(b, s, m_h, h, de):
-    """Precision Standard 2.1 three-way comparison for all 5 outputs."""
-    results = run_engram_forward_case(b, s, m_h, h, de)
+def test_engram_forward_pypto(b, s, m_h, h, de, return_cache):
+    """Precision Standard 2.1 three-way comparison.
+
+    return_cache=True: all 5 outputs; return_cache=False (推理): value_out only (cache 为 None).
+    """
+    results = run_engram_forward_case(b, s, m_h, h, de, return_cache=return_cache)
+    expected = FORWARD_NAMES if return_cache else FORWARD_NAMES[:1]
+    assert list(results.keys()) == expected, \
+        f"return_cache={return_cache} should compare {expected}, got {list(results.keys())}"
     failed = [n for n, ok in results.items() if not ok]
     assert not failed, f"Precision check failed for: {failed}"
     log.info("[PRECISION_PASS]")
@@ -178,7 +196,11 @@ def test_engram_forward_pypto(b, s, m_h, h, de):
 
 def main():
     is_acl = "--acl" in sys.argv
-    log.info(f"=== Running {'ACLGRAPH' if is_acl else 'DIRECT'} mode ===")
+    no_cache = "--no-cache" in sys.argv
+    mode = "ACLGRAPH" if is_acl else ("DIRECT (no-cache)" if no_cache else "DIRECT")
+    log.info(f"=== Running {mode} mode ===")
+    if is_acl and no_cache:
+        log.info("  Note: ACLGraph op 签名固定训练模式, --no-cache 被忽略")
     all_pass = True
     for case in CASES:
         b, s, m_h, h, de = case.values
@@ -187,7 +209,7 @@ def main():
             if is_acl:
                 results = run_engram_forward_acl_case(b, s, m_h, h, de)
             else:
-                results = run_engram_forward_case(b, s, m_h, h, de)
+                results = run_engram_forward_case(b, s, m_h, h, de, return_cache=not no_cache)
             ok = all(results.values())
         except Exception as exc:
             log.info("  EXCEPTION in %s: %s", name, exc)

@@ -35,8 +35,10 @@ def engram_forward_wrapper(
     query_gamma: Tensor,        # BF16, shape: (M, Hh)
     clamp_value: float = 1e-6,  # sign-sqrt 门控的 clamp 下界
     eps: float = 1e-6,          # RMSNorm 的 ε
-) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    return_cache: bool = True,    # 推理场景置 False: 不分配/不写出 4 个反向 cache, 后 4 项返回 None
+) -> Tuple[Tensor, ...]:
     # (value_out, score_back, key_back, value_back, gate_back)
+    # return_cache=False 时后 4 项为 None (返回签名一致, 调用方无需分支解包)
 ```
 
 ## 参数说明
@@ -51,16 +53,17 @@ def engram_forward_wrapper(
 | value_proj_weights | Tensor(BF16) | (De, Hh) | Value 投影权重（所有头共享） |
 | key_gamma | Tensor(BF16) | (M, Hh) | Key RMSNorm 缩放系数（逐头） |
 | query_gamma | Tensor(BF16) | (M, Hh) | Query RMSNorm 缩放系数（逐头） |
+| return_cache | bool | - | 推理场景置 False：kernel 不生成 cache 写出代码、wrapper 不分配 cache buffer，节省显存与回传开销，后 4 项 cache 返回 None（默认 True） |
 
 ### 输出参数
 
 | 参数名 | 类型 | 形状 | 说明 |
 |-------|------|------|------|
 | value_out | Tensor(BF16) | (B, L, M, Hh) | 主输出：门控后的 value |
-| score_back | Tensor(FP32) | (B, L, M) | 中间量 score（供反向） |
-| key_back | Tensor(BF16) | (B, L, M, Hh) | 中间量 key（投影后、归一化前） |
-| value_back | Tensor(BF16) | (B, L, Hh) | 中间量 value（投影后、门控前） |
-| gate_back | Tensor(FP32) | (B, L, M) | 中间量 gate（供反向） |
+| score_back | Tensor(FP32) \| None | (B, L, M) | 中间量 score（供反向；return_cache=False 时为 None） |
+| key_back | Tensor(BF16) \| None | (B, L, M, Hh) | 中间量 key（投影后、归一化前；return_cache=False 时为 None） |
+| value_back | Tensor(BF16) \| None | (B, L, Hh) | 中间量 value（投影后、门控前；return_cache=False 时为 None） |
+| gate_back | Tensor(FP32) \| None | (B, L, M) | 中间量 gate（供反向；return_cache=False 时为 None） |
 
 ## 算法原理
 
