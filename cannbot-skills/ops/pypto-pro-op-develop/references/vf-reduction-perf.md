@@ -9,7 +9,7 @@
 - [Per-call overhead and loop form](#call-overhead)
 - [Load-issue cost model — a hypothesis to re-probe, not a fact](#load-cost-model)
 - [Reviewable examples](#reviewable-examples)
-- [Scratch stores need a barrier before the next vector load](#scratch-barrier)
+- [Scratch barriers follow dependency edges, not function boundaries](#scratch-barrier)
 - [Primary source order](#primary-sources)
 
 
@@ -113,28 +113,35 @@ These examples establish API usage only for their recorded environment. They
 are not proof that the same implementation level is fastest for another
 operator or target.
 
-## <a id="scratch-barrier"></a>Scratch stores need a barrier before the next vector load
+## <a id="scratch-barrier"></a>Scratch barriers follow dependency edges, not function boundaries
 
-Any VF vector store into UB scratch that a later vector load reads — inside
-one vector function or across calls that share the scratch — needs
-`vf.mem_bar()` (default `VST_VLD`, the RAW direction) at the producer's
-tail. `auto_mutex` only arbitrates *across* pipes; it orders nothing inside
-the V pipe, so the omission reads clean on aligned shapes and goes stale on
-the shapes that reorder the schedule. The official
-`test_quant_lightning_indexer_vf.py` sample carries six such barriers with
-"ensure X visible to Y's vlds" comments — copy the discipline, not just the
-arithmetic. Cost is ~16 ns per barriered round trip (measured in the scan
-KB): irrelevant to throughput, decisive for correctness. The WAR direction
-needs no barrier (register dependences cover it; the same sample reuses
-scratch without one).
+`@pl.vector_function` expands at call sites, so a helper tail is not a
+synchronization boundary. Add `vf.mem_bar()` only for a concrete UB dependency
+on a reachable expanded path, including later VF calls, loop back-edges, and
+Tile operations after lowering. Record the ordered accesses, overlapping UB
+range/alias, hazard, and lowered operation classes.
+
+Every hazardous path not already ordered by a documented register/dataflow
+guarantee must cross a matching barrier, and every barrier must protect such a
+path; Python variable names do not prove physical same-register ordering.
+Choose the mode from the target API's src→dst classes for the actual RAW,
+WAR, or WAW hazard. Place it between matched accesses with the least
+serialization.
+
+A Tile operation counts only when its lowering supplies the matching access.
+A final VF store consumed only by `pl.store`/MTE3 needs documented cross-pipe
+ordering, such as TileGroup `auto_mutex=True` or explicit pipe synchronization,
+not a VF-local memory barrier. Barrier cost is paid on every dynamic execution; inspect
+generated code and profile it instead of treating the cost as negligible.
 
 ## <a id="primary-sources"></a>Primary source order
 
 1. `$PYPTO_DEVKIT_DIR/docs/pypto_pro/api/` for the installed `pl` and `vf`
    signatures and constraints. In the current documentation layout, verify
    `SIMD-API/vf_computation/data_movement/load_align.md`,
-   `SIMD-API/vf_computation/reduction/reduce_sum.md`, and
-   `SIMD-API/vf_computation/data_movement/store_align.md`.
+   `SIMD-API/vf_computation/data_movement/store_align.md`,
+   `SIMD-API/vf_computation/data_movement/mem_bar.md`, and
+   `SIMD-API/vf_computation/reduction/reduce_sum.md`.
 2. The official examples listed in
    [`../../pypto-pro-material-explore/references/official_samples.md`](../../pypto-pro-material-explore/references/official_samples.md).
 3. A correctness run and profiler capture on the detected target.

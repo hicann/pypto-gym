@@ -294,12 +294,11 @@ exposed as a row-major `[1, R]` tile. In the measured failing design, two
 `auto_mutex` tracks dependencies per `mutex_id`. It does not know the two groups
 alias, so any dependency that crosses the views is invisible to it.
 
-Whether that matters depends on which pipes the two accesses sit on:
+Pipe identity alone does not prove ordering:
 
-* **Write and read both on the vector pipe** — safe. Instructions issue in
-  program order on one pipe, so no barrier is needed and none is missed. This is
-  why the reduction carriers work: they are written by a `dim=0` reduction and
-  read by a broadcast, both vector ops.
+* **The measured Tile-level reduction→broadcast chain** passed without an extra
+  `vf.mem_bar`. This observation does not prove ordering for other Tile chains
+  or explicit `vf.store*`→`vf.load*` UB edges.
 * **DMA writes one view, a vector op reads the other** — silently wrong. The
   MTE2→V barrier is never emitted, and the broadcast reads whatever was at the
   address before the transfer landed.
@@ -323,8 +322,8 @@ pl.mul(t_asm, t_asl, 1.0)                        # vector write to the alias
 pl.expand_mul(t_af, t_af, t_as, dim=0)           # vector read of the DN view
 ```
 
-The copy costs one vector instruction per tile and puts the dependency back
-where the framework can see it — in program order on a single pipe.
+The copy costs one vector instruction per tile; its measured success is not a
+general same-pipe ordering rule.
 
 **Detection.** Aliased groups are declarable but never checked. A build-time
 warning whenever two `make_tile_group` calls overlap in address range and carry
@@ -747,9 +746,8 @@ below is the superseding record.
 - **UB ordering hazards inside a vector function** — store-then-reload under
   #1f above; cross-call scatter ordering in
   [patterns/vec-scatter-owner-model.md](../patterns/vec-scatter-owner-model.md)
-  ("every scatter needs a `vf.mem_bar()`"); the store→load
-  `vf.mem_bar(VST_VLD)` requirement in
-  [patterns/vec-scan-prefix-dependent.md](../patterns/vec-scan-prefix-dependent.md).
+  (match synchronization to the dependent accesses); the store→load ordering
+  requirement in [patterns/vec-scan-prefix-dependent.md](../patterns/vec-scan-prefix-dependent.md).
 - **`vf.update_mask` is issue-expensive; hoist it** — measured table in
   [constraints/vec-alignment-and-rotation.md](../constraints/vec-alignment-and-rotation.md);
   two caveats recorded below.
@@ -836,13 +834,12 @@ Identified by title, per the numbering-collision rule above.
   (D=2 de-interleave 42x, D=128 batched rows 17.6x, D=3..8 gather route
   2.1-3.4x over rerouting; model intervals overlapped, only the on-board
   pair run ranked them).
-- **UB scratch RAW inside one VF or across VF calls needs `vf.mem_bar()`
-  (VST_VLD) at the producer's tail.** `auto_mutex` orders nothing inside the
-  V pipe. A design review that skipped this shipped four unbarriered
-  store→load loops; the authoritative official sample
-  (`test_quant_lightning_indexer_vf.py`) carries six such barriers with
-  visibility comments. Cost ~16 ns/round trip — never the bottleneck,
-  always the correctness.
+- **VF local-memory barriers are dependency-edge scoped, not function-tail
+  scoped.** Follow the canonical
+  [scratch-barrier rule](../../pypto-pro-op-develop/references/vf-reduction-perf.md):
+  expand calls, back-edges, and lowering, then match the UB alias, hazard, and
+  mode. Sample counts and producer-tail placement do not generalize, and
+  `pl.store`/MTE3 requires documented cross-pipe ordering.
 - **Orchestrator-plugin agents defined with OpenCode-style frontmatter
   (`tools:` as a lowercase boolean map) spawn tool-less under Claude Code.**
   The failure is silent and dangerous: the agent cannot touch disk, so it

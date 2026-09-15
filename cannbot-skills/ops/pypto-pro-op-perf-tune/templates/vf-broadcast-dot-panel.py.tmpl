@@ -66,5 +66,5 @@ def accumulate_panel_vf(
         vf.store_align(high_tile + state_row, high, predicate)
         vf.store_align(low_tile + state_row, low, predicate)
 
-    # Required when a following Tile cast or VF call reads these scratch tiles.
-    vf.mem_bar(mode=pl.MemBarMode.VST_VLD)
+    # No default barrier: match VF synchronization to proved UB dependencies on the expanded path.
+    # pl.store/MTE3 requires documented cross-pipe ordering instead.

@@ -242,7 +242,7 @@ Suggested action: <编排器应补充的具体证据；不得按 false_gap/confi
 | 3 | 设备 | 测试设备与 golden 一致 | `grep -c "npu:" custom/<op>/test_{op}.py` 若每个 test 函数各自硬编码不同设备号 → FAIL。test 须导入 `{op}_golden._get_device()` |
 | 4 | 精度标准 | 使用方案A混合容差标准，禁止 assert_close 和自定义 atol/rtol。精度对比必须用 `{op}_golden_cpu`（CPU FP32），禁止用 `{op}_golden`（NPU 同 dtype）做精度对比 | `grep "assert_close" custom/<op>/test_{op}.py` 应返回空；`grep "_assert_precision" custom/<op>/test_{op}.py` 应返回非空；`grep "atol_override" custom/<op>/test_{op}.py` 应返回空；`grep "golden_cpu" custom/<op>/test_{op}.py` 应返回非空。任一不满足 → FAIL |
 | 5 | **未作弊** ⚠️ | **作弊是绝对红线**——立即 FAIL，不得以"精度通过"/"性能达标"或任何授权声明放行。**判定标准是计算实质，不是命名**：核心计算（比较、排序、选择、去重、索引重排等值依赖决策）必须在 kernel 内；纯 Python 标量运算、`torch.empty`、连续张量纯视图和一次 kernel 调用本身不构成作弊，但纯视图仍可能违反 #15 的独立 wrapper 边界。<br><br>**机械规则**：① `@pl.jit` kernel 仅一个；② 当前入口 wrapper 只调用一次 kernel；③ kernel 调用不在 for/while 内；④ 不用 `import pypto`（非 Pro）规避。<br><br>**语义规则**：⑤ host 无值依赖变换；⑥ kernel 直接产出最终输出；⑦ wrapper 不缩减声明的维度/dtype/参数范围；⑧ test 数据分布/value_range 符合 DESIGN.md §8。任一命中即 FAIL |
-| 6 | 性能强制 — buffer | 需要 buffer 切换/轮转的 tile 用 `make_tile_group` | grep `make_tile`（非 group）确认仅用于单次使用 scratch tile（不参与轮转），无 `make_tile` + 手动 `sync_src`/`sync_dst` 管 buffer 轮转的写法；auto_mutex=True 的 tile 上无手动 pipe 级 sync |
+| 6 | 性能强制 — buffer 与同步边 | 需要 buffer 切换/轮转的 tile 用 `make_tile_group`；显式本地内存同步须完整且最小，`vf.mem_bar` 不是 vector-function 默认尾声 | grep `make_tile`（非 group）确认仅用于单次 scratch，无手动 sync 管轮转，且 auto_mutex tile 无手动 pipe sync。按 Develop scratch-barrier 规则展开调用点：每个 barrier 须匹配前后访问、重叠 UB、hazard、lowered class 和 mode；每条未被寄存器/dataflow 保序的危险路径也须被匹配 barrier 覆盖。多余、缺失或 mode 错误 → FAIL；`pl.store`/MTE3 须由匹配的跨 pipe 同步保序。DESIGN 问题报 `design_violation`，仅实现问题报 `perf_violation`；lowering 证据不足不得 PASS。 |
 | 7 | Vector 选择一致性 | 最终实现必须逐项对应 DESIGN.md §1 已冻结的 `vector_selection`；实现偏离有效选择报 `perf_violation`。 |
 | 8 | 运行 | 代码可运行 | 执行 `python custom/<op>/test_{op}.py`，检查 exit code = 0 |
 | 9 | 精度 | 精度通过 | 从运行输出中确认 `PASS`（无 Traceback/Error/Exception），且输出含 `matched_ratio=` 和 `max_abs_error=` 指标行 |
@@ -315,7 +315,7 @@ Suggested action: <对应 mode 的修复或补充动作>
 | `design_violation` | design Skill 定义的 Stage 3 产物错误，包括 Binding/DESIGN、Module 合同、`planned_location` 或 `verification_method` 有误 | 回退 Stage 3 修正对应轮次 |
 | `import_violation` | import 门禁失败（用非 Pro API） | 回退 Stage 4 修复 |
 | `cheating` | host 端做核心计算（值依赖变换/候选筛选/规格砍单/测试输入偷换，含以任何命名伪装者）/多 kernel/wrapper 多次调用 kernel 分担计算/循环调用 kernel 分担计算/规避门禁/未声明实现偏差却产出偏离 DESIGN.md 的代码 | 回退 Stage 4，红线重写 |
-| `perf_violation` | buffer 轮转或 Vector 最终实现偏离已冻结选择 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
+| `perf_violation` | buffer 轮转、显式同步边或 Vector 最终实现偏离已冻结选择 | 回退 Stage 4（或 Stage 3 若 DESIGN 偏离） |
 | `precision_failure` | test 运行无 PASS | 回退 Stage 4 修复 |
 | `runtime_failure` | test 运行报错（非环境） | 回退 Stage 4 修复 |
 | `performance_evidence_invalid` | Stage 5 证据缺失、不可读、不可比、不可复算或彼此矛盾 | 报告不可评估的原始证据；不得建议回退 |

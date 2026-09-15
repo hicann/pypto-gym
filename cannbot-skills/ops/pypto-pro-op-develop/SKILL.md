@@ -112,7 +112,7 @@ L1 的逐 Module 交付只规定开发与验证顺序，不等于运行时整段
 
 ### 5. 填写 kernel 实现
 
-按 Module 把 DESIGN.md §1 的 API 序列翻译为代码，以 §10 校验每一步输入、输出和数据所有权。同步点严格取自 §6；尾块严格取自 §7。所有 dtype 转换、轴变换、padding、索引和计算都在 kernel 内完成。
+按 Module 把 DESIGN.md §1 的 API 序列翻译为代码，以 §10 校验每一步输入、输出和数据所有权。跨核同步点严格取自 §6；尾块严格取自 §7。所有 dtype 转换、轴变换、padding、索引和计算都在 kernel 内完成。VF 局部同步按 [scratch-barrier 规则](references/vf-reduction-perf.md#scratch-barrier)核对完整依赖边，不得默认追加尾部 barrier；冻结设计缺少依赖两端、UB overlap 或 mode 证据时上报疑似 `design_violation`。
 
 实现与任何冻结常量、算法步骤或布局不一致时，不得静默交付。先判断是抄录错误还是设计错误：前者修代码，后者上报疑似 `design_violation`。
 

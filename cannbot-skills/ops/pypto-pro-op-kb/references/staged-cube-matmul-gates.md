@@ -276,9 +276,11 @@ VF has hard limits:
   needs profiler and precision evidence before use;
 - lane masks, tails, and register validity are explicit--tensor `valid_shape`
   does not automatically predicate VF registers;
-- insert `vf.mem_bar(VST_VLD)` where a VF store must become visible to a later
-  VF load or Tile-level consumer; an auto-mutex or cross-core barrier does not
-  replace an intra-AIV memory barrier;
+- insert `vf.mem_bar` only for a proved overlapping dependency on the expanded,
+  lowered path; choose the matching synchronization mode from the target API.
+  A Tile operation counts only when lowering supplies the matching access;
+  `pl.store`/MTE3 uses documented cross-pipe ordering, while a cross-core
+  barrier never replaces a required intra-AIV barrier;
 - AIV subblocks may share MTE resources, so give independent GM traffic to the
   designated lane unless a target probe proves concurrency safe;
 - every launched lane must reach unconditional MIX/event barriers even when its
