@@ -7,6 +7,7 @@
 以下阈值和判定逻辑以本文件为当前可执行事实源：
   - 逐元素通过条件: |actual - golden| <= atol + rtol * |golden|
   - 整体通过条件: matched_ratio >= required_matched_ratio AND max_abs_error <= max_abs_error_limit
+    AND mean_abs_error <= atol AND mean_rel_error <= rtol
   - max_abs_error_limit = max(fixed_limit, 32 * ULP)  ('or' 语义取较大者)
 
 阈值表硬编码，不接受外部参数（防作弊）。
@@ -130,15 +131,26 @@ def _calculate_float_metrics(prepared, threshold, total):
     if not compare_mask.any().item():
         matched_ratio = 1.0
         max_abs_error = 0.0
+        mean_abs_error = 0.0
+        mean_rel_error = 0.0
     else:
         diff = (actual - golden).abs()
         element_pass = diff <= atol + rtol * golden.abs()
         pass_count = (element_pass & compare_mask).sum().item() + match_mask.sum().item()
         matched_ratio = pass_count / total
         max_abs_error = diff[compare_mask].max().item()
+        mean_abs_error = diff[compare_mask].mean().item()
+        golden_abs = golden.abs()[compare_mask]
+        rel_valid = golden_abs > 0
+        if rel_valid.any().item():
+            mean_rel_error = (diff[compare_mask][rel_valid] / golden_abs[rel_valid]).mean().item()
+        else:
+            mean_rel_error = 0.0
     return {
         "matched_ratio": matched_ratio,
         "max_abs_error": max_abs_error,
+        "mean_abs_error": mean_abs_error,
+        "mean_rel_error": mean_rel_error,
         "required_matched_ratio": required_ratio,
         "max_abs_error_limit": max_abs_limit,
         "rtol": rtol,
@@ -147,16 +159,30 @@ def _calculate_float_metrics(prepared, threshold, total):
 
 
 def _format_float_result(metrics):
-    passed = (
-        metrics["matched_ratio"] >= metrics["required_matched_ratio"]
-        and metrics["max_abs_error"] <= metrics["max_abs_error_limit"]
-    )
-    summary = (
-        f"matched_ratio={metrics['matched_ratio']:.6f} "
-        f"(req>={metrics['required_matched_ratio']}), "
-        f"max_abs_error={metrics['max_abs_error']:.6e} "
-        f"(limit={metrics['max_abs_error_limit']:.6e})"
-    )
+    checks = [
+        ("atol", metrics["mean_abs_error"], metrics["atol"], "GT"),
+        ("rtol", metrics["mean_rel_error"], metrics["rtol"], "GT"),
+        ("matched_ratio", metrics["matched_ratio"], metrics["required_matched_ratio"], "LT"),
+        ("max_abs_error", metrics["max_abs_error"], metrics["max_abs_error_limit"], "GT"),
+    ]
+    failed = {
+        name
+        for name, value, thresh, op in checks
+        if (value > thresh if op == "GT" else value < thresh)
+    }
+    passed = not failed
+    lines = [f"precision {'PASS' if passed else 'FAIL'}"]
+    for name, value, thresh, op in checks:
+        if name == "matched_ratio":
+            val_s, thr_s = f"{value:.4f}", f"{thresh:.4f}"
+        else:
+            val_s, thr_s = f"{value:.3e}", f"{thresh:.3e}"
+        lines.append(
+            f"    {name:<16}: {val_s:<10}thresh={thr_s:<10}check={op}"
+            + ("  [CHECK_FAILED]" if name in failed else "")
+        )
+    lines.append("-" * 100)
+    summary = "\n".join(lines)
     return passed, summary, metrics
 
 
