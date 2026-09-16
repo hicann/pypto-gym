@@ -16,12 +16,13 @@
 | `make_tile` 合法用途 | 仅单次 scratch tile（写入一次、读取一次、不参与轮转循环，如一次性中间结果暂存、不迭代的归约标量结果）|
 | 禁止 | `make_tile` + 手动 `sync_src`/`sync_dst` 管理轮转 |
 
-**同步分工**（auto_mutex 管核内，跨核另用手动 API，命名空间独立）：
+**同步分工**（auto_mutex 管核内；跨核由已选的自动或手动 CV 流水机制管理，命名空间独立）：
 
 | 范围 | 机制 | 标识符 | 说明 |
 |------|------|--------|------|
 | 核内 pipe 间 | `auto_mutex=True`（框架自动插 `mutex_lock`/`mutex_unlock`） | `mutex_id` ∈ [0,31] | 覆盖 `make_tile_group` tile 的 buffer 互斥；禁止在其上叠加手动 `sync_src`/`sync_dst`，否则依赖环导致 AICore timeout 死锁 |
-| 跨核（AIC↔AIV） | `set_cross_core`/`wait_cross_core`（手动） | `event_id` ∈ [0,16) | auto_mutex 不覆盖跨核依赖 |
+| 跨核（AIC↔AIV），自动流水 | 跨核TileGroup的`fwd_ids`/`bwd_ids`，框架生成`set_cross_core`/`wait_cross_core` | `event_id` ∈ [0,16) | 适用约束和配置以目标版本`auto_parallel_pipeline.md`为准，须复核生成代码 |
+| 跨核（AIC↔AIV），手动流水 | 显式`set_cross_core`/`wait_cross_core` | `event_id` ∈ [0,16) | auto_mutex 不覆盖跨核依赖；事件位置和pipe按实际数据操作设计 |
 
 > `mutex_id` 与 `event_id` 是两个独立命名空间（FA 样例中数值重叠共存无报错），不构成冲突。
 

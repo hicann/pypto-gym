@@ -126,6 +126,10 @@ description: 设计 PyPTO-Pro 算子的 tile 级执行方案。当 SPEC、Golden
 - 每个Vector步骤唯一的`vector_selection`；已选KB模板明确要求使用`pl.*`时选择`tile_op`，否则选择`vf`
 - 涉及非线性函数、窄dtype量级增长或长轴归约时的数值安全边界和处理方案
 
+> **A5 L0C→UB数据通路**：在950/A5上，Vector需要继续处理Cube结果时，先查阅目标版本`memory_data_movement/move.md`和`basic_data_structures/AccToVecMode.md`，确认`pl.move`是否支持当前MemorySpace、dtype、layout、shape和尾块。支持时优先从Acc(L0C)直接搬到Vec(UB)：两个Vector subblock能够独立处理时，沿非归约轴拆分并尽量均衡负载；存在归约依赖时，使用单个Vector subblock，或在R5/R6明确设计部分结果的合并与同步。不支持时改用GM workspace通路。
+>
+> DESIGN.md §1须记录所选数据通路、`AccToVecMode`、两个Vector subblock的数据范围和尾块处理；片上容量在R3统一校验。
+
 EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后再确定调用链；接口无法满足算子语义时，回退本轮重新选择API。同步API在R6设计。
 
 **输出**：DESIGN.md §1（引用`api_mapping_and_tile_planning.md`，给出Module级API调用序列和逻辑Tile清单）
@@ -153,36 +157,9 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 **核心问题**：每块 tile 放在哪个内存空间的哪个地址？如何分配管理？
 
-**内存空间**：tile 按 R2 确定的 `target_memory` 落到不同片上空间，**每个空间独立寻址、独立限容**——地址各自从 `0x00000` 起算，同一 addr 值在不同空间是不同物理位置。
+> 📌 **权威依据（必读）**：读取[片上空间布局](references/onchip_memory_layout.md)，按文档中的统一流程完成地址分配、对齐、复用和逐空间容量检查。该文档同时说明A5双AIV的UB核算、L0C→UB通路超限时的处理、MX scale地址映射和L1 Bank检查；容量值以当前`EXPLORE_REPORT.md` §7为准。
 
-- `Vec`(UB)：vector 计算用；纯 vector 算子只涉及此空间（`TileType.md` 参数范围表：`Vec` 对应 UB）
-- `Mat`(L1)、`Left`(L0A)、`Right`(L0B)、`Acc`(L0C)：含 cube/matmul 的算子涉及。`matmul` 的操作数内存空间是**硬性约束**——`lhs` 只能 `Left`(L0A)、`rhs` 只能 `Right`(L0B)、`dst` 只能 `Acc`(L0C)，放错空间即报错
-- 典型数据流：`GM --load--> L1(Mat) --move--> L0A/L0B --matmul--> L0C(Acc)`，结果既可从 Acc 直接 `store` 回 GM，也可先 `move` 到 UB 再后处理/store
-
-**流程**：
-
-片上地址范围与容量检查的规范规则以本 R3 为准；R8 检查项与 DESIGN 模板 §9 只引用本 R3 并记录检查结果。
-
-1. 按 `target_memory` 把 R2 的 tile 分组，**每个内存空间各自从 `0x00000` 开始**连续排列地址，不重叠。UB/L1 首地址须 32 字节对齐；L0A/L0B/L0C 的对齐以对应 API 文档 / 官方指定算子为准。
-2. 标注同地址不同 layout 的 tile 对（如有）
-3. 分配方式应使用 `make_tile_group` + `auto_mutex`：TileGroup提供多槽buffer，代码通过`next()`或显式下标选择槽位，`auto_mutex`根据mutex信息管理执行域内部的跨Pipe依赖（见上方「实现约束」）。
-4. **逐空间**验证最大排他结束字节不超过容量，并用半开区间检查生命周期重叠的 tile 地址不相交。容量值以 EXPLORE_REPORT §7 探测记录为准——§7 必含 UB 容量；含 cube 时须补探 L1/L0 各空间容量（§7 未记录则回退 material-explore 补测，不得在此臆测数值）
-5. **double buffer 地址规划**：`make_tile_group` 的 buffer 数 > 1 时地址占用按倍数放大，须在地址表中显式反映（buffer 数、受影响 tile、是否需 PONG 地址）。buffer 数取值参照官方指定算子中相似算子的实际配置
-
-**输出**：片上地址映射表（**按内存空间分节**，纯 vector 算子只有 UB 一节）：
-
-| 内存空间 | 用途 | 变量名 | shape | dtype | layout | 起始字节 | 每槽字节数 | 槽位数 | 生命周期 | 结束字节（不含） | 备注 |
-|---------|------|--------|-------|-------|--------|---------|-----------:|------:|----------|------------------|------|
-| UB(Vec) | 输入暂存 | `tile_a` | `[64,128]` | FP32 | `—` | `0x00000` | 32768 | 2 | 轮转 | `0x10000` | 两槽连续排列 |
-| L1(Mat) | A 矩阵暂存 | `a_l1` | `[128,128]` | FP16 | `—` | `0x00000` | 32768 | 1 | 驻留 | `0x08000` | ... |
-| L0C(Acc) | 累加结果 | `acc` | `[128,128]` | FP32 | `—` | `0x00000` | 65536 | 1 | 驻留 | `0x10000` | Acc FP32 自动 fractal |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
-
-> `—` 表示 layout 列留空即用该内存空间的默认布局（Vec 无约束；其余空间见 `TileType.md` 默认布局表）；非默认布局显式写出，具体值以 API 文档为准。连续槽位的结束字节为`起始字节 + 每槽字节数 × 槽位数`；槽位不连续时逐槽列出起止字节，不能用一行包成连续范围。
-
-**各空间地址高水位**（逐空间列出，无对应 tile 的空间可省略）:
-- UB(Vec): {max(结束字节（不含）)} / {§7 UB 容量} = {百分比}
-- L1(Mat) / L0A / L0B / L0C（如有 cube）: {max(结束字节（不含）)} / {§7 对应容量} = {百分比}——各空间容量来自 §7 探测记录
+**输出**：DESIGN.md §3。按模板填写逐槽位地址表、逐空间容量结果和地址复用依据。布局失败时按参考文档给出的顺序回退R2或R1。
 
 ---
 
@@ -190,12 +167,16 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 **核心问题**：R0确定的Module如何放入Section，循环嵌套、跨Tile状态和分核信息应如何组织？
 
-> 📌 **权威依据（必读）**：读取[循环与Section结构设计](references/loop_design.md)。R4不重新划分Module，负责把R0的Module落到具体Section代码结构，并确定结果单元、循环层次、跨Tile状态生命周期、动态循环上界和分核信息的获取位置。若`is_fusion=true`，同时读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)，确定第一阶段每次交给下一阶段的数据范围、产生下一份数据的循环索引和连续编号递增位置。多阶段链按Cube/Vector交替顺序列出，计算各阶段延迟、启动时序以及最后一个新任务进入后需要继续执行的轮数。
+> 📌 **权威依据（必读）**：读取[循环与Section结构设计](references/loop_design.md)。R4不重新划分Module，负责把R0的Module落实到Section与循环结构。融合算子还须读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)和`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md`：满足自动流水文档的全部“使用约束”时推荐自动流水；任一约束不满足时，记录具体条款并采用手动流水。两种方式都要设计任务编号、阶段关系、启动时序、稳定运行时序、最后一个任务进入后的剩余阶段执行时序，以及缓冲生命周期。
+
+> **CV并行流水必须在Stage 3/R4完成设计，并在Stage 4实现。** Stage 5不得新增流水或切换自动/手动方案；实测表明必须修改流水设计时，返回Stage 3修订DESIGN。
 
 **输出**：填入模板 §4：
 - 参考样例路径与可复用结构点
 - 本算子的Section代码结构、结果单元、跨Tile状态生命周期、动态循环上界、各Module内的循环嵌套和分核信息的获取位置
 - `is_fusion=true`时补充第一阶段每次交给下一阶段的数据范围、产生下一份数据的循环索引、`task_id`递增位置、交替阶段链、候选预加载轮数、逐阶段delay计算表，以及启动、稳定运行和末尾剩余阶段的执行时序；使用上下文缓冲时补充字段、深度和索引
+- `is_fusion=true`时记录`pipeline_impl=auto/manual`及选择依据；具体配置和同步字段按模板填写
+- `is_fusion=true`时逐一列出阶段链中的每一处 Cube↔Vector 交接，分别检查同一逻辑 Block 内 1 个 Cube 与 2 个 Vector subblock 的数据分配，并记录两个 subblock 各自处理的范围和工作量
 - 引用`loop_design.md`，说明采用的Section和循环组织方式
 
 ---
@@ -210,6 +191,9 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 - 分核方案
 - host 侧 `num_cores` 计算式
 - **launch 次数**：交付必须恰好启动 1 次 kernel；写明唯一 kernel 与 wrapper 调用点。若现有设计做不到，记录客观证据并返回 `failure_category: design_violation`，不得把多 launch 作为交付 fallback
+- A5 CV 融合路径中两个 Vector subblock 的分工：切分轴、各自处理的索引范围、尾块归属和工作量；没有使用两个 subblock 时说明接口、数据量或依赖方面的原因
+
+> **A5的1 Cube : 2 Vector分工**：逐一检查每处Cube↔Vector交接。两个Vector subblock能够独立处理时，沿非归约轴均衡切分，并记录各自的数据范围和尾块；存在归约依赖时，优先改用非归约轴切分或由一个subblock完成归约。确需拆分归约轴时，在GM保存部分结果，并在R6设计同步和最终合并。
 
 > **TensorList 输入（`is_list: true`）：launch 次数必须是 1。**
 > 逐元素 launch 是这类算子最常见也最贵的设计错误——它们的基线是一次融合调用，
@@ -236,16 +220,17 @@ EXPLORE_REPORT.md §3只用于提供候选映射。逐项核对API参考页后�
 
 ### R6：核间同步（cross_core）
 
-**核心问题**：Cube与Vector之间，或不同Block/subblock之间存在数据依赖时，如何使用手动跨核事件和多槽缓冲，让Cube与Vector同时处理不同编号的数据？
+**核心问题**：Cube与Vector之间，或不同Block/subblock之间存在数据依赖时，如何使用自动流水同步或手动跨核事件及多槽缓冲，让Cube与Vector同时处理不同编号的数据？
 
-> 📌 **权威依据（必读，官方标准）**：读取[跨核同步](references/cross_core_synchronization.md)。若`is_fusion=true`，同时读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)。根据阶段延迟和共享TileGroup槽位放置`set_cross_core`/`wait_cross_core`，并记录槽位的初始可写状态、稳定运行时的复用顺序和最后一批数据完成消费的方式。事件方向、pipe、`sync_mode`和`event_id`以跨核同步文档及目标分支当前实现为准。
+> 📌 **权威依据（必读，官方标准）**：读取[跨核同步](references/cross_core_synchronization.md)，融合算子同时读取[CV融合算子手动预加载流水设计](references/cv_fusion_pipeline.md)。流水方式沿用R4结论：自动流水配置TileGroup的`fwd_ids`/`bwd_ids`并复核`pipeline_generated.py`；手动流水按共享槽位显式放置`set_cross_core`/`wait_cross_core`。两种方式都要说明槽位的初始可写状态、稳定复用顺序和最后一批数据的消费完成条件。
 
 **DESIGN.md §6须记录的设计内容**：
 - 是否涉及cross_core；Cube与Vector之间无数据依赖，并且不存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`或`UNICAST_BLOCK`处理的依赖时，填写“不涉及cross_core”。不能仅凭Section数量判定
-- `is_fusion=true`时记录手动预加载流水：Cube/Vector之间传递数据的连续编号、各阶段延迟、预加载轮数、最后一个新任务进入后两侧需要继续执行的轮数、跨核TileGroup的就绪/释放事件和初始释放事件位置；使用上下文缓冲时同时记录其深度与索引
+- `is_fusion=true`时记录所选自动或手动预加载流水：Cube/Vector之间传递数据的连续编号、各阶段延迟、预加载轮数、最后一个新任务进入后两侧需要继续执行的轮数、跨核TileGroup的就绪/释放关系和初始可写状态；自动方式记录`fwd_ids`/`bwd_ids`及生成代码复核结果，手动方式记录实际事件位置；使用上下文缓冲时同时记录其深度与索引
 - 生产者、消费者和共享数据；共享数据是多槽TileGroup时，补充缓冲深度和两侧的槽位访问表达式
-- 手动同步方案的同步点表：方向、共享缓冲、槽位表达式、set/wait位置、pipe、`sync_mode`和`event_id`
+- 同步方案表：自动方式记录方向、共享缓冲、槽位表达式、`fwd_ids`/`bwd_ids`和生成代码中的set/wait；手动方式记录方向、共享缓冲、槽位表达式、set/wait位置、pipe、`sync_mode`和`event_id`
 - 循环复用缓冲时的正向与反向同步，以及最后一次消费完成后生产者侧的等待位置
+- 两个Vector subblock之间存在结果依赖时，记录GM部分结果、最终合并者和workspace复用条件；若使用`INTER_SUBBLOCK`屏障，具体参与者和调用规则以目标版本同步文档及官方样例为准
 
 **完成设计后校验**：先核对生产者、消费者和就绪/释放事件是否按同一表达式选择物理槽位，再逐槽位、逐轮次核对set/wait是否一一对应。检查动态下标是否始终落在`[0, depth)`，以及零次、一次、整除和尾块分支中的事件是否都能配对，并确认生产者结束前已经等待最后一次消费完成。任一项不满足时，重新设计本轮同步方案。
 
@@ -305,7 +290,8 @@ EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不�
 | **准确性** | API 调用链是否完整实现了数学公式的每一步 | 回到 R1 补充 |
 | | §4 已参照官方样例确定循环结构（含参考样例路径与结构说明） | 回到 R4 补充 |
 | | 数据依赖是否正确（Module 顺序、sync 位置） | 回到 R0 或 R4 调整 |
-| | CV融合是否给出Cube/Vector之间传递数据的连续编号、交替阶段链、逐阶段delay计算、上下文缓冲、启动时序、末尾剩余阶段时序，以及稳定运行时Cube与Vector的重叠 | 回到 R4/R6 重构流水 |
+| | CV融合是否依据自动流水“使用约束”选择自动或手动方案，并完整设计任务编号、阶段关系、缓冲、启动时序、稳定运行时序和最后一个任务进入后的剩余阶段执行时序 | 回到 R4/R6 重构流水 |
+| | A5 CV融合是否逐一检查Cube↔Vector交接的1:2分工；存在归约依赖时是否给出部分结果与合并方案 | 回到 R4/R5/R6 修正 |
 | | dtype 选择是否能保证精度（如 matmul 累加用 FP32） | 回到 R2 调整 |
 | | 归约类 API 的 `[M,1]`/`[1,N]` 输出已设合适的 `layout` | 回到 R2 补 layout |
 | **泛化性** | 目标测试 case（≥4，单轴算子按例外）已按 tile 切分确定具体 shape，且逐个验证 design 可适配（R7.5 已完成） | 回到 R7.5 补充 / 回溯适配不了的轮次 |
@@ -314,7 +300,7 @@ EXPLORE_REPORT §4中的官方指定算子用于核对完整调用方式，不�
 | | 超越函数（exp/log/sqrt 等）在目标 dtype 范围内无溢出（§1 数值安全边界已分析） | 回到 R1 补溢出防护 |
 | | 窄 dtype（fp16/bf16）下的平方、同量级相乘、长轴累加，其**中间值**量级上界在该 dtype 范围内；若不在，升位宽的 `vf.astype` 已落在产生增长的那一步之前而非归约之前（§1 数值安全边界已分析） | 回到 R1 调整 cast 位置 / 回到 R2 改累加 dtype |
 | | 跨 tile 状态是否正确初始化和持久化 | 回到 R0 或 R1 修正 |
-| | cross_core 同步方案是否正确（存在跨执行域或跨Block/subblock依赖时）：手动预加载流水的阶段延迟、上下文槽位、就绪/释放事件、初始释放事件、同步点和event_id是否参照权威文档与当前实现 | 回到 R4/R6 修正 |
+| | cross_core 同步方案是否正确（存在跨执行域或跨Block/subblock依赖时）：自动或手动预加载流水的阶段延迟、上下文槽位、就绪/释放关系、初始可写状态、同步点和event_id是否参照权威文档与当前实现；自动方式是否复核生成代码 | 回到 R4/R6 修正 |
 | **一致性** | R0-R7 各轮输出是否存在矛盾（如 API 需要的 tile 在 R2 中缺失） | 回溯到矛盾产生的轮次修正 |
 | | 证据链是否完整（每个决策都有来源） | 补充缺失的文档引用或官方指定算子路径 |
 | | R3 片上地址范围与逐空间容量检查是否全部通过 | 回到 R3 重排地址 / R2 缩 tile |

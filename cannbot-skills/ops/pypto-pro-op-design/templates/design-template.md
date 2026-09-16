@@ -161,7 +161,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 > 地址使用半开区间`[起始字节, 结束字节)`。连续槽位的结束字节为`起始字节 + 每槽字节数 × 槽位数`；槽位不连续时逐槽列出起止字节。生命周期重叠的 tile 地址不得相交。
 
-**各空间地址高水位**（逐空间列出，无对应 tile 的空间可省略）:
+**各空间最高地址上界**（逐空间列出，无对应 tile 的空间可省略）:
 - UB(Vec): {max(结束字节（不含）)} / {EXPLORE_REPORT §7 UB 容量} = {百分比}
 - L1(Mat) / L0A / L0B / L0C（如有 cube）: {max(结束字节（不含）)} / {EXPLORE_REPORT §7 对应容量} = {百分比}——容量取 §7 探测记录，§7 未记录则回退 material-explore 补测，不臆测
 
@@ -207,12 +207,15 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 > 同步点见 §6（R6），尾块处理见 §7（R7）。
 
-### CV 手动预加载流水设计（`is_fusion=true`时必填）
+### CV 并行流水设计（`is_fusion=true`时必填）
 
-> 依据[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)。先确定第一阶段每次交给下一阶段的数据范围，以及哪些循环索引会产生下一份数据，再为这些数据分配连续编号，并展示稳定运行时Cube与Vector同时处理不同编号数据的时序。
+> 当前框架提供自动 CV 并行流水功能。读取`$PYPTO_DEVKIT_DIR/docs/guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md`并逐项核对“使用约束”：全部满足时推荐自动流水；任一不满足时，记录具体条款并按[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)采用手动流水。两种方式都先确定第一阶段每次交给下一阶段的数据范围，以及哪些循环索引会产生下一份数据，再为这些数据分配连续编号，并展示稳定运行时Cube与Vector同时处理不同编号数据的时序。流水结构必须在编排 Stage 3 冻结，不得留到 Stage 5 才引入。
 
+- **流水实现**: {`auto` / `manual`；逐项列出目标版本自动流水“使用约束”的核对结果；选择manual时写明不满足的具体条款}
+- **自动流水配置**: {不涉及 / stage函数及顺序；跨核TileGroup的`fwd_ids`/`bwd_ids`；串行精度验证配置（本次指定版本为`PipelineConfig(preload=0)`，版本变化时以缓存文档为准）；候选与初始`preload`；`pipeline_generated.py`复核位置}
 - **流水编号**: {第一阶段每次交给下一阶段的数据范围；共同确定该数据位置的循环索引；`task_id`递增位置；Cube/Vector两侧的编号关系}
 - **阶段链**: {按声明顺序列出阶段及所属Cube/Vector执行域；相邻同执行域计算的合并方式}
+- **逐交接的1:2分工**: {逐一列出每一处Cube↔Vector交接；该处subblock 0和1分别处理的数据范围、尾块和工作量；存在依赖时引用§5/§6的GM合并与同步方案}
 - **阶段延迟表**: {`preload`取值；每个阶段所属Section、同执行域上一个阶段、delay计算式、执行条件和处理的数据编号}
 - **上下文循环缓冲（按需）**: {迭代信息能直接由`task_id`推导时填“不使用”；否则记录字段、深度、当前写槽、各阶段读槽表达式和信息生存期}
 - **预加载轮数与缓冲深度**: {候选预加载轮数、计划采用的轮数和性能依据；各共享数据与状态缓冲的深度及推导过程}
@@ -231,13 +234,15 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 - **host 侧 block_dim**: {仅Vector Kernel使用`vector_core_num`，Cube或混合Kernel使用`core_num`}；`total_tasks > 0` 时 `block_dim = min(max_blocks, total_tasks)`；`total_tasks = 0` 时仅允许经目标验证的 `block_dim=1` 空工作单次启动，否则报 `design_violation`，禁止 `block_dim=0` 或跳过启动
 - **交付 launch 合同**: 恰好 1 次；唯一 kernel `{kernel_symbol}` 由 `{wrapper_symbol}` 在 host 循环外调用一次；若做不到，记录证据并返回 `failure_category: design_violation`，不得填写多 launch fallback
 - **TensorList ABI（不涉及则填 N/A）**: {冻结合同中的有限 `L_MAX` 及 `B_MAX=L_MAX`；多个 TensorList 形参间的长度关系；每槽有限元素数上限 `N_MAX` 对所有 `DT_INT32` 派生式的安全性；只生成一组 `B_MAX` 个固定槽位，每个 TensorList 形参逐槽展开为独立 Ptr 参数；wrapper 对真实槽位的校验和 `n_i=0` 填充；连续且 rank 无关的适用依据，或非连续/rank 相关情形所需的独立有界 ABI；地址值不进入 tiling 数据}
+- **A5 CV 的两个 Vector subblock 分工**: {不涉及 / 切分轴；subblock 0和1各自的索引范围、尾块归属和工作量；未同时使用两个subblock的原因}
+- **两个 Vector subblock 的结果依赖**: {无依赖，可独立处理 / 存在归约等依赖：为何不能改切非归约轴、GM部分结果的shape与地址、最终合并者；同步细节见§6}
 
 ---
 
 ## §6 核间同步（R6 输出）
 
 > 带非空`mutex_ids`的TileGroup由`auto_mutex`管理执行区内部的跨Pipe依赖；未配置`mutex_ids`时，按§2记录的数据路径手动插入核内同步。Cube与Vector之间的数据交接使用`set_cross_core`/`wait_cross_core`，具体规则见[跨核同步](../references/cross_core_synchronization.md)。
-> CV融合的手动编号错位、通用多阶段delay计算、预加载和末尾剩余阶段执行规则见[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)。跨核事件放在共享缓冲区的实际第一次读、最后一次写和槽位复用位置。
+> 满足目标版本`auto_parallel_pipeline.md`全部“使用约束”时推荐自动流水，由框架生成核间同步并复核`pipeline_generated.py`；否则按[CV融合算子手动预加载流水设计](../references/cv_fusion_pipeline.md)显式设计同步。手动流水的编号错位、通用多阶段delay计算、预加载和末尾剩余阶段执行规则也见该文档。跨核同步须对应共享缓冲区的实际第一次读、最后一次写和槽位复用位置。
 >
 > **条件性**：Cube与Vector之间有数据依赖，或存在需要`INTER_BLOCK`、`INTER_SUBBLOCK`、`UNICAST_BLOCK`处理的依赖时填写；否则填“不涉及cross_core”。Section数量本身不是判断依据。
 
@@ -245,7 +250,7 @@ SCALE = 1.0 / sqrt({D_logical})  # 缩放因子（若算子有 scale 步骤）
 
 - **是否涉及 cross_core**: {是 / 不涉及}
 - **依据**: {依赖是否跨Cube/Vector执行域或跨Block/subblock；若跨Block/subblock，说明为何不能用普通核内同步或算法重构处理}
-- **流水实现**: {`manual_preload`；列出阶段延迟表、最后一个新任务进入后两侧还需执行的轮数和稳定运行时序的引用位置；使用上下文缓冲时补充其深度}
+- **流水实现**: {`auto` / `manual`；列出阶段延迟表、最后一个新任务进入后两侧还需执行的轮数和稳定运行时序的引用位置；自动方式补充`fwd_ids`/`bwd_ids`及生成代码复核结果，手动方式补充事件位置；使用上下文缓冲时补充其深度}
 
 > 若"不涉及"，以下各表填"不涉及"或省略。
 
@@ -349,7 +354,7 @@ pl.set_validshape(tile_a, [valid_m, valid_n])  # 运行时告知硬件
 |--------|------|------|
 | R0-R7 输出无矛盾 | ✅ / ❌ | {交叉验证} |
 | 所有决策有证据支撑 | ✅ / ❌ | {证据链检查} |
-| R3 片上地址范围与逐空间容量检查 | ✅ / ❌ | 规则见 `pypto-pro-op-design` Skill「R3：片上空间布局」；证据见本文 §3 的地址表、地址高水位和容量来源；❌ 时回 R3 重排地址 / R2 缩 tile |
+| R3 片上地址范围与逐空间容量检查 | ✅ / ❌ | 规则见[片上空间布局](../references/onchip_memory_layout.md)；证据见本文 §3 的地址表、最高地址上界和容量来源；❌ 时回 R3 重排地址 / R2 缩 tile |
 | `tile_dims` 使用时已关注大 stride 对性能的影响 | ✅ / ❌ | {回 R2 调整布局} |
 | 条件性检查（若 §6 填“不涉及cross_core”，确认不存在Cube↔Vector或跨Block/subblock的数据依赖） | ✅ / ❌ | {R0 重新评估} |
 
