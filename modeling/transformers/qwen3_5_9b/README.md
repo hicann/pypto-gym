@@ -5,7 +5,7 @@
 | HuggingFace | Qwen/Qwen3.5-9B |
 | 权重目录 | 由 `MODEL_PATH` 环境变量 / `--model-path` 指定（Qwen3.5-9B 权重目录） |
 | 代码来源 | transformers 包 (built-in，使用 qwen3_5 架构) |
-| 运行命令 | `python3 ask_Qwen3.5-9B.py --model-path <weights>` |
+| 运行命令 | `python3 scripts/ask_Qwen3.5-9B.py --model-path <weights>` |
 | transformers 版本 | 5.8.1（实测运行 / 与上方环境信息一致） |
 | 代码位置 | 运行时：transformers 内置 `transformers.models.qwen3_5`；归档快照：`src/pypto_gym/transformers/qwen3_5_9b/{modeling,configuration}_qwen3_5.py` |
 | 修改内容 | 运行时由 `ask_Qwen3.5-9B.py` 经 `sys.modules` 注入 + monkey-patch 接入 PyPTO（built-in `qwen3_5` 架构，`config.json` 无 auto_map）。归档快照在内置 qwen3_5 modeling 中嵌入同一 chunk 注入钩子（含 `query.device.type == "npu"` 守卫）+ 华为 NOTICE，供参考；保留上游相对导入，未改绝对导入 |
@@ -42,10 +42,10 @@ qwen3_5_9b_pto_kernels`。该适配层包预期部署在权重目录下
 
 ```bash
 # Baseline
-python3 ask_Qwen3.5-9B.py --model-path <weights_dir>
+python3 scripts/ask_Qwen3.5-9B.py --model-path <weights_dir>
 
 # PyPTO fused
-python3 ask_Qwen3.5-9B.py --model-path <weights_dir> --use_pypto
+python3 scripts/ask_Qwen3.5-9B.py --model-path <weights_dir> --use_pypto
 ```
 
 Benchmark:
@@ -54,7 +54,7 @@ Benchmark:
 # 整网 e2e GREEDY token generation（prefill→首 token 延迟 + decode tok/s + 峰值显存）
 # 1 次 warmup generate + 1 次 measured generate；prompt "你好，请介绍一下自己。"，output_length=100
 # 同时跑：自然 prompt（~16 tok）与合成 256-token 输入；逐 token streamer 拆分 prefill 与 decode
-python3 bench_qwen3_5_9b.py --model-path <weights> [--use_pypto]
+python3 scripts/bench_qwen3_5_9b.py --model-path <weights> [--use_pypto]
 bash bench_qwen3_5_9b.sh   # eager + PyPTO 两阶段, 写 bench_baseline.json / bench_pypto.json
 ```
 

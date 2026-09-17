@@ -66,10 +66,10 @@ bash $REPO_ROOT/cannbot-skills/model/pypto-fused-op-integration/scripts/restore_
 
 ```bash
 # 基础推理
-python3 ask_Phi-3-mini-4k-instruct.py --model-path "$MODEL_PATH" --device 0 --prompt "你好"
+python3 scripts/ask_Phi-3-mini-4k-instruct.py --model-path "$MODEL_PATH" --device 0 --prompt "你好"
 
 # PyPTO 融合算子模式
-python3 ask_Phi-3-mini-4k-instruct.py --model-path "$MODEL_PATH" --device 0 --use_pypto --prompt "你好"
+python3 scripts/ask_Phi-3-mini-4k-instruct.py --model-path "$MODEL_PATH" --device 0 --use_pypto --prompt "你好"
 
 # 基准测试
 PHI3_MODEL_PATH="$MODEL_PATH" bash bench_Phi-3-mini-4k-instruct.sh
