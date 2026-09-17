@@ -41,15 +41,15 @@ python3 ../download_hf_model.py --model-id MiniMaxAI/MiniMax-M3 --output-dir "$M
 python3 ../runtime_patch.py --model-family minimax_m3 --model-path "$MODEL_PATH"
 
 # inference (variant selects the model + activation)
-MODEL_PATH=/path/to/MiniMax-M2.7 python3 ask_minimax.py --variant m27 --device <NPU>
-MODEL_PATH=/path/to/MiniMax-M3   python3 ask_minimax.py --variant m3  --device <NPU> --use_pypto
+MODEL_PATH=/path/to/MiniMax-M2.7 python3 scripts/ask_minimax.py --variant m27 --device <NPU>
+MODEL_PATH=/path/to/MiniMax-M3   python3 scripts/ask_minimax.py --variant m3  --device <NPU> --use_pypto
 
 # E2E generation benchmark (single die)
-MODEL_PATH=/path/to/MiniMax-M2.7 python3 bench_minimax.py --variant m27 --device <NPU> --max-layers 2
-MODEL_PATH=/path/to/MiniMax-M3   python3 bench_minimax.py --variant m3  --device <NPU> --max-layers 6 --use_pypto
+MODEL_PATH=/path/to/MiniMax-M2.7 python3 scripts/bench_minimax.py --variant m27 --device <NPU> --max-layers 2
+MODEL_PATH=/path/to/MiniMax-M3   python3 scripts/bench_minimax.py --variant m3  --device <NPU> --max-layers 6 --use_pypto
 
 # NPUGraph capture/replay decode benchmark
-MODEL_PATH=/path/to/MiniMax-M3 python3 bench_minimax.py --variant m3 --graph --use_pypto
+MODEL_PATH=/path/to/MiniMax-M3 python3 scripts/bench_minimax.py --variant m3 --graph --use_pypto
 
 # shell driver (variant via VARIANT env or first positional arg)
 MODEL_PATH=/path/to/MiniMax-M3 VARIANT=m3 DEVICE=0 bash bench_minimax.sh

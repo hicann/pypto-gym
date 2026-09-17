@@ -56,13 +56,13 @@ snapshot_download(
 source env_setup.sh
 
 # 基线推理（原生 PyTorch 解码层）
-python3 ask_openpangu_v5_7b.py \
+python3 scripts/ask_openpangu_v5_7b.py \
     --recipes-path $CANN_RECIPES_PATH \
     --model-path  /path/to/openPangu-Embedded-7B \
     --prompt "你好"
 
 # PyPTO 整层融合推理
-python3 ask_openpangu_v5_7b.py \
+python3 scripts/ask_openpangu_v5_7b.py \
     --recipes-path $CANN_RECIPES_PATH \
     --model-path  /path/to/openPangu-Embedded-7B \
     --prompt "你好" --use-pto
