@@ -37,10 +37,10 @@ python3 ../runtime_patch.py \
     --model-path "$MODEL_PATH"
 
 # inference (baseline)
-python3 ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device <NPU>
+python3 scripts/ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device <NPU>
 
 # inference (PyPTO fused ops)
-python3 ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device <NPU> --use_pypto
+python3 scripts/ask_LLaDA2-mini.py --model-path "$MODEL_PATH" --device <NPU> --use_pypto
 
 # benchmark (baseline vs PyPTO)
 MODEL_PATH="$MODEL_PATH" DEVICE=0 bash bench_LLaDA2-mini.sh

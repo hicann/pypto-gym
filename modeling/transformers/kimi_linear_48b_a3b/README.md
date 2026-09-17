@@ -5,7 +5,7 @@
 | HuggingFace | moonshotai/Kimi-Linear-48B-A3B-Instruct (`KimiLinearForCausalLM`) |
 | 权重目录 | `/data/models/Kimi-Linear-48B-A3B-Instruct`（可通过 `--model-path` 指定） |
 | 代码来源 | trust_remote_code — `modeling_kimi.py` / `configuration_kimi.py` 由 HuggingFace 仓库自带（config.json 的 auto_map） |
-| 运行命令 | `python3 ask_Kimi-Linear-48B-A3B.py --num_npus 4` |
+| 运行命令 | `python3 scripts/ask_Kimi-Linear-48B-A3B.py --num_npus 4` |
 | transformers 版本 | 5.8.1（模型面向 4.57.1 — 已适配） |
 
 ## 已融合算子 (Fused operators)
@@ -38,10 +38,10 @@ kimi_linear_48b_a3b_pto_kernels`，置 `USE_PTO_KDA = True`。该适配层包预
 
 ```bash
 # Baseline
-python3 ask_Kimi-Linear-48B-A3B.py --model-path <weights_dir> --num_npus 4
+python3 scripts/ask_Kimi-Linear-48B-A3B.py --model-path <weights_dir> --num_npus 4
 
 # PyPTO fused (KDA chunk)
-python3 ask_Kimi-Linear-48B-A3B.py --model-path <weights_dir> --num_npus 4 --use_pypto
+python3 scripts/ask_Kimi-Linear-48B-A3B.py --model-path <weights_dir> --num_npus 4 --use_pypto
 ```
 
 Benchmark（两段式 baseline vs pypto，输出对比表格）:
@@ -111,7 +111,7 @@ KDA chunk kernel 本地单算子 bench（prefill，avg-of-20，与 torch golden 
 - harness smoke（随机权重，无需 checkpoint）：
   `torchrun --nproc_per_node=2 bench_kimi_multinpu.py --random-weights --layers 4 --seq 80 --iters 2 --pypto`
 - 单进程快速检查（~6/20，*不会*得到上面的全覆盖数字）：
-  `python3 ask_Kimi-Linear-48B-A3B.py --model-path <weights> --num_npus 4 --use_pypto`
+  `python3 scripts/ask_Kimi-Linear-48B-A3B.py --model-path <weights> --num_npus 4 --use_pypto`
 - 算子级 msprof：`MODEL_PATH=<weights> bash prof_Kimi-Linear-48B-A3B.sh`。
 
 ---
