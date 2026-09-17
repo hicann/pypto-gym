@@ -27,6 +27,8 @@
 
 ##### 2. Cube TileShape 设置规范
 
+> **Buffer 容量约束**：cube tile 的 L0/L1 切分受 L1(512KB)/L0A/L0B(64KB)/L0C(128~256KB) 容量限制，各平台具体数值见 [shared/npu-memory-arch.md](../../shared/npu-memory-arch.md) §一。
+
 **函数原型**：
 ```python
 pypto.set_cube_tile_shapes([mL0, mL1], [kL0, kL1], [nL0, nL1])
@@ -78,6 +80,8 @@ pypto.set_cube_tile_shapes([16, 16], [16, K, 256], [256, 256])
 **🔥 案例**：[多 Matmul 独立 TileShape 优化](../cases/per-matmul-tile-shapes.md)（3 个 matmul 独立设 tile，-46.1%）
 
 ##### 3. Vector TileShape 设置规范
+
+> **UB 容量约束**：vec tile 的输入+输出必须同时装入 UB（910B2 192KB / 950PR 248KB 每 AIV），详见 [shared/npu-memory-arch.md](../../shared/npu-memory-arch.md) §一。
 
 **配置原则**：
 1. 满足特定 Operation 对 TileShape 的规格约束

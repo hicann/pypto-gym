@@ -88,7 +88,7 @@ complete_phase(MN) 之后：
     8. 以 Composition verification 模式调度 @pypto-op-verifier（不传 phase 参数）。
          PASS → 第 9 步。
          FAIL → 在 MEMORY.md 追加 "## Composition Rejection — <ts>"，并
-         state_transition(rollback_to_stage, target_stage=3 或 4, reason=...)。
+         state_transition(rollback_to_stage, target_stage=3, reason=...)。
     9. 清理（不再调度 coder）：运行脚本生成合成的 <op>_impl.py + README.md ——
        `python ./*/skills/pypto-op-verify/scripts/gen_cleanup.py --op <op>
        --final-impl custom/<op>/modules/<op>_module<suffix_N>_impl.py
@@ -294,8 +294,8 @@ Coder 返回到 Verifier 调度之间必须经过 `submit_for_verify`。`awaitin
 |---|---|
 | Phase M_k 通过 | `complete_phase` → 进入下一 phase 或 `complete_stage(5)` |
 | `failure_category: precision` / `aicore` / `host_crash` / 等，且 `cycles<10` | `fail_phase` → 调度 debugger → 再 coder |
-| 同一 phase 连续失败 10 次 | Phase 变为 `blocked`。审查 debug 日志；若根因在上游（design / architecture），调用 `rollback_to_stage(target_stage=3 或 4)`。否则上报用户。 |
-| Verifier 拒收 `module_interfaces.yaml`（composition_verify_failed） | 调用 `rollback_to_stage(target_stage=4, reason="...")` 修订 YAML。 |
+| 同一 phase 连续失败 10 次 | Phase 变为 `blocked`。审查 debug 日志；若根因在上游（design / interface 归属 Stage 3），调用 `rollback_to_stage(target_stage=3)`；仅验证准备自身问题回退 `target_stage=4`。否则上报用户。 |
+| Verifier 拒收 `module_interfaces.yaml`（composition_verify_failed） | 调用 `rollback_to_stage(target_stage=3, reason="...")` 修订设计/接口并失效相关证据，重新执行独立检查。 |
 
 ## Stage 完成判据（用于 verifier 调度）
 

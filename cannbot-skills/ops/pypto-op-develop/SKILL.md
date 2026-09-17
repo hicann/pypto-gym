@@ -265,6 +265,8 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
     **设计含义**：当 DESIGN.md 把 Layer I 设计为独立辅助函数（如 `_<op>_kernel_impl`），如果该 body 含 `pypto.is_loop_begin` / `pypto.is_loop_end`，Coder 必须把整个 body inline 到 Layer J 的 `@pypto.frontend.jit` 函数里，或在 Layer I 上加 `@pypto.frontend.function`。**这是模板 `impl_template.py.tmpl` 默认 Layer I/J 切分的已知陷阱**。
 20. **直接采用 DESIGN.md tile**（默认）：第一次写 `<op>_module<k>_impl.py` 或集成 kernel 时，按 DESIGN.md 「范式与设计决策」 的 tile shape 原样落码。禁止在实现阶段擅自引入训练/decode/核利用率等 cube-tile 分支。若 DESIGN.md 「范式与设计决策」 未填好，交回上层而不要猜。
 
+    **障碍绕法约束**：实现中遇编译错误或资源限制需绕开时，绕法按序选择：(1) 生产参考实现或知识库已验证的同类绕法优先（如 F00003 对齐错误 → cast 后用 4D tile 做 reshape+transpose，而非改用 gather 类接口）；(2) 无参考时选数学等价且与原设计语义最近的写法；(3) 绕法涉及结构变化（算子替换、数据重排方式变更）时，必须在交付说明中写明性能影响预期并交回编排者确认，禁止静默引入。
+
 ---
 
 ## 实现阶段高频陷阱（反模式清单）

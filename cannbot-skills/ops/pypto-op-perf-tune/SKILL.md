@@ -128,6 +128,8 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 
 **⚠️ 重要：拒绝盲目调优，主动查询，主动学习**
 
+**配置与结构的分工：配置项求稳，代码结构求优。** 配置项（tile 数值、pass/runtime options、调度参数）逐项实测、退化即回退，不堆叠未验证的配置组合；结构级优化（数据布局、等价改写、高效算子替换）按设计层确定的方向执行，其收益优先级高于配置微调。
+
 1. 拒绝盲目无脑试错式调优
 不瞎猜、不瞎改、不凭感觉乱配置。
 2. 以文档 / 资料库为依据
@@ -141,6 +143,7 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 
 1. [高性能编程实践](../../../src/pypto_gym/ops/pypto_tensor) -- 介绍了很多高性能的编程案例，可以参考其中的高性能写法进行优化
 2. [API 接口文档](https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api) -- 介绍了整个 pypto 仓库的所有接口及调优参数使用说明
+3. [NPU 内存体系参考](shared/npu-memory-arch.md) -- AI Core Buffer 层级（L1/L0A/L0B/L0C/UB 容量）、L2/Memory 带宽。TileShape 设置、UB 容量规划、泳道搬运分析时查阅；表内为族系典型值
 
 ### 3. 阶段摘要与上下文隔离原则
 

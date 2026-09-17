@@ -71,8 +71,15 @@ dynamic_axes:
 |---|---|---|---|
 | <pass_options / runtime_options 参数> | <值> | <具体原因及资料链接> | <实际依据或待验证事项> |
 
-### 布局与量化（按需）
+### 布局与量化
 
+**布局继承（必填）**：逐 tensor 采用 SPEC §5 声明的布局（ND / NZ），默认 ND；SPEC 未声明时沿用生产参考实现的布局。采用 NZ 时必须显式声明并注明依据。
+
+| 张量 | SPEC/参考布局 | 本设计 | 依据 | NZ 对齐核对（内轴 32B、外轴 16 元素）与 cube tile 兼容 |
+|---|---|---|---|---|
+| <权重/大矩阵> | <ND/NZ> | <ND/NZ> | <依据> | <通过 / 回退原因> |
+
+- NZ tensor 落地：JIT 签名声明 `format=pypto.TileOpFormat.TILEOP_NZ`；host 侧先无条件执行 `torch_npu.npu.config.allow_internal_format = True`（该属性 write-only，`hasattr` 守卫恒为 False，守卫写法导致 F00002），再 `torch_npu.npu_format_cast(t.contiguous(), torch_npu.Format.FRACTAL_NZ)` 转换；伪代码标注转换点。权重转换只做一次，不计入算子耗时。
 - 布局变化：<源与目标 shape / 布局、转换位置、是否共享存储或原地修改>。
 - 数据访问：<连续、分页或稀疏访问方式，索引来源与无效位置处理>。
 - 量化：<转换位置、格式、scale 的 shape/dtype 及对应轴、乘除约定>。
