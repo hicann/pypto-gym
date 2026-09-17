@@ -19,10 +19,10 @@ export GUTENOCR_MODEL_PATH=/path/to/gutenocr_3b
 export CANN_POW_PATCH_PATH=/path/to/cann_pow_patch
 
 # Baseline
-python3 ask_gutenocr_3b.py --prompt "你好" --device 0
+python3 scripts/ask_gutenocr_3b.py --prompt "你好" --device 0
 
 # PTO 模式
-python3 ask_gutenocr_3b.py --prompt "你好" --device 0 --use_pto
+python3 scripts/ask_gutenocr_3b.py --prompt "你好" --device 0 --use_pto
 ```
 
 ## 下载模型

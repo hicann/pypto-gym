@@ -36,10 +36,10 @@ python3 ../runtime_patch.py \
     --model-path "$MODEL_PATH"
 
 # inference (baseline)
-python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU>
+python3 scripts/ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU>
 
 # inference (PyPTO fused ops)
-python3 ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU> --use_pypto
+python3 scripts/ask_Gemma-4-31B-it.py --model-path "$MODEL_PATH" --device <NPU> --use_pypto
 
 # benchmark (baseline vs PyPTO)
 DEVICE=0 MODEL_PATH="$MODEL_PATH" bash bench_Gemma-4-31B-it.sh
