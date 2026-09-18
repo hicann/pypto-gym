@@ -197,7 +197,6 @@ custom/<op>/
 ├── SPEC.md                    # 需求规格
 ├── EXPLORE_REPORT.md          # 资料探索与可行性报告
 ├── PRO_MATERIAL_INDEX.md      # PyPTO-Pro 资料索引
-├── MEMORY.md                  # 任务摘要与协作记录
 ├── {op}_golden.py             # NPU Golden 参考实现
 ├── {op}_golden_cpu.py         # CPU 更高精度 Golden（供精度校验）
 ├── GOLDEN_VALIDATION.json     # 与当前 SPEC/Golden 哈希绑定的成功回执

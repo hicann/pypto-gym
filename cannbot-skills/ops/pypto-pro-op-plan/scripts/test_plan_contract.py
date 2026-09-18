@@ -7,14 +7,17 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Regression checks for the Stage-1 skill boundaries and hand-off contract."""
+"""Regression checks for PyPTO-Pro planning artifacts and their consumers."""
 
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,35 +67,7 @@ def _report_with_paths(template: str, samples: list[str], tutorials: list[str]) 
     )
 
 
-class Stage1SkillContractTests(unittest.TestCase):
-    def test_skills_are_concise_and_have_clear_boundaries(self) -> None:
-        boundaries = {
-            INTENT: ("SPEC.md", "不要选择 PyPTO-Pro API"),
-            MATERIAL: ("PRO_MATERIAL_INDEX.md", "不要修改需求语义"),
-            PLAN: ("KB_SELECTION.json", "不要用于 golden"),
-        }
-        for directory, required in boundaries.items():
-            text = _read(directory / "SKILL.md")
-            self.assertLessEqual(len(text.splitlines()), 500, directory.name)
-            for phrase in required:
-                self.assertIn(phrase, text, directory.name)
-
-    def test_plan_preserves_all_stage1_deliverables_and_order(self) -> None:
-        text = _read(PLAN / "SKILL.md")
-        for artifact in (
-            "SPEC.md", "PRO_MATERIAL_INDEX.md", "EXPLORE_REPORT.md", "MEMORY.md",
-            "KB_SELECTION.json",
-        ):
-            self.assertIn(artifact, text)
-        positions = [
-            text.index("### 1. 冻结需求语义"),
-            text.index("### 2. 创建 MEMORY 并补充 kernel 交接合同"),
-            text.index("### 3. 探索目标版本资料"),
-            text.index("### 4. 收敛 MEMORY"),
-            text.index("### 5. 冻结知识选择"),
-        ]
-        self.assertEqual(positions, sorted(positions))
-
+class PlanContractTests(unittest.TestCase):
     def test_material_scans_all_pro_guide_ranges_and_rejects_missing_sources(self) -> None:
         material = self._load_module(MATERIAL / "scripts/build_material_index.py")
         temporary = tempfile.TemporaryDirectory()
@@ -131,7 +106,7 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertRegex(text, r'"default_params":\s*\{\}')
         self.assertTrue(re.search(r"\{\{[^{}]+\}\}", text))
 
-    def test_stage1_commands_use_canonical_python_entrypoint(self) -> None:
+    def test_plan_commands_use_canonical_python_entrypoint(self) -> None:
         paths = list(INTENT.rglob("*.md")) + list(MATERIAL.rglob("*.md")) + list(PLAN.rglob("*.md"))
         for path in paths:
             self.assertNotIn("python3", _read(path), path.as_posix())
@@ -143,8 +118,7 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertIn("公开接口的 rank、shape", intent)
         self.assertIn("rank-0", intent)
         self.assertIn('class_id` 必须为字面量 `"."`', plan)
-        self.assertIn("custom/<op>/<class>/KB_SELECTION.json", plan)
-        self.assertLess(plan.index("立即创建或追加 `MEMORY.md`"), plan.index("### 3. 探索"))
+        self.assertIn("<op-dir>/<class>/KB_SELECTION.json", plan)
         self.assertIn("单一 VF API", material)
 
     def test_kb_documents_define_zero_or_multi_topology_semantics(self) -> None:
@@ -195,18 +169,18 @@ class Stage1SkillContractTests(unittest.TestCase):
         self.assertTrue(topology_map["mandatory_constraints"])
         self.assertNotRegex(plan, r"contract v\d+")
 
-    def test_plan_uses_one_stage1_validator(self) -> None:
+    def test_plan_uses_one_plan_validator(self) -> None:
         plan = _read(PLAN / "SKILL.md")
-        validator_path = PLAN / "scripts" / "validate_stage1.py"
+        validator_path = PLAN / "scripts" / "validate_plan.py"
         self.assertTrue(validator_path.is_file())
-        self.assertIn("scripts/validate_stage1.py", plan)
+        self.assertIn("scripts/validate_plan.py", plan)
         self.assertIn("未指定时默认 A5", plan)
         self.assertNotIn("python -c '", plan)
         planner = _read(VERIFIER.with_name("pypto-pro-op-planner.md"))
-        self.assertIn("validate_stage1.py", planner)
+        self.assertIn("validate_plan.py", planner)
 
     def test_kb_validator_accepts_flat_split_and_dynamic_topologies(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             kb, selection = self._create_kb_fixture(root)
@@ -231,7 +205,7 @@ class Stage1SkillContractTests(unittest.TestCase):
             self.assertEqual(validator.check_kb(op_dir, kb, "demo"), [])
 
     def test_kb_validator_rejects_stale_unknown_and_escaping_references(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             kb, selection = self._create_kb_fixture(root)
@@ -257,11 +231,11 @@ class Stage1SkillContractTests(unittest.TestCase):
             (kb / "topology-map.json").write_text(
                 '{"contract":[],"topologies":{}}', encoding="utf-8",
             )
-            with self.assertRaises(validator.Stage1ConfigurationError):
+            with self.assertRaises(validator.PlanConfigurationError):
                 validator.check_kb(op_dir, kb, "demo")
 
     def test_kb_validator_requires_boolean_flags_and_integer_contract_versions(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             kb, selection = self._create_kb_fixture(root)
@@ -283,28 +257,34 @@ class Stage1SkillContractTests(unittest.TestCase):
                     mapping["contract"]["contract_version"] = version
                     mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
                     self.assertRaisesRegex(
-                        validator.Stage1ConfigurationError, "contract_version must be an integer",
+                        validator.PlanConfigurationError, "contract_version must be an integer",
                         validator.check_kb, op_dir, kb, "demo",
                     )
 
     def test_report_validator_uses_template_and_index_contents(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         op_dir, paths, report, index = self._create_report_fixture()
         self.assertEqual(validator.check_report(op_dir, "demo", index), [])
+        for path in paths:
+            with self.subTest(missing=path):
+                (op_dir / "EXPLORE_REPORT.md").write_text(
+                    report.replace(f"`{path}`", f"`cat {path}`"), encoding="utf-8",
+                )
+                errors = validator.check_report(op_dir, "demo", index)
+                self.assertTrue(any("not covered" in error and path in error for error in errors), errors)
         tutorial_row = f"| `{paths[1]}` | guide | pattern | applicable |"
         misplaced = report.replace(tutorial_row, "").replace("### 5.2 来自教程的关键约束与建议", "")
         (op_dir / "EXPLORE_REPORT.md").write_text(
             misplaced.replace("## 6. Stage 3 设计事实输入", "## 6. Stage 3 设计事实输入\n" + tutorial_row),
             encoding="utf-8",
         )
-        errors = validator.check_report(op_dir, "demo", index)
-        self.assertTrue(any("guide paths not covered" in error for error in errors))
+        self.assertEqual(validator.check_report(op_dir, "demo", index), [])
         (op_dir / "EXPLORE_REPORT.md").write_text(
-            report.replace(f"| `{paths[1]}` |", "| `unrelated.md` |") + "\n" + paths[1],
+            report.replace(f"| `{paths[1]}` |", "| `docs/guide/unlisted.md` |") + "\n" + paths[1],
             encoding="utf-8",
         )
         errors = validator.check_report(op_dir, "demo", index)
-        self.assertTrue(any("guide paths not covered" in error for error in errors))
+        self.assertTrue(any("guide referenced paths absent" in error for error in errors))
         report = _report_with_paths(
             _read(MATERIAL / "templates/explore_report.md"),
             [paths[0], "pro_ops/a5/vector/unlisted.py"],
@@ -312,11 +292,36 @@ class Stage1SkillContractTests(unittest.TestCase):
         )
         (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
         errors = "\n".join(validator.check_report(op_dir, "demo", index))
-        self.assertIn("sample table paths absent", errors)
-        self.assertIn("guide table paths absent", errors)
+        self.assertIn("sample referenced paths absent", errors)
+        self.assertIn("guide referenced paths absent", errors)
+
+    def test_report_validator_checks_file_citations(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
+        op_dir, _, report, index = self._create_report_fixture()
+        api = "docs/pypto_pro/api/add.md"
+        guide = "docs/guide/programming_guide/pro/tail block.md"
+        sample = "pro_ops/a5/vector/test.v1#variant.py"
+        index += "\n" + "\n".join(f"- `{path}`" for path in (api, guide, sample))
+        report += f"\n`{guide}#tail-blocks.1`、`{sample}`\n"
+        for citation, valid in (
+            (api, True), (guide + "#tail-blocks.1", True), (sample, True),
+            ("docs/pypto_pro/api/unlisted.md", False),
+            ("docs/guide/programming_guide/pro/missing.mdd", False),
+            (sample.replace("variant", "missing"), False),
+            (r"C:\cache root\docs\guide\programming_guide\pro\tail block.md", False),
+        ):
+            with self.subTest(citation=citation):
+                (op_dir / "EXPLORE_REPORT.md").write_text(
+                    report + f"\n补充证据：`{citation}`\n", encoding="utf-8",
+                )
+                errors = validator.check_report(op_dir, "demo", index)
+                if valid:
+                    self.assertEqual(errors, [])
+                else:
+                    self.assertTrue(any("referenced paths absent" in error for error in errors), errors)
 
     def test_report_validator_parses_frontmatter(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         op_dir, _, report, index = self._create_report_fixture()
         for field, values, valid in (
             ("op_name: demo", ('"demo"', "'demo' # operator"), True),
@@ -340,24 +345,23 @@ class Stage1SkillContractTests(unittest.TestCase):
         )
         self.assertEqual(validator.check_report(op_dir, "it's # feasible", index), [])
 
-    def test_report_validator_limits_table_coverage_to_its_section(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
-        op_dir, paths, report, index = self._create_report_fixture()
-        tutorial_row = f"| `{paths[1]}` | guide | pattern | applicable |"
-        for heading, valid in (("#### detail", True), ("### next", False), ("## next", False), ("# next", False)):
-            with self.subTest(heading=heading):
-                (op_dir / "EXPLORE_REPORT.md").write_text(
-                    report.replace(tutorial_row, heading + "\n" + tutorial_row), encoding="utf-8",
-                )
-                errors = validator.check_report(op_dir, "demo", index)
-                covered = not any("guide paths not covered" in error for error in errors)
-                self.assertEqual(covered, valid)
+    def test_report_validator_ignores_commands_and_non_devkit_references(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
+        op_dir, _, report, index = self._create_report_fixture()
+        report += (
+            "\n`docs/guide/`、`docs/guide/v1.0/pro`\n"
+            "`examples/samples/vector_kernels/reduce_sum_impl.py`\n"
+            "`cat docs/guide/missing.md`\n"
+            "`/usr/bin/cat /cache/docs/guide/missing.md`\n"
+        )
+        (op_dir / "EXPLORE_REPORT.md").write_text(report, encoding="utf-8")
+        self.assertEqual(validator.check_report(op_dir, "demo", index), [])
 
-    def test_stage1_validator_accepts_a_complete_fixture(self) -> None:
-        validator = self._load_module(PLAN / "scripts/validate_stage1.py")
+    def test_plan_validator_accepts_a_complete_fixture(self) -> None:
+        validator = self._load_module(PLAN / "scripts/validate_plan.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            op_dir = root / "custom/demo"
+            op_dir = root / "chosen outputs/demo"
             devkit, _ = self._create_devkit_fixture(root)
 
             op_dir.mkdir(parents=True)
@@ -389,16 +393,24 @@ class Stage1SkillContractTests(unittest.TestCase):
             (op_dir / "EXPLORE_REPORT.md").write_text(
                 report, encoding="utf-8",
             )
-            (op_dir / "MEMORY.md").write_text(
-                "SPEC.md PRO_MATERIAL_INDEX.md EXPLORE_REPORT.md KB_SELECTION.json", encoding="utf-8",
-            )
             kb, selection = self._create_kb_fixture(root)
             (op_dir / "KB_SELECTION.json").write_text(json.dumps(selection), encoding="utf-8")
             results = validator.validate(op_dir, devkit, kb)
+            self.assertEqual([name for name, _ in results], ["SPEC", "INDEX", "REPORT", "KB"])
             self.assertTrue(all(not errors for _, errors in results), results)
 
+            env = os.environ.copy()
+            for key in ("PYPTO_DEVKIT_DIR", "CANNBOT_CONFIG_ROOT", "TILE_FWK_DEVICE_ID"):
+                env.pop(key, None)
+            command = [sys.executable, "-B", str(PLAN / "scripts/validate_plan.py"),
+                       "--op-dir", str(op_dir), "--devkit", str(devkit), "--kb-root", str(kb)]
+            completed = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            for artifact in ("SPEC", "INDEX", "REPORT", "KB"):
+                self.assertIn(f"[PASS] {artifact}", completed.stdout)
+
     def _load_module(self, path: Path):
-        spec = importlib.util.spec_from_file_location(f"_stage1_test_{path.stem}", path)
+        spec = importlib.util.spec_from_file_location(f"_plan_test_{path.stem}", path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
         module = importlib.util.module_from_spec(spec)

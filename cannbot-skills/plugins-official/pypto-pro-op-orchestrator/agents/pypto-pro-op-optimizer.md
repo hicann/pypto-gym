@@ -29,7 +29,7 @@ skills:
 调度目标位于 `custom/<op>/`。完整执行 perf Skill 的“开始前读取”和按需路由；不得用 Stage 4
 摘要或事实记录代替直接读取权威输入。
 
-本工作流的必需输入为 SPEC、两份数学 Golden、EXPLORE_REPORT、PRO_MATERIAL_INDEX、MEMORY、
+本工作流的必需输入为 SPEC、两份数学 Golden、EXPLORE_REPORT、PRO_MATERIAL_INDEX、
 DESIGN、DESIGN_BINDINGS、module_interfaces、最终测试及全部 P0、各 class 的 KB_SELECTION、
 已选参考和 KB_USAGE，以及 `$CANNBOT_CONFIG_ROOT/references/performance-constraints.md`。
 它们按 perf Skill 的冻结/可更新边界处理，不能套用独立使用时的可选资料分支跳过。

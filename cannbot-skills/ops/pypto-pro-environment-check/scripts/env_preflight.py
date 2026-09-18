@@ -3,20 +3,20 @@
 # -----------------------------------------------------------------------------
 # PyPTO-Pro 环境 Preflight 聚合检测脚本
 #
-# 在 orchestrator 启动算子开发前执行一次，统一确认：
+# 在疑似环境故障、需要分层诊断时按需执行，采集：
 #   [1] NPU 设备层   — 复用 _npu_info.py（设备枚举 / 健康 / 可用数）
 #   [2] NPU 架构层   — 复用 get_npu_arch.py（dav-* 架构探测，如 dav-3510=a5）
 #   [3] 运行时层     — torch_npu / pypto_pro.language / pl.jit 是否可导入（PyPTO-Pro 专属）
 #   [4] CANN 层      — ASCEND_HOME_PATH / set_env / CANN 版本（裁剪自 check_env.sh）
 #
 # 设计约定：
-#   - 只检测、不修复。发现问题时汇总 errors/warnings 供 orchestrator 反馈用户。
+#   - 采集当前环境信息，将检测问题汇总为 errors/warnings。
 #   - errors 视为阻断（exit 1）；warnings 不阻断（exit 0）。
 #   - 输出人类可读摘要 + 末尾一行机器可读 JSON（PREFLIGHT_JSON: {...}）。
 #
 # 用法：
-#   python $CANNBOT_CONFIG_ROOT/skills/pypto-pro-environment-check/scripts/env_preflight.py          # 完整检测
-#   python $CANNBOT_CONFIG_ROOT/skills/pypto-pro-environment-check/scripts/env_preflight.py --json    # 仅输出 JSON
+#   python "<skill-dir>/scripts/env_preflight.py"          # 完整检测
+#   python "<skill-dir>/scripts/env_preflight.py" --json   # 仅输出 JSON
 # -----------------------------------------------------------------------------
 
 import argparse

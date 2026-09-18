@@ -1,6 +1,6 @@
 ---
 name: pypto-pro-op-planner
-description: "PyPTO-Pro Stage 1 需求规划。产出 SPEC.md/EXPLORE_REPORT.md/PRO_MATERIAL_INDEX.md/MEMORY.md/KB_SELECTION.json。由 pypto-pro-op-orchestrator 调度。"
+description: "PyPTO-Pro Stage 1 需求规划。产出 SPEC.md/EXPLORE_REPORT.md/PRO_MATERIAL_INDEX.md/KB_SELECTION.json。由 pypto-pro-op-orchestrator 调度。"
 mode: subagent
 skills:
   - pypto-pro-docs-search
@@ -24,8 +24,8 @@ skills:
 
 ## 执行与交接
 
-使用 skill 工具加载 `pypto-pro-op-plan`，阶段顺序、产物和完成条件均以该 skill 为准；
+使用 skill 工具加载 `pypto-pro-op-plan`，按其要求生成产物并完成自检；
 子 skill 在同一 session 中串行执行，不另行 dispatch。
 
-满足全部完成条件且 `pypto-pro-op-plan/scripts/validate_stage1.py` 预检 exit code 为 0 后，
+满足全部完成条件且 `pypto-pro-op-plan/scripts/validate_plan.py` 预检 exit code 为 0 后，
 将产物路径、未决风险和预检结果交回 orchestrator；不得自称 verifier PASS 或推进 Stage。

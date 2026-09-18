@@ -7,7 +7,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Run the read-only, mechanically provable PyPTO-Pro Stage-1 checks."""
+"""Validate PyPTO-Pro planning artifacts against the supplied devkit and KB."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ PLACEHOLDER_RE = re.compile(r"\{[^{}\r\n]+\}")
 LOGGER = logging.getLogger(__name__)
 
 
-class Stage1ConfigurationError(RuntimeError):
+class PlanConfigurationError(RuntimeError):
     pass
 
 
@@ -56,12 +56,12 @@ def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path) if path.is_file() else None
     if spec is None or spec.loader is None:
-        raise Stage1ConfigurationError(f"missing checker dependency: {path}")
+        raise PlanConfigurationError(f"missing checker dependency: {path}")
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except Exception as error:
-        raise Stage1ConfigurationError(f"cannot load {path}: {error}") from error
+        raise PlanConfigurationError(f"cannot load {path}: {error}") from error
     return module
 
 
@@ -85,7 +85,7 @@ def _check_index(op_dir: Path, devkit: Path, material: Any):
     try:
         expected, _ = material.build_index(devkit, material.manifest_path())
     except Exception as error:
-        raise Stage1ConfigurationError(f"cannot build canonical material index: {error}") from error
+        raise PlanConfigurationError(f"cannot build canonical material index: {error}") from error
     try:
         actual = _read(op_dir / "PRO_MATERIAL_INDEX.md", "PRO_MATERIAL_INDEX.md")
     except ValueError as error:
@@ -123,22 +123,37 @@ def _frontmatter(text: str) -> dict[str, str]:
     return result
 
 
-def _section_table_paths(text: str, heading: str, prefix: str) -> set[str]:
-    """Return matching backtick paths from one level-3 section's table rows."""
-    match = re.search(rf"(?m)^### {re.escape(heading)}\s*$", text)
-    if match is None:
-        return set()
-    end = re.search(r"(?m)^#{1,3}[ \t]+", text[match.end():])
-    stop = match.end() + end.start() if end is not None else len(text)
-    section = text[match.start():stop]
-    rows = "\n".join(line for line in section.splitlines() if line.lstrip().startswith("|"))
-    return set(re.findall(rf"`({re.escape(prefix)}[^`]+)`", rows))
+def _file_paths(text: str) -> set[str]:
+    """Extract backtick file paths, retaining suffixes and possible anchors."""
+    return {
+        path for path in re.findall(r"`([^`\r\n]+)`", text)
+        if re.match(r"^\S*[/\\]", path) and re.search(r"[^/\\]\.[^/\\#]+(?:#.*)?$", path)
+    }
 
 
 def _path_error(label: str, paths: list[str], reason: str) -> str:
     shown = ", ".join(paths[:8])
     remainder = f" (+{len(paths) - 8} more)" if len(paths) > 8 else ""
     return f"{label} {reason} ({len(paths)}): {shown}{remainder}"
+
+
+def _check_citations(label: str, prefix: str, cited: set[str], allowed: set[str]) -> list[str]:
+    errors = []
+    if label != "API":
+        missing = []
+        for source in allowed - cited:
+            if source.startswith(prefix) and not any(path.startswith(source + "#") for path in cited):
+                missing.append(source)
+        if missing:
+            errors.append(_path_error(label, sorted(missing), "paths not covered in report"))
+    # Match anchors against complete indexed names; filenames may contain '#'.
+    extra = []
+    for path in cited - allowed:
+        if not any(path.startswith(source + "#") for source in allowed):
+            extra.append(path)
+    if extra:
+        errors.append(_path_error(label, sorted(extra), "referenced paths absent from material index"))
+    return errors
 
 
 def check_report(op_dir: Path, op_name: str, index: str) -> list[str]:
@@ -163,30 +178,29 @@ def check_report(op_dir: Path, op_name: str, index: str) -> list[str]:
     remaining = sorted(set(PLACEHOLDER_RE.findall(template)) & set(PLACEHOLDER_RE.findall(report)))
     if remaining:
         errors.append("unresolved template placeholders: " + ", ".join(remaining[:8]))
-    extra_errors = []
-    for label, prefix, suffix, heading in (
-        ("sample", "pro_ops/", "py", "4.1 全量样例参考（按 cube/vec 组成分类）"),
-        ("guide", "docs/guide/", "md", "5.1 适用的设计模式"),
-    ):
-        expected_paths = re.findall(rf"`({prefix}[^`]+\.{suffix})`", index)
-        actual_paths = _section_table_paths(report, heading, prefix)
-        missing = [path for path in expected_paths if path not in actual_paths]
-        extra = sorted(actual_paths - set(expected_paths))
-        if missing:
-            errors.append(_path_error(label, missing, "paths not covered in its table"))
-        if extra:
-            extra_errors.append(_path_error(label, extra, "table paths absent from material index"))
-    return errors + extra_errors
-
-
-def _check_memory(op_dir: Path) -> list[str]:
-    try:
-        text = _read(op_dir / "MEMORY.md", "MEMORY.md")
-    except ValueError as error:
-        return [str(error)]
-    names = ("SPEC.md", "PRO_MATERIAL_INDEX.md", "EXPLORE_REPORT.md", "KB_SELECTION.json")
-    missing = [name for name in names if name not in text]
-    return [] if not missing else ["missing artifact pointers: " + ", ".join(missing)]
+    paths = _file_paths(report)
+    categories = (("sample", "pro_ops/"), ("guide", "docs/guide/"), ("API", "docs/pypto_pro/api/"))
+    rooted = r"(?:/|\.\.?/|[A-Za-z]:/|\$(?:\w+|\{[^}]+\})/)"
+    allowed = _file_paths(index)
+    # Check devkit citations and required sample/guide coverage across the report.
+    # Reading and applicability follow the Material Skill and semantic review.
+    # Directories and commands are not evidence; supplementary KB references
+    # are governed by the KB contract, not the devkit material index.
+    for label, prefix in categories:
+        cited = set()
+        for path in paths:
+            before, found, _ = path.replace("\\", "/").partition(prefix)
+            # Preserve spaces in paths, but exclude command prefixes and
+            # separate rooted arguments such as `/usr/bin/cat /cache/...`.
+            if not found:
+                continue
+            if before and (not before.endswith("/") or not re.match(rooted, before)):
+                continue
+            if re.search(r"\s+" + rooted, before):
+                continue
+            cited.add(path)
+        errors.extend(_check_citations(label, prefix, cited, allowed))
+    return errors
 
 
 def _mapping(kb_root: Path) -> dict[str, Any]:
@@ -212,7 +226,7 @@ def _mapping(kb_root: Path) -> dict[str, Any]:
             raise ValueError("topologies must be an object")
         return value
     except (KeyError, TypeError, ValueError) as error:
-        raise Stage1ConfigurationError(f"invalid topology-map.json: {error}") from error
+        raise PlanConfigurationError(f"invalid topology-map.json: {error}") from error
 
 
 def _refs(refs: Any, namespace: str, kb_root: Path) -> list[str]:
@@ -327,12 +341,12 @@ def check_kb(op_dir: Path, kb_root: Path, op_name: str) -> list[str]:
 def validate(op_dir: Path, devkit: Path, kb_root: Path):
     for path, label in ((op_dir, "operator"), (devkit, "devkit"), (kb_root, "KB root")):
         if not path.is_dir():
-            raise Stage1ConfigurationError(f"{label} directory does not exist: {path}")
+            raise PlanConfigurationError(f"{label} directory does not exist: {path}")
     intent = _module(
-        "_stage1_spec", OPS_ROOT / "pypto-pro-intent-understand/scripts/validate_spec.py",
+        "_plan_spec", OPS_ROOT / "pypto-pro-intent-understand/scripts/validate_spec.py",
     )
     material = _module(
-        "_stage1_material", MATERIAL_ROOT / "scripts/build_material_index.py",
+        "_plan_material", MATERIAL_ROOT / "scripts/build_material_index.py",
     )
     op_name, spec_errors = _check_spec(op_dir, intent)
     index, index_errors = _check_index(op_dir, devkit, material)
@@ -340,7 +354,6 @@ def validate(op_dir: Path, devkit: Path, kb_root: Path):
         ("SPEC", spec_errors),
         ("INDEX", index_errors),
         ("REPORT", check_report(op_dir, op_name, index)),
-        ("MEMORY", _check_memory(op_dir)),
         ("KB", check_kb(op_dir, kb_root, op_name)),
     ]
 
@@ -356,7 +369,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         results = validate(*(
             Path(value).resolve() for value in (args.op_dir, args.devkit, args.kb_root)
         ))
-    except Stage1ConfigurationError as error:
+    except PlanConfigurationError as error:
         LOGGER.error("ERROR: %s", error)
         return 2
     failed = False

@@ -50,7 +50,7 @@ skills:
 
 环境问题（torch_npu / pypto_pro 导入失败、npu-smi 无响应、CANN 未配置、设备卡顿 / hang 等）**不进 debug 自修复循环**——你被硬性规则禁止碰环境，无法自行修复。
 
-**统一加载 skill `pypto-pro-environment-check`** 走其环境检测流程（Step 1 VF smoke 事实验证 → 必要时 Step 2 脚本诊断；怀疑设备 hang 时走其「设备 hang 评定」三段式），据其评定结论反馈 pypto-pro-op-orchestrator，由其决定换卡或上报用户，禁止用自写临时超短超时测试
+加载 `pypto-pro-environment-check`，根据当前症状和已有证据选择有界检查，复用有效结果；不因一次超时判定 hang，也不把 VF smoke 通过外推为所有执行路径健康。附检查范围、原始错误和评定结论反馈 pypto-pro-op-orchestrator，由其按既有分流处理：硬件问题换卡，软件问题停机反馈用户；原因未定时标记 `INCONCLUSIVE`，交其决定后续检查。
 
 ## Exit criterion
 

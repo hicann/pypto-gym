@@ -59,7 +59,7 @@ orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返�
 
 | 模式 | 触发时机 | 检查项数 | 动态运行 |
 |---|---|---|---|
-| `stage1-check` | planner 返回后 | 1 个脚本 + 4 项语义审查 | 否 |
+| `stage1-check` | planner 返回后 | 1 个脚本 + 3 项语义审查 | 否 |
 | `stage2-check` | mathematician 返回后 | 见下方门禁 | 否 |
 | `stage3-check` | architect 返回后 | 12 | 否 |
 | `module-check` | L1 路径 Module k impl 产完后 | 7 | 是（`python custom/<op>/modules/test_{op}_module<suffix_k>.py`） |
@@ -72,7 +72,7 @@ orchestrator 在 dispatch prompt 中声明模式，你执行对应检查并返�
 
 ## Stage 1 检查清单（`stage1-check`）
 
-只执行已加载 `pypto-pro-op-plan` §6 中的 `validate_stage1.py` 检查命令；
+只执行已加载 `pypto-pro-op-plan`「收尾自检」中的 `validate_plan.py` 检查命令；
 exit code 非 0 直接 FAIL，不修改或重试。通过后独立执行下表的语义审查：
 
 | # | 检查项 | 验证方式 |
@@ -80,7 +80,6 @@ exit code 非 0 直接 FAIL，不修改或重试。通过后独立执行下表�
 | 1 | SPEC 数学、公开接口与 kernel 契约正确 | 独立对照用户事实/批准合同，确认 `formula` 定义全部公开输出，且 kernel 契约补充满足 op-plan skill；不得用关键词匹配代替语义审查 |
 | 2 | 资料结论成立 | 逐项核对 API 依据、适用条件、Vector 映射和 `unsupported`/替代路线；KB 模板例外交 Stage 3 冻结 |
 | 3 | 知识选择语义合规 | 按下方「知识使用门禁」判断 topology/property 是否真实完整、pattern 是否适用；不重复脚本已完成的 JSON/路径/哈希检查 |
-| 4 | MEMORY 可用 | 核对任务摘要、已确认裁定、kernel 风险/决策及 Stage 1 产物指针准确精炼；不得复制长篇报告或提前写 Stage 3 决策 |
 
 ---
 
@@ -339,15 +338,15 @@ Suggested action: <对应 mode 的修复或补充动作>
 
 运行 `python custom/<op>/test_{op}.py` 时，若遇导入失败（torch_npu / pypto_pro 未安装或初始化失败）、npu-smi 无响应、CANN 未配置等环境问题，**不归入 FAIL**，而是报告 `failure_category: env_error` + 证据（错误输出原文）。**分流决策权保留在 orchestrator**（换卡/停机/引导用户）。
 
-**涉及设备 hang 时**：不得仅凭单次运行超时直接报 env_error——加载 skill `pypto-pro-environment-check` 走其「设备 hang 评定」三段式流程，在 env_error 报告中附评定结论（`device_assessment` / `smoke_result` / `evidence` / `recommendation`），供 orchestrator 据证据决策。**禁止用自写临时超短超时测试判定 hang**。
+**疑似设备 hang 时**：加载 `pypto-pro-environment-check`，根据日志、设备状态和独立对照选择有界检查；单次超时或固定次数重试失败不能直接证明 hang。报告 `device_assessment` / `smoke_result` / `evidence` / `recommendation` 及检查覆盖范围；原因未定时标记 `INCONCLUSIVE`，交 orchestrator 决定下一步，不把缺少证据写成已确认环境故障。
 
 **全量失败（0/N）不得直接判 `precision_failure`** ⚠️：设备故障可能不触发超时，
 而是让运行正常结束并报告 `TOTAL 0/N passed`。因此，全量失败必须先确认精度比较
 确实执行完成，不能仅凭汇总计数回退代码。
 
-判据是**比对是否真的执行过**：失败若来自 `npuSynchronizeDevice` / `copy_between_host_and_device_opapi` 等同步/拷贝入口抛出的 `RuntimeError`，则输入根本没到设备，**没有任何精度结论产生**；真正的精度失败会给出 MARE/MERE 与阈值的对比而不抛异常。其余佐证：波及本次改动未触及的 case、报出的 core id 超出该 SKU 核数、相隔数分钟的两个进程逐核 dump 逐字节相同、control（纯 torch 算子）自身失败。
+先核对**比对是否真的执行过**：若同步、拷贝或调用异常发生在比对前，受影响的 case 未产生精度结论。`RuntimeError` 也可能由 kernel 越界或同步缺陷触发，不能单独证明设备故障。波及未修改 case、异常 core id、跨进程重复错误 dump 或纯 torch control 失败时，按 `pypto-pro-environment-check` 的“设备异常与精度失败”结合目标型号、版本和独立证据判别。
 
-命中任一条 → 加载 skill `pypto-pro-environment-check` 走「设备故障伪装成精度失败」判别，按 `env_error` 上报（`device_assessment: FAULT_NO_TIMEOUT`），并在报告中**明确写明该次运行未产生精度结论**（"未测量"，而非"测量为 0/N"）。**处置任何全量失败前，先要求能证明比对执行过的正面证据——先读 `npu-smi`（只读、一次往返），再归因于代码。**
+有充分设备故障证据时按 `env_error` 上报；无超时故障可用 `FAULT_NO_TIMEOUT`，证据不足则保留 `INCONCLUSIVE`。未执行比对时明确写“未产生精度结论”，不报告已测量的精度通过率；比对确实执行时保留真实误差指标，再按已查明的根因分流。
 
 ---
 
@@ -368,7 +367,7 @@ Suggested action: <对应 mode 的修复或补充动作>
 「读过文档」和「知识落进代码」是两件事，必须分开检查：前者无法证明后者。
 
 **Stage 1 之后**：先核对每个已确认 class 的 `KB_SELECTION.json` 齐全；路径、JSON 结构、
-schema、哈希与引用存在性以 `validate_stage1.py` 的成功结果为准，不再手工复查；
+schema、哈希与引用存在性以 `validate_plan.py` 的成功结果为准，不再手工复查；
 verifier 再语义审查该 class 的路由选择是否满足
 （未切分 cases 时为 `custom/<op>/`，切分时为 `custom/<op>/<class>/`；见运行时
 `$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/CONTRACT.md`）

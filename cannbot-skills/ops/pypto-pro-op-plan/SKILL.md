@@ -1,79 +1,64 @@
 ---
 name: pypto-pro-op-plan
-description: 编排 PyPTO-Pro Stage 1 规划。用于依次完成需求规格化、目标版本资料探索、kernel 合同补充、MEMORY.md 初始化和 KB_SELECTION.json 冻结；输入是已授权算子需求，输出是 Stage 2/3 可直接消费的一组规划产物。不要用于 golden、Module/tile 设计、kernel 实现或性能调优。
+description: 将算子需求整理为 PyPTO-Pro 开发所需的规格、资料证据、kernel 契约和知识选择。用于建立可验证、可复用的完整算子规划产物。
 ---
 
-# PyPTO-Pro Stage 1 规划
+# PyPTO-Pro 算子规划
 
-本 skill 只定义 Stage 1 的顺序、交接和完成条件。需求理解与资料探索的具体方法分别由
-`pypto-pro-intent-understand` 和 `pypto-pro-material-explore` 负责，不在这里重复。
+整理需求、实现约束和资料证据，生成彼此一致的规划产物。需求规格化与资料探索分别复用
+`pypto-pro-intent-understand` 和 `pypto-pro-material-explore`。
 
 ## 输入与产物
 
-输入：用户已授权的算子需求，以及 orchestrator 已装配的 `$PYPTO_DEVKIT_DIR`。
+输入：用户已授权的算子需求、目标版本 devkit 缓存、KB 根目录和共享 `performance-constraints.md` 的路径。
+已有安装可分别从 `$PYPTO_DEVKIT_DIR`、`$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/` 和
+`$CANNBOT_CONFIG_ROOT/references/performance-constraints.md` 定位。所复用的两个 Skill 及其脚本须可加载。
 
-在 `custom/<op>/` 生成：
+使用任务指定的输出目录 `<op-dir>`，默认 `custom/<op>/`；目录名 `<op>` 与 SPEC 算子名一致。在其中生成：
 
-| 产物 | 所有者 | 下游用途 |
-|------|--------|----------|
-| `SPEC.md` | intent-understand | 数学语义、公开接口、P0 cases |
-| `PRO_MATERIAL_INDEX.md` | material-explore | 本次目标版本资料目录 |
-| `EXPLORE_REPORT.md` | material-explore | API 可行性、约束和证据 |
-| `MEMORY.md` | plan | Stage 间的裁定摘要，不复制长篇规则 |
-| `KB_SELECTION.json` | plan | 冻结当前 class 的 KB 路由结果 |
+| 产物 | 内容 |
+|------|------|
+| `SPEC.md` | 数学语义、公开接口、P0 cases |
+| `PRO_MATERIAL_INDEX.md` | 本次目标版本资料目录 |
+| `EXPLORE_REPORT.md` | API 可行性、约束和证据 |
+| `KB_SELECTION.json` | 当前 class 的知识路由结果 |
 
-## 串行流程
+调用上述 Skill 时传入本次 SPEC、输出目录、缓存和共享规则的实际路径，替换命令中的默认路径；
+需求确认与资料阅读遵循各自 Skill 的规则。
+
+## 生成与校验
+
+复用已提供且校验有效的产物，按以下依赖补齐：先明确规格，再核实 API 可行性，最后依据完整事实生成知识选择。
 
 ### 1. 冻结需求语义
 
-在同一 agent session 中加载 `pypto-pro-intent-understand`，生成并验证 `SPEC.md`。
-不要 dispatch 子代理，也不要在本 skill 中重做其确认流程。
+加载 `pypto-pro-intent-understand`，按已有授权生成或更新 `SPEC.md` 并验证。
 
-### 2. 创建 MEMORY 并补充 kernel 交接合同
+### 2. 补充 kernel 契约
 
-语义冻结后立即创建或追加 `MEMORY.md`，先记录任务、确认状态与 `SPEC.md` 路径；后续每步
-只追加新裁定、阻塞、尝试与产物指针，探索完成后再按第 4 步收敛，避免到末尾才补写历史。
+在 `SPEC.md` 末尾增加 `## kernel 契约补充`，记录通用需求模板尚未表达的实现语义：
 
-在 `SPEC.md` 末尾增加 `## kernel 契约补充`，只记录后续阶段必须知道、但通用需求模板
-不表达的边界：
-
-| 字段 | Stage 1 处理 |
+| 字段 | 记录要求 |
 |------|--------------|
-| 辅助张量语义 | 确认是公开输入、模型参数还是内部临时量；实现位置交 Stage 3 |
+| 辅助张量语义 | 确认是公开输入、模型参数还是内部临时量 |
 | cast 边界链 | 记录输入、累加、后处理、输出各段的语义 dtype |
 | 累加/写回语义 | 确认覆盖写、跨块累加或原子累加的数学要求 |
-| 目标设备 | 运行时或 build 配置已指定 target 时使用指定值；未指定时默认 A5，并在 SPEC/MEMORY 标注这是默认假设 |
-| topology/tile/同步 | 标记“由 Stage 3 设计”，不得在 Stage 1 猜测 |
+| 目标设备 | 运行时或 build 配置已指定 target 时使用指定值；未指定时默认 A5，并在 SPEC 标注这是默认假设 |
 
-若该字段会改变数学语义或公开接口，必须回到 intent-understand；若只是硬件实现选择，留给
-Stage 3，不问用户。
+涉及数学语义或公开接口的修订按 intent-understand 校验；硬件实现的可选方案及待核实条件记入资料报告。
 
 ### 3. 探索目标版本资料
 
-加载 `pypto-pro-material-explore`，以包含 kernel 交接合同的 `SPEC.md` 为输入，重新扫描资料
-索引并生成 `PRO_MATERIAL_INDEX.md` 与 `EXPLORE_REPORT.md`。探索不能反向静默改变 SPEC；
-若发现公式、接口或 P0 case 有问题，返回 intent-understand 修订并重新确认。
+加载 `pypto-pro-material-explore`，以包含 kernel 契约的 `SPEC.md` 为输入，重新扫描资料
+索引并生成 `PRO_MATERIAL_INDEX.md` 与 `EXPLORE_REPORT.md`。结论须保持 SPEC 的数学语义；
+若发现公式、接口或 P0 case 有问题，返回 intent-understand，按其规则修订和校验。
 
-### 4. 收敛 MEMORY
+### 4. 冻结知识选择
 
-整理持续追加的 `MEMORY.md`，只保留下游需要快速恢复的索引信息：
-
-- 任务和确认状态摘要；
-- kernel 契约补充的裁定及未决项；
-- `SPEC.md`、`PRO_MATERIAL_INDEX.md`、`EXPLORE_REPORT.md` 路径；第 5 步完成后追加各 `KB_SELECTION.json` 路径；
-- 公式步骤到 API 候选的简短映射；
-- 已冻结事实、阻塞项和尝试历史。
-
-详细公式留在 SPEC，详细证据留在 EXPLORE_REPORT，KB 规则留在 KB；不要复制全文。
-
-### 5. 冻结知识选择
-
-阅读安装态 KB 根下的 `CONTRACT.md`、`ROUTER.md` 与 `topology-map.json`，为每个 class
-逐 class 生成 `KB_SELECTION.json`：flat 布局落在 `custom/<op>/KB_SELECTION.json`，此时
+阅读输入 KB 根下的 `CONTRACT.md`、`ROUTER.md` 与 `topology-map.json`，为每个 class
+逐 class 生成 `KB_SELECTION.json`：flat 布局落在 `<op-dir>/KB_SELECTION.json`，此时
 `class_id` 必须为字面量 `"."`；split 布局逐一落在
-`custom/<op>/<class>/KB_SELECTION.json`，`class_id` 必须等于该 class 目录名。安装态路径为
-`$CANNBOT_CONFIG_ROOT/pypto-pro-op-kb/`；源码中
-skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
+`<op-dir>/<class>/KB_SELECTION.json`，`class_id` 必须等于该 class 目录名。
 
 执行规则：
 
@@ -95,18 +80,18 @@ skill 链接使用 `../../pypto-pro-op-kb/` 是有意的安装布局。
 7. `properties` 只来自 SPEC、cases 或已确认环境事实。target 未指定时按默认 A5
    触发 `constraints/arch-a5.md`；已明确为非 A5 时不触发。
 
-布局、`class_id` 与完整字段合同以 [KB CONTRACT](../pypto-pro-op-kb/CONTRACT.md) 为唯一规范，路由算法以
-[KB ROUTER](../pypto-pro-op-kb/ROUTER.md) 和
-[`topology-map.json`](../pypto-pro-op-kb/topology-map.json) 为唯一数据源。
+布局、`class_id` 与完整字段合同以所提供 KB 的 `CONTRACT.md` 为准；路由算法和数据分别以同一 KB 的
+`ROUTER.md` 与 `topology-map.json` 为准。
 
-### 6. 收尾自检
+### 5. 收尾自检
 
-`<skill-dir>` 为本 skill 的绝对路径，`<kb-root>` 为第 5 步已读取的 KB 根，`<缓存绝对路径>` 为编排器给定的 `PYPTO_DEVKIT_DIR` 值；替换后保留引号，只运行以下只读检查器：
-它复用 canonical SPEC/材料索引校验器，并检查报告结构与覆盖、MEMORY 指针和 KB_SELECTION 的动态字段、路径及哈希，不替代 verifier 的语义裁决。
+将 `<skill-dir>`、`<kb-root>`、`<缓存绝对路径>` 和 `<op-dir>` 替换为实际路径，保留引号，运行只读检查器：
+它复用 SPEC/索引校验器，检查报告结构、引用及样例/指南路径覆盖，以及 KB_SELECTION 的字段、路径和哈希。
+另按公式步骤、接口约束和当前风险核对报告证据是否充分。
 
 ```bash
-python "<skill-dir>/scripts/validate_stage1.py" \
-  --op-dir "custom/<op>" \
+python "<skill-dir>/scripts/validate_plan.py" \
+  --op-dir "<op-dir>" \
   --devkit "<缓存绝对路径>" \
   --kb-root "<kb-root>"
 ```
@@ -115,13 +100,12 @@ python "<skill-dir>/scripts/validate_stage1.py" \
 
 ## 完成条件
 
-- 五个 Stage 1 产物均存在；
-- SPEC 校验通过且没有被探索阶段静默改写；
+- 四类规划产物均存在；
+- SPEC 校验通过，探索结论与其数学语义一致；
 - INDEX 的 §A/§B/§C 与本次缓存一致；
 - EXPLORE_REPORT 没有未解决的 `unsupported` 阻断；
-- MEMORY 只记录摘要和指针，含 kernel 合同裁定；
 - KB_SELECTION 的 `schema_version` 等于 `topology-map.json` 中当前的
   `contract.contract_version`，所有路径和哈希真实可复核；
-- 本 agent 只做预检，不得自称 verifier PASS。
+- 规格语义、资料结论与知识选择相互一致。
 
-返回上述产物路径、未决风险和预检结果，交 orchestrator 调度 `stage1-check`。
+返回产物路径、已完成的校验及其结果、剩余风险和需要补齐的证据。
