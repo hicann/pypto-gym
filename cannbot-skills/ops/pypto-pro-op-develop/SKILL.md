@@ -35,6 +35,7 @@ description: 实现、调试并自验证 PyPTO-Pro 算子 kernel。用于按冻�
 3. 轮转 tile 使用 `make_tile_group` + `auto_mutex`；`make_tile` 只用于不参与轮转的单次 scratch。不要在 `auto_mutex` 管理的 tile 上叠加手动 `sync_src`/`sync_dst`。
 4. wrapper 只做参数检查、读取 KB 约束列明的只读元数据、纯 Python 整数推导、`torch.empty` 分配当前 wrapper 合同声明的输出和一次 kernel 启动；完整边界与迁移方式见 [wrapper-boundary.md](../pypto-pro-op-kb/constraints/wrapper-boundary.md)。DESIGN、usage、`deviated` 或 profile 均不能放宽该硬约束。
 5. 测试通过 wrapper 调用 kernel；不得删改 DESIGN.md §8 的 case 来迁就实现，也不得把核心计算移到测试或 host 代码。
+6. **上下文效率**：对于已加载且未发生变更的文件，尽量按需读取，避免全量重读。重复读取、冗余思考复述等无效上下文属于无效开销，会增加Token消耗，同时导致注意力稀释。
 
 ## 按需读取的资源
 
