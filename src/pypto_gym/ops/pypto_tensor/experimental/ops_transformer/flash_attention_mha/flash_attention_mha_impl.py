@@ -140,9 +140,6 @@ def flash_attention_varlen_forward_kernel(
         "vec_nbuffer_setting": {-1: 1},
         "ooo_sched_mode": "HLF",
     },
-    codegen_options={
-        "vf_options": "-mllvm -cce-vf-enable-vloopv2-recognizer=true -mllvm -enable-pto-colop-fusion=true"
-    }
 )
 def flash_attention_varlen_forward_950(
     # Q侧输入: shape=[total_q, N, D], total_q=DYNAMIC, N=num_heads, D=head_dim
