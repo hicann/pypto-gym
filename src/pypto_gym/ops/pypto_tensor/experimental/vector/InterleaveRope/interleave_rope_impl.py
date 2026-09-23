@@ -56,8 +56,8 @@ ASCEND_950_NPUARCH = "DAV_3510"
 class RopeTileConfig:
     def __init__(self):
         self.n_length = 32
-        self.gather_tile = [1, 16, 16, 64]
-        self.elem_tile = [1, 16, 16, 32]
+        self.gather_tile = [1, 16, 8, 64]
+        self.elem_tile = [1, 16, 8, 32]
         self.unroll_list = {64, 32, 1}
 
 
@@ -93,25 +93,24 @@ def interleave_rope_kernel_n128_bf16(
 
                 x_t = pypto.view(x, [1, n_length, unroll_length, dim], [b_idx, n_off, s_blk, 0],
                                  valid_shape=[1, n_length, unroll_length, dim])
-                # cos/sin 半区 view：零 gather，等价 ASC 的地址偏移配对
-                c_lo = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
-                                  valid_shape=[1, 1, unroll_length, HALF])
-                c_hi = pypto.view(cos, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
-                                  valid_shape=[1, 1, unroll_length, HALF])
-                s_lo = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, 0],
-                                  valid_shape=[1, 1, unroll_length, HALF])
-                s_hi = pypto.view(sin, [1, 1, unroll_length, HALF], [b_idx, 0, s_blk, HALF],
-                                  valid_shape=[1, 1, unroll_length, HALF])
+                cos_t = pypto.view(cos, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
+                                   valid_shape=[1, 1, unroll_length, dim])
+                sin_t = pypto.view(sin, [1, 1, unroll_length, dim], [b_idx, 0, s_blk, 0],
+                                   valid_shape=[1, 1, unroll_length, dim])
 
                 pypto.set_pass_options(sg_set_scope=1)
                 pypto.set_vec_tile_shapes(gather_tile[0], gather_tile[1], gather_tile[2], gather_tile[3])
 
-                # 计算流开头：全部输入先 cast 到 FP32（与加载融合），再进行后续计算流
+                # 计算流开头：x/cos/sin 先 cast 到 FP32（与加载融合）
                 x_f = pypto.cast(x_t, pypto.DT_FP32)
-                cl_f = pypto.cast(c_lo, pypto.DT_FP32)
-                ch_f = pypto.cast(c_hi, pypto.DT_FP32)
-                sl_f = pypto.cast(s_lo, pypto.DT_FP32)
-                sh_f = pypto.cast(s_hi, pypto.DT_FP32)
+                cos_f = pypto.cast(cos_t, pypto.DT_FP32)
+                sin_f = pypto.cast(sin_t, pypto.DT_FP32)
+
+                # cos/sin 半区 view（FP32 域，零 gather）
+                c_lo = pypto.view(cos_f, [1, 1, unroll_length, HALF], [0, 0, 0, 0])
+                c_hi = pypto.view(cos_f, [1, 1, unroll_length, HALF], [0, 0, 0, HALF])
+                s_lo = pypto.view(sin_f, [1, 1, unroll_length, HALF], [0, 0, 0, 0])
+                s_hi = pypto.view(sin_f, [1, 1, unroll_length, HALF], [0, 0, 0, HALF])
 
                 # 仅 x 做奇偶抽取（FP32 域，等价 ASC GatherMask real/imag）
                 x_e = pypto.gathermask(x_f, pattern_mode=1)
@@ -119,8 +118,8 @@ def interleave_rope_kernel_n128_bf16(
 
                 pypto.set_vec_tile_shapes(elem_tile[0], elem_tile[1], elem_tile[2], elem_tile[3])
                 # FP32 计算（ASC 全 dtype 强制 fp32）
-                ye_f = pypto.sub(pypto.mul(x_e, cl_f), pypto.mul(x_o, sl_f))
-                yo_f = pypto.add(pypto.mul(x_e, sh_f), pypto.mul(x_o, ch_f))
+                ye_f = pypto.sub(pypto.mul(x_e, c_lo), pypto.mul(x_o, s_lo))
+                yo_f = pypto.add(pypto.mul(x_e, s_hi), pypto.mul(x_o, c_hi))
                 # bf16 出口 CAST_RINT（与 ASC 一致）
                 ye = pypto.cast(ye_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
                 yo = pypto.cast(yo_f, pypto.DT_BF16, mode=pypto.CastMode.CAST_RINT)
