@@ -270,6 +270,13 @@ def chunk_kda_varlen_kernel(
                                             valid_shape=[1, actual_l, 1, V])  # only actual_l rows valid
                     pypto.assemble(o_chunk, [0, off, h, 0], o_out)          # writes o_out[0, off:off+actual_l, h, :]
                 else:
+                    # `cat` is heavily used in `_chunk_compute`, pass has some optimize constraints when valid shape
+                    # is dynamic set it same as shape(constants) make pass happy
+                    q2 = pypto.view(q2, q2.shape, [0, 0], valid_shape=q2.shape)
+                    k2 = pypto.view(k2, k2.shape, [0, 0], valid_shape=k2.shape)
+                    v2 = pypto.view(v2, v2.shape, [0, 0], valid_shape=v2.shape)
+                    g2 = pypto.view(g2, g2.shape, [0, 0], valid_shape=g2.shape)
+                    b2 = pypto.view(b2, b2.shape, [0, 0], valid_shape=b2.shape)
                     oc, s_new = _chunk_compute(q2, k2, v2, g2, b2, s_carry, tril, trils, eyestk,
                                                use_qk_l2norm_in_kernel, scale, z8, z16, z32)
                     s_carry[:] = s_new
