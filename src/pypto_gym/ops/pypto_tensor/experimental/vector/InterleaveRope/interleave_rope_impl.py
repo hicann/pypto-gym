@@ -61,6 +61,15 @@ class RopeTileConfig:
         self.unroll_list = {64, 32, 1}
 
 
+@dataclass
+class RopeTileConfig950:
+    def __init__(self):
+        self.n_length = 32
+        self.gather_tile = [1, 16, 16, 64]
+        self.elem_tile = [1, 16, 16, 32]
+        self.unroll_list = {64, 32, 1}
+
+
 @pypto.frontend.jit(
     runtime_options={
         "run_mode": pypto.RunMode.NPU,
@@ -197,7 +206,7 @@ def interleave_rope_kernel_n128_bf16_950(
     cos: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     sin: pypto.Tensor([pypto.DYNAMIC, 1, pypto.DYNAMIC, 64], pypto.DT_BF16),
     out: pypto.Tensor([pypto.DYNAMIC, 128, pypto.DYNAMIC, 64], pypto.DT_BF16),
-    tile_config = RopeTileConfig()
+    tile_config=RopeTileConfig950()
 ):
     pypto.experimental.set_operation_options(combine_axis=True)
     batch = x.shape[0]
