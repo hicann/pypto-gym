@@ -79,7 +79,7 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 |----------------|---------|---------|
 | ITER_START | 根据子技能指南或决策树（步骤 4.1）选择一个优化点 | 步骤 4.1 |
 | ITER_MODIFY | 每次只修改一个参数 | 步骤 4.0 |
-| ITER_VERIFY | 运行测试用例，按步骤 1.3 的检查流程验证 | 步骤 1.3 |
+| ITER_VERIFY | 运行测试用例，按步骤 1.2 的检查流程验证 | 步骤 1.2 |
 | ITER_MEASURE | 采集性能数据，对比基准性能，计算提升百分比 | 步骤 2-3 |
 | ITER_RECORD | 更新 Todo 性能记录表 | 编排器 Todo |
 | ITER_JUDGE | 判断是否达标 / 连续无提升次数是否达阈值 | 编排器退出条件 |
@@ -213,47 +213,24 @@ description: PyPTO 算子性能分析和自动调优技能。用于对生成及�
 □ TILE_FWK_DEVICE_ID 已设置为空闲 chip id
 □ PTO-ISA 兼容性通过：
   - 检测命令：grep -rq "DivAlgorithm" "${PTO_TILE_LIB_CODE_PATH}/include/pto/"
-  - 失败则：git clone https://gitcode.com/cann/pto-isa.git 并 export PTO_TILE_LIB_CODE_PATH
-□ PyPTO 已编译安装：python3 -c "import pypto" 无报错
+□ PyPTO 可用：python3 -c "import pypto" 无报错
 □ torch_npu 可用：python3 -c "import torch_npu; assert torch.npu.is_available()"
 □ 算子文件存在且语法正确：python3 -c "import py_compile; py_compile.compile('<op_file>', doraise=True)"
 ```
 
 **不通过时的处理**：
-- 按环境检查清单逐项修复（NPU/卡号/PTO-ISA/编译安装）
-- 修复后重新检查清单，全部 ✅ 才放行到精度校验
-- 向用户报告环境状态（含 PTO-ISA 来源、可用卡数等关键信息）
+
+**⛔ 调优环节不做环境修复**（含编译安装）。任一项不通过即停止调优，上报失败项与环境状态（检测命令输出、PTO-ISA 来源、可用卡数），由用户确认处理。环境恢复后重新执行本清单，全部 ✅ 放行精度校验。
 
 ---
 
-### 1.1 编译策略
-
-**⚠️ 重要：首次进行精度校验，需要进行编译。**
-**⚠️ 重要：如果只修改了算子测试或 impl 代码，直接运行即可，不需要编译。**
-
-| 修改类型 | 是否需要编译 | 原因 |
-|---------|------------|------|
-| 首次执行 | ✅ 需要编译 | 第一次执行需要更新 whl 包 |
-| 算子测试或 impl 代码（*.py） | ❌ 不需要 | Python 代码即时生效 |
-| framework 代码 | ✅ 需要编译 | C++ 代码需要重新编译 |
-| python/pypto目录 | ✅ 需要编译 | 核心框架代码 |
-
-**编译命令**（仅在需要时执行）：
-```bash
-# 执行编译
-python3 build_ci.py -f python3 --disable_auto_execute
-# 设置环境变量
-export PYTHONPATH=./pypto/build_out/:$PYTHONPATH
-export LD_LIBRARY_PATH=./pypto/build_out/pypto/lib/:$LD_LIBRARY_PATH
-```
-
-### 1.2 执行算子用例
+### 1.1 执行算子用例
 
 ```bash
 python3 custom/operator_name/operator.py --run-mode npu
 ```
 
-### 1.3 精度校验（⛔ 强制检查点)
+### 1.2 精度校验（⛔ 强制检查点)
 
 **⛔ 禁止：必须完成本步骤并通过后，才能进入步骤2！**
 
@@ -361,7 +338,7 @@ def kernel_function(...):
 
 **⚠️ 基准性能差异说明**：调优全程的性能数据在 `debug_options={"runtime_debug_mode": 1}` 下采集，用于横向对比优化效果。调优结束后移除 debug_options，还原为生产配置即可。
 
-### 2.2 重新运行（不需要编译）
+### 2.2 重新运行
 
 如果只修改了算子 impl 代码，直接运行即可：
 ```bash
@@ -469,7 +446,7 @@ SWIMLANE 重试"的回环是预期行为，不是异常——外循环机制天�
 第4步（可选）：算法级优化（在 INCORE 阶段内执行）
 ├─ INCORE 配置级调优收敛后仍未达标时触发（非独立 PHASE，嵌入 INCORE 内部）
 ├─ 不加载新子技能，按步骤 4.3 的检查清单逐项排查
-├─ 每次只改一个算法点，改后按步骤 1.3 验证精度 + 重新测性能
+├─ 每次只改一个算法点，改后按步骤 1.2 验证精度 + 重新测性能
 ├─ A-D1~A-D3 修复 CV 断点后须回退至 SWIMLANE 下一轮重试 S-14（预期回环行为）
 └─ 精度回归立即回退；无收益记录后尝试下一项
 ```
@@ -624,7 +601,7 @@ SWIMLANE 重试"的回环是预期行为，不是异常——外循环机制天�
 
 **执行规则**：
 1. 每次只改一个算法点，验证后再改下一个。禁止一次叠加多个算法改动。
-2. 每次修改后按步骤 1.3 的强制检查流程验证精度，并按步骤 2~3 重新采集和对比性能。
+2. 每次修改后按步骤 1.2 的强制检查流程验证精度，并按步骤 2~3 重新采集和对比性能。
 3. 精度回归或性能回退：立即回退修改，将失败尝试记入调优记录（避免重试），再尝试下一项。
 4. 算法级改动追加到已生成的调优报告（`{op_name}_tuning_report.md`）的「已采纳优化」/「已失败优化」表，阶段名填「算法」，并同步更新性能对比数据。
 5. ⛔ A-D1~A-D3（减少 DDR 往返）改造后，须重新评估 S-14 Mix合图——代码结构改变后，原先不生效的 Mix合图可能变为生效（CV 通路断点已被修复）。
