@@ -122,7 +122,6 @@ class FinalizeRoutingInputs:
     pass_options={
         "cube_nbuffer_setting": {-1: 1},
         "vec_nbuffer_setting": {-2: 1, -1: 1},
-        "auto_mix_partition": 1,
     },
     runtime_options={
         "stitch_function_max_num": 128,
@@ -151,6 +150,8 @@ def gmm_finalize_routing_kernel(
       otherwise [n, ceil(k / 64), 2]
     - pertoken_scale: [m, ceil(k / 64), 2]
     """
+
+    pypto.experimental.auto_mix_partition(1)
 
     pypto.set_cube_tile_shapes(config.m_tile_shape, config.k_tile_shape, config.n_tile_shape)
     pypto.set_vec_tile_shapes(

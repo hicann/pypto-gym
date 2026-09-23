@@ -79,7 +79,6 @@ class ShapeConfig:
 
 @pypto.frontend.jit(
     pass_options={
-        "auto_mix_partition": 1,
         "cube_l1_reuse_setting": {-1: 2},
         "cube_nbuffer_setting": {-1: 4},
         "vec_nbuffer_setting": {-2: 1, -1: 2},
@@ -116,6 +115,8 @@ def transpose_quant_batch_mat_mul_kernel(
         - permX2 determines whether x2 uses scaled_mm with b_trans=True
         - Reshape x1→[M, B*K] and assemble→local_out pattern unchanged from original
     """
+    pypto.experimental.auto_mix_partition(1)
+
     M = tile_config.ori_shape[0]
     K = tile_config.ori_shape[1]
     N = tile_config.ori_shape[2]

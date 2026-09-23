@@ -62,7 +62,6 @@ def msa_main_branch(hq, hkv, dh, bk, topk, max_n=None):
         },
         pass_options={
             "ooo_sched_mode": "HLF",
-            "auto_mix_partition": 1,
             "sg_set_tunevf_mode": 1,
             "vec_nbuffer_setting": {"DEFAULT": 1},
             "cube_l1_reuse_setting": {"DEFAULT": 2},
@@ -80,6 +79,8 @@ def msa_main_branch(hq, hkv, dh, bk, topk, max_n=None):
         block_mask: pypto.Tensor([max_n, kv_len], pypto.DT_FP32),
         output: pypto.Tensor([pypto.DYNAMIC, hq, dh], pypto.DT_FP32),
     ):
+        pypto.experimental.auto_mix_partition(1)
+
         n = query.shape[0]
 
         query_2d = pypto.reshape(query, [n, hq * dh], inplace=True)

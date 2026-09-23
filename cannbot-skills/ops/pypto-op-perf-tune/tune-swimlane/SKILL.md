@@ -90,7 +90,7 @@ Stitch 配置决定了多少个 root function 被同时下发调度。
 
 > **⛔ ⛔ ⛔ 配置任何合图参数前，必须加载 [合图调优](references/merge-optimization.md) 获取完整指南。合图配置错误是性能退化的最常见原因。**
 
-> **🔥 A5 平台专属 [S-14] Mix合图**：若 `pypto.platform.npuarch == 'DAV_3510'`，CV 间搬运可用 Mix合图走 CV 通路消除（CV 最优配比 1:2）。自动合图（`auto_mix_partition: 1`）和手动合图（`sg_set_scope`）是同一功能的两种开关方式，功能完全一致，异常处理（编译超时/退化）方式也完全一致。优先尝试自动合图，按 merge-optimization.md §4.1 关键路径（Step 0→1→2→3→4→5→6）逐步执行，当前开关方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种开关方式。限制条件必须逐项满足。**⚠️ Mix合图首次开启与配套 TileShape（L0 调小 + L1 调大 + loop tile 调小）须作为原子优化点提交**。
+> **🔥 A5 平台专属 [S-14] Mix合图**：若 `pypto.platform.npuarch == 'DAV_3510'`，CV 间搬运可用 Mix合图走 CV 通路消除（CV 最优配比 1:2）。自动合图（`pypto.experimental.auto_mix_partition(1)`）和手动合图（`sg_set_scope`）是同一功能的两种开关方式，功能完全一致，异常处理（编译超时/退化）方式也完全一致。优先尝试自动合图，按 merge-optimization.md §4.1 关键路径（Step 0→1→2→3→4→5→6）逐步执行，当前开关方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种开关方式。限制条件必须逐项满足。**⚠️ Mix合图首次开启与配套 TileShape（L0 调小 + L1 调大 + loop tile 调小）须作为原子优化点提交**。
 
 > **⛔ 编译超时处理摘要**（完整步骤见 [merge-optimization.md §4.1 Step 2](references/merge-optimization.md)）：⛔ 禁止移除 Mix合图配置，按以下优先级逐个尝试：
 > 1. 移除 `debug_options` + 加 `host_options={"compile_monitor_enable": 0}`（最常见原因）
@@ -437,7 +437,7 @@ if pypto.platform.npuarch == 'DAV_3510':
 - [ ] [S-14] 是否确认平台为 A5（`pypto.platform.npuarch == 'DAV_3510'`）
 - [ ] 是否确认算子存在 CV 交替结构（纯 Cube/Vector 算子不适用 Mix合图，跳过本节）
 - [ ] ⛔ 进入 Mix合图前必须先完成 Step 0 数据流分析（0a: CV 数据流表 → 0b: scope 布局方案 → 0c: 配套参数推荐值 → 0d: 分析结论），Step 1 的原子优化点必须基于 Step 0 结论
-- [ ] 选择一种 Mix合图开关方式（优先尝试 `auto_mix_partition: 1`，或 `sg_set_scope`），配合 Step 0c 推荐的配套参数 + nbuffer 默认 1:1，作为**原子优化点**一次性提交实测性能（详见 merge-optimization.md §4.1 关键路径 Step 1）
+- [ ] 选择一种 Mix合图开关方式（优先尝试 `pypto.experimental.auto_mix_partition(1)`，或 `sg_set_scope`），配合 Step 0c 推荐的配套参数 + nbuffer 默认 1:1，作为**原子优化点**一次性提交实测性能（详见 merge-optimization.md §4.1 关键路径 Step 1）
 - [ ] 达标 → 完成；⛔ 编译超时 → 按关键路径 Step 2（2a→2d 顺序）处理，**禁止移除 Mix合图**；⛔ 退化 → **禁止跳过分析直接回退**，按关键路径 Step 3 阶段 A 先分析退化原因（3a: Q1 CV通路 / Q2 spill / Q3 退化因素 → 3b: 在当前 scope 内调参 → 3c: ⛔ 8项配套参数全部逐个调优并标记✅/❌），3c 调完后 → **⛔ 无论"仍退化"还是"有提升但未达标"都必须进入 Step 4**（调整 scope 框架：全合↔不全合），Step 4 仍无收益 → Step 5 切换另一种开关方式（自动↔手动），**⛔ 切换后等同于Mix合图重新开始：nbuffer重置为1，必须重走Step 3→4完整流程，禁止切换后直接判断退化就回退**
 - [ ] 是否检查 CV 间数据传递为 1:N 或 N:1（不支持 M:N 多对多，否则走 DDR）；消费者约束：一个 matmul 结果只喂一条 vector 链，同一 L0C_COPY_UB 的 vector 消费者须在同一 AIV 核
 - [ ] 是否检查 CV 间 shape 变化单调（无交叉大小，如 [64,128]→[128,64] 禁止）

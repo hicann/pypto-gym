@@ -94,7 +94,7 @@
 | ⭐⭐   | F-6 合并独立 loop  | 开箱     | 合并无数据依赖的独立 loop                                                      |
 | ⭐⭐   | S-9 Stitch 调优    | 深度     | `stitch_function_max_num: 128`                                               |
 | ⭐⭐⭐ | S-4 / S-5 普通合图 | 深度     | sg_set_scope 包裹 V 段 或 nbuffer                                              |
-| ⭐⭐⭐ | S-14 A5 Mix合图    | 深度     | A5 平台：`auto_mix_partition=1`（自动）和 `sg_set_scope`（手动）是同一功能的两种开关方式，优先尝试自动，当前方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种（仅 `npuarch=='DAV_3510'`） |
+| ⭐⭐⭐ | S-14 A5 Mix合图    | 深度     | A5 平台：`pypto.experimental.auto_mix_partition(1)`（自动）和 `sg_set_scope`（手动）是同一功能的两种开关方式，优先尝试自动，当前方式充分调优后未达到预期目标性能或需要最优性能时再切换另一种（仅 `npuarch=='DAV_3510'`） |
 | ⭐⭐⭐ | S-21 Mix多scope策略 | 深度     | A5 平台：涉及跨迭代依赖的 V 段从 Mix scope 放出，用独立 `sg_set_scope` 做普通合图；多段无数据依赖的 CV 段分独立 Mix scope                  |
 | ⭐     | S-10 调度策略      | 深度     | `device_sched_mode` 调整                                                     |
 | ⭐⭐⭐ | §4.3 A-D1~A-D3     | 算法     | ⚠️ S-14 配置级 Mix合图失败后，走算法级优化减少 DDR 往返（合并 gather / view 复用 / 消除中间 assemble），修复 CV 通路断点后重试 S-14。详见主 SKILL.md §4.3 |
@@ -489,7 +489,7 @@
 - **操作指南**: tune-swimlane SKILL.md §4 + merge-optimization.md §4
 - **原理**: 走 CV 通路（片上直连）替代 CV 间 GM 搬运，CV 最优配比 1:2（1 Cube : 2 Vector）。**Mix合图功能只在 A5（DAV_3510）平台上才有**；DAV_3003/3113 等 Lite 平台有独立 LiteNPU 路径，不可等同；只包裹 Vector 段的合图称为普通合图（S-4），在所有平台均可用
 - **两种开关方式（功能完全一致，异常处理方式也完全一致）**:
-  - **自动合图（优先尝试）**：`pass_options={"auto_mix_partition": 1}`，编译器自动决定 scope 范围。默认关闭，受代价/收益判断影响可能跳过部分段
+  - **自动合图（优先尝试）**：在 jit kernel 函数体内调用 `pypto.experimental.auto_mix_partition(1)`，编译器自动决定 scope 范围。默认关闭（0），受代价/收益判断影响可能跳过部分段
   - **手动合图**：`sg_set_scope` 包裹 CV 交替段（开始 正整数，结束 -1），用户手动控制 scope 范围。scope 后的数字只是唯一标志，无功能差异，相同数字=同一段合图，不同数字=不同段合图
 - **统一调优流程**: ⛔ 先完成 Step 0 数据流分析（CV 数据流表→scope 布局→配套参数）→ Step 1 基于分析结论开启 Mix合图（原子优化点）→ 达标则完成 → ⛔ 编译超时**禁止放弃 Mix合图**，按关键路径 Step 2 缩小 scope/TileShape/unroll 后重试（自动超时→切手动缩小 scope）→ ⛔ 退化**禁止跳过分析直接回退**，按关键路径 Step 3 分析原因并调参 → Step 4 调整 scope 框架 → 当前方式全部走完仍无收益 → 按关键路径 Step 5 切换另一种开关方式。详见 merge-optimization.md §4.1 关键路径
 - **硬性限制条件（⛔ 不满足则不生效，详见 merge-optimization.md §4.2）**:

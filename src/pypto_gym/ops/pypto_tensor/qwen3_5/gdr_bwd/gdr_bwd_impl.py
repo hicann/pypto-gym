@@ -995,7 +995,6 @@ _SCHED_950 = 1
     pass_options={"vec_nbuffer_setting": {-2: 1, -1: 4},
                   "cube_nbuffer_setting": {-1: 4},
                   "cube_l1_reuse_setting": {-1: 8},
-                  "auto_mix_partition": 1,
                   },
     host_options={"compile_monitor_enable": 0}
     )
@@ -1028,6 +1027,7 @@ def gdr_bwd_fused_kernel_npu_950(
     head_dim: int, bt: int, n_heads: int, nt_max: int, scale_val: float,                  # specialized non-tensor knobs
     use_rstd: bool,
 ):
+    pypto.experimental.auto_mix_partition(1)
     pypto.experimental.set_operation_options(combine_axis=True)
     _fused_backward_body_950(
         q, k, v, beta, gcum,

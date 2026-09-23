@@ -478,28 +478,28 @@ python3 scripts/leafhash_to_code.py <output_dir>
 
 | | 自动合图（方式 A） | 手动合图（方式 B） |
 |---|---|---|
-| 开关 | `pass_options={"auto_mix_partition": 1}` | `sg_set_scope(正整数)` / `sg_set_scope(-1)` |
+| 开关 | `pypto.experimental.auto_mix_partition(1)` | `sg_set_scope(正整数)` / `sg_set_scope(-1)` |
 | scope 范围 | 编译器自动决定 CV 段的包裹范围 | 用户手动圈定 CV 段 |
 | 功能 | 完全一致：消除 CV 间 DDR 搬运，走 CV 通路 | 完全一致 |
 | 配套参数 | 完全一致：nbuffer、TileShape、unroll 等 | 完全一致 |
 | 编译超时处理 | 完全一致（见关键路径 Step 2） | 完全一致 |
 | 退化处理 | 完全一致（见关键路径 Step 3→4） | 完全一致 |
 
-**⛔ 调优互斥原则**：性能调优时不能同时使用两种方式——要么使用自动合图，要么使用手动合图。切换时必须移除旧配置（移除 `auto_mix_partition` 或移除所有 `sg_set_scope`），同时使用会导致调优变量混淆。
+**⛔ 调优互斥原则**：性能调优时不能同时使用两种方式——要么使用自动合图，要么使用手动合图。切换时必须移除旧配置（重置 `pypto.experimental.auto_mix_partition(0)` 或移除所有 `sg_set_scope`），同时使用会导致调优变量混淆。
 
 **方式 A：自动合图（优先尝试）**
 
-在 `pass_options` 中设置 `auto_mix_partition: 1`，编译器底层自动对 CV 算子做合图包裹，无需手动设置 `sg_set_scope`：
+在 jit kernel 函数体内调用 `pypto.experimental.auto_mix_partition(1)`，编译器底层自动对 CV 算子做合图包裹，无需手动设置 `sg_set_scope`：
 
 ```python
 @pypto.frontend.jit(
     pass_options={
-        "auto_mix_partition": 1,
         "vec_nbuffer_setting": {-1: 1},
         "cube_nbuffer_setting": {-1: 1},
     },
 )
 def kernel(...):
+    pypto.experimental.auto_mix_partition(1)
     # ... kernel 计算代码（无需手动 sg_set_scope 包裹）...
 ```
 
@@ -521,7 +521,7 @@ if pypto.platform.npuarch == 'DAV_3510':
 
 **参考资料**
 
-- [auto_mix_partition/sg_set_scope 参数设置说明](https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/config/pypto-set_pass_options.md)
+- [sg_set_scope 参数设置说明](https://raw.gitcode.com/cann/pypto/raw/master/docs/zh/api/config/pypto-set_pass_options.md)
 
 ---
 
@@ -529,7 +529,7 @@ if pypto.platform.npuarch == 'DAV_3510':
 
 > **铁律：Mix合图一旦开启，不论编译超时还是性能退化，都禁止直接移除 Mix合图配置转向非 Mix 优化（如 stitch/sched_mode/NONE_CACHEABLE/vf_options）。必须走完下方全部 Step 后才允许退出。**
 
-> **⛔ 两条独立调试线原则：自动合图（auto_mix_partition=1）和手动合图（sg_set_scope）是两条独立的调试线，各自必须完整走 Step 0→1→2→3→4→5→6。先完整走完自动合图线（Step 0→6），再切换走手动合图线（Step 0→6，Step 0 数据流分析可复用）。禁止从自动合图的某个中间步骤直接跳入手动合图的某个中间步骤。两条线全部走完仍未达到预期目标性能才允许退出 Mix合图。**
+> **⛔ 两条独立调试线原则：自动合图（`pypto.experimental.auto_mix_partition(1)`）和手动合图（`sg_set_scope`）是两条独立的调试线，各自必须完整走 Step 0→1→2→3→4→5→6。先完整走完自动合图线（Step 0→6），再切换走手动合图线（Step 0→6，Step 0 数据流分析可复用）。禁止从自动合图的某个中间步骤直接跳入手动合图的某个中间步骤。两条线全部走完仍未达到预期目标性能才允许退出 Mix合图。**
 
 ```
 Step 0: 数据流分析（进入 Mix合图前的强制准备）
@@ -620,7 +620,7 @@ Step 1: 开启 Mix合图 + 配套参数（原子优化点）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   操作：基于 Step 0 的分析结论，一次性设置全套配套配置：
     - Mix合图开关：按 Step 0b 的 scope 布局方案配置
-      （自动合图 auto_mix_partition=1，或手动合图 sg_set_scope）
+      （自动合图 pypto.experimental.auto_mix_partition(1)，或手动合图 sg_set_scope）
     - 配套参数：按 Step 0c 的推荐值配置
       （cube tile / unroll_list / ooo_sched_mode / max_workspace_kb）
     - nbuffer：按 Step 0c 的推荐值配置（如无特殊推荐则默认 1:1）
@@ -807,8 +807,8 @@ Step 5: 切换另一种开关方式（自动↔手动）
   ⛔ 只有当前开关方式下 Step 3（阶段A：3a→3b→3c）+ Step 4（阶段B：调整scope框架）全部走完仍无收益（既未达标也无提升趋势）才进入此步骤。
   ⛔ 禁止从 Step 3c 直接跳到 Step 5——必须先走 Step 4。
 
-  - 当前是自动合图 → 切换到手动合图（移除 auto_mix_partition，添加 sg_set_scope）
-  - 当前是手动合图 → 切换到自动合图（移除 sg_set_scope，添加 auto_mix_partition）
+  - 当前是自动合图 → 切换到手动合图（重置 pypto.experimental.auto_mix_partition(0)，添加 sg_set_scope）
+  - 当前是手动合图 → 切换到自动合图（移除 sg_set_scope，调用 pypto.experimental.auto_mix_partition(1)）
     ⚠️ 如果自动合图在 Step 2 中已编译超时，跳过此方向，直接进入 Step 6
 
   ⛔ **切换后等同于 Mix合图重新开始调优**：
@@ -891,7 +891,7 @@ Step 6: 退出 Mix合图
 □ Step 6: 退出 Mix合图（记录原因和已尝试配置）
 ```
 
-> **注意**：`auto_mix_partition` 默认关闭。自动合图还受代价和收益判断影响，可能跳过部分段，因此不作为确定性保证。需要精确控制合图段时用手动 `sg_set_scope`。
+> **注意**：`pypto.experimental.auto_mix_partition` 默认关闭（0）。自动合图还受代价和收益判断影响，可能跳过部分段，因此不作为确定性保证。需要精确控制合图段时用手动 `sg_set_scope`。
 
 **说明**：
 
@@ -974,7 +974,7 @@ Step 6: 退出 Mix合图
    - **AICore E2E Time 无收益**：CV 全合（含配套 TileShape/nbuffer 调优）多次尝试后 AICore E2E Time 未下降
    - **四个最优条件中有明确违反且无法通过调优修复**：如全合后 task 数 < 物理核数且调小 TileShape 仍无法增加任务数（违反条件 1）；或 spill > 20 且调小 TileShape/调小 nbuffer 均无法降低（违反条件 3）
 
-   无需四个条件全部验证不通过才改不全合——四个条件是判断"是否达到理论最优"的标准，而非判断"是否应改不全合"的门槛。只要性能无收益或某条件明确违反且不可修复，即可改不全合。**⚠️ 自动合图（`auto_mix_partition: 1`）模式下，全合/不全合由编译器自动决策，用户无需手动放出段**——以下手动放出段策略仅适用于手动 `sg_set_scope` 模式。
+   无需四个条件全部验证不通过才改不全合——四个条件是判断"是否达到理论最优"的标准，而非判断"是否应改不全合"的门槛。只要性能无收益或某条件明确违反且不可修复，即可改不全合。**⚠️ 自动合图（`pypto.experimental.auto_mix_partition(1)`）模式下，全合/不全合由编译器自动决策，用户无需手动放出段**——以下手动放出段策略仅适用于手动 `sg_set_scope` 模式。
 
    **⛔ CV 全合最低尝试要求**：CV 全合首次开启后，"多次尝试"不是模糊的——必须完成以下全部尝试维度后才允许判定"无收益"并切换到 CV 不全合：
 
@@ -1071,13 +1071,13 @@ Step 6: 退出 Mix合图
 ```python
 @pypto.frontend.jit(
     pass_options={
-        "auto_mix_partition": 1,             # 自动合图，无需手动 sg_set_scope
         "vec_nbuffer_setting": {-1: 1},      # v_n 配比 1
         "cube_nbuffer_setting": {-1: 1},     # c_n 配比 1（无效则改 cube_l1_reuse_setting={-1:1}）
     },
     runtime_options={...}
 )
 def kernel(...):
+    pypto.experimental.auto_mix_partition(1)   # 自动合图，在 kernel 函数体内调用，无需手动 sg_set_scope
     pypto.experimental.set_operation_options(combine_axis=True)
 
     for s2_idx in pypto.loop(0, bn_per_batch, 1,
