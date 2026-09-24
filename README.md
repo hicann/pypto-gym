@@ -169,7 +169,7 @@ pypto-gym/
 │       │       ├── kimi_linear_48b_a3b/     # Kimi-Linear-48B-A3B KDA
 │       │       ├── llada2_moe/              # LLaDA2-MoE Gate / Expert FFN / Grouped GEMM
 │       │       ├── ling_3_0_flash/          # Ling 3.0 Flash KDA
-│       │       ├── minimax_m27/             # MiniMax M2.7 MoE Grouped GEMM
+│       │       ├── minimax/                 # MiniMax M2.7 MoE Grouped GEMM
 │       │       ├── mtgr_segment_attention/  # MTGR Ragged Segment Attention
 │       │       ├── openpangu_v5_7b/         # openPangu-Embedded-7B 整层融合（单层 BSH）
 │       │       ├── phi_3_mini_4k_instruct/  # Phi-3-mini-4k-instruct RMSNorm
