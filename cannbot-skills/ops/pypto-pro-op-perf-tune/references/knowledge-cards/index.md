@@ -10,7 +10,7 @@ okf_version: "0.2"
 
 本文件是卡片清单的**唯一入口**，调优时只从 Active 表获取候选，不通过扫描目录自动采用卡片。
 实际卡片按稳定类别放入子目录。已内置 15 张 VF/VEC 卡片，位于 `vec/`，编号为 `vec-01` 至
-`vec-15`，均以 `status=stable` 登记到 Active 表。
+`vec-15`；7 张 Cube 卡片，位于 `cube/`，编号为 `cube-01` 至 `cube-07`，均以 `status=stable` 登记到 Active 表。
 
 ## Active items
 
@@ -34,6 +34,13 @@ okf_version: "0.2"
 | `vec-13` | [VF 尾块统一 mask](vec/vec-13-vf-tail-unified-mask.md) | `stable` | `mixed` | full 与 tail 代码体重复，逐拍 active 可由 total 减 offset 精确重算，offset 与 mask 使用同一元素粒度，且不违反已选 KB 中前提成立的 full-mask 外提义务 | 仅限 Ascend 950PR 或 950DT；须核验 vf.update_mask 不回写 Python 标量，lane 常量按 dtype 与生成物确定 |
 | `vec-14` | [对齐分段 Tile 布局](vec/vec-14-aligned-split-copy.md) | `stable` | `memory` | 非 32B 段起点在生成物或 trace 中造成对齐退化，且独立 Tile 及 padding 可被 Vec 容量容纳 | 仅限 Ascend 950PR 或 950DT；须核验 pl.load/store 元素 offset、Tile physical/valid shape、TileGroup 地址与对齐合同 |
 | `vec-15` | [布局先行 + 64-lane 向量树化，消除跨 lane 归约与标量 pack](vec/vec-15-layout-first-vector-tree.md) | `stable` | `mixed` | VF 热点沿某一轴做归约（在线 softmax 行 max/段和等），分数矩阵布局可翻转为列=query（cube 侧把 Q·Kᵀ 改写为 K·Q̃ 类形式并按 N 维拆分搬运），每条 64-lane load 覆盖一个归约行 × 64 个查询，归约结果无跨行交叉消费且翻布局后 live set 可被容量容纳 | 仅限 Ascend 950PR 或 950DT；依赖已核验的 vf.load_align/vf.store_align、vf.max/muls/add 树、vf.reduce_max/reduce_sum 与 AccToVecMode.DualModeSplitN；store_unalign tracker 语义须按当前版本复核 |
+| `cube-01` | [matmul `phase=` 细粒度 M↔FixPipe 流水（unit_flag 硬件握手）](cube/cube-01-unitflag-fine-grained-fixpipe.md) | `stable` | `scheduling` | Cube kernel 的 K 循环累加器经 pl.store/store_tile 直接写回 GM（无 Acc→Vec epilogue），profiling 显示 FIXPIPE bound 或 MMAD 与搬出整段串行，且 L0C 被完整输出块占满无法开双缓冲 | 仅限 Ascend 950PR 或 950DT；phase= 仅在 drain 为带 phase= 的 pl.store/store_tile 时合法；pl.move 是否携带 phase 形参随版本变化，Acc→Vec 配对合法性须按目标版本重新验证，验证前禁用维持 |
+| `cube-02` | [L1 bank 冲突规避（ping/pong 分居前后半 L1）](cube/cube-02-l1-bank-half-split.md) | `stable` | `memory` | K 循环 matmul 的 L1 操作数 buffer 数 ≥2（ping/pong），profiling 显示 MTE1 bound 或 MMAD 断流，且单个 buffer 数据总量不超过半个 L1 | 仅限 Ascend 950PR 或 950DT；依赖 make_tile_group 的 addrs 列表显式指定各 buffer 地址与 auto_mutex 轮转；L1 容量与 bank 边界按目标 ini 复核 |
+| `cube-03` | [StreamK / Split-K：K 维跨核切分 + 原子累加部分和](cube/cube-03-streamk-atomic-k-split.md) | `stable` | `scheduling` | matmul 的 M/N tile 数明显小于可用核数且 K 足够长；输出 dtype 支持原子累加；FP32 部分和精度预算允许 | 仅限 Ascend 950PR 或 950DT；依赖 pl.store/store_tile 的 atomic=AtomicAdd（目的区域须预先初始化）与 kernel[stream, block_dim] 启动 |
+| `cube-04` | [FullLoad：小侧操作数全量驻留 L1](cube/cube-04-fullload-resident-l1.md) | `stable` | `memory` | matmul 一侧矩阵字节数 ≤ 可用 L1 预算（预留对侧流式与轮转空间），对侧循环次数 ≥2，且当前为 MTE2 bound | 仅限 Ascend 950PR 或 950DT；依赖 pl.load 单次大搬运与 pl.move 的 offset 切片语义（源 tile 大于目的 tile 时按元素偏移读） |
+| `cube-05` | [MTE2 预取（显式 ping/pong 组 + 消费后回填）](cube/cube-05-mte2-preload-explicit-pingpong.md) | `stable` | `memory` | K 循环 matmul 已有双缓冲语义但流水仍见 MTE2 空泡（搬运发射滞后于数据依赖解除），且 k_blocks ≥ 2 | 仅限 Ascend 950PR 或 950DT；依赖独立 tile group + auto_mutex 的同组内 pipe 排序；动态奇偶分支选择句柄的形式须按当前 parser 复核 |
+| `cube-06` | [GroupedMatmul 组间连续核分配（全局线性 tile 空间）](cube/cube-06-grouped-continuous-core-assign.md) | `stable` | `scheduling` | 单 kernel 承载多组 matmul（MoE 分组、batch matmul 等），各组 tile 数不被核数整除，组数较多 | 仅限 Ascend 950PR 或 950DT；依赖 pl.get_block_idx/pl.get_block_num、三维 GM 张量的组维寻址与单次 launch |
+| `cube-07` | [权重 NZ 离线预打包（GM NZ 声明 + NZ→NZ 纯搬运）](cube/cube-07-weight-nz-prepack.md) | `stable` | `memory` | 推理场景权重固定、可离线预处理；matmul 为 MTE2 bound 且权重搬运占比高；原始内轴不对齐时随路转换代价更高、收益更明显 | 仅限 Ascend 950PR 或 950DT；GM Tensor 仅支持 ND/NZ 两种声明，NZ 要求调用方已按 NZ 物理排布 packing 且按对齐后容量分配；NZ 搬运不支持降序 order 转置 |
 
 ## ID 与状态规则
 
