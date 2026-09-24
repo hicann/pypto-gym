@@ -156,17 +156,17 @@ TEST/test_bsa_bwd         ← bsa_test_utils, bsa_fwd_golden, bsa_fwd_impl,
 |---|------|---------|------|
 | 1 | ~~不支持 `pypto.DYNAMIC`~~ | 工厂函数 + 字典缓存，每种 shape 编译一个 kernel | **已解除**：BSA 使用 `pypto.frontend.dynamic()` 创建的 SymbolicScalar 作为 tensor 维度，等同于 `pypto.DYNAMIC`；BWD kernel 使用单一合并内核（cache key = `("bwd")`）无需每种 shape 重编译 |
 | 2 | 不支持 `pypto.cond()` | 裸 `if pypto.is_loop_begin(v):` | **编译失败确认**：`pypto.cond()` 在 BSA 内核中触发 `REGISTER_COPY tile shape not set` 错误（BiSheng 编译器无法为条件分支间的数据拷贝设置 tile shape），BSA 的 `parallel=True` + SUB_SPLIT + 多 tile shape 上下文切换模式与此机制不兼容；DeepSeek V32 可用是因为其内核结构更简单（无 SUB_SPLIT、无 parallel、无显式 tile shape 切换） |
-| 3 | `SymbolicScalar ** -0.5` 不支持 | kernel 外计算为 Python float，闭包捕获 |
-| 4 | `pypto.where` 仅支持单轴广播 | 预展开 mask 到 `[BLOCK, BLOCK]` |
-| 5 | `pypto.where(mask, tensor, scalar)` CCE 失败 | 使用 `S*mask + (1-mask)*neg` 算术替代 |
-| 6 | `pypto.cast(BOOL, FP32)` kernel 内数据损坏 | wrapper 中预转换 `mask.float()` |
-| 7 | `pypto.assemble` + `reshape` 冲突 | 输出 tensor 传 3D，避免 kernel 内 reshape |
-| 8 | `pypto.sum(FP16)` 返回 FP16 | cast 到 FP32 后再 sum |
-| 9 | `pypto.assemble` 是覆写非累加 | 拆分 kernel，局部累积后一次性写出 |
-| 10 | `and` + `is_loop_begin` 触发 `ValueError` | 嵌套 if 代替 and |
-| 11 | Cube tile `[256, 128]` 不支持 | 必须使用 `[128, 128]` |
-| 12 | `pypto.view` 2D 偏移对 LSE 不正确 | 反向时 flatten LSE 到 `[B*Hq*Sq, 1]`，用 1D 偏移 |
-| 13 | wrapper 数据与 kernel 存在竞争 | `torch.npu.synchronize()` 确保 wrapper 数据写入完成 |
+| 3 | `SymbolicScalar ** -0.5` 不支持 | kernel 外计算为 Python float，闭包捕获 | **已规避** |
+| 4 | `pypto.where` 仅支持单轴广播 | 预展开 mask 到 `[BLOCK, BLOCK]` | **已规避** |
+| 5 | `pypto.where(mask, tensor, scalar)` CCE 失败 | 使用 `S*mask + (1-mask)*neg` 算术替代 | **已规避** |
+| 6 | `pypto.cast(BOOL, FP32)` kernel 内数据损坏 | wrapper 中预转换 `mask.float()` | **已规避** |
+| 7 | `pypto.assemble` + `reshape` 冲突 | 输出 tensor 传 3D，避免 kernel 内 reshape | **已规避** |
+| 8 | `pypto.sum(FP16)` 返回 FP16 | cast 到 FP32 后再 sum | **已规避** |
+| 9 | `pypto.assemble` 是覆写非累加 | 拆分 kernel，局部累积后一次性写出 | **已规避** |
+| 10 | `and` + `is_loop_begin` 触发 `ValueError` | 嵌套 if 代替 and | **已规避** |
+| 11 | Cube tile `[256, 128]` 不支持 | 必须使用 `[128, 128]` | **已规避** |
+| 12 | `pypto.view` 2D 偏移对 LSE 不正确 | 反向时 flatten LSE 到 `[B*Hq*Sq, 1]`，用 1D 偏移 | **已规避** |
+| 13 | wrapper 数据与 kernel 存在竞争 | `torch.npu.synchronize()` 确保 wrapper 数据写入完成 | **已规避** |
 
 ---
 
@@ -253,31 +253,30 @@ export PYTHONPATH=/mnt/workspace/gitCode/cann/pypto/python:$PYTHONPATH
 
 1. **`BSA_ROOT` 环境变量**（显式指定）
 2. **自动检测**：从脚本位置向上搜索 `BSA_README.md` + `common/bsa_common.py`
-3. **仓库相对路径**：从 CWD 向上搜索 `pypto_6304/models/experimental/attention/BSA`
+3. **仓库相对路径**：在含 `tests/` 与 `src/` 的项目根下，按 `tests/ops/` 相对路径定位 `src/pypto_gym/ops/` 下的 BSA 实现
 
 ```bash
 # 前向精度测试（对齐）
-cd models/experimental/attention/BSA/
-python TEST/test_bsa_fwd.py --mode precision
+python tests/ops/experimental/attention/BSA/test_bsa_fwd.py --mode precision
 
 # 前向精度测试（非对齐/变长）
-python TEST/test_bsa_fwd.py --mode non-aligned
+python tests/ops/experimental/attention/BSA/test_bsa_fwd.py --mode non-aligned
 
 # 前向性能测试（泳道图）
-python TEST/test_bsa_fwd.py --mode perf
+python tests/ops/experimental/attention/BSA/test_bsa_fwd.py --mode perf
 
 # 反向精度测试（对齐）
-python TEST/test_bsa_bwd.py --mode precision
+python tests/ops/experimental/attention/BSA/test_bsa_bwd.py --mode precision
 
 # 反向精度测试（非对齐/变长）
-python TEST/test_bsa_bwd.py --mode non-aligned
+python tests/ops/experimental/attention/BSA/test_bsa_bwd.py --mode non-aligned
 
 # 反向性能测试（泳道图）
-python TEST/test_bsa_bwd.py --mode perf
+python tests/ops/experimental/attention/BSA/test_bsa_bwd.py --mode perf
 
 # 快速测试（仅 S256+S512+B2S256）
-python TEST/test_bsa_fwd.py --cases quick
-python TEST/test_bsa_bwd.py --cases quick
+python tests/ops/experimental/attention/BSA/test_bsa_fwd.py --cases quick
+python tests/ops/experimental/attention/BSA/test_bsa_bwd.py --cases quick
 ```
 
 ### 注意事项

@@ -203,13 +203,13 @@ export PTO_TILE_LIB_CODE_PATH=/path/to/pto-isa
 export TILE_FWK_DEVICE_ID=0
 
 # 运行精度+性能测试
-python3 test_chunked_gated_delta_rule.py --perf
+python3 tests/ops/chunked_gdr/test_chunked_gated_delta_rule.py --perf
 
 # 运行单个用例
-python3 test_chunked_gated_delta_rule.py aligned_gqa --perf
+python3 tests/ops/chunked_gdr/test_chunked_gated_delta_rule.py aligned_gqa --perf
 
 # 列出所有用例
-python3 test_chunked_gated_delta_rule.py --list
+python3 tests/ops/chunked_gdr/test_chunked_gated_delta_rule.py --list
 ```
 
 ## 精度要求
