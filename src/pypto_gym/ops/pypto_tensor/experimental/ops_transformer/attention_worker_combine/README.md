@@ -121,4 +121,4 @@ attention_worker_combine/
 ## 相关文档
 
 - [PyPTO API 文档](../../../docs/api/)
-- [PyPTO 动态轴文档](../../../docs/api/pypto-DYNAMIC.md)
+- [PyPTO 动态轴文档](https://gitcode.com/cann/pypto/blob/master/docs/zh/api/tensor_api/others/pypto-DYNAMIC.md)

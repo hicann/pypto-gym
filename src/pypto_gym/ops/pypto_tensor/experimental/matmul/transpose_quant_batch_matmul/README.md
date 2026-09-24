@@ -252,7 +252,7 @@ test_transpose_quant_batch_matmul(
 - **DESIGN.md** - 详细设计文档
 - [PyPTO API 文档](../../../docs/api/)
 - [MXFP8 量化规范](../../../docs/tutorials/quantization/)
-- [性能优化指南](../../../docs/tutorials/debug/performance.md)
+- [性能优化指南](https://gitcode.com/cann/pypto/blob/master/docs/zh/guide/programming_guide/tensor/debug/performance.md)
 
 ---
 
