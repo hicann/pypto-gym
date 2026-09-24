@@ -14,6 +14,7 @@ Qwen3-1.7B 单次问答脚本
 """
 
 import argparse
+import logging
 import os
 import torch
 import torch_npu
@@ -35,7 +36,6 @@ if args.use_pto:
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 logging.info(f"Using device: npu:{args.device}")

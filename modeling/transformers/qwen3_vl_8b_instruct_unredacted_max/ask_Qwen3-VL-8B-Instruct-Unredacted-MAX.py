@@ -16,6 +16,7 @@ Qwen3-VL-8B-Instruct-Unredacted-MAX 推理脚本
 """
 
 import argparse
+import os
 import sys
 import torch
 import torch_npu
