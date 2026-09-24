@@ -9,7 +9,7 @@
 | [src/pypto_gym/ops/pypto_tensor/glm_v4_5/glm_*_impl.py](../src/pypto_gym/ops/pypto_tensor/glm_v4_5/) | [ops/glm_v4_5/test_glm_*.py](ops/glm_v4_5/) |
 | [src/pypto_gym/ops/pypto_tensor/deepseek_v32_exp/*_impl.py](../src/pypto_gym/ops/pypto_tensor/deepseek_v32_exp/) | [ops/deepseek_v32_exp/test_*.py](ops/deepseek_v32_exp/) |
 | [src/pypto_gym/ops/pypto_tensor/qwen3_1_7b/qwen3_*.py](../src/pypto_gym/ops/pypto_tensor/qwen3_1_7b/) | [ops/qwen3_1_7b/test_*.py](ops/qwen3_1_7b/) |
-| [src/pypto_gym/ops/pypto_tensor/qwen3_next/gated_delta_rule_impl.py](../src/pypto_gym/ops/pypto_tensor/qwen3_next/gated_delta_rule_impl.py) | [ops/qwen3_next/test_gated_delta_rule.py](ops/qwen3_next/test_gated_delta_rule.py) |
+| [src/pypto_gym/ops/pypto_tensor/qwen3_next/gated_delta_rule_impl.py](../src/pypto_gym/ops/pypto_tensor/qwen3_next/gated_delta_rule_impl.py) | [ops/qwen3_next/test_gated_delta_rule_qwen3_next.py](ops/qwen3_next/test_gated_delta_rule_qwen3_next.py) |
 
 
 ## 运行方式
