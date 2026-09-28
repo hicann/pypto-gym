@@ -40,6 +40,7 @@ import math
 import torch
 
 import pypto_pro.language as pl
+from pypto_pro.runtime.platform import get_platform_info
 from pypto_pro.runtime.tilingkey import TilingKeyField
 
 
@@ -818,7 +819,7 @@ def engram_forward_wrapper(
     value_back = torch.empty((m, h_out), dtype=torch.float32, device=device)
     gate_back = torch.empty((m, m_dim, 64), dtype=torch.float32, device=device)
 
-    num_cores = min(32, (m + tile_m - 1) // tile_m)
+    num_cores = min(get_platform_info().core_num, (m + tile_m - 1) // tile_m)
     if num_cores < 1:
         num_cores = 1
 
