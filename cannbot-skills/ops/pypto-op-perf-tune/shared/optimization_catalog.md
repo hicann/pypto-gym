@@ -388,9 +388,8 @@
 - **前置条件**: S-3 完成
 - **检查方法**: 运行 `analyze_swimlane.py` 查看 `[AIV]` 部分，确认短耗时任务
 - **操作指南**: tune-swimlane SKILL.md §4 → references/merge-optimization.md §2.1
-- **配置示例**: `pass_options={"vec_nbuffer_setting": {-2: 1, -1: 2}}`
+- **配置示例**: `pass_options={"vec_nbuffer_setting": {-1: 2}}`
 - **调优方法**: 可先用 `{-1: N}` 全局配置，再按 psgId 精细调优
-- **⛔ 必须包含 `-2: 1`**: `vec_nbuffer_setting` 中必须包含 `-2: 1`，否则合图可能不生效
 
 ### [S-6] Cube L1Reuse（消除重复搬运）
 

@@ -231,7 +231,7 @@ def _format_merge_suggestion(hash_order, tasks_per_iteration, is_vector):
     values_text = '/'.join(str(value) for value in values)
     if is_vector:
         return (
-            f"\n    -> integer key: {{-2: 1, -1: {values_text}}} (global)"
+            f"\n    -> integer key: {{-1: {values_text}}} (global)"
             f"\n    -> func key:    "
             f"{{\"DEFAULT\": 1, \"{hash_order}\": {values_text}}} (specific)"
         )

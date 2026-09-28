@@ -12,7 +12,7 @@
 
 1. **⛔ 合图前必须先完成核使用率分析（第 3 节）**：核未满时优先用满核，核满后再合图。盲目合图会导致核未满时性能退化。
 2. pass_options key 有两种格式（**同一 dict 内禁止混用**）：
-   - **整数键格式**：`{-1: N}`（全局通配所有子图），`vec_nbuffer_setting` 中必须加 `-2: 1` 作为 merge enable 标志
+   - **整数键格式**：`{-1: N}`（全局通配所有子图）
    - **字符串键格式**：`{"DEFAULT": M, "func{magic}_{order}": N}`（精细控制特定 hashOrder）
    - **场景选择**：需要所有子图均合图时用整数键 `-1`；仅需合图某几个 hashOrder 时用字符串键
    - hashOrder 来源：`merged_swimlane.json` 中每个事件的 `args.hashOrder-hint` 字段，对应三种合图类型：
@@ -100,14 +100,14 @@ python3 scripts/analyze_swimlane.py output/output_xxx --outer-loops 32
 | t/iter | 含义                               | 核状态 | 合图粒度建议                                                                                      |
 | ------ | ---------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
 | 1      | 单个 root function 中只有 1 个子图 | —     | 粒度 1（不合并），或跨 root function 尝试 2/4                                                     |
-| 2      | 单个 root function 中有 2 个子图   | 未满   | cube 类粒度 1（不合并）；vec_nbuffer 可尝试`{-2: 1, -1: 2}` 或 `{"DEFAULT": 1, "func5_4": 4}` |
+| 2      | 单个 root function 中有 2 个子图   | 未满   | cube 类粒度 1（不合并）；vec_nbuffer 可尝试`{-1: 2}` 或 `{"DEFAULT": 1, "func5_4": 4}` |
 | 2      | 同上                               | 已满   | 优先试 2，再试 4                                                                                  |
 | 4+     | 单个 root function 中有多个子图    | 未满   | 优先试 vec_nbuffer，cube 类通常退化                                                               |
 | 4+     | 同上                               | 已满   | 可试 2/4/8，逐步增大                                                                              |
 
 **⚠️ 核未满时的合图策略**：
 
-- `vec_nbuffer_setting`：可尝试，用整数键 `{-2: 1, -1: N}` 或字符串键 `{"DEFAULT": 1, "func5_4": N}`，从 N=4 开始逐步试 8/16
+- `vec_nbuffer_setting`：可尝试，用整数键 `{-1: N}` 或字符串键 `{"DEFAULT": 1, "func5_4": N}`，从 N=4 开始逐步试 8/16
 - `cube_l1_reuse_setting` / `cube_nbuffer_setting`：通常退化，不建议设置；核未满时合图会进一步减少并行度
 
 **⚠️ 粒度过大的风险**：
@@ -151,17 +151,15 @@ Merge Tuning Guide (hashOrder = merge key)
 
 [AIV] vec_nbuffer_setting:
   hashOrder=func5_4: subGraphCount=40, t/iter=5, avg=3.78us
-    -> integer key: {-2: 1, -1: 2/4/8/16} (global)
+    -> integer key: {-1: 2/4/8/16} (global)
     -> func key:    {"DEFAULT": 1, "func5_4": 2/4/8/16} (specific)
 
 **解读**：
 - hashOrder=func15_1 的 AIC 子图 subGCnt=90、t/iter=11（单个 root function 有 11 个子图），所有子图均合图时用整数键 `{-1: 4}`，仅合此 hashOrder 时用 `{"DEFAULT": 1, "func15_1": 4}`
 - hashOrder=func5_0 的 AIC 子图 subGCnt=20、t/iter=2、avg=29.91us，所有子图均合图时用 `{-1: 2}`，仅合此 hashOrder 时用 `{"DEFAULT": 1, "func5_0": 2}`
-- hashOrder=func5_4 的 AIV 子图 subGCnt=40、t/iter=5，所有子图均合图时用 `{-2: 1, -1: 4}`，仅合此 hashOrder 时用 `{"DEFAULT": 1, "func5_4": 4}`
+- hashOrder=func5_4 的 AIV 子图 subGCnt=40、t/iter=5，所有子图均合图时用 `{-1: 4}`，仅合此 hashOrder 时用 `{"DEFAULT": 1, "func5_4": 4}`
 
 #### 2. Vector 合图
-
-**⛔ 重要原则**：`vec_nbuffer_setting` 中**必须**添加 `-2: 1` 配置，以规避部分合图不生效的问题。无论后续如何调优粒度，此配置不可省略。
 
 ##### 2.1 自动合图方案（vec_nbuffer_setting）
 
@@ -169,7 +167,7 @@ Merge Tuning Guide (hashOrder = merge key)
 # 整数键格式（全局通配所有子图）：
 @pypto.frontend.jit(
     pass_options={
-        "vec_nbuffer_setting": {-2: 1, -1: 8}
+        "vec_nbuffer_setting": {-1: 8}
     }
 )
 
@@ -186,7 +184,7 @@ Merge Tuning Guide (hashOrder = merge key)
 
 **参数说明**
 
-- 整数键格式：`-1:N` 代表所有 vector 子图按 N 的粒度合图；`-2:1` 必须添加作为 merge enable 标志
+- 整数键格式：`-1:N` 代表所有 vector 子图按 N 的粒度合图
 - 字符串键格式：`"DEFAULT":1` 是必需的 merge enable 标志；`"func5_4":N` 仅对 hashOrder=func5_4 的子图生效
 - **禁止混用**：同一个 dict 内不能同时包含整数键和字符串键
 
@@ -195,7 +193,7 @@ Merge Tuning Guide (hashOrder = merge key)
 1. 运行 [analyze_swimlane.py](../scripts/analyze_swimlane.py)，查看 `[AIV] vec_nbuffer_setting` 部分的输出
 2. 根据 `hashOrder` 确定合图 key，根据 `t/iter` 确定粒度参考值
 3. t/iter=1 的组先设为 1，t/iter≥2 的组设为对应值或更小
-4. 需所有子图均合图时用整数键 `{-2: 1, -1: N}`，需精细控制特定 hashOrder 时用字符串键
+4. 需所有子图均合图时用整数键 `{-1: N}`，需精细控制特定 hashOrder 时用字符串键
 
 **参考资料**
 

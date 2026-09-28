@@ -290,7 +290,7 @@ echo $TILE_FWK_DEVICE_ID  # 必须有值
 | `ready_on_host_tensors: ["cu_seqlens_q", ...]` | `runtime_options` | 标量索引 tensor 驻留 host，避免 device→host 同步读取 |
 | `seq_len.as_variable()` | JIT body | 将运行时标量显式标记为变量 |
 | `pypto.experimental.set_operation_options(combine_axis=True)` | kernel 入口 | 轴合并优化 |
-| `cube_l1_reuse_setting` / `cube_nbuffer_setting` / `vec_nbuffer_setting` 的 per-op keyed 形式（如 `{0: 8, 1: 1}` / `{-2: 1, 0: 8, 1: 2}`） | `pass_options` | 按算子索引精调 L1 复用与流水缓冲，优于全局 `{-1: x}` |
+| `cube_l1_reuse_setting` / `cube_nbuffer_setting` / `vec_nbuffer_setting` 的 per-op keyed 形式（如 `{0: 8, 1: 1}`） | `pass_options` | 按算子索引精调 L1 复用与流水缓冲，优于全局 `{-1: x}` |
 | `sg_set_scope=N` 包裹 reduce / softmax 链 | `pypto.set_pass_options` | 融合为一次向量超算子，中间量流式通过、不逐个物化 UB |
 | `unroll_list` 多值（如 `{2, 1}`） | 最内层 `pypto.loop` | 循环全展开流水化，消除串行依赖等待（仅 Stage 7 调优使用；Stage 6 之前 OL56 强制单值） |
 

@@ -24,7 +24,7 @@ examples:
 
 ```python
 @pypto.frontend.jit(
-    pass_options={"vec_nbuffer_setting": {-2: 1, -1: N}},
+    pass_options={"vec_nbuffer_setting": {-1: N}},
     runtime_options={"stitch_function_max_num": 128},
 )
 def general_vector_kernel(inputs..., outputs..., scalar_params):

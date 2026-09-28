@@ -73,7 +73,7 @@ def recurrent_kernel(query, key, value, state, output, last_state_out, ...):
 
 | 维度 | 推荐配置 | 取值经验 | 作用 |
 |------|---------|---------|------|
-| `pass_options.vec_nbuffer_setting` | **必须细粒度配** | 按操作索引逐项给值，例：`{0: 4, 1: 16, 2: 8, 3: 8, ..., -2: 1}` | 递归状态机的 V 算子拓扑复杂，统一值会冲突 |
+| `pass_options.vec_nbuffer_setting` | **必须细粒度配** | 按操作索引逐项给值，例：`{0: 4, 1: 16, 2: 8, 3: 8, ...}` | 递归状态机的 V 算子拓扑复杂，统一值会冲突 |
 | `runtime_options.stitch_function_max_num` | **必配** | **`2`（极低！）** | 防止状态依赖被错误融合到大子图，与 SK-01 (`128`) 完全相反 |
 | `runtime_options.device_sched_parallelism` | 必配 | `8` | 8 路并行调度，配合向量维并行 |
 | 向量维并行 | **必配** | 内层 loop `pypto.loop(..., parallel=True)` | 状态在序列维不可并行，但跨 head/nv 维可并行 |
