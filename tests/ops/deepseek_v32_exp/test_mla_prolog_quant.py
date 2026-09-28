@@ -511,11 +511,6 @@ def gen_mla_prolog_quant_v32_data(params, dtypes, actual_seq, is_quant=(False, F
         if has_smooth:
             inputs["smooth_cq"] = smooth_cq
 
-    if torch_npu.npu.is_available():
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor):
-                inputs[key] = value.npu()
-
     result = mla_prolog_quant_v32_compute(inputs)
     q_out = result.q_out
     q_embed = result.q_embed
@@ -528,6 +523,11 @@ def gen_mla_prolog_quant_v32_data(params, dtypes, actual_seq, is_quant=(False, F
     outputs["kv_quant_scale_cache_golden"] = kv_quant_scale_cache_out
     outputs["rms_norm_golden"] = rms_norm_out
     outputs["rms_norm_scale_golden"] = rms_norm_scale
+
+    if torch_npu.npu.is_available():
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                inputs[key] = value.npu()
 
     return inputs, outputs
 
