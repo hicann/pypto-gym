@@ -208,7 +208,7 @@ def hc_pre_kernel(
 )
 def hc_pre_kernel_prefill(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC, pypto.STATIC], pypto.DT_BF16),
-    hc_fn: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_FP32),
+    hc_fn: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     hc_scale_: pypto.Tensor([pypto.STATIC], pypto.DT_FP32),
     hc_base_: pypto.Tensor([pypto.STATIC], pypto.DT_FP32),
     y: pypto.Tensor([pypto.DYNAMIC, pypto.STATIC], pypto.DT_BF16),
