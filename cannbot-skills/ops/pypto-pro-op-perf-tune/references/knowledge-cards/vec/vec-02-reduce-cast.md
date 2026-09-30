@@ -5,7 +5,7 @@ description: "在精度合同允许时删除往返 Cast，否则批量转换，�
 status: "stable"
 tags: ["pypto-pro", "vec", "cast", "dtype"]
 item_id: "vec-02"
-bound_hint: "compute"
+bound_hint: "VEC"
 applicability: "存在冗余 Cast、可批量或就近转换的机会，或不必要的转换中转 Tile，且 dtype、rounding、布局与值域允许相应改写"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；Tile 级 pl.cast 需当前 ST 支持，UNPK/PACK 须有明确分布模式与端到端 value ST"
 ---

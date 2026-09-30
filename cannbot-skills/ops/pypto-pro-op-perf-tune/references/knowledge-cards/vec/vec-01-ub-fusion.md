@@ -5,7 +5,7 @@ description: "相邻 Vector 操作在同一 Vec Tile 与同一 VF 中接力，�
 status: "stable"
 tags: ["pypto-pro", "vec", "memory", "fusion"]
 item_id: "vec-01"
-bound_hint: "mixed"
+bound_hint: "VEC、MTE2、MTE3"
 applicability: "相邻 Vector 链的中间结果无外部消费者，生成物仍有中间 GM 回写再读入，且 Vec 容量可容纳融合 live set"
 target_api_gate: "仅限已核验 VF、TileGroup 与 auto_mutex 的 Ascend 950PR 或 950DT 工具链；其它 SoC 重新查表并验证"
 ---

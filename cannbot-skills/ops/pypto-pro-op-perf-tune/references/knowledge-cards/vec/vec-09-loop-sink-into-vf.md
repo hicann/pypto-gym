@@ -5,7 +5,7 @@ description: "把 kernel 中逐行调用 VF 的循环下沉到单个 vector_func
 status: "stable"
 tags: ["pypto-pro", "vec", "scalar", "loop"]
 item_id: "vec-09"
-bound_hint: "mixed"
+bound_hint: "VEC、SCALAR"
 applicability: "kernel 按行重复调用同一 VF，行间无依赖，setup 跨行不变且合并后的寄存器与 Tile 生命周期可容纳"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；确认 vector_function 内动态 pl.range、offset 与逐行 mask 语义后采用"
 ---

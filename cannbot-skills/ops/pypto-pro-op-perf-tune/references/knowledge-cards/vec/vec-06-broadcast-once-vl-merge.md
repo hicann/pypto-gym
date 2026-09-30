@@ -5,7 +5,7 @@ description: "把跨行不变量移出热循环，并仅在 packed 布局、蝶�
 status: "stable"
 tags: ["pypto-pro", "vec", "broadcast", "packing"]
 item_id: "vec-06"
-bound_hint: "mixed"
+bound_hint: "VEC、MTE2"
 applicability: "外提时数据须在复用循环内不变；VL merge 时须证明 R、packed 布局及 Tile、tiling、mask、dispatch 一致"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；BRC_B32 是保守路径；BLK 须八哨兵 value ST；VL merge 须完整 packed/蝶式布局与尾 mask value ST"
 ---

@@ -5,7 +5,7 @@ description: "MN 方向 tile 数填不满核时，把 K 维切成多段分给多
 status: "stable"
 tags: ["pypto-pro", "cube", "matmul", "streamk", "split-k", "atomic"]
 item_id: "cube-03"
-bound_hint: "mac"
+bound_hint: "MAC"
 applicability: "matmul 的 M/N tile 数明显小于可用核数且 K 足够长；输出 dtype 支持原子累加；FP32 部分和精度预算允许"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；依赖 pl.store/store_tile 的 atomic=AtomicAdd（目的区域须预先初始化）与 kernel[stream, block_dim] 启动"
 ---

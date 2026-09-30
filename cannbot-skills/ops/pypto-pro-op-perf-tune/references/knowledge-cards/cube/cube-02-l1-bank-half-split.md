@@ -5,7 +5,7 @@ description: "多 buffer 的 L1 tile group 用显式 addrs 把 ping buffer 与 p
 status: "stable"
 tags: ["pypto-pro", "cube", "l1", "bank-conflict", "memory-layout"]
 item_id: "cube-02"
-bound_hint: "mte2"
+bound_hint: "MTE1"
 applicability: "K 循环 matmul 的 L1 操作数 buffer 数 ≥2（ping/pong），profiling 显示 MTE1 bound 或 MMAD 断流，且单个 buffer 数据总量不超过半个 L1"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；依赖 make_tile_group 的 addrs 列表显式指定各 buffer 地址与 auto_mutex 轮转；L1 容量与 bank 边界按目标 ini 复核"
 ---

@@ -5,7 +5,7 @@ description: "在累加器经 pl.store 直接写回 GM 的 Cube kernel 中，给
 status: "stable"
 tags: ["pypto-pro", "cube", "matmul", "fixpipe", "pipeline"]
 item_id: "cube-01"
-bound_hint: "mac、fixpipe"
+bound_hint: "MAC、FIXPIPE"
 applicability: "Cube kernel 的 K 循环累加器经 pl.store/store_tile 直接写回 GM（无 Acc→Vec epilogue），profiling 显示 FIXPIPE bound 或 MMAD 与搬出整段串行，且 L0C 被完整输出块占满无法开双缓冲"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；phase= 仅在 drain 为带 phase= 的 pl.store/store_tile 时合法；pl.move 是否携带 phase 形参随版本变化，Acc→Vec 排水的配对合法性须按目标版本重新验证，验证前禁用结论维持；AccPhase 末块 Final/其余 Partial 的序列须按目标 SDK 文档复核"
 ---

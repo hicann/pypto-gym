@@ -5,7 +5,7 @@ description: "把紧凑 GM 行的真实子段分别搬入独立对齐 Tile，使
 status: "stable"
 tags: ["pypto-pro", "vec", "alignment", "memory"]
 item_id: "vec-14"
-bound_hint: "memory"
+bound_hint: "MTE2、MTE3"
 applicability: "非 32B 段起点在生成物或 trace 中造成对齐退化，且独立 Tile 及 padding 可被 Vec 容量容纳"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；须核验 pl.load/store 元素 offset、Tile physical/valid shape、TileGroup 地址与对齐合同"
 ---

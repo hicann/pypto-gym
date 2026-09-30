@@ -5,7 +5,7 @@ description: "超越函数主导时先删除重复调用或使用公开融合接
 status: "stable"
 tags: ["pypto-pro", "vec", "transcendental", "capability-gate"]
 item_id: "vec-11"
-bound_hint: "compute"
+bound_hint: "VEC"
 applicability: "超越函数主导热点，且存在以下机会之一：重复调用复用、公开融合接口或有当前 API、编译产物和精度证据的 LUT/近似方案"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；采用目标版本支持的公开超越函数或融合接口，所需 precision/LUT 能力未明确支持时记录 capability gap"
 ---

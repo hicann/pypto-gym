@@ -5,7 +5,7 @@ description: "删除仅供紧邻 VF 步骤消费的 Vec Tile store-load 往返�
 status: "stable"
 tags: ["pypto-pro", "vec", "memory", "register"]
 item_id: "vec-05"
-bound_hint: "mixed"
+bound_hint: "VEC、MTE2、MTE3"
 applicability: "中间 Vec Tile 仅供紧邻 VF 步骤使用且无跨循环、输出或 bank-conflict 角色，生成物存在 store-load"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；使用已核验的 Vf.full、reduce、shuffle、mem_bar 与 Cast，布局能力须补 value ST"
 ---

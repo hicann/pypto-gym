@@ -5,7 +5,7 @@ description: "权重固定的推理场景下，把权重在离线阶段打包为
 status: "stable"
 tags: ["pypto-pro", "cube", "matmul", "nz", "layout", "mte2"]
 item_id: "cube-07"
-bound_hint: "mte2"
+bound_hint: "MTE2"
 applicability: "推理场景权重固定、可离线预处理；matmul 为 MTE2 bound 且权重搬运占比高；原始内轴不对齐时随路转换代价更高、收益更明显"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；GM Tensor 仅支持 ND/NZ 两种声明，NZ 要求调用方已按 NZ 物理排布 packing 且按对齐后容量分配；NZ 搬运不支持降序 order 转置"
 ---

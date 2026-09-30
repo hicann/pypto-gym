@@ -26,7 +26,7 @@ description: "<在什么条件下，把什么结构改成什么结构>"
 status: "stable"
 tags: ["pypto-pro", "<方法主题>"]
 item_id: "<类别>-<两位递增序号>"
-bound_hint: "<compute|memory|scalar|scheduling|mixed>"
+bound_hint: "<MTE2|MTE3|MTE1|FIXPIPE|SCALAR|MAC|VEC|L2Cache|iCache|PIPELINE>"
 applicability: "<方法适用的场景、数据特征和技术条件>"
 target_api_gate: "<所需设备、公开 API 及已知限制>"
 ---

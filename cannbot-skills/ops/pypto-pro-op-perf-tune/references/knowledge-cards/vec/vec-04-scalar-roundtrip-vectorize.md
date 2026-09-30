@@ -5,7 +5,7 @@ description: "把逐行取标量、计算和写回改为寄存器广播与批量
 status: "stable"
 tags: ["pypto-pro", "vec", "scalar", "broadcast"]
 item_id: "vec-04"
-bound_hint: "mixed"
+bound_hint: "VEC、SCALAR"
 applicability: "每行归约后存在标量往返或不必要的 Tile store→load；消费者可用同 VF full、跨阶段单 B32 广播，或已通过八哨兵 value ST 的 BLK 路径"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；Vf.full 与 BRC_B32 可作保守路径，BLK 和 stride-zero 多行布局须另证"
 ---

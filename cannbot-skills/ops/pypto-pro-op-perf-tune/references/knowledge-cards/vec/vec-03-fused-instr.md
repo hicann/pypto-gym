@@ -5,7 +5,7 @@ description: "在语义、dtype 和 mask 兼容时，用 vf.mul_dst_add 替换�
 status: "stable"
 tags: ["pypto-pro", "vec", "fma", "instruction-fusion"]
 item_id: "vec-03"
-bound_hint: "compute"
+bound_hint: "VEC"
 applicability: "存在 x 乘 weight 加 bias，编译结果未自动融合，中间乘积无其他消费者且 dtype 与 mask 兼容"
 target_api_gate: "仅在当前 Ascend 950PR 或 950DT PyPTO-Pro 公开 Vf.mul_dst_add 语义和生成 vmadd 均已复核时采用"
 ---

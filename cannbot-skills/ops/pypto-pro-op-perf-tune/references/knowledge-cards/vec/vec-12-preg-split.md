@@ -5,7 +5,7 @@ description: "在生成物出现 spill/reload 时，按可证明条件拆成活�
 status: "stable"
 tags: ["pypto-pro", "vec", "register-pressure", "specialization"]
 item_id: "vec-12"
-bound_hint: "scheduling"
+bound_hint: "VEC"
 applicability: "目标路径生成物或 trace 出现 spill/reload，分支条件可证明，且专用 VF 能真正删除整段逻辑和活跃值"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；通过 TilingKey 或合法控制流分流，RegTraitNumTwo 仅作后端风险模型"
 ---

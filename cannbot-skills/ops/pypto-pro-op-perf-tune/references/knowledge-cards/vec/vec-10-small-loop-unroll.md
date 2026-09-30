@@ -5,7 +5,7 @@ description: "把 VF 内编译期已知的极小循环显式展开，以删除�
 status: "stable"
 tags: ["pypto-pro", "vec", "loop", "unroll"]
 item_id: "vec-10"
-bound_hint: "mixed"
+bound_hint: "VEC"
 applicability: "trip count 编译期已知且很小，展开后的数据、offset 与 mask 等价"
 target_api_gate: "仅限 Ascend 950PR 或 950DT；只使用已核验 VF 基础算术，是否源码展开由当前 parser、生成物和 TilingKey 决定"
 ---
