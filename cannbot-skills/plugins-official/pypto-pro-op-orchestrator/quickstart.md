@@ -35,7 +35,7 @@ bash init.sh global opencode    # 全局级
 
 ### 其他工具（资源安装，不含自动状态机/硬门禁）
 
-> **自动门禁支持边界**：`state_transition` 工具、写入前 lint 和 Stage/Module 自动硬门禁目前通过 OpenCode 插件提供。下列其他工具的 `init.sh` 适配仅安装 skills、agents 与提示词资源，不会获得同等的 OpenCode 自动门禁能力。需要完整 5 阶段状态机和 fail-closed lint 流程时，请使用 OpenCode。
+> **自动门禁支持边界**：`state_transition` 工具、写入前 lint 和 Stage/Module 自动硬门禁目前通过 OpenCode 插件提供。下列其他工具的 `init.sh` 适配仅安装普通 Pro 的 skills、agents 与提示词资源，不提供 Scriptor CLI、下游 worker/verifier 或 Scriptor 验收流程。需要完整 5 阶段状态机、fail-closed lint 或 Scriptor 模式时，请使用 OpenCode。
 
 <details>
 <summary>Claude Code</summary>
@@ -164,6 +164,38 @@ claude
 ```
 使用 PyPTO-Pro 开发 softmax 算子，支持 [1, 128]、[4, 2048] 和 [32, 4096] 的 float16 输入。
 ```
+
+### Scriptor 模式（OpenCode）
+
+拉取更新后，使用已有 Python >=3.10，通过本插件的 `init.sh project opencode <项目路径>` 安装或刷新一次资源；工作流资源是项目副本，刷新时需重跑入口；Ascriptor 编译器始终从本插件源码快照直接加载。此入口注册 CLI、精度调试技能及下游 worker/verifier。使用以下提示词即可选路：
+
+```text
+使用 scriptor 模式开发这个 PyPTO-Pro 算子：<公式、接口、shape/dtype、输入约束>。
+前段只要求可编译上板，精度最多修复 3 轮；后段启用优化，遵循入口默认轮数。
+```
+
+主入口读取 [scriptor-mode.md](references/scriptor-mode.md)：需求/Golden/设计/可上板原型 → DSL implement → optimize → accept → delivery-check。前段无性能开发、无独立 prepare 或 verifier；原型由主 agent 参考源码快照的 ROUTER/playbook 文档与 DESIGN.md 直接编写，满足 SPEC 且编译上板跑通；精度不通过时全算子最多修复 3 轮，3 轮后未解决的精度问题随证据交接。DSL 候选及最终验收仍须通过精度。后段按用户要求优化；无可比用户 baseline 时以 NPU Golden 为参考、首个正确 PyPTO 候选用于排名，未指定目标时默认每个 P0 ≥1.0×。Scriptor optimize 默认至少 10 轮有效优化且无上限，必须完成基础优化和 Active 卡片逐卡覆盖；优化阶段复用冻结合同和已有证据，accept 后不强制再调用完整 `pypto-pro-op-perf-tune`，用户明确要求独立调优时才另行发起。用户明确的停止、预算或不优化要求优先，具体规则见入口。
+新 Scriptor 交付默认从首个 DSL 候选到最终包只生成 `auto_mutex=True`；仅用户明确要求 manual 时在初始化状态记录授权并显式生成 manual。auto_mutex 失败时保留证据并报告阻断，不自动回退 manual；底层 Ascriptor API 的历史默认不决定本工作流的交付模式。
+`custom/<op>/` 保留 Scriptor 状态与原始证据；最终精简可运行包放在独立的
+`delivery/<op>/`，含 `kernels/`、`golden_cpu.py`、`wrapper.py`、`test.py`、
+最终 `DESIGN.md`、`REPORT.md` 与测试必需的本地依赖。用
+`delivery-check --op-dir custom/<op> --delivery-dir delivery/<op>` 核对并在隔离副本
+真机执行交付入口；只有返回 `status=PASS` 才算本轮通过。仅有 `generated/`、
+`test_<op>.py`、历史 `reports/final/` 或静态 `STRUCTURE_PASS` 不代表交付完成。
+
+agent 保留原型副本，公开 wrapper 由 DSL 导出器接管；Scriptor 阶段报告在
+`custom/<op>/reports/final/final.md`。优化账本和轮次证据随算子保留。
+OpenCode 初始化只注册工作流、Skills、Hooks 和 CLI，不安装或复制 Ascriptor 编译器。
+源码直接取自本插件的 `resources/ascriptor/`；数值运行需要 Torch/NumPy，真机还需要
+CANN、PyPTO-Pro、torch_npu 与 msprof。
+
+维护者修改快照后运行 `scripts/sync_ascriptor_sources.py` 刷新完整文件索引，
+并用 `--check` 验证 SHA-256、Markdown 链接、inline 脚本命令和关键 JSON 路径。
+`product-view.json` 声明此自包含快照的交付范围；`sources.json` 与
+`sources-index.json` 是可复核的源码身份。无需获取私有仓库或 wheel。
+DSL worker 从 `doctor.source_root/agent` 执行
+`python tools/build_kernel_context.py --print`，直接读取浓缩起点，无需来源哈希校验。
+首发 0.1.0 是源码交付；设备和性能结果需按当前任务独立验证。
 
 ### 深度编排工作流（按需）
 

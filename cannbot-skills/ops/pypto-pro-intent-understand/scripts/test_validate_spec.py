@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import tempfile
+import json
 import unittest
 from pathlib import Path
 
-from validate_spec import load_spec_contract, load_spec_contract_text, validate_text
+from validate_spec import _extract, load_spec_contract, load_spec_contract_text, validate_text
 
 
 VALID = '''```json machine-contract
@@ -44,6 +45,79 @@ y = x
 
 
 class SpecValidationTests(unittest.TestCase):
+    def test_explicit_integer_atol_contract(self):
+        contract = _extract(VALID)
+        for amount in (0, 1, 3):
+            contract["tolerance"]["integer_atol"] = amount
+            self.assertEqual(load_spec_contract_text("```json machine-contract\n" + json.dumps(contract) + "\n```")["tolerance"]["integer_atol"], amount)
+        for amount in (-1, True, 1.5, "1"):
+            contract["tolerance"]["integer_atol"] = amount
+            self.assertIn("integer_atol", validate_text("```json machine-contract\n" + json.dumps(contract) + "\n```")[0])
+
+    def test_p0_special_inputs_are_explicit_and_typed(self) -> None:
+        contract = _extract(VALID)
+        contract["p0_cases"][0]["input_special_values"] = {"x": ["-inf", "+inf"]}
+        render = lambda value: "```json machine-contract\n" + json.dumps(value) + "\n```"
+        self.assertEqual(load_spec_contract_text(render(contract))["p0_cases"][0]
+                         ["input_special_values"]["x"], ["-inf", "+inf"])
+        for values, error in (({"wrong": ["nan"]}, "declared input names"),
+                              ({"x": ["inf"]}, "unique -inf, +inf or nan"),
+                              ({"x": ["nan", "nan"]}, "unique -inf, +inf or nan")):
+            changed = json.loads(json.dumps(contract))
+            changed["p0_cases"][0]["input_special_values"] = values
+            self.assertIn(error, validate_text(render(changed))[0])
+        contract["inputs"][0]["dtype"] = "int32"
+        contract["outputs"][0]["dtype"] = "int32"
+        contract["supported_dtypes"] = ["int32"]
+        self.assertIn("floating input dtype", validate_text(render(contract))[0])
+
+    def test_rank_polymorphic_interface_keeps_exact_p0_shapes(self) -> None:
+        contract = _extract(VALID)
+        contract["inputs"][0]["shape"] = ["..."]
+        contract["outputs"][0]["shape"] = ["..."]
+        contract["dynamic_axes_ranges"] = {}
+        contract["p0_cases"][1]["input_shapes"] = {"x": [2, 4, 16]}
+        contract["p0_cases"][1]["output_shapes"] = {"y": [2, 4, 16]}
+        spec = "```json machine-contract\n" + json.dumps(contract) + "\n```"
+        parsed = load_spec_contract_text(spec)
+        self.assertEqual(parsed["p0_cases"][1]["input_shapes"]["x"], [2, 4, 16])
+        changed = json.loads(json.dumps(contract))
+        changed["inputs"][0]["shape"] = ["...", 16]
+        self.assertIn("rank wildcard", validate_text("```json machine-contract\n" + json.dumps(changed) + "\n```")[0])
+
+    def test_per_case_dtypes_cover_one_public_interface(self) -> None:
+        contract = _extract(VALID)
+        contract["supported_dtypes"] = ["float32", "float16", "bfloat16"]
+        for case, dtype in zip(contract["p0_cases"], ("float16", "bfloat16")):
+            case["input_dtypes"] = {"x": dtype}
+            case["output_dtypes"] = {"y": dtype}
+        # The first case is the canonical tensor default.
+        contract["p0_cases"][0]["input_dtypes"] = {"x": "float32"}
+        contract["p0_cases"][0]["output_dtypes"] = {"y": "float32"}
+        contract["p0_cases"].append({"name": "bf16", "params": {},
+            "input_shapes": {"x": [64, 16]}, "output_shapes": {"y": [64, 16]},
+            "input_dtypes": {"x": "bfloat16"}, "output_dtypes": {"y": "bfloat16"}})
+        contract["p0_cases"][1]["input_dtypes"] = {"x": "float16"}
+        contract["p0_cases"][1]["output_dtypes"] = {"y": "float16"}
+        spec = "```json machine-contract\n" + json.dumps(contract) + "\n```"
+        self.assertEqual(load_spec_contract_text(spec)["p0_cases"][2]["output_dtypes"]["y"], "bfloat16")
+        for mutate, message in (
+            (lambda c: c["p0_cases"][1].pop("output_dtypes"), "together"),
+            (lambda c: c["p0_cases"][1]["input_dtypes"].update(z="float16"), "names/order"),
+            (lambda c: c["p0_cases"][1]["input_dtypes"].update(x="bf16"), "canonical"),
+            (lambda c: c.update(supported_dtypes=["float32", "float16"]), "first-appearance"),
+        ):
+            with self.subTest(message=message):
+                changed = json.loads(json.dumps(contract))
+                mutate(changed)
+                self.assertIn(message, validate_text("```json machine-contract\n" + json.dumps(changed) + "\n```")[0])
+
+    def test_explicit_workflow_precision_policy(self) -> None:
+        spec = VALID.replace('{"atol": 0.001, "rtol": 0.002}', '{"policy": "pro_scheme_a"}')
+        self.assertFalse(validate_text(spec))
+        for policy in ('{"policy": "unknown"}', '{"policy": "pro_scheme_a", "atol": 1, "rtol": 1}'):
+            self.assertTrue(validate_text(spec.replace('{"policy": "pro_scheme_a"}', policy)))
+
     def test_valid_contract_and_compatibility_field(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "SPEC.md"

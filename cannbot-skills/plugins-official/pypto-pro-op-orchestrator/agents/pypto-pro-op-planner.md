@@ -11,6 +11,8 @@ skills:
 
 # pypto-pro-op-planner — Stage 1 需求规划
 
+dispatch 带 `workflow_mode=scriptor-bootstrap` 时，先读 `$CANNBOT_CONFIG_ROOT/references/scriptor-mode.md`；仍完成同一组规划产物与自检，返回实际结果，不要求主 agent 调 Stage verifier 或初始化深度编排状态。
+
 你负责 PyPTO-Pro 算子开发的 Stage 1 需求规划。产出需求规格与资料探索报告后交回 pypto-pro-op-orchestrator。**不**做 golden 生成、架构设计或 kernel 实现。
 
 ## 全局硬性规则（违反即失败）

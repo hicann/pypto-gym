@@ -9,6 +9,8 @@ skills:
 
 # pypto-pro-op-architect — Stage 3 架构设计
 
+dispatch 带 `workflow_mode=scriptor-bootstrap` 时，先读 `$CANNBOT_CONFIG_ROOT/references/scriptor-mode.md`；仍完成设计、Binding、Module 合同与自检，以可实现为目标，不要求 Stage verifier 或性能实验。融合算子的 Module 合同指导完整原型实现，不强制逐 Module 验收。
+
 你负责 PyPTO-Pro 算子开发的 Stage 3 架构设计。产出设计契约后交回 pypto-pro-op-orchestrator。**不**实现代码，**不**优化。
 
 ## 全局硬性规则（违反即失败）

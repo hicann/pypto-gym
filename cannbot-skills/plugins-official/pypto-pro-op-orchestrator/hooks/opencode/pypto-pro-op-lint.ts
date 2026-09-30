@@ -130,6 +130,20 @@ export const PyptoProOpLintPlugin: Plugin = async (input) => {
     const sessionID = typeof input.sessionID === "string" ? input.sessionID : "";
     const agent = sessionID ? agentBySession.get(sessionID) : undefined;
     const serialized = JSON.stringify([input, toolOutput]).replaceAll("\\\\", "/");
+    // The shared primary also serves scriptor. Its generated kernels have a distinct
+    // contract (including explicit sync); use their own hook and evidence gates.
+    const operators = [...serialized.matchAll(/custom\/[a-zA-Z0-9_./-]+/g)].map((m) => m[0]);
+    if (operators.length && operators.every((candidate) => {
+      let directory = path.resolve(baseDir, candidate);
+      const custom = path.resolve(baseDir, "custom");
+      while (directory.startsWith(custom + path.sep)) {
+        try {
+          const state = JSON.parse(fs.readFileSync(path.join(directory, ".scriptor/state.json"), "utf8"));
+          return state.workflow === "pypto-pro-op-scriptor";
+        } catch { directory = path.dirname(directory); }
+      }
+      return false;
+    })) return false;
     const targetsCustomRoot = serialized.includes("custom/");
     const primaryOrUnknown = agent === undefined || agent === "build";
     const run = primaryOrUnknown ? targetsCustomRoot : LINT_RUN_AGENTS.has(agent);

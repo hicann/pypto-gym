@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 DOC_PATHS = (
     "api/pro_api",
@@ -59,6 +59,7 @@ def download(url, pin, destination, samples):
     if pin:
         git("fetch", "--depth", "1", "origin", pin, cwd=destination)
     paths = ["/docs/zh/" + path + ("" if path.endswith(".md") else "/") for path in DOC_PATHS]
+    paths.append("/docs/zh/pypto_pro/")  # the alternative upstream Pro-only layout
     paths.extend("/" + source_sample(sample) for sample in samples)
     # 自定义 Git 模板可能省略 info；旧版 Git 的 sparse-checkout 不会补建。
     (destination / ".git/info").mkdir(parents=True, exist_ok=True)
@@ -73,7 +74,8 @@ def local_source():
     if explicit:
         return Path(explicit).expanduser().resolve()
     for candidate in (Path.cwd(), *Path.cwd().parents):
-        if (candidate / "docs/zh/api/pro_api").is_dir():
+        if any((candidate / "docs/zh" / relative).is_dir()
+               for relative in ("api/pro_api", "pypto_pro/api")):
             return candidate
     return None
 
@@ -124,18 +126,73 @@ def compatibility_api(docs):
     (docs / "api/index.md").write_text("# PyPTO Pro API\n\n[API 总索引](pro_api/index.md)\n", encoding="utf-8")
 
 
+def copy_alternative_layout(source, destination, revision, url):
+    """Normalize the pypto_pro/{api,tutorials} layout without changing its source."""
+    docs = source / "docs/zh"
+    pro = docs / "pypto_pro"
+    for relative in ("api/index.md", "tutorials/index.md", "tutorials/introduction.md", "tutorials/quick_start/index.md"):
+        if not (pro / relative).is_file():
+            raise FileNotFoundError("缺少 Pro 资料：pypto_pro/" + relative)
+    mapping = {}
+    for original in (pro / "api").rglob("*"):
+        if original.is_file():
+            mapping[original.resolve()] = destination / "api/pro_api" / original.relative_to(pro / "api")
+    for original in (pro / "tutorials").rglob("*"):
+        if not original.is_file():
+            continue
+        relative = original.relative_to(pro / "tutorials")
+        if relative.as_posix() == "introduction.md":
+            target = destination / "guide/introduction.md"
+        elif relative.parts[0] == "quick_start":
+            target = destination / "guide/quick_start/pro" / Path(*relative.parts[1:])
+        else:
+            target = destination / "guide/programming_guide/pro" / relative
+        mapping[original.resolve()] = target
+    # Rewrite actual Markdown links, preserving fenced and inline code verbatim.
+    segments = re.compile(r"(?P<code>^```[^\n]*\n.*?^```[^\n]*$|`[^`\n]*`)"
+                          r"|(?P<link>!?\[[^\]\n]*\]\()(?P<href>[^)\s]+)(?P<end>\))", re.M | re.S)
+    for original, target in mapping.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if original.suffix != ".md":
+            shutil.copy2(original, target)
+            continue
+        def rewrite(match):
+            if match.group("code"):
+                return match.group(0)
+            href = match.group("href")
+            if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", href) or href.startswith(("#", "//")):
+                return match.group(0)
+            path, separator, anchor = href.partition("#")
+            linked = (original.parent / unquote(path)).resolve()
+            if linked in mapping:
+                replacement = Path(os.path.relpath(mapping[linked], target.parent)).as_posix()
+            elif linked.is_relative_to(source.resolve()):
+                ref = revision if revision != "unversioned" else "master"
+                replacement = (url.removesuffix(".git") + "/blob/" + quote(ref, safe="") + "/"
+                               + quote(linked.relative_to(source.resolve()).as_posix(), safe="/"))
+            else:
+                return match.group(0)
+            return match.group("link") + replacement + (separator + anchor if separator else "") + match.group("end")
+        target.write_text(segments.sub(rewrite, original.read_text(encoding="utf-8")), encoding="utf-8")
+
+
 def assemble(source, staged, samples, revision, url):
     original_docs = source / "docs/zh"
-    require_docs(original_docs)
-    for relative in DOC_PATHS:
-        original, target = original_docs / relative, staged / "docs" / relative
-        if relative == "guide/figures/pro" and not original.exists():
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if original.is_dir():
-            shutil.copytree(original, target)
-        else:
-            shutil.copy2(original, target)
+    alternative = not (original_docs / "api/pro_api/index.md").is_file()
+    if alternative:
+        copy_alternative_layout(source, staged / "docs", revision, url)
+        require_docs(staged / "docs")
+    else:
+        require_docs(original_docs)
+        for relative in DOC_PATHS:
+            original, target = original_docs / relative, staged / "docs" / relative
+            if relative == "guide/figures/pro" and not original.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if original.is_dir():
+                shutil.copytree(original, target)
+            else:
+                shutil.copy2(original, target)
     for sample in samples:
         original, target = source / source_sample(sample), staged / sample
         if not original.is_file():
@@ -143,6 +200,8 @@ def assemble(source, staged, samples, revision, url):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(original, target)
     compatibility_api(staged / "docs")
+    if alternative:
+        return  # all relocated links were already mapped from their real source paths
     # 仅转换指南中明确指向未缓存资料的跳转；保留代码、图片和 Pro 内部链接。
     external = re.compile(
         r"\]\(((?:\.\./)+(?:install/prepare_environment\.md|"

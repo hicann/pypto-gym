@@ -46,8 +46,10 @@ Module、tile、同步或 kernel 写法；这些分别属于 material-explore �
 - 数学公式或等价的逐步算法；
 - 每个公开输入、输出及可选参数的名称、rank、shape、dtype、动态轴和语义；
 - 每个输出 shape/dtype 相对输入与参数的推导关系；rank-0 tensor 的 shape 明确写 `[]`；
-- machine-contract 的每个输入/输出都写可解析的闭区间 `value_range: [min, max]`；界限必须有语义
-  依据且为有限数，供 Stage 3 做强制数值安全分析，未知时不得猜测或用模板示例替代；
+- machine-contract 的每个输入/输出都写可解析的有限闭区间 `value_range: [min, max]`，供 Stage 3
+  分析有限值；界限须有语义依据，未知时不得猜测。P0 输入含 NaN/Inf 时，还须在对应
+  `p0_cases[].input_special_values` 按输入名列出实际出现的 `"-inf"`、`"+inf"`、`"nan"`；
+  有限区间不能代替这些特殊值，也不能删掉原任务的特殊输入；
 - 零值、极值、NaN/Inf、空维度及尾部元素的数学行为；
 - 精度标准、功能优先级和至少一组可执行 P0 典型配置。
 
@@ -92,9 +94,12 @@ P0/P1 必须进入首个版本；P2 可选；P3 明确暂缓。不要在本 skil
 
 - `op_name` 对应算子名；
 - `formula` 用等式或编号伪代码步骤定义每个公开输出；复杂算法仍须让每个输出成为赋值或箭头目标，正文只解释符号与依据；
-- `supported_dtypes` 按首次出现顺序列出本 SPEC 公开输入输出实际使用的全部 canonical dtype；同一接口的另一组 dtype 组合拆为独立 class/SPEC，避免下游静默丢失 index、mask 或量化辅助 tensor 的 dtype；
+- `supported_dtypes` 按首次出现顺序列出默认输入输出和 P0 case 实际使用的全部 canonical dtype；同一接口的不同 dtype 组合保留在同一 SPEC，逐 case 明确输入和输出 dtype，避免静默丢失 index、mask 或量化辅助 tensor 的 dtype；
 - `inputs` / `outputs` 按公开签名顺序完整记录 name、shape、dtype、有限 value_range；
-- `p0_cases` 逐案记录 name、params、input_shapes、output_shapes；校验器会从第一项导出
+  非有限输入另按 P0 case 记录 `input_special_values`，例如
+  `{"x":["-inf","+inf"]}` 或 `{"x":["nan"]}`。列出的每一种必须在该 case 的实际输入出现；
+- 同一公开 tensor 的 P0 case 跨 rank 时，顶层 `shape` 使用 `["..."]`，逐案 `input_shapes` / `output_shapes` 仍写具体维度；只承诺列明的 P0 范围，输出形状关系由公式和独立 Golden 验证；
+- `p0_cases` 逐案记录 name、params、input_shapes、output_shapes；dtype 与默认 tensor 不同时成对记录完整的 input_dtypes、output_dtypes；校验器会从第一项导出
   只供旧调用方使用的内存字段 `p0_shapes`，SPEC 不再双写该字段；
 - `default_params` 只包含公开签名中已确认的标量默认参数；没有则写 `{}`；
 - `tolerance`、动态轴范围、shape 约束和性能目标直接记录已确认裁定；
@@ -123,7 +128,8 @@ python "$CANNBOT_CONFIG_ROOT/skills/pypto-pro-intent-understand/scripts/validate
 - 复杂算子含可恢复的算法步骤；
 - 所有功能均标优先级，P0/P1 没有遗漏；
 - 所有 P0 配置均可供 golden 构造输入，且输出 shape 与机器合同公式一致；
-- 所有机器合同输入/输出均有有依据、可解析的有限 `value_range`；
+- 所有机器合同输入/输出均有有依据、可解析的有限 `value_range`；原任务含非有限 P0 输入时，
+  每案的 `input_special_values` 与原任务一致，Golden 和后续真机测试不得以有限值替换；
 - SPEC 恰有一个严格 JSON machine-contract、正文没有重复机器字段、无占位符或未披露默认值；
 - 用户性能目标或 Stage 5 默认 Golden 1.0 理想参考的来源已按规则明确记录；
 - `validate_spec.py` 通过。

@@ -294,7 +294,10 @@ def check_kb(op_dir: Path, kb_root: Path, op_name: str) -> list[str]:
     """Check selection layouts and contents against the supplied KB's current contract."""
     mapping = _mapping(kb_root)
     contract = mapping["contract"]
-    paths = sorted(op_dir.rglob("KB_SELECTION.json"))
+    # bootstrap-restart preserves prior inputs here; they are not active classes.
+    history = op_dir / "reports" / "bootstrap-restarts"
+    paths = sorted(path for path in op_dir.rglob("KB_SELECTION.json")
+                   if not path.is_relative_to(history))
     allowed = [path for path in paths if len(path.relative_to(op_dir).parts) in (1, 2)]
     errors = [f"nested selection: {path}" for path in paths if path not in allowed]
     flat = op_dir / "KB_SELECTION.json"

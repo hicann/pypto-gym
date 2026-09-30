@@ -29,9 +29,12 @@ REQUIRED = {
     "schema_version", "op_name", "formula", "supported_dtypes", "inputs", "outputs",
     "default_params", "tolerance", "dynamic_axes_ranges", "shape_constraints", "p0_cases",
 }
-OPTIONAL = {"perf_target"}
+OPTIONAL = {"perf_target", "exit_criteria"}
 TENSOR_FIELDS = {"name", "shape", "dtype", "value_range"}
 CASE_FIELDS = {"name", "params", "input_shapes", "output_shapes"}
+CASE_DTYPE_FIELDS = {"input_dtypes", "output_dtypes"}
+CASE_SPECIAL_FIELDS = {"input_special_values"}
+SPECIAL_VALUES = {"-inf", "+inf", "nan"}
 DTYPE_VOCAB = {
     "bfloat16", "float16", "float32", "float64", "int8", "uint8", "int16",
     "int32", "int64", "bool",
@@ -113,6 +116,12 @@ def _eval_node(node: ast.AST, env: dict[str, int], where: str) -> int:
 def _shape(value: Any, where: str, *, concrete: bool = False) -> list[int | str]:
     if not isinstance(value, list):
         raise SpecContractError(f"{where} must be a JSON array")
+    if value == ["..."]:
+        if concrete:
+            raise SpecContractError(f"{where} must be concrete")
+        return value
+    if "..." in value:
+        raise SpecContractError(f"{where} rank wildcard must be the sole dimension")
     for dim in value:
         if isinstance(dim, bool) or not isinstance(dim, (int, str)):
             raise SpecContractError(f"{where} dimensions must be integers or expressions")
@@ -152,6 +161,8 @@ def _shape_symbols(tensors: list[dict[str, Any]]) -> set[str]:
     for tensor in tensors:
         for dim in tensor["shape"]:
             if isinstance(dim, str):
+                if dim == "...":
+                    continue
                 symbols.update(
                     node.id for node in ast.walk(ast.parse(dim, mode="eval"))
                     if isinstance(node, ast.Name)
@@ -174,7 +185,9 @@ def _tensors(value: Any, where: str) -> list[dict[str, Any]]:
         label = f"{where}[{index}]"
         if not isinstance(item, dict):
             raise SpecContractError(f"{label} must be an object")
-        _keys(item, TENSOR_FIELDS, set(), label)
+        _keys(item, TENSOR_FIELDS, {"is_list"}, label)
+        if not isinstance(item.get("is_list", False), bool):
+            raise SpecContractError(f"{label}.is_list must be boolean")
         name = item["name"]
         if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name in names:
             raise SpecContractError(f"{label}.name must be a unique lower_snake_case name")
@@ -208,6 +221,17 @@ def _validate_case_header(case: dict[str, Any], index: int,
         raise SpecContractError("the first P0 case params must equal default_params")
 
 
+def _member_shapes(meta: dict[str, Any], value: Any, where: str) -> list:
+    """The shape of a list is an ordered, non-empty array of member shapes."""
+    if not meta.get("is_list", False):
+        return [value]
+    if not isinstance(value, list) or not value or any(not isinstance(s, list) for s in value):
+        raise SpecContractError(f"{where} must be a non-empty array of TensorList member shapes")
+    if len({len(s) for s in value}) != 1 or not value[0]:
+        raise SpecContractError(f"{where} TensorList members must have one common positive rank")
+    return value
+
+
 def _validate_case_shapes(case: dict[str, Any],
                           tensors: tuple[list[dict[str, Any]], list[dict[str, Any]]],
                           where: str) -> None:
@@ -215,8 +239,46 @@ def _validate_case_shapes(case: dict[str, Any],
         shapes, names = case[field], [item["name"] for item in metadata]
         if not isinstance(shapes, dict) or list(shapes) != names:
             raise SpecContractError(f"{where}.{field} names/order must match the contract")
-        for name, shape in shapes.items():
-            _shape(shape, f"{where}.{field}.{name}", concrete=True)
+        for meta in metadata:
+            name = meta["name"]
+            for shape in _member_shapes(meta, shapes[name], f"{where}.{field}.{name}"):
+                _shape(shape, f"{where}.{field}.{name}", concrete=True)
+
+
+def _validate_case_dtypes(case: dict[str, Any], index: int,
+                          tensors: tuple[list[dict[str, Any]], list[dict[str, Any]]],
+                          where: str) -> None:
+    present = CASE_DTYPE_FIELDS & case.keys()
+    if present and present != CASE_DTYPE_FIELDS:
+        raise SpecContractError(f"{where} must declare input_dtypes and output_dtypes together")
+    for field, metadata in zip(("input_dtypes", "output_dtypes"), tensors):
+        if field not in case:
+            continue
+        names = [item["name"] for item in metadata]
+        values = case[field]
+        if not isinstance(values, dict) or list(values) != names:
+            raise SpecContractError(f"{where}.{field} names/order must match the contract")
+        if any(dtype not in DTYPE_VOCAB for dtype in values.values()):
+            raise SpecContractError(f"{where}.{field} must use canonical dtypes")
+        if index == 0 and values != {item["name"]: item["dtype"] for item in metadata}:
+            raise SpecContractError("the first P0 case dtypes must equal tensor defaults")
+
+
+def _validate_case_special_values(case: dict[str, Any], inputs: list[dict[str, Any]], where: str) -> None:
+    if "input_special_values" not in case:
+        return
+    mapping = case["input_special_values"]
+    names = {item["name"] for item in inputs}
+    if not isinstance(mapping, dict) or not mapping or not set(mapping) <= names:
+        raise SpecContractError(f"{where}.input_special_values must map declared input names")
+    dtypes = case.get("input_dtypes", {item["name"]: item["dtype"] for item in inputs})
+    for name, values in mapping.items():
+        if (not isinstance(values, list) or not values
+                or any(not isinstance(value, str) or value not in SPECIAL_VALUES for value in values)
+                or len(values) != len(set(values))):
+            raise SpecContractError(f"{where}.input_special_values.{name} must list unique -inf, +inf or nan")
+        if dtypes[name] not in {"float16", "bfloat16", "float32", "float64"}:
+            raise SpecContractError(f"{where}.input_special_values.{name} requires a floating input dtype")
 
 
 def _bind_shape_symbol(expression: int | str, concrete: int,
@@ -235,11 +297,13 @@ def _case_environment(case: dict[str, Any], inputs: list[dict[str, Any]],
         if isinstance(value, int) and not isinstance(value, bool)
     }
     for meta in inputs:
-        actual = case["input_shapes"][meta["name"]]
-        if len(actual) != len(meta["shape"]):
-            raise SpecContractError(f"{where} input {meta['name']} rank mismatch")
-        for expression, concrete in zip(meta["shape"], actual):
-            _bind_shape_symbol(expression, concrete, env, where)
+        if meta["shape"] == ["..."]:
+            continue
+        for actual in _member_shapes(meta, case["input_shapes"][meta["name"]], where):
+            if len(actual) != len(meta["shape"]):
+                raise SpecContractError(f"{where} input {meta['name']} rank mismatch")
+            for expression, concrete in zip(meta["shape"], actual):
+                _bind_shape_symbol(expression, concrete, env, where)
     return env
 
 
@@ -249,14 +313,17 @@ def _validate_case_expected_shapes(
         env: dict[str, int], where: str) -> None:
     for field, metadata in zip(("input_shapes", "output_shapes"), tensors):
         for meta in metadata:
+            if meta["shape"] == ["..."]:
+                continue
             actual = case[field][meta["name"]]
             expected = [
                 _eval_dim(dim, env, f"{where}.{meta['name']}")
                 for dim in meta["shape"]
             ]
-            if actual != expected:
-                raise SpecContractError(
-                    f"{where}.{meta['name']} shape {actual} does not equal {expected}")
+            for member in _member_shapes(meta, actual, where):
+                if member != expected:
+                    raise SpecContractError(
+                        f"{where}.{meta['name']} shape {member} does not equal {expected}")
 
 
 def _validate_case_ranges(case: dict[str, Any], env: dict[str, int],
@@ -271,9 +338,11 @@ def _case(case: Any, index: int, tensors: tuple[list[dict[str, Any]], list[dict[
     where = f"p0_cases[{index}]"
     if not isinstance(case, dict):
         raise SpecContractError(f"{where} must be an object")
-    _keys(case, CASE_FIELDS, set(), where)
+    _keys(case, CASE_FIELDS, CASE_DTYPE_FIELDS | CASE_SPECIAL_FIELDS, where)
     _validate_case_header(case, index, defaults, where)
     _validate_case_shapes(case, tensors, where)
+    _validate_case_dtypes(case, index, tensors, where)
+    _validate_case_special_values(case, tensors[0], where)
     env = _case_environment(case, tensors[0], where)
     _validate_case_expected_shapes(case, tensors, env, where)
     _validate_case_ranges(case, env, ranges, where)
@@ -305,11 +374,16 @@ def _supported_dtypes(value: Any) -> list[str]:
 
 
 def _validate_tensor_dtypes(dtypes: list[str], inputs: list[dict[str, Any]],
-                            outputs: list[dict[str, Any]]) -> None:
-    observed_dtypes = list(dict.fromkeys(item["dtype"] for item in inputs + outputs))
+                            outputs: list[dict[str, Any]],
+                            cases: list[dict[str, Any]]) -> None:
+    observed = [item["dtype"] for item in inputs + outputs]
+    for case in cases:
+        for field, metadata in zip(("input_dtypes", "output_dtypes"), (inputs, outputs)):
+            observed.extend(case.get(field, {item["name"]: item["dtype"] for item in metadata}).values())
+    observed_dtypes = list(dict.fromkeys(observed))
     if dtypes != observed_dtypes:
         raise SpecContractError(
-            "supported_dtypes must list input/output dtypes in first-appearance order")
+            "supported_dtypes must list tensor and P0 case dtypes in first-appearance order")
 
 
 def _default_params(value: Any) -> dict[str, Any]:
@@ -327,9 +401,15 @@ def _default_params(value: Any) -> dict[str, Any]:
 def _validate_tolerance(value: Any) -> None:
     if not isinstance(value, dict):
         raise SpecContractError("tolerance must be an object")
-    _keys(value, {"atol", "rtol"}, set(), "tolerance")
+    if value == {"policy": "pro_scheme_a"}:
+        return
+    _keys(value, {"atol", "rtol"}, {"integer_atol"}, "tolerance")
     for key in ("atol", "rtol"):
         _number(value[key], f"tolerance.{key}", non_negative=True)
+    if "integer_atol" in value:
+        amount = value["integer_atol"]
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
+            raise SpecContractError("tolerance.integer_atol must be a non-negative integer")
 
 
 def _validate_perf_target(value: Any) -> None:
@@ -414,7 +494,6 @@ def _validate(contract: dict[str, Any]) -> dict[str, Any]:
     if {item["name"] for item in inputs} & {item["name"] for item in outputs}:
         raise SpecContractError("input and output names must be distinct")
     _formula(contract["formula"])
-    _validate_tensor_dtypes(dtypes, inputs, outputs)
     defaults = _default_params(contract["default_params"])
     _validate_tolerance(contract["tolerance"])
     _validate_perf_target(contract.get("perf_target"))
@@ -423,6 +502,18 @@ def _validate(contract: dict[str, Any]) -> dict[str, Any]:
     _validate_dynamic_symbols(ranges, used_symbols, inputs)
     _validate_shape_constraints(contract["shape_constraints"])
     cases = _validate_cases(contract["p0_cases"], (inputs, outputs), defaults, ranges)
+    _validate_tensor_dtypes(dtypes, inputs, outputs, cases)
+    if contract.get("exit_criteria") is not None:
+        # Load by file location so callers using importlib do not need to modify sys.path.
+        import importlib.util
+        module_spec = importlib.util.spec_from_file_location(
+            "pypto_exit_criteria", Path(__file__).with_name("exit_criteria.py"))
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+        try:
+            module.validate_exit_criteria(contract["exit_criteria"], [case["name"] for case in cases])
+        except ValueError as exc:
+            raise SpecContractError(f"invalid exit_criteria: {exc}") from exc
     result = dict(contract)
     result["p0_shapes"] = [cases[0]["input_shapes"][item["name"]] for item in inputs]
     return result

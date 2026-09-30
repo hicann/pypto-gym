@@ -161,6 +161,12 @@ general knowledge 本身不是优化项来源，假设必须先按前述证据�
 
 ## 5. 交付物
 
+独立调用本 Skill 时，`PERFORMANCE_REPORT.md` 和账本必须以真实评分后最终选定的 DSL/导出为终态。
+实验若被完整正确性或用户评分否决，应标为 reject 并记录回退身份，不能让旧的
+KEEP/final 文字与实际交付源码相反。主 agent 随后按 `scriptor-mode.md` 整理同根
+`custom/<op>/` 的 Ascriptor 交付视图和 `REPORT.md`，执行 `delivery-check`；
+此段不减免下表的正式性能证据。
+
 | 交付 | 要求 |
 |---|---|
 | `test_{op}.py` | 正确、合规的冻结 baseline 与本轮正式评价候选中，按冻结聚合指标选出的最佳实现 |

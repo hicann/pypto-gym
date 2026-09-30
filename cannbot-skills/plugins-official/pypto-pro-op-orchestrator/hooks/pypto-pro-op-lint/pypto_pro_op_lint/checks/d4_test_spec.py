@@ -8,7 +8,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# ----------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------
 """D4 测试规范: PL15 (_assert_precision / 禁止 assert_close) + PL16 (import golden_cpu)."""
 
 from __future__ import annotations

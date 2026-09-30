@@ -269,6 +269,9 @@ export const PyptoProStateTransitionPlugin: Plugin = async (input) => {
             );
           }
           const statePath = path.join(opDir, ".orchestrator_state.json");
+          if (fs.existsSync(path.join(opDir, ".scriptor/state.json"))) {
+            throw new Error("operator belongs to the scriptor workflow; use scriptor_transition");
+          }
           if (action === "init") {
             fs.mkdirSync(opDir, { recursive: true });
           }

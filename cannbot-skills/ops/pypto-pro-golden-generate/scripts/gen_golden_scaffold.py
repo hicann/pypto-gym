@@ -89,7 +89,8 @@ def _case_input_lines(tensors: list[dict], case: dict) -> list[str]:
     names: list[str] = []
     for tensor in tensors:
         name = tensor["name"]
-        expr, constrain = _ctor(case["input_shapes"][name], tensor["dtype"])
+        dtype = case.get("input_dtypes", {}).get(name, tensor["dtype"])
+        expr, constrain = _ctor(case["input_shapes"][name], _norm_dtype(dtype))
         tag = "  # TODO: constrain" if constrain else ""
         lines.append(f"    {name} = {expr}{tag}")
         names.append(name)
@@ -170,6 +171,7 @@ def _build_validate(op: str, case_names: list[str]) -> str:
         "    print('\\n' + '=' * 60)",
         "    print('validation complete')",
         "    print('=' * 60)",
+        "    return True",
     ])
 
 
@@ -207,16 +209,27 @@ def generate(spec_path: str, template_path: str) -> str:
         "{formula_literal}", repr(contract["formula"]),
     )
 
-    # Replace the placeholder signature line (already {op}-substituted above).
-    out = out.replace(f"def {op}_golden(x: torch.Tensor) -> torch.Tensor:",
-                      _build_signature(op, tensors, kwargs), 1)
+    cpu = f"def {op}_golden_cpu(" in out
+    function = f"{op}_golden_cpu" if cpu else f"{op}_golden"
+    signature = _build_signature(op, tensors, kwargs).replace(f"{op}_golden(", f"{function}(", 1)
+    out = out.replace(f"def {function}(x: torch.Tensor) -> torch.Tensor:", signature, 1)
+    if cpu:
+        # The CPU template has no NPU device helper or case factory. Install the same
+        # contract-driven factory/harness, with an explicitly CPU-only device.
+        if "_SPEC_FORMULA =" not in out:
+            out = out.replace("import torch", f"import torch\n\n_SPEC_FORMULA = {contract['formula']!r}", 1)
+        if "def _get_device(" not in out:
+            out = out.replace("def _validate():", "def _get_device():\n    return torch.device('cpu')\n\n\ndef _validate():", 1)
+        if "def _make_inputs(" not in out:
+            out = out.replace("def _validate():", _build_make_inputs(tensors, cases) + "\n\n\ndef _validate():", 1)
 
     # Swap the default _make_inputs (lines from `def _make_inputs` to its
     # `return [x], {}`) with the generated one.
     out = _replace_block(out, "def _make_inputs(device):",
                          _build_make_inputs(tensors, cases))
     out = _replace_block(out, "def _validate():",
-                         _build_validate(op, [case["name"] for case in cases]))
+                         _build_validate(op, [case["name"] for case in cases]).replace(
+                             f"{op}_golden(*args", f"{function}(*args"))
     return out
 
 

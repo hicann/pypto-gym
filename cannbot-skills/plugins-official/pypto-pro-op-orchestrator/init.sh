@@ -363,6 +363,15 @@ fi
 
 CANNBOT_DIR="$CONFIG_ROOT"
 
+# OpenCode always installs the Pro entry point plus its Scriptor mode, both on a
+# fresh project and on refresh. The Python installer preserves unmanaged roots.
+if [ "$TOOL" = "opencode" ]; then
+    shared_install_base="$CONFIG_ROOT"
+    if [ "$LEVEL" = "project" ]; then shared_install_base="$INSTALL_BASE"; fi
+    exec "${CANNBOT_PYTHON:-python3}" "$PLUGIN_ROOT/scripts/install_opencode.py" \
+        "$LEVEL" opencode "$shared_install_base"
+fi
+
 # Keep primary-Agent selection isolated: refuse a different existing primary
 # before creating or replacing any installation resource.
 config_src="$PLUGIN_ROOT/AGENTS.md"
@@ -745,10 +754,17 @@ else
     if [ -d "$PLUGIN_ROOT/references" ]; then
         REF_DISCOVERY="$CONFIG_ROOT/references"
         mkdir -p "$REF_DISCOVERY"
+        for stale_ref in "$REF_DISCOVERY"/scriptor-*; do
+            [ -L "$stale_ref" ] || continue
+            case "$(readlink "$stale_ref")" in
+                "$PLUGIN_ROOT/references/"*) rm -f "$stale_ref" ;;
+            esac
+        done
         ref_link_count=0
         for ref_entry in "$PLUGIN_ROOT/references"/*; do
             [ -e "$ref_entry" ] || continue
             ref_name=$(basename "$ref_entry")
+            case "$ref_name" in scriptor-*) continue ;; esac
             ref_target="$REF_DISCOVERY/$ref_name"
             [ -e "$ref_target" ] || [ -L "$ref_target" ] && rm -rf "$ref_target"
             ln -sfn "$ref_entry" "$ref_target"

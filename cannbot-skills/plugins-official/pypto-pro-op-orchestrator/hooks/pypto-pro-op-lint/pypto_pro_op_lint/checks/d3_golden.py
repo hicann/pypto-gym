@@ -8,7 +8,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# ----------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------
 """D3 Golden 纯度: PL11 (禁止 import pypto/pypto_pro) + PL13 (golden_stage 独立性)."""
 
 from __future__ import annotations
