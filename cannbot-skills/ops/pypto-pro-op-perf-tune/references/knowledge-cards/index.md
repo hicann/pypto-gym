@@ -11,8 +11,8 @@ okf_version: "0.2"
 本文件是卡片清单的**唯一入口**，调优时只从 Active 表获取候选，不通过扫描目录自动采用卡片。
 实际卡片按稳定类别放入子目录。已内置 15 张 VF/VEC 卡片，位于 `vec/`，编号为 `vec-01` 至
 `vec-15`；8 张 Cube 卡片，位于 `cube/`，编号为 `cube-01` 至 `cube-08`；5 张 MEM 卡片，位于
-`mem/`，编号为 `mem-01` 至 `mem-05`；3 张 PIPE 卡片，位于 `pipe/`，编号为 `pipe-01`
-至 `pipe-03`；1 张 SCALAR 卡片，位于 `scalar/`，编号为 `scalar-01`；另有 1 张跨引擎卡片，
+`mem/`，编号为 `mem-01` 至 `mem-05`；4 张 PIPE 卡片，位于 `pipe/`，编号为 `pipe-01`
+至 `pipe-04`；1 张 SCALAR 卡片，位于 `scalar/`，编号为 `scalar-01`；另有 1 张跨引擎卡片，
 位于 `cross-engine/`，编号为 `cross-engine-01`。以上卡片均以 `status=stable` 登记到 Active 表。
 
 ## Active items
@@ -53,6 +53,7 @@ okf_version: "0.2"
 | `pipe-01` | [无 bound 手段清单](pipe/pipe-01-no-bound-checklist.md) | `stable` | `PIPELINE` | 各硬件单元利用率均不高、无明显单一瓶颈，trace 有流水气泡与等待区间、搬移-计算 overlap 不足 | 仅限 Ascend 950PR 或 950DT；各手段分别依赖 make_tile_group 深度轮转、auto_mutex、整块搬运与 VF 融合等已核验能力 |
 | `pipe-02` | [三阶段顺序重排（计算发射优先 + 写出延后一拍）](pipe/pipe-02-stage-order-rescheduling.md) | `stable` | `PIPELINE` | TileGroup 双缓冲已开但 trace 显示搬入-计算-写出仍串行（写回等待刚发出的计算、搬运发射反压计算发射），且每核 tile 数足够形成流水 | 仅限 Ascend 950PR 或 950DT；依赖 make_tile_group 的 group[i] 运行时索引与 auto_mutex 依赖 |
 | `pipe-03` | [C/V 交错流水](pipe/pipe-03-cv-pipeline.md) | `stable` | `PIPELINE` | Cube 和 Vector 存在相邻轮次的独立工作，但当前流水图显示整段串行 | Cube/Vector 分区、TileGroup.next()、独立 buffer 和跨核事件需在目标版本复核 |
+| `pipe-04` | [共享地址 Tile Group 用显式共享计数器管理 Buffer 下标](pipe/pipe-04-shared-buffer-counter.md) | `stable` | `PIPELINE` | 同一地址空间（相同 addrs 与 mutex_ids）被多组 tile group 共享，且不同流水线阶段（QK/PV、drain、按位图跳块）对各组调用次数不一致 | 仅限 Ascend 950PR 或 950DT；仅用 pl.make_tile_group 下标取用 group[idx] 与 Python 标量计数器，已在当前工具链 kernel 核验，其它 SoC 重新查表并验证 |
 | `scalar-01` | [Scalar bound 手段清单](scalar/scalar-01-scalar-bound-checklist.md) | `stable` | `SCALAR` | scalar 泳道忙而 VECTOR 空闲、总计算量极小或 shape 很小，循环内存在可外提的冗余标量计算（div/mod、重复 offset 推导） | 仅限 Ascend 950PR 或 950DT；依赖 pl.range 循环标量表达式与 tile 基础算术 |
 | `cross-engine-01` | [UB 直接交给 L1，少一次 GM 往返](cross-engine/cross-engine-01-ub-to-l1-handoff.md) | `stable` | `VEC、MTE2、MTE3` | Vector 的结果紧接着由 Cube 消费，当前存在关键路径上的 GM 写回和读回 | UB 到 L1 的布局转换、insert、valid shape 和跨核事件需在目标版本复核 |
 
