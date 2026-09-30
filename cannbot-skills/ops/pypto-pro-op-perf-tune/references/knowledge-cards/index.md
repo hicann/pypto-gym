@@ -10,10 +10,10 @@ okf_version: "0.2"
 
 本文件是卡片清单的**唯一入口**，调优时只从 Active 表获取候选，不通过扫描目录自动采用卡片。
 实际卡片按稳定类别放入子目录。已内置 15 张 VF/VEC 卡片，位于 `vec/`，编号为 `vec-01` 至
-`vec-15`；7 张 Cube 卡片，位于 `cube/`，编号为 `cube-01` 至 `cube-07`；5 张 MEM 卡片，位于
-`mem/`，编号为 `mem-01` 至 `mem-05`；2 张 PIPE 卡片，位于 `pipe/`，编号为 `pipe-01`
-至 `pipe-02`；1 张 SCALAR 卡片，位于 `scalar/`，编号为 `scalar-01`，均以 `status=stable`
-登记到 Active 表。
+`vec-15`；8 张 Cube 卡片，位于 `cube/`，编号为 `cube-01` 至 `cube-08`；5 张 MEM 卡片，位于
+`mem/`，编号为 `mem-01` 至 `mem-05`；3 张 PIPE 卡片，位于 `pipe/`，编号为 `pipe-01`
+至 `pipe-03`；1 张 SCALAR 卡片，位于 `scalar/`，编号为 `scalar-01`；另有 1 张跨引擎卡片，
+位于 `cross-engine/`，编号为 `cross-engine-01`。以上卡片均以 `status=stable` 登记到 Active 表。
 
 ## Active items
 
@@ -44,6 +44,7 @@ okf_version: "0.2"
 | `cube-05` | [MTE2 预取（显式 ping/pong 组 + 消费后回填）](cube/cube-05-mte2-preload-explicit-pingpong.md) | `stable` | `MTE2` | K 循环 matmul 已有双缓冲语义但流水仍见 MTE2 空泡（搬运发射滞后于数据依赖解除），且 k_blocks ≥ 2 | 仅限 Ascend 950PR 或 950DT；依赖独立 tile group + auto_mutex 的同组内 pipe 排序；动态奇偶分支选择句柄的形式须按当前 parser 复核 |
 | `cube-06` | [GroupedMatmul 组间连续核分配（全局线性 tile 空间）](cube/cube-06-grouped-continuous-core-assign.md) | `stable` | `MAC` | 单 kernel 承载多组 matmul（MoE 分组、batch matmul 等），各组 tile 数不被核数整除，组数较多 | 仅限 Ascend 950PR 或 950DT；依赖 pl.get_block_idx/pl.get_block_num、三维 GM 张量的组维寻址与单次 launch |
 | `cube-07` | [权重 NZ 离线预打包（GM NZ 声明 + NZ→NZ 纯搬运）](cube/cube-07-weight-nz-prepack.md) | `stable` | `MTE2` | 推理场景权重固定、可离线预处理；matmul 为 MTE2 bound 且权重搬运占比高；原始内轴不对齐时随路转换代价更高、收益更明显 | 仅限 Ascend 950PR 或 950DT；GM Tensor 仅支持 ND/NZ 两种声明，NZ 要求调用方已按 NZ 物理排布 packing 且按对齐后容量分配；NZ 搬运不支持降序 order 转置 |
+| `cube-08` | [同一 L1 地址提供两种布局](cube/cube-08-dual-view-l1-tile-group.md) | `stable` | `MTE1` | 同一份数据要按原布局和转置布局供两条 Cube 输入路径使用，且两边都能同形搬运 | 同地址 TileGroup、NZ/ZN 视角、L0 搬运和共享地址 mutex 合同需在目标版本复核 |
 | `mem-01` | [对齐连续主路径 + 隔离尾块](mem/mem-01-aligned-main-tail-split.md) | `stable` | `MTE2、MTE3` | 同一算子同时覆盖对齐与非对齐规格，主循环每个 tile 都走动态 valid_shape/保守搬运路径，且主区可切出静态 shape 的对齐完整 Tile | 仅限 Ascend 950PR 或 950DT；依赖 TileType 静态 shape、valid_shape=[-1,-1] 与 set_validshape |
 | `mem-02` | [按 UB 预算批量搬行](mem/mem-02-batched-row-copy.md) | `stable` | `MTE2、MTE3` | 循环中反复按单行或单个小张量搬入/写出，相邻行在 GM 连续排布且下游同阶段消费，UB 预算可容纳多行 Tile | 仅限 Ascend 950PR 或 950DT；依赖 pl.load/pl.store 的二维 Tile 整块搬运与 make_tile_group 轮转 |
 | `mem-03` | [一次性数据绕过 L2（能力门控）](mem/mem-03-l2-bypass-one-shot.md) | `stable` | `MTE2` | 大权重/scale/输入块只被完整消费一次且可由 shape/schedule 谓词证明无后续复用，热数据 L2 命中被流式读挤压 | 能力门控：PyPTO-Pro 当前版本无 L2 cache hint/bypass 公开 API；`pl.system.dcci` 仅做缓存清理失效，不构成 bypass |
@@ -51,7 +52,9 @@ okf_version: "0.2"
 | `mem-05` | [Identity/Pure-Copy 快路径路由](mem/mem-05-identity-pure-copy.md) | `stable` | `SCALAR` | 算子存在退化语义（identity reshape、单段 split、参数使变换退化为 copy），且该条件可由 shape/axis/layout/属性在 tiling 阶段完整证明 | 仅限 Ascend 950PR 或 950DT；依赖 pl.load/pl.store 二维整块搬运与 host 侧模板路由 |
 | `pipe-01` | [无 bound 手段清单](pipe/pipe-01-no-bound-checklist.md) | `stable` | `PIPELINE` | 各硬件单元利用率均不高、无明显单一瓶颈，trace 有流水气泡与等待区间、搬移-计算 overlap 不足 | 仅限 Ascend 950PR 或 950DT；各手段分别依赖 make_tile_group 深度轮转、auto_mutex、整块搬运与 VF 融合等已核验能力 |
 | `pipe-02` | [三阶段顺序重排（计算发射优先 + 写出延后一拍）](pipe/pipe-02-stage-order-rescheduling.md) | `stable` | `PIPELINE` | TileGroup 双缓冲已开但 trace 显示搬入-计算-写出仍串行（写回等待刚发出的计算、搬运发射反压计算发射），且每核 tile 数足够形成流水 | 仅限 Ascend 950PR 或 950DT；依赖 make_tile_group 的 group[i] 运行时索引与 auto_mutex 依赖 |
+| `pipe-03` | [C/V 交错流水](pipe/pipe-03-cv-pipeline.md) | `stable` | `PIPELINE` | Cube 和 Vector 存在相邻轮次的独立工作，但当前流水图显示整段串行 | Cube/Vector 分区、TileGroup.next()、独立 buffer 和跨核事件需在目标版本复核 |
 | `scalar-01` | [Scalar bound 手段清单](scalar/scalar-01-scalar-bound-checklist.md) | `stable` | `SCALAR` | scalar 泳道忙而 VECTOR 空闲、总计算量极小或 shape 很小，循环内存在可外提的冗余标量计算（div/mod、重复 offset 推导） | 仅限 Ascend 950PR 或 950DT；依赖 pl.range 循环标量表达式与 tile 基础算术 |
+| `cross-engine-01` | [UB 直接交给 L1，少一次 GM 往返](cross-engine/cross-engine-01-ub-to-l1-handoff.md) | `stable` | `VEC、MTE2、MTE3` | Vector 的结果紧接着由 Cube 消费，当前存在关键路径上的 GM 写回和读回 | UB 到 L1 的布局转换、insert、valid shape 和跨核事件需在目标版本复核 |
 
 ## ID 与状态规则
 
