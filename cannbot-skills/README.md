@@ -59,7 +59,7 @@ opencode
 
 | 类别 | 技能 | 说明 |
 |------|------|------|
-| 编排入口 | `pypto-orchestration-manual` | 9-agent 团队编排入口 |
+| 编排入口 | `pypto-orchestration-manual` | 10-agent 团队编排入口 |
 | 需求理解 | `pypto-intent-understand` | 用户需求分析、规格化与歧义澄清 |
 | 方案与计划 | `pypto-op-design`、`pypto-op-plan` | 算子方案设计与实施计划 |
 | 知识参考 | `pypto-op-knowledge`、`pypto-api-explore`、`pypto-docs-search`、`pypto-memory-template` | 领域知识库、API 速查、文档检索、经验模板复用 |
@@ -67,6 +67,7 @@ opencode
 | Golden 与精度 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug` | Golden 生成、精度对比、精度问题排查 |
 | 验证与检视 | `pypto-op-verify`、`pypto-op-review`、`pypto-kernel-validate` | 算子功能验证、代码检视与产物校验（反作弊 + 精度 + 性能） |
 | 性能调优 | `pypto-op-perf-tune` | 算子性能采集、分析与自动调优 |
+| 性能调优 | `pypto-op-perf-panko-manual` | PANKO 搜索式自动调优的 world model + evaluator 契约（由 `pypto-op-auto-tuner-panko` 读取） |
 | 监控与调试 | `pypto-op-monitor`、`pypto-general-debug` | 任务进度监控与通用问题诊断 |
 | **Pro 专属** | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check`、`pypto-pro-precision-debug` | PyPTO-Pro 开发与精度诊断 |
 | **Scriptor** | `pypto-pro-scriptor-develop`、`pypto-pro-scriptor-optimize`、`pypto-pro-scriptor-verify` | 继承 Pro 数学合同与原型、按安装版指南开发、可配置预算与准出、独立验收 |
@@ -140,7 +141,7 @@ cannbot-skills/
 ╠══════════════════════════════════════════════════════════════════════╣
 ║                                                                      ║
 ║  ┌─ 编排与知识类 ─────────────────────────────────────────────────┐  ║
-║  │  pypto-orchestration-manual  9-agent 团队编排入口                │  ║
+║  │  pypto-orchestration-manual  10-agent 团队编排入口               │  ║
 ║  │  pypto-intent-understand     需求分析与规范化                    │  ║
 ║  │  pypto-op-knowledge          领域知识库                           │  ║
 ║  │  pypto-api-explore           API 速查与用法示例                  │  ║
@@ -162,6 +163,7 @@ cannbot-skills/
 ║  │  pypto-op-verify             功能验证                            │  ║
 ║  │  pypto-op-review             代码检视                            │  ║
 ║  │  pypto-op-perf-tune          性能分析与自动调优                   │  ║
+║  │  pypto-op-perf-panko-manual          PANKO 搜索式自动调优契约             │  ║
 ║  └─────────────────────────────────────────────────────────────────┘  ║
 ║                                                                      ║
 ║  ┌─ 监控与调试类 ─────────────────────────────────────────────────┐  ║

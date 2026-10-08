@@ -144,7 +144,12 @@ function buildTransitionInput(action: TransitionAction, args: Record<string, unk
         max_stage: args.max_stage !== undefined ? Number(args.max_stage) : undefined,
       };
     case "start_stage":
-      return { action, stage: Number(args.stage), reason: args.reason as string | undefined };
+      return {
+        action,
+        stage: Number(args.stage),
+        reason: args.reason as string | undefined,
+        tuning_mode: args.tuning_mode as "stepwise" | "panko" | undefined,
+      };
     case "complete_stage":
       return { action, stage: Number(args.stage) };
     case "fail_stage":
@@ -275,6 +280,7 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
           "Safely transition .orchestrator_state.json (schema v2.0). " +
           "Stage actions: init (stage=1 only, first call), start_stage (set stage to in_progress for retry), " +
           "complete_stage (lint gate check + mark done + auto-advance), fail_stage (mark failed + increment retry). " +
+          "start_stage(stage=7) accepts tuning_mode=\"panko\"|\"stepwise\" (default stepwise) to record which Stage 7 path this operator is on; OL63 only applies to \"panko\". " +
           "Stage 4 design action: submit_design (Architect→Verifier handoff — runs design-scoped lint OL12+OL55 on DESIGN.md only, throws on FAIL so the Architect is re-dispatched BEFORE the Verifier wastes a cycle on a typo-bearing DESIGN.md; module interfaces are checked structurally before lint). " +
           "Stage 5 phase actions (per-Phase M_k loop): start_phase, submit_for_verify (Coder→Verifier handoff — runs phase-scoped lint, moves status to awaiting_verify on success), complete_phase, fail_phase. " +
           "Other actions: record_artifact_hash (snapshot SPEC.md/DESIGN.md/etc. hashes), " +
@@ -285,6 +291,8 @@ export const PyptoStateTransitionPlugin: Plugin = async (input) => {
           // Stage actions
           stage: tool.schema.number().optional(),
           max_stage: tool.schema.number().optional(),
+          // start_stage(7) only: "stepwise" (default) | "panko"
+          tuning_mode: tool.schema.string().optional(),
           reason: tool.schema.string().optional(),
           // Phase actions (stage=5 only)
           phase: tool.schema.string().optional(),

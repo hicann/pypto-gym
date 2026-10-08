@@ -93,7 +93,7 @@ cannbot-skills/
 |------|------------|------|
 | 编排与知识类 | `pypto-orchestration-manual`、`pypto-intent-understand`、`pypto-op-knowledge`、`pypto-api-explore`、`pypto-docs-search`、`pypto-memory-template` | 编排入口、需求理解、领域知识、API 速查、文档检索、经验复用 |
 | 方案与开发类 | `pypto-op-plan`、`pypto-op-design`、`pypto-op-develop` | 实施计划、算子设计与模块接口、代码开发 |
-| 验证与调优类 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug`、`pypto-op-verify`、`pypto-op-review`、`pypto-op-perf-tune`、`pypto-kernel-validate` | Golden 生成、精度对比与排查、功能验证、代码检视、性能调优、产物校验（反作弊 + 精度 + 性能） |
+| 验证与调优类 | `pypto-golden-generate`、`pypto-precision-compare`、`pypto-precision-debug`、`pypto-op-verify`、`pypto-op-review`、`pypto-op-perf-tune`、`pypto-op-perf-panko-manual`、`pypto-kernel-validate` | Golden 生成、精度对比与排查、功能验证、代码检视、性能调优（分步骤 / PANKO 搜索式）、产物校验（反作弊 + 精度 + 性能） |
 | 监控与调试类 | `pypto-op-monitor`、`pypto-general-debug` | 任务监控、通用诊断 |
 | Pro 专属类 | `pypto-pro-intent-understand`、`pypto-pro-material-explore`、`pypto-pro-op-plan`、`pypto-pro-op-design`、`pypto-pro-op-develop`、`pypto-pro-op-perf-tune`、`pypto-pro-golden-generate`、`pypto-pro-environment-check`、`pypto-pro-precision-debug` | PyPTO-Pro 需求、开发、调优与调试 |
 | Scriptor 流程类 | `pypto-pro-scriptor-develop`、`pypto-pro-scriptor-optimize`、`pypto-pro-scriptor-verify` | 继承 Pro 原型与合同，复用固定 ascriptor 源码完成实现、优化与验收 |

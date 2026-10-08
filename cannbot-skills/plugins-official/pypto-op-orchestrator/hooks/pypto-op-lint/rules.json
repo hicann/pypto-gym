@@ -758,6 +758,17 @@
       ],
       "target": "gate",
       "rule": "Experience Preflight 门禁（Stage 5/6，Coder 写 impl 前创建并自检；Stage 1-4 不触碰 MEMORY.md）: (1) MEMORY.md `## Experience Preflight` section 存在且非占位符; (2) 格式合规（markdown checklist 非表格，≤20 条，[-] 项须有 ⚠️ 待验证 注释）; (3) 所有 [-] 待验证项必须消除（改为 [x] 或标注 ✅ 已知风险）; (4) 对 impl.py 做 AST 扫描检测 4 类反模式（F4 非法 cast 路径/F2 Element 双重包装/F1 scalar 首参/F8 zeros dtype 位置错误）"
+    },
+    {
+      "id": "OL63",
+      "severity": "S1",
+      "dimension": "D2",
+      "fix_effort": "E1",
+      "stages": [
+        7
+      ],
+      "target": "gate",
+      "rule": "Stage 7 完成门禁（仅 PANKO 路径）：路径取自 .orchestrator_state.json 的 stage7_tuning_mode，由 start_stage(stage=7, tuning_mode=...) 记录。为 \"stepwise\" 或未设置时本规则 SKIP，分步骤调优照常 complete_stage(7)。为 \"panko\" 时，complete_stage(7) 前 optimization/search_state.json 的 progress.stop_reason 必须非空——即 panko_harness.py 的 stop() 已判定真正停止（success / wall_clock / frontier_exhausted / global_stagnation / eval_budget / converged）。编排器是薄 relay，不得自行判断\"够好 / 差不多\"提前结束优化，必须 relay 到 @pypto-op-auto-tuner-panko 依 harness 发出 STOP。若 search_state.json 存在而 stage7_tuning_mode 不是 \"panko\"，说明 PANKO 已运行却未登记，同样 FAIL——否则不登记即可绕过门禁。"
     }
   ]
 }

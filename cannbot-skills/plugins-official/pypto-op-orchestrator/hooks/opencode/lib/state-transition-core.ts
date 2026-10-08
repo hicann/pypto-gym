@@ -74,13 +74,23 @@ export type OrchestratorState = {
   stage5_phases?: Stage5Phases;
   artifact_hashes?: ArtifactHashes;
   rollback_history?: RollbackEntry[];
+  // Which Stage 7 tuning path this operator is on. Recorded by the orchestrator
+  // at start_stage(7) and never inferred, because the lint gate OL63 has to tell
+  // "PANKO ran and was cut short" from "PANKO was never asked for" and the two
+  // are indistinguishable from the artifacts alone. Absent means "stepwise",
+  // which is the default path and what every pre-PANKO operator is on.
+  stage7_tuning_mode?: Stage7TuningMode;
   last_updated?: string;
   [key: string]: unknown;
 };
 
+export type Stage7TuningMode = "stepwise" | "panko";
+
+const STAGE7_TUNING_MODES: readonly string[] = ["stepwise", "panko"];
+
 export type TransitionInput =
   | { action: "init"; stage?: number; max_stage?: number }
-  | { action: "start_stage"; stage: number; reason?: string }
+  | { action: "start_stage"; stage: number; reason?: string; tuning_mode?: Stage7TuningMode }
   | { action: "complete_stage"; stage: number }
   | { action: "fail_stage"; stage: number; reason?: string }
   | { action: "submit_design"; stage: 4 }
@@ -194,6 +204,22 @@ export function applyTransition(
             `cannot start stage ${stage}: previous stage ${stage - 1} is "${prevStatus ?? "unknown"}", not "completed"`,
           );
         }
+      }
+      if (input.tuning_mode !== undefined) {
+        if (stage !== 7) {
+          throw new Error(`tuning_mode is only meaningful on stage 7, got stage ${stage}`);
+        }
+        if (!STAGE7_TUNING_MODES.includes(input.tuning_mode)) {
+          throw new Error(
+            `invalid tuning_mode: ${input.tuning_mode} (must be ${STAGE7_TUNING_MODES.join(" | ")})`,
+          );
+        }
+        next.stage7_tuning_mode = input.tuning_mode;
+      } else if (stage === 7 && next.stage7_tuning_mode === undefined) {
+        // Explicit rather than left unset: OL63 reads this field, and a missing
+        // one would make "stepwise" a guess about an absent value instead of a
+        // recorded fact.
+        next.stage7_tuning_mode = "stepwise";
       }
       next.current_stage = stage;
       statusMap[key] = "in_progress";
@@ -432,6 +458,12 @@ export function applyTransition(
       // may change after going back to architecture/design.
       if (target < 5) {
         next.stage5_phases = emptyStage5Phases();
+      }
+      // Same reasoning one stage later: the tuning path is chosen when Stage 7
+      // is entered, so a rollback past it must not leave the previous run's
+      // choice standing. A stale "panko" would make OL63 gate a stepwise rerun.
+      if (target < 7) {
+        delete next.stage7_tuning_mode;
       }
       // Drop artifact hashes that were computed at the repeated stage and subsequent stages.
       const HASH_STAGE: Record<string, number> = {

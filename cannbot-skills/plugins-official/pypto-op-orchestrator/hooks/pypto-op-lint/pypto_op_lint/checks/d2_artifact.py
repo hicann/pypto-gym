@@ -930,3 +930,114 @@ def _ol61_5d_alloc_dtype(
                     f"Fix policy: pypto.{call_name}(shape, dtype={arg.attr})"
                 )
                 break
+
+
+def _stage7_tuning_mode(ctx: CheckContext) -> str:
+    """Which Stage 7 path this operator is on, per the authoritative state file.
+
+    Returns "" when the state file is absent or unreadable, which callers treat
+    the same as "stepwise": a run with no orchestrator state has not declared a
+    PANKO run, and a gate must not assume one.
+    """
+    path = ctx.file_path(".orchestrator_state.json")
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            mode = json.load(f).get("stage7_tuning_mode")
+    except (json.JSONDecodeError, OSError):
+        return ""
+    return mode if isinstance(mode, str) else ""
+
+
+def _ol63_off_path(ctx: CheckContext, mode, have_state) -> Finding:
+    """The verdict for a run that is not on the PANKO path.
+
+    A state file with no declared mode is the inconsistency, not a skip: PANKO
+    demonstrably ran -- only panko_harness.py writes that file -- but the run was
+    never declared, and skipping there would let the gate be switched off simply
+    by not recording the mode.
+    """
+    if have_state:
+        return ctx.make_finding(
+            "OL63", "FAIL",
+            "optimization/search_state.json exists (PANKO ran) but "
+            f"stage7_tuning_mode is {mode or 'unset'} — record the path with "
+            'state_transition(action="start_stage", stage=7, tuning_mode="panko") '
+            "so the Stage 7 stop gate applies to this run",
+            file=".orchestrator_state.json",
+        )
+    return ctx.make_finding(
+        "OL63", "SKIP",
+        f"stage7_tuning_mode={mode or 'unset'} (stepwise path) — OL63 governs "
+        "the PANKO auto-tuning path only",
+    )
+
+
+def _ol63_progress(ctx: CheckContext, state_path):
+    """(progress, failure) for the harness state file; exactly one is set."""
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        return None, ctx.make_finding(
+            "OL63", "FAIL", f"search_state.json failed to parse as JSON: {e}"
+        )
+    progress = data.get("progress")
+    if not isinstance(progress, dict):
+        return None, ctx.make_finding(
+            "OL63", "FAIL", "search_state.json has no progress field"
+        )
+    return progress, None
+
+
+@register("OL63")
+def check_ol63(ctx: CheckContext) -> Finding:
+    """Stage 7 completion gate: block complete_stage(7) until the harness recorded a real STOP.
+
+    Applies to the PANKO tuning path ONLY. The path is read from
+    .orchestrator_state.json's stage7_tuning_mode, which start_stage(7) records
+    and which nothing else may write. It is not inferred from the artifacts: the
+    stepwise path leaves no search_state.json, and so does a PANKO run the
+    orchestrator abandoned before the first init -- exactly the failure this gate
+    exists to catch. Absent or "stepwise" means the stepwise path, which this
+    rule does not govern, so the gate returns SKIP and the default Stage 7 flow
+    completes as it always has.
+
+    On the PANKO path the orchestrator is a thin relay with no authority to end
+    the search on "good enough" (background: an orchestrator once called
+    complete_stage(7) long before the harness stop() would have fired,
+    discarding most of the unexplored action space). The stop decision belongs to
+    panko_harness.py's stop(), which persists it to progress.stop_reason in
+    optimization/search_state.json. This gate only checks that the marker is
+    non-empty; it does not duplicate the stop logic, so the two cannot drift.
+    """
+    mode = _stage7_tuning_mode(ctx)
+    state_path = ctx.file_path(os.path.join("optimization", "search_state.json"))
+    have_state = os.path.isfile(state_path)
+    if mode != "panko":
+        return _ol63_off_path(ctx, mode, have_state)
+    if not have_state:
+        return ctx.make_finding(
+            "OL63", "FAIL",
+            "stage7_tuning_mode=panko but optimization/search_state.json does not "
+            "exist — the harness never ran, so no stop was decided; cannot "
+            "complete_stage(7)",
+        )
+    progress, failure = _ol63_progress(ctx, state_path)
+    if failure is not None:
+        return failure
+    reason = progress.get("stop_reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return ctx.make_finding(
+            "OL63", "FAIL",
+            "the harness recorded no STOP (progress.stop_reason is empty) — the "
+            "orchestrator must not end Stage 7 on its own judgement; relay to "
+            "pypto-op-auto-tuner-panko until the harness stop() emits STOP",
+            file="optimization/search_state.json",
+        )
+    return ctx.make_finding(
+        "OL63", "PASS",
+        f"harness STOP recorded (stop_reason={reason})",
+        file="optimization/search_state.json",
+    )

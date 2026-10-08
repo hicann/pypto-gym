@@ -12,10 +12,10 @@
     "./agents/pypto-op-planner.md",
     "./agents/pypto-op-mathematician.md",
     "./agents/pypto-op-architect.md",
-    "./agents/pypto-op-architect.md",
     "./agents/pypto-op-coder.md",
     "./agents/pypto-op-verifier.md",
     "./agents/pypto-op-debugger.md",
-    "./agents/pypto-op-optimizer.md"
+    "./agents/pypto-op-optimizer.md",
+    "./agents/pypto-op-auto-tuner-panko.md"
   ]
 }

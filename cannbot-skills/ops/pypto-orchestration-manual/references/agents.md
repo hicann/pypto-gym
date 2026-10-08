@@ -27,6 +27,7 @@ not inspect what skills each agent loads.
 | 6 | `pypto-op-verifier` | Stage 4 scaffolding (Step B) + Stage 5 phase scaffolding + Stage 5 composition + Stage 6 E2E + Stage 7 regression |
 | 7 | `pypto-op-debugger` | Stage 5 failure investigation |
 | 8 | `pypto-op-optimizer` | Stage 7 performance tuning (S1_SETUP / S2_COLLECT / S3_ANALYZE / S4_FRONTEND / S4_SWIMLANE / S4_INCORE / S5_REPORT). Loads `pypto-op-perf-tune` + `tune-orchestrator` per dispatch; self-manages ITER loops within each PHASE. |
+| 9 | `pypto-op-auto-tuner-panko` | Stage 7 search-based auto-tuning (PANKO), when the user asks for it. World model + evaluator. Loads `pypto-op-perf-panko-manual` per dispatch; runs one search cycle over the persisted tree and returns a CODE/STOP directive. |
 
 **Separation of concerns in Stage 5 phase failure:** verifier = judge
 (pass / fail with `failure_category`); debugger = investigator (proposes a
@@ -202,3 +203,47 @@ adopted/failed optimizations, constraints, and code config to
   executing stages not specified in the dispatch prompt; modifying
   `.orchestrator_state.json`.
 
+
+
+### 9. pypto-op-auto-tuner-panko — Stage 7 search-based auto-tuning (PANKO)
+
+Used **only when the user asks for PANKO** in the initial prompt; otherwise Stage 7
+runs section 8 unchanged. Auto-tuner reads skill `pypto-op-perf-panko-manual` (the only agent
+that does) and runs ONE search cycle per dispatch over
+`custom/<op>/optimization/search_state.json` — the persisted world-model tree. It is
+both the **world model** (propose δ, reflect, rescore V, insert/update/prune) and the
+**evaluator** (run the frozen `E(x) → (s, p)`). The deterministic core — selection,
+legality, duplicate detection, keep-or-revert, tile numbers, stop conditions and all
+state I/O — lives in `scripts/panko_harness.py`, which it calls. The orchestrator
+neither reads the skill nor runs the harness.
+
+**Dispatch contract:**
+
+| | |
+|---|---|
+| **Inputs (INIT — first cycle, no `candidate_file`)** | `op`, `op_dir=custom/<op>`, `DEVICE=TILE_FWK_DEVICE_ID`, `op_file`, `test_command`, `P_ref`, `config` |
+| **Inputs (STEP — a candidate the coder just produced)** | the same, plus `action_id` and `candidate_file` |
+| **Output** | exactly one JSON directive, nothing else |
+
+```
+{"directive":"CODE","op_file":"custom/<op>/<op>_impl.py","action_id":"u13","intent":"<δ>"}
+{"directive":"CODE", ..., "coder":false}     # the core already wrote the file
+{"directive":"STOP","reason":"<stop reason>","best":{"latency_us":..,"J":..,"speedup_vs_preopt":..}}
+```
+
+- **Handoff:** on `CODE`, the orchestrator forwards `intent` **verbatim** to
+  `pypto-op-coder` and then re-dispatches the auto-tuner (STEP). A `CODE` carrying
+  `"coder": false` skips the coder — the deterministic core has already written
+  `op_file`, and dispatching the coder would overwrite what the core proposed. On
+  `STOP`, the orchestrator runs the Stage 7 regression verify (`pypto-op-verifier`)
+  on `best`, then `complete_stage(7)`.
+- **The coder needs no knowledge of PANKO.** It receives one fully specified change
+  and applies it once, exactly as in any other dispatch.
+- **Gate:** Stage 6 is `complete_stage(6)` before the first dispatch (trusted, not
+  re-confirmed). Lint gate **OL63** additionally requires `progress.stop_reason` in
+  `search_state.json` to be non-empty before `complete_stage(7)` — the orchestrator
+  cannot declare the search finished on the harness's behalf.
+- **Forbidden:** calling `state_transition`; changing the frozen evaluation method,
+  its thresholds or how latency is measured; hard-coding `DEVICE`; changing the
+  operator's public contract (name / arguments / shapes / dtypes / layout — only the
+  internal implementation is tuned).

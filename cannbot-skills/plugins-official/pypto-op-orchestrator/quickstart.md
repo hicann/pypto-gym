@@ -2,7 +2,7 @@
 
 ## 概述
 
-CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。采用 7 阶段状态机驱动，8 智能体团队协作，覆盖从需求理解到性能调优的完整开发流程，支持断点续跑与失败恢复。每个阶段完成门禁校验后才能进入下一阶段，Stage 5+ 通过 `MEMORY.md` 协作账本记录 pass/fail 与推理过程。
+CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。采用 7 阶段状态机驱动，9 智能体团队协作，覆盖从需求理解到性能调优的完整开发流程，支持断点续跑与失败恢复。每个阶段完成门禁校验后才能进入下一阶段，Stage 5+ 通过 `MEMORY.md` 协作账本记录 pass/fail 与推理过程。
 
 ### 与 PyPTO-Pro 开发的区别
 
@@ -23,6 +23,7 @@ CANNBot PyPTO 算子开发模式适用于通过 PyPTO 开发自定义算子。�
 - 已安装 PyPTO，版本需与 CANN 配套。通过 PyPI 安装时，CANN 与 PyPTO 版本对应关系查阅 [PyPI 安装](https://pypto.gitcode.com/install/build_and_install.html#pypi)；CANN 9.1.0 版本推荐使用源码编译安装，参阅 [源码编译安装](https://pypto.gitcode.com/install/build_and_install.html)
 - 已配置 NPU 设备（支持 Ascend 910/950 PR 等芯片）
 - 已安装 OpenCode、Claude Code、TRAE、Cursor、Copilot、CodeArts 等受支持的 AI 编程工具
+- **仅 PANKO 自动调优需要**：`optuna >= 2.0`（`python3 -m pip install 'optuna>=2.0'`）。Tile 数值由 optuna 的 TPE 决定，缺失时 `init` 会明确拒绝而不是静默改用其它方式；不使用 PANKO 时无需安装
 
 ### OpenCode（推荐）
 
@@ -120,7 +121,7 @@ bash /path/to/pypto-gym/cannbot-skills/plugins-official/pypto-op-orchestrator/in
 ```bash
 # OpenCode
 opencode agent list
-# 应看到 pypto-op-planner / pypto-op-mathematician / pypto-op-architect / pypto-op-coder / pypto-op-verifier / pypto-op-debugger / pypto-op-optimizer
+# 应看到 pypto-op-planner / pypto-op-mathematician / pypto-op-architect / pypto-op-coder / pypto-op-verifier / pypto-op-debugger / pypto-op-optimizer / pypto-op-auto-tuner-panko
 
 # Claude Code
 ls .claude/
@@ -165,7 +166,7 @@ claude
 
 ### 核心工作流
 
-采用 7 阶段状态机驱动，8 智能体团队协作，确保算子开发质量：
+采用 7 阶段状态机驱动，9 智能体团队协作，确保算子开发质量：
 
 ```
 Stage 1: 需求规划与 API 可行性 → Stage 2: Golden 生成
@@ -180,7 +181,7 @@ Stage 1: 需求规划与 API 可行性 → Stage 2: Golden 生成
 - **Stage 4**（verifier）：独立检查设计与接口；多模块时准备测试文件
 - **Stage 5**（coder、verifier、debugger）：按模块闭环，逐模块完成编码→验证→修复，产出 `modules/`、集成 `<op>_impl.py`、`test_<op>.py` 与 README.md；MEMORY.md 从 Stage 5 开始写入
 - **Stage 6**（verifier）：最终 E2E 精度验证与 layout 校验
-- **Stage 7**（optimizer）：性能采集、分析与迭代调优，verifier 回归确认精度无损，生成 `<op>_tuning_report.md`
+- **Stage 7**（optimizer / auto-tuner）：默认由 optimizer 做分步骤调优（性能采集、分析与迭代调优），生成 `<op>_tuning_report.md`；**用户在 initial prompt 中要求 PANKO 时**改由 auto-tuner 以 relay 循环做搜索式自动调优，产出 `optimization/search_state.json` 与 `optimization/<op>_optimization.md`。两种路径都由 verifier 回归确认精度无损
 
 每个阶段完成门禁校验后才能进入下一阶段。支持断点续跑和失败恢复，详见 AGENTS.md。
 
@@ -224,7 +225,8 @@ custom/<op>/
 | `pypto-general-debug` | 通用错误定位与修复 | Stage 5 |
 | `pypto-precision-debug` | 精度问题代码层排查 | Stage 5 |
 | `pypto-precision-compare` | 精度中间结果对比分析 | Stage 5（辅助） |
-| `pypto-op-perf-tune` | 算子性能分析与自动调优 | Stage 7 |
+| `pypto-op-perf-tune` | 算子性能分析与自动调优（分步骤） | Stage 7 |
+| `pypto-op-perf-panko-manual` | PANKO 搜索式自动调优的 world model + evaluator 契约 | Stage 7（用户要求 PANKO 时） |
 | `pypto-op-review` | 设计与实现评审 | Stage 3–7 |
 | `pypto-docs-search` | 算子 API 文档、参考实现与 golden 检索 | 按需 |
 | `pypto-memory-template` | MEMORY.md 协作账本模板 | Stage 5+ |
@@ -240,7 +242,8 @@ custom/<op>/
 | `pypto-op-coder` | Kernel 实现 | Stage 5 |
 | `pypto-op-verifier` | 独立裁决与检查 | Stage 4–7 |
 | `pypto-op-debugger` | 失败定位与补丁建议 | Stage 5 |
-| `pypto-op-optimizer` | 性能采集与调优 | Stage 7 |
+| `pypto-op-optimizer` | 性能采集与调优（分步骤） | Stage 7 |
+| `pypto-op-auto-tuner-panko` | PANKO 搜索式自动调优的 world model + evaluator | Stage 7（用户要求 PANKO 时） |
 
 ## 四、断点续跑与恢复
 
@@ -284,7 +287,7 @@ cd pypto-gym/cannbot-skills/plugins-official/pypto-op-orchestrator && bash init.
 
 ## 总结
 
-1. PyPTO 算子开发模式通过 7 阶段状态机与 8 智能体团队实现端到端自动化：需求规划→Golden 生成→架构设计→模块分解→编码闭环→E2E 验证→性能调优
+1. PyPTO 算子开发模式通过 7 阶段状态机与 9 智能体团队实现端到端自动化：需求规划→Golden 生成→架构设计→模块分解→编码闭环→E2E 验证→性能调优
 2. 使用 `init.sh` 脚本一键安装（OpenCode 推荐），支持项目级和全局级
 3. `opencode` / `claude` 是核心交互指令
 4. 所有阶段通过门禁驱动，支持断点续跑与失败恢复
