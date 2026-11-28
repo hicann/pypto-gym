@@ -275,7 +275,7 @@ pypto-gym/
 | `spatial_ssrl_3b/` | rms_norm, rope | RMSNorm + RoPE（Vision 2D / 多模态 3D） |
 | `experimental/matmul/` | gmm_mxfp8 | MXFP8 GMM 算子 |
 | `experimental/ops_transformer/` | flash_attention_mha, flash_attention_mha_grad, flash_attention_score, flash_attention_score_grad, fused_swiglu, fused_swiglu_grad, lightning_indexer, mla_prolog, mla_prolog_mxfp_quant_v3, mla_prolog_quant_hifp8_v3, page_attention_quant, sparse_attention_antiquant_fp8, sparse_attention_antiquant_kv_split, sparse_attention_grad_tnd, sparse_attention_tnd, attention_worker_combine, engram, flash_attention_fp8, kimi_attention_residuals | Flash Attention（MHA/Score/FP8，含量化/反向）、MLA Prolog（含量化）、SwiGLU、Page Attention、稀疏注意力、Engram、Kimi Attention Residuals 等算子 |
-| `pypto_pro/deepseek_v4_1/` | engram_gate, indexer_prologue_k, indexer_prologue_qw | DeepSeek V4.1 IFA Pro 算子（PyPTO Pro DSL） |
+| `pro/deepseek_v4_1/` | engram_gate, engram_hash, indexer_prologue_k, indexer_prologue_qw, mixed_quant_sparse_flash_mla 等 17 个 | DeepSeek V4.1 IFA Pro 算子（JIT 直调 + ACLNN 双路由交付形态） |
 | `pypto_pro/llada2/` | liger_cross_entropy_loss | Liger Cross Entropy Loss（Pro 实现） |
 | `pypto_pro/experimental/ops_transformer/` | engram, kda 系列 | 实验性 Pro 算子（Engram、KDA 等） |
 

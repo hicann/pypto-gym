@@ -42,13 +42,13 @@ Engram Gate 保持仓内 CPU golden、输入生成与方案 A 精度标准，只
 
 ```bash
 # 仓内实现：五个算子用例与比较器失败路径校准
-python -m pytest ops/pypto_pro/deepseek_v4_1/engram_gate/tests -q
+python -m pytest ops/pro/deepseek_v4_1/engram_gate/tests -q
 
 # 相同测试与判据，调用 skill 样例的公开入口
-python -m pytest ops/pypto_pro/deepseek_v4_1/engram_gate/tests -q --op-entry engram_gate=cannbot-skills/ops/pypto-pro-kernel/examples/algorithms/engram_gate/kernel.py:engram_gate_wrapper
+python -m pytest ops/pro/deepseek_v4_1/engram_gate/tests -q --op-entry engram_gate=cannbot-skills/ops/pypto-pro-kernel/examples/algorithms/engram_gate/kernel.py:engram_gate_wrapper
 
 # AttnEpilogue 的公开输出边界测试使用相同候选入口协议
-python -m pytest ops/pypto_pro/deepseek_v4_1/attn_epilogue/tests -q -k test_token_boundaries --op-entry attn_epilogue=cannbot-skills/ops/pypto-pro-kernel/examples/algorithms/attn_epilogue/kernel.py:attn_epilogue
+python -m pytest ops/pro/deepseek_v4_1/atten_epilogue/tests -q -k test_token_boundaries --op-entry attn_epilogue=cannbot-skills/ops/pypto-pro-kernel/examples/algorithms/attn_epilogue/kernel.py:attn_epilogue
 ```
 
 AttnEpilogue 的内部 workspace、tiling 和图缓存测试依赖仓内模块的私有接口，继续验证该模块；比较候选时显式选择上述公开边界测试。FlexAttention 已通过 `get_op_caller` 获取入口，也可使用相同参数；候选仍须满足它的公开接口。其它直接导入实现的测试需先接入公共调用层，参数不会全局替换 Python 导入。

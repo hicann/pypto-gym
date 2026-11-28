@@ -5,8 +5,8 @@ PyPTO-Pro 稀疏 Flash MLA 计算，kernel 以 raw Ptr + OpTiling 形态编写�
 直调（jit）、经 CANN 框架的 aclnn 接口调用（run 包 built-in），以及 whl 安装态的
 `torch.ops.pypto_gym.mixed_quant_sparse_flash_mla` Torch 绑定。
 
-算法设计、流水结构与性能/优化记录见原 jit 形态算子目录
-`ops/pypto_pro/deepseek_v4_1/mixed_quant_sparse_flash_mla/`（`DESIGN.md` / `RESULTS.md`）；
+算法设计、流水结构与性能/优化记录见本目录
+`DESIGN.md` / `RESULTS.md`（自原 jit 形态算子目录迁入）；
 本目录只承载交付形态所需的 kernel 签名改造、host 侧（def / infershape / tiling）与测试桥。
 
 ## 产品支持情况
