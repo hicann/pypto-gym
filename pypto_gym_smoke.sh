@@ -300,7 +300,7 @@ LOG_INFO "PYPTO_3RD_LIB_PATH=$PYPTO_3RD_LIB_PATH"
 # ======================================================================================================================
 SRC_DIR=""
 SRC_TARGET_BRANCH="master"  # 不传入本参数时默认是 master
-PTO_ISA_URL=""
+PTO_ISA_PKG=""              # 已由调用方(.gitcode/scripts/pre_smoke.sh)完成下载与校验的本地 .run 包路径, 非空时安装
 PYPTO_RUN_URL=""            # compile.sh 已编好的 pypto run 包下载地址, 非空时跳过 pypto 源码构建
 CI_MODE=false
 CHANGED_FILE_FROM_ARG=""
@@ -314,8 +314,8 @@ while [[ $# -gt 0 ]]; do
             SRC_TARGET_BRANCH="$2"
             shift 2
             ;;
-        --pto_isa_url)
-            PTO_ISA_URL="$2"
+        --pto_isa_pkg)
+            PTO_ISA_PKG="$2"
             shift 2
             ;;
         --pypto_run_url)
@@ -349,7 +349,7 @@ SRC_DIR=$(cd "$SRC_DIR" && pwd)
 # 检查输出可选参数
 LOG_INFO "SRC_DIR=$SRC_DIR"
 LOG_INFO "SRC_TARGET_BRANCH=$SRC_TARGET_BRANCH"
-LOG_INFO "PTO_ISA_URL=$PTO_ISA_URL"
+LOG_INFO "PTO_ISA_PKG=$PTO_ISA_PKG"
 LOG_INFO "PYPTO_RUN_URL=$PYPTO_RUN_URL"
 
 # ======================================================================================================================
@@ -368,31 +368,17 @@ export CANN_PATH
 LOG_INFO "CANN_PATH=$CANN_PATH"
 
 # 安装 PTO-ISA 包
-if [ -n "${PTO_ISA_URL}" ]; then
-
-    # 目标目录
-    PTO_ISA_PKG_DIR="$DATA_DIR/pto_isa_pkg/$SRC_TARGET_BRANCH"
-
-    # 创建目录（不存在则自动创建）
-    mkdir -p "${PTO_ISA_PKG_DIR}"
-
-    # 进入目录，并记住进入前的路径
-    pushd "${PTO_ISA_PKG_DIR}" > /dev/null || exit 1
-
-    # 删除所有 .run 文件
-    rm -f ./*.run
-
-    # wget .run 包并安装
-    PTO_ISA_PKG_NAME="cann-pto-isa_linux.run"
-    wget -O "$PTO_ISA_PKG_NAME" "${PTO_ISA_URL}"
-    chmod +x ./$PTO_ISA_PKG_NAME
-    LOG_DO "bash" "$PTO_ISA_PKG_NAME" "--full" "--quiet" "--install-path=${CANN_PATH}../"
-
+# 本地安装包由调用方(.gitcode/scripts/pre_smoke.sh)负责下载与完整性校验(域名白名单 + .run --check),
+# 本脚本只安装传入的已校验本地包, 不自行下载(CWE-494)
+if [ -n "${PTO_ISA_PKG}" ]; then
+    if [ ! -f "${PTO_ISA_PKG}" ]; then
+        LOG_ERROR "PTO_ISA_PKG file not found: ${PTO_ISA_PKG}"
+        exit 1
+    fi
+    LOG_HEAD "[BGN] Install PTO-ISA package: ${PTO_ISA_PKG}"
+    LOG_DO "bash" "${PTO_ISA_PKG}" "--full" "--quiet" "--install-path=${CANN_PATH}../"
+    LOG_HEAD "[END] Install PTO-ISA package"
     echo "安装pto-isa包成功：${CANN_PATH}"
-
-    # 自动回到进入前的工作目录
-    popd > /dev/null
-
 fi
 
 # 验证setenv.bash文件存在性

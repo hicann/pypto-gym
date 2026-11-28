@@ -28,6 +28,36 @@ check_result() {
   fi
 }
 
+# PTO-ISA .run 安装包下载域名白名单(CWE-494): 仅允许从发布方受控站点下载可执行安装包,
+# 白名单外地址一律拒绝下载执行, 防止任意 URL 指向被投毒/被篡改的安装包。
+# 校验逻辑收敛在本脚本(pypto_gym_smoke.sh 可能被外部篡改, 不承担安全校验职责)
+PTO_ISA_URL_DOMAIN_WHITELIST=(
+    "ascend-ci.obs.cn-north-4.myhuaweicloud.com"
+)
+
+check_pto_isa_url() {
+  local url="$1"
+  local host
+  local allowed
+  if [[ "$url" != https://* ]]; then
+    echo "$(date +%Y%m%d.%H%M%S) : PTO_ISA_URL must use https scheme, refuse to download: $url"
+    exit 1
+  fi
+  host="${url#https://}"
+  host="${host%%/*}"      # 去掉 path
+  host="${host#*@}"       # 去掉 userinfo
+  host="${host%%:*}"      # 去掉 port
+  host="${host,,}"        # 域名比较统一小写
+  for allowed in "${PTO_ISA_URL_DOMAIN_WHITELIST[@]}"; do
+    if [ "$host" = "$allowed" ] || [[ "$host" == *."$allowed" ]]; then
+      echo "[INFO] pto-isa url host '$host' passed download domain whitelist"
+      return 0
+    fi
+  done
+  echo "$(date +%Y%m%d.%H%M%S) : PTO_ISA_URL host '$host' is not in the download domain whitelist: ${PTO_ISA_URL_DOMAIN_WHITELIST[*]}"
+  exit 1
+}
+
 export ASCEND_GLOBAL_LOG_LEVEL=2
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
 source /usr/local/Ascend/cann/set_env.sh
@@ -39,7 +69,9 @@ rm -rf /root/ascend/log
 # ==============================
 # 运行冒烟测试
 # pto-isa 包架构由 export 控制: PTO_ISA_ARCH=aarch64(默认)/x86_64;
-# PTO_ISA_URL 可直接覆盖完整下载地址(优先级高于 PTO_ISA_ARCH)
+# PTO_ISA_URL 可直接覆盖完整下载地址(优先级高于 PTO_ISA_ARCH), 域名必须在白名单内;
+# 下载与校验全部收敛在本脚本: 域名白名单 -> wget -> 内嵌完整性校验(.run --check),
+# 校验通过后把本地包路径传给 smoke 脚本安装, smoke 脚本只安装本地包, 不再自行下载
 # ==============================
 case "${PTO_ISA_ARCH:-aarch64}" in
     arm|aarch64)      pto_arch="aarch64" ;;
@@ -49,12 +81,31 @@ esac
 pto_url="${PTO_ISA_URL:-https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/pto-isa/daily/cann-pto-isa_linux-${pto_arch}.run}"
 echo "[INFO] pto-isa package url: ${pto_url}"
 
+# ==============================
+# 下载并校验 pto-isa 安装包(CWE-494): 任一步失败直接终止(fail-closed)
+# ==============================
+PTO_ISA_PKG_DIR="${WORKSPACE}/pto_isa_pkg"
+mkdir -p "${PTO_ISA_PKG_DIR}"
+pto_pkg="${PTO_ISA_PKG_DIR}/cann-pto-isa_linux-${pto_arch}.run"
+check_pto_isa_url "${pto_url}"
+rm -f "${pto_pkg}"
+if ! wget -O "${pto_pkg}" "${pto_url}"; then
+    echo "$(date +%Y%m%d.%H%M%S) : pto-isa package download failed: ${pto_url}"
+    exit 1
+fi
+if ! bash "${pto_pkg}" --check; then
+    echo "$(date +%Y%m%d.%H%M%S) : pto-isa package integrity check failed, package may be corrupted or tampered: ${pto_pkg}"
+    rm -f "${pto_pkg}"
+    exit 1
+fi
+echo "[INFO] pto-isa package downloaded and integrity-verified: ${pto_pkg}"
+
 log "start run test case, please wait ..."
 echo "==============start smoke testing================="
 # PYPTO_RUN_URL: compile.sh(stage2) 已编好的 pypto run 包下载地址, 由 workflow run:| 导出
 #   (x86 -> pypto_run_x86.tar.gz / aarch64 -> pypto_run_arm.tar.gz);
 #   非空时 smoke 下载安装该包并跳过 pypto 源码构建, 为空时回退原 clone+build 流程
-bash pypto_gym_smoke.sh --src ${WORKSPACE} --pto_isa_url "${pto_url}" --src_target_branch master \
+bash pypto_gym_smoke.sh --src ${WORKSPACE} --pto_isa_pkg "${pto_pkg}" --src_target_branch master \
     --f ${WORKSPACE}/pr_filelist.txt --ci --pypto_run_url "${PYPTO_RUN_URL:-}" 2>&1 | tee -a ./run_test.log
 smoke_rc=${PIPESTATUS[0]}
 
